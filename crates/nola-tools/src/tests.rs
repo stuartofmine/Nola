@@ -238,3 +238,127 @@ fn symlink_escape_and_validation_snapshot_ignore_pycache() {
     let snap2 = validation_snapshot(dir.path());
     assert_eq!(snap1, snap2, "__pycache__ must not invalidate validation_snapshot");
 }
+
+#[test]
+fn optimized_tools_output_store_multiline_edit_diagnostics_grep_and_tool_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.sandbox_mode = SandboxMode::Disabled;
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. Structured bash spill produces multi-line text, preserves exit_code, supports tail!
+    let big_stdout: String = (1..=600)
+        .map(|i| format!("build line {i}: compiling module_{i}\n"))
+        .collect();
+    let bash_payload = ToolModelPayload::structured(
+        json!({"exit_code": 2, "stdout": big_stdout, "stderr": "fatal: missing symbol"}),
+        "Shell exited with status 2",
+    );
+    let (spilled, meta) = ctx
+        .output_store
+        .maybe_spill_payload("bash", &bash_payload, 1024)
+        .expect("should spill");
+    let sv = spilled.to_model_value();
+    assert_eq!(sv["exit_code"], 2);
+    assert!(meta.total_lines > 500, "spilled bash stdout must stay multi-line");
+    let tail = reg.execute(
+        "tool_output",
+        &ctx,
+        json!({"action": "tail", "output_id": meta.output_id, "tail_lines": 5}),
+    );
+    assert!(!tail.is_error);
+    assert!(tail.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("missing symbol"));
+
+    // 2. Bash strips ANSI codes & keeps head+tail across >256 KiB output
+    let ansi = crate::shell_pipeline::strip_ansi("\x1b[31mERROR\x1b[0m: \x1b[1mfailed\x1b[0m");
+    assert_eq!(ansi, "ERROR: failed");
+    let big_cmd = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "python3 -c 'print(\"HEAD_MARKER\"); print(\"x\"*300000); print(\"TAIL_MARKER\")'"}),
+    );
+    assert!(!big_cmd.is_error);
+    let bv = big_cmd.payload.to_model_value();
+    let out_str = bv["stdout"].as_str().unwrap();
+    assert!(out_str.contains("HEAD_MARKER") && out_str.contains("TAIL_MARKER"));
+
+    // 3. read_file rejects binary cleanly & truncates huge single lines
+    std::fs::write(dir.path().join("bin.dat"), b"\x7fELF\x00\x01\x02").unwrap();
+    let bin_r = reg.execute("read_file", &ctx, json!({"path": "bin.dat"}));
+    assert!(bin_r.is_error);
+    assert_eq!(bin_r.payload.to_model_value()["error"], "binary_file");
+
+    std::fs::write(dir.path().join("mini.js"), "a".repeat(5_000)).unwrap();
+    let mini_r = reg.execute("read_file", &ctx, json!({"path": "mini.js"}));
+    assert!(!mini_r.is_error);
+    assert!(mini_r.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("line truncated"));
+
+    // 4. edit_file: CRLF normalization, ambiguous line hints, and closest_match on not_found
+    std::fs::write(
+        dir.path().join("code.rs"),
+        "fn alpha() {\r\n    let x = 1;\r\n}\r\nfn beta() {\r\n    let x = 1;\r\n}\r\n",
+    )
+    .unwrap();
+    let amb = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "code.rs", "old_text": "let x = 1;", "new_text": "let x = 2;"}),
+    );
+    assert!(amb.is_error);
+    assert_eq!(amb.payload.to_model_value()["match_lines"], json!([2, 5]));
+
+    let miss = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "code.rs", "old_text": "fn alpha() {\n    let x = 999;\n}", "new_text": "x"}),
+    );
+    assert!(miss.is_error);
+    assert!(miss.payload.to_model_value()["closest_match"]["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("fn alpha()"));
+
+    let crlf_ok = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "code.rs", "old_text": "fn beta() {\n    let x = 1;\n}", "new_text": "fn beta() {\n    let x = 42;\n}"}),
+    );
+    assert!(!crlf_ok.is_error);
+    assert_eq!(crlf_ok.payload.to_model_value()["match_mode"], "crlf_normalized");
+
+    // 5. grep with include, context_lines, fixed_strings, files_only & list_dir max_depth
+    std::fs::create_dir_all(dir.path().join("sub/nested")).unwrap();
+    std::fs::write(dir.path().join("sub/nested/mod.py"), "a = 1\ntarget(x+y)\nb = 2\n").unwrap();
+    let g_ctx = reg.execute(
+        "grep",
+        &ctx,
+        json!({"pattern": "target(x+y)", "fixed_strings": true, "include": "*.py", "context_lines": 1}),
+    );
+    assert!(!g_ctx.is_error);
+    assert_eq!(g_ctx.payload.to_model_value()["count"], 1);
+    assert_eq!(g_ctx.payload.to_model_value()["matches"][0]["before"], json!(["a = 1"]));
+    assert_eq!(g_ctx.payload.to_model_value()["matches"][0]["after"], json!(["b = 2"]));
+
+    let g_files = reg.execute("grep", &ctx, json!({"pattern": "target", "files_only": true}));
+    assert_eq!(g_files.payload.to_model_value()["count"], 1);
+
+    let ld = reg.execute("list_dir", &ctx, json!({"max_depth": 3}));
+    assert!(ld.payload.to_model_value()["count"].as_u64().unwrap() >= 4);
+
+    // 6. tool_search empty browse does NOT blindly activate all tools, and omits duplicate parameters
+    let browse = reg.execute("tool_search", &ctx, json!({"query": ""}));
+    assert_eq!(
+        browse.payload.to_model_value()["activate_names"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(browse.payload.to_model_value()["tools"][0].get("parameters").is_none());
+}

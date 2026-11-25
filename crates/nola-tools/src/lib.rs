@@ -62,6 +62,7 @@ pub struct ToolContext {
     pub browser: Arc<BrowserManager>,
     pub lsp: Arc<LspPool>,
     pub network_allowed: bool,
+    pub interactive_user_input: bool,
     pub permission_profile: PermissionProfile,
     pub sandbox_mode: SandboxMode,
 }
@@ -80,6 +81,7 @@ impl ToolContext {
             browser: Arc::new(BrowserManager::default()),
             lsp: Arc::new(LspPool::default()),
             network_allowed: true,
+            interactive_user_input: false,
             permission_profile: PermissionProfile::Cautious,
             sandbox_mode: SandboxMode::Auto,
         }
@@ -176,25 +178,62 @@ impl ToolRegistry {
 
     pub fn execute(&self, name: &str, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         if name == "tool_search" {
-            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let matches: Vec<Value> = self
+            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(if query.is_empty() { 40 } else { 10 })
+                .clamp(1, 50) as usize;
+            // Empty browse query lists available tools WITHOUT blindly activating 40 schemas!
+            let activate = args
+                .get("activate")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(!query.is_empty());
+            let specs: Vec<ToolSpec> = self
                 .search_specs(query)
                 .into_iter()
+                .filter(|s| {
+                    s.tier != ToolTier::InteractiveOnly || ctx.interactive_user_input
+                })
+                .take(limit)
+                .collect();
+            let activate_names: Vec<String> = if activate {
+                specs
+                    .iter()
+                    .filter(|s| s.tier == ToolTier::Deferred)
+                    .take(8)
+                    .map(|s| s.schema.name.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            // Return compact tool summaries (avoid duplicating full JSON parameter schemas
+            // in BOTH tool output history AND prefix_stable_tools!).
+            let matches: Vec<Value> = specs
+                .iter()
                 .map(|s| {
+                    let is_activated = activate_names.contains(&s.schema.name);
                     json!({
                         "name": s.schema.name,
                         "tier": s.tier,
-                        "domain": s.domain,
                         "read_only": s.read_only,
+                        "activated": is_activated,
                         "description": s.schema.description,
-                        "parameters": s.schema.parameters,
                     })
                 })
                 .collect();
             let count = matches.len();
             return ToolExecutionResult::ok_structured(
-                json!({ "query": query, "count": count, "tools": matches }),
-                format!("Found {count} tools matching '{query}'"),
+                json!({
+                    "query": query,
+                    "count": count,
+                    "activate_names": activate_names,
+                    "tools": matches
+                }),
+                format!(
+                    "Found {count} tools matching '{query}' (activated {})",
+                    activate_names.len()
+                ),
             );
         }
         match self.handlers.get(name) {
@@ -216,11 +255,13 @@ impl ToolHandler for ToolSearchTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "tool_search".into(),
-                description: "Search available deferred, module, and MCP tools by keyword and return their full schemas.".into(),
+                description: "Search deferred, module, and MCP tools by keyword and activate matching tools into your active schema list (empty query lists all without activating).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "query": { "type": "string", "description": "Keyword(s) to match tool names or descriptions (empty lists all)" }
+                        "query": { "type": "string", "description": "Keyword(s) to match tool names or descriptions (empty lists all)" },
+                        "activate": { "type": "boolean", "description": "Activate matched deferred tools for calling on next turn (default true when query non-empty)" },
+                        "limit": { "type": "integer", "description": "Maximum results to return (default 10)" }
                     },
                     "required": ["query"]
                 }),

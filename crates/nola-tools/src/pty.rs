@@ -254,13 +254,26 @@ mod unix_pty {
 
         pub fn screen_text(&self) -> String {
             let p = self.parser.lock().unwrap();
-            p.screen().contents()
+            let raw = p.screen().contents();
+            // Trim trailing blank rows to keep PTY context compact
+            let mut lines: Vec<&str> = raw.lines().map(str::trim_end).collect();
+            while lines.last().is_some_and(|l| l.is_empty()) {
+                lines.pop();
+            }
+            lines.join("\n")
         }
 
         pub fn read_delta(&self) -> String {
             let mut q = self.unread_delta.lock().unwrap();
             let bytes: Vec<u8> = q.drain(..).collect();
-            String::from_utf8_lossy(&bytes).into_owned()
+            let cleaned = crate::shell_pipeline::strip_ansi(&String::from_utf8_lossy(&bytes));
+            let chars = cleaned.chars().count();
+            if chars <= 4_096 {
+                cleaned
+            } else {
+                let tail: String = cleaned.chars().skip(chars - 4_096).collect();
+                format!("... [truncated {} chars] ...\n{tail}", chars - 4_096)
+            }
         }
 
         pub fn is_running(&self) -> bool {

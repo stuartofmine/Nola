@@ -20,7 +20,7 @@ pub mod subagents;
 mod tests;
 
 pub use catalog::{ForceToolSet, ToolCatalog};
-pub use compaction::{compact_history, CompactionReport};
+pub use compaction::{compact_history, compact_history_force, CompactionReport};
 pub use hooks::HookRunner;
 pub use loop_guard::{semantic_observation_arguments, LoopGuard};
 pub use loop_runner::{

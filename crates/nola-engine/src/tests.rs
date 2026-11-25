@@ -465,4 +465,278 @@ fn audit_regressions_loop_guard_and_multi_path_workspace_escape() {
         ws.path(),
     );
     assert_eq!(move_dec.action, PermissionAction::Deny);
+
+    // 3. Git read-only actions are cleanly Allowed even in Cautious mode, while external worktree_create is Denied!
+    let cautious = EffectivePolicy {
+        profile: PermissionProfile::Cautious,
+        workspace_trusted: false,
+        network_allowed: true,
+        rules: vec![],
+    };
+    let git_spec = reg.get("git").unwrap().spec();
+    assert_eq!(
+        cautious
+            .evaluate(&git_spec, &json!({"action": "status"}), ws.path())
+            .action,
+        PermissionAction::Allow
+    );
+    assert_eq!(
+        cautious
+            .evaluate(&git_spec, &json!({"action": "diff", "stat_only": true}), ws.path())
+            .action,
+        PermissionAction::Allow
+    );
+    assert_eq!(
+        policy
+            .evaluate(
+                &git_spec,
+                &json!({"action": "worktree_create", "target": ext_path.display().to_string()}),
+                ws.path()
+            )
+            .action,
+        PermissionAction::Deny
+    );
+}
+
+#[test]
+fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
+    // 1. Stale reasoning pruning + superseded read_file dedup + output_id preservation + Tier-3 hard limit!
+    let mut history = vec![
+        HistoryMessage::User {
+            content: "Fix the auth module and run tests.".into(),
+            media: vec![],
+        },
+        HistoryMessage::Assistant {
+            content: "Reading auth.rs".into(),
+            reasoning: Some("r".repeat(6_000)),
+            tool_calls: vec![ModelToolCall {
+                call_id: "c1".into(),
+                name: "read_file".into(),
+                arguments: json!({"path": "src/auth.rs"}),
+            }],
+            continuation: None,
+        },
+        HistoryMessage::Tool {
+            call_id: "c1".into(),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::structured(
+                json!({"path": "src/auth.rs", "content": "old".repeat(3_000)}),
+                "Read src/auth.rs",
+            ),
+            is_error: false,
+            media: vec![],
+        },
+        HistoryMessage::Assistant {
+            content: "Running cargo test".into(),
+            reasoning: Some("t".repeat(4_000)),
+            tool_calls: vec![ModelToolCall {
+                call_id: "c2".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "cargo test"}),
+            }],
+            continuation: None,
+        },
+        HistoryMessage::Tool {
+            call_id: "c2".into(),
+            tool_name: "bash".into(),
+            payload: ToolModelPayload::structured(
+                json!({
+                    "spilled": true,
+                    "output_id": "out_deadbeef12345678",
+                    "exit_code": 1,
+                    "head_preview": "h".repeat(4_000)
+                }),
+                "Shell exited with status 1",
+            ),
+            is_error: false,
+            media: vec![],
+        },
+        HistoryMessage::Assistant {
+            content: "Re-reading auth.rs".into(),
+            reasoning: Some("recent".into()),
+            tool_calls: vec![ModelToolCall {
+                call_id: "c3".into(),
+                name: "read_file".into(),
+                arguments: json!({"path": "src/auth.rs"}),
+            }],
+            continuation: None,
+        },
+        HistoryMessage::Tool {
+            call_id: "c3".into(),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::structured(
+                json!({"path": "src/auth.rs", "content": "new".repeat(4_000)}),
+                "Read src/auth.rs",
+            ),
+            is_error: false,
+            media: vec![],
+        },
+    ];
+
+    // Tiny window forces Tier 1 -> Tier 2 -> Tier 3 hard-limit guard!
+    let budget = ContextBudget::for_window(8_192, false);
+    let report = compact_history(&mut history, budget, 500, None);
+    assert!(report.saved_tokens() > 0);
+    let hard_limit = budget.history_budget(500, budget.prompt_token_limit());
+    assert!(
+        report.tokens_after <= hard_limit,
+        "Tier-3 hard limit must shrink history ({}) <= hard_limit ({})",
+        report.tokens_after,
+        hard_limit
+    );
+
+    // Verify output_id survives micro-compaction when not yet summarized
+    let mut micro_hist = vec![
+        HistoryMessage::User {
+            content: "Check logs".into(),
+            media: vec![],
+        },
+        HistoryMessage::Tool {
+            call_id: "t0".into(),
+            tool_name: "bash".into(),
+            payload: ToolModelPayload::structured(
+                json!({"output_id": "out_keepme1234", "exit_code": 1, "head_preview": "z".repeat(4_000)}),
+                "Shell failed",
+            ),
+            is_error: false,
+            media: vec![],
+        },
+    ];
+    for i in 1..=7 {
+        micro_hist.push(HistoryMessage::Tool {
+            call_id: format!("t{i}"),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::text("a".repeat(2_000)),
+            is_error: false,
+            media: vec![],
+        });
+    }
+    let b2 = ContextBudget::for_window(12_000, false);
+    let r2 = compact_history(&mut micro_hist, b2, 1_000, None);
+    assert!(r2.micro_compacted_tools >= 1);
+    if let HistoryMessage::Tool { payload, .. } = &micro_hist[1] {
+        assert_eq!(payload.to_model_value()["output_id"], "out_keepme1234");
+        assert_eq!(payload.to_model_value()["exit_code"], 1);
+    }
+
+    // 2. Reactive HTTP 400 context-overflow retry inside AgentEngine::run
+    struct OverflowOnceCaller {
+        calls: Mutex<usize>,
+    }
+    impl ModelCaller for OverflowOnceCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                return Err(LlmError::Status {
+                    status: 400,
+                    body: "This model's maximum context length is 8192 tokens.".into(),
+                });
+            }
+            Ok(NormalizedModelResponse {
+                response_id: Some("r_ok".into()),
+                response_model: Some("mock".into()),
+                content: "Recovered after compaction!".into(),
+                reasoning: None,
+                tool_calls: vec![],
+                stop_reason: ModelStopReason::Stop,
+                usage: TokenUsage {
+                    input_tokens: 1_200,
+                    output_tokens: 20,
+                    ..Default::default()
+                },
+                continuation: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let store = Store::open_in_memory().unwrap();
+    // Pre-seed a session with oversized history so force-compaction yields real savings
+    let seeded_history = vec![
+        HistoryMessage::User {
+            content: "Initial prompt".into(),
+            media: vec![],
+        },
+        HistoryMessage::Tool {
+            call_id: "seed1".into(),
+            tool_name: "bash".into(),
+            payload: ToolModelPayload::text("x".repeat(6_000)),
+            is_error: false,
+            media: vec![],
+        },
+        HistoryMessage::Assistant {
+            content: "done step 1".into(),
+            reasoning: Some("r".repeat(2_000)),
+            tool_calls: vec![],
+            continuation: None,
+        },
+    ];
+    store
+        .set_kv(
+            "session_state:overflow_sess",
+            &json!({
+                "history": seeded_history,
+                "policy": {
+                    "profile": "allow_all",
+                    "workspace_trusted": true,
+                    "network_allowed": true,
+                    "rules": []
+                },
+                "activated_tools": []
+            }),
+        )
+        .unwrap();
+    let caller = Arc::new(OverflowOnceCaller {
+        calls: Mutex::new(0),
+    });
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller.clone(),
+    );
+    let res = engine
+        .run(
+            &ctx,
+            "Continue",
+            AgentRunConfig {
+                session_id: Some("overflow_sess".into()),
+                resume: true,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![FrozenSystemBlock {
+                    id: "sys".into(),
+                    text: "System".into(),
+                }],
+                host_capabilities: HostCapabilities {
+                    interactive_user_input: false,
+                    network_allowed: true,
+                },
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 5,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(res.final_text, "Recovered after compaction!");
+    assert_eq!(*caller.calls.lock().unwrap(), 2);
 }

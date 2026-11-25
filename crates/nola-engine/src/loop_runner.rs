@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::catalog::{ForceToolSet, ToolCatalog};
-use crate::compaction::compact_history;
+use crate::compaction::{compact_history, compact_history_force};
 use crate::hooks::HookRunner;
 use crate::loop_guard::LoopGuard;
 use crate::middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
@@ -328,6 +328,8 @@ impl AgentEngine {
         let mut steps = 0usize;
         let mut consecutive_output_limits = 0usize;
         let mut cancelled = false;
+        // Real server-token calibration ratio (actual_input / estimated_input), clamped to [1.0, 2.5].
+        let mut token_calibration: f64 = 1.0;
 
         loop {
             if cfg.cancel.load(Ordering::Relaxed) {
@@ -352,7 +354,7 @@ impl AgentEngine {
             }
             steps += 1;
 
-            // Prefix-stable tools & fixed overhead estimation
+            // Prefix-stable tools & calibrated overhead estimation
             let tools = catalog.compile_preserving_prefix_order(&self.registry);
             let probe_req = StructuredModelRequest {
                 frozen_system_prefix: cfg.frozen_system_blocks.clone(),
@@ -362,10 +364,17 @@ impl AgentEngine {
                 max_output_tokens: budget.reserved_output_tokens,
                 json_schema: cfg.json_schema.clone(),
             };
-            let fixed_overhead = estimate_request_tokens(&probe_req);
+            let raw_overhead = estimate_request_tokens(&probe_req);
+            // Scale overhead upward by calibration factor when provider tokenizer counts higher
+            let calibrated_budget = ContextBudget {
+                context_window_tokens: ((budget.context_window_tokens as f64) / token_calibration)
+                    .round()
+                    .max(4_096.0) as usize,
+                ..budget
+            };
 
-            // Two-tier compaction (Tier-1 micro-compaction commits partial savings first!)
-            let comp = compact_history(&mut history, budget, fixed_overhead, None);
+            // Three-tier compaction (Tier-1 stale-read/reasoning/micro -> Tier-2 ledger -> Tier-3 hard limit!)
+            let comp = compact_history(&mut history, calibrated_budget, raw_overhead, None);
             if comp.saved_tokens() > 0 {
                 self.emit_and_persist(
                     &session_id,
@@ -379,16 +388,18 @@ impl AgentEngine {
                 );
             }
 
-            let request = StructuredModelRequest {
+            let step_reminders = std::mem::take(&mut pending_reminders);
+            let mut request = StructuredModelRequest {
                 frozen_system_prefix: cfg.frozen_system_blocks.clone(),
-                prefix_stable_tools: tools,
+                prefix_stable_tools: tools.clone(),
                 history: history.clone(),
-                ephemeral_tail_reminders: std::mem::take(&mut pending_reminders),
+                ephemeral_tail_reminders: step_reminders.clone(),
                 max_output_tokens: budget.reserved_output_tokens,
                 json_schema: cfg.json_schema.clone(),
             };
+            let estimated_req_tokens = estimate_request_tokens(&request);
 
-            let resp = self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
+            let resp = match self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
                 match delta {
                     ModelStreamDelta::Text(t) => on_event(AgentEvent::TextDelta { delta: t }),
                     ModelStreamDelta::Reasoning(r) => {
@@ -397,7 +408,49 @@ impl AgentEngine {
                     ModelStreamDelta::ToolCallStart { .. }
                     | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
                 }
-            })?;
+            }) {
+                Ok(r) => r,
+                Err(err) if is_context_overflow_error(&err) => {
+                    // Reactive context-overflow recovery: force-compact history and retry once cleanly!
+                    let forced =
+                        compact_history_force(&mut history, calibrated_budget, raw_overhead, None);
+                    if forced.saved_tokens() == 0 {
+                        return Err(AgentError::Llm(err));
+                    }
+                    self.emit_and_persist(
+                        &session_id,
+                        AgentEvent::Compacted {
+                            tokens_before: forced.tokens_before,
+                            tokens_after: forced.tokens_after,
+                            micro_tools: forced.micro_compacted_tools,
+                            summary_messages: forced.summary_compacted_messages,
+                        },
+                        &mut on_event,
+                    );
+                    token_calibration = (token_calibration * 1.25).clamp(1.0, 2.5);
+                    request.history = history.clone();
+                    self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
+                        match delta {
+                            ModelStreamDelta::Text(t) => {
+                                on_event(AgentEvent::TextDelta { delta: t })
+                            }
+                            ModelStreamDelta::Reasoning(r) => {
+                                on_event(AgentEvent::ReasoningDelta { delta: r })
+                            }
+                            ModelStreamDelta::ToolCallStart { .. }
+                            | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
+                        }
+                    })?
+                }
+                Err(err) => return Err(AgentError::Llm(err)),
+            };
+
+            // Calibrate local estimator using real server-reported input_tokens
+            if resp.usage.input_tokens > 0 && estimated_req_tokens > 0 {
+                let ratio = (resp.usage.input_tokens as f64) / (estimated_req_tokens as f64);
+                let clamped = ratio.clamp(1.0, 2.5);
+                token_calibration = (token_calibration * 0.6 + clamped * 0.4).clamp(1.0, 2.5);
+            }
 
             total_usage.input_tokens = total_usage.input_tokens.saturating_add(resp.usage.input_tokens);
             total_usage.output_tokens = total_usage.output_tokens.saturating_add(resp.usage.output_tokens);
@@ -448,9 +501,15 @@ impl AgentEngine {
                 break;
             }
 
-            // Execute tool batch: read-only batches run in parallel (up to 12); mutating sequentially!
+            // Execute tool batch: read-only batches (including read-only git actions) run in parallel!
             let all_read_only = resp.tool_calls.len() > 1
                 && resp.tool_calls.iter().all(|tc| {
+                    if tc.name == "git" {
+                        return matches!(
+                            tc.arguments.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+                            "status" | "diff" | "log" | "show" | "blame" | "worktree_list"
+                        );
+                    }
                     self.registry
                         .get(&tc.name)
                         .map(|h| h.spec().read_only)
@@ -540,30 +599,34 @@ impl AgentEngine {
 
             let mut guard_batch = Vec::with_capacity(resp.tool_calls.len());
             for (tc, out) in resp.tool_calls.iter().zip(outcomes.into_iter()) {
-                // Auto-activate deferred tools returned by `tool_search` strictly at tail!
+                // Auto-activate ONLY explicitly requested deferred tools returned by `tool_search`
+                // strictly at tail (never blindly activating all 40 tools on an empty browse query!).
                 if tc.name == "tool_search" && !out.result.is_error {
                     let val = out.result.payload.to_model_value();
-                    if let Some(arr) = val.get("tools").and_then(|v| v.as_array()) {
+                    if let Some(arr) = val.get("activate_names").and_then(|v| v.as_array()) {
                         let names: Vec<String> = arr
                             .iter()
-                            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                            .filter_map(|v| v.as_str())
+                            .take(8)
                             .map(ToString::to_string)
                             .collect();
                         catalog.activate_tail(&names, &self.registry);
                     }
                 }
-                // Inject any skill body returned by `skill_load` as an ephemeral tail reminder
-                // (NEVER mutating Message 0 frozen_system_prefix!).
+                // Reference loaded skill concisely as an ephemeral tail reminder without duplicating
+                // the full skill body (which is already present in the tool result above!).
                 if tc.name == "skill_load" && !out.result.is_error {
                     let val = out.result.payload.to_model_value();
-                    if let Some(body) = val.get("body").and_then(|v| v.as_str()) {
+                    if val.get("body").and_then(|v| v.as_str()).is_some() {
                         let skill_name = val
                             .get("name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("skill");
                         pending_reminders.push(RuntimeReminder {
                             tag: format!("skill:{skill_name}"),
-                            text: body.to_string(),
+                            text: format!(
+                                "Follow the loaded '{skill_name}' skill instructions from the tool result above."
+                            ),
                         });
                     }
                 }
@@ -687,6 +750,24 @@ impl AgentEngine {
         }
         on_event(event);
     }
+}
+
+fn is_context_overflow_error(err: &LlmError) -> bool {
+    let body = match err {
+        LlmError::Status {
+            status: 400 | 413,
+            body,
+        } => body.as_str(),
+        LlmError::Wire(msg) => msg.as_str(),
+        _ => return false,
+    };
+    let lower = body.to_ascii_lowercase();
+    lower.contains("context length")
+        || lower.contains("maximum context")
+        || lower.contains("too many tokens")
+        || lower.contains("prompt is too long")
+        || lower.contains("context_length_exceeded")
+        || lower.contains("exceeds the available context")
 }
 
 fn extract_recall_keywords(prompt: &str) -> String {

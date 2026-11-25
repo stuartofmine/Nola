@@ -30,7 +30,7 @@ impl ToolHandler for GitTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "git".into(),
-                description: "Inspect repository status/diff/log or create a commit.".into(),
+                description: "Inspect repository status/diff/log/show/blame or create commits/worktrees.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -40,6 +40,9 @@ impl ToolHandler for GitTool {
                         },
                         "message": { "type": "string", "description": "Commit message (for action=commit)" },
                         "target": { "type": "string", "description": "Commit ref (show), file path (blame), or worktree path (worktree_create/remove)" },
+                        "path": { "type": "string", "description": "Optional file/directory filter for diff or log" },
+                        "staged": { "type": "boolean", "description": "Diff staged changes (--cached) for action=diff" },
+                        "stat_only": { "type": "boolean", "description": "Return compact --stat summary for action=diff" },
                         "branch": { "type": "string", "description": "Optional branch name for worktree_create" },
                         "limit": { "type": "integer", "description": "Log entry count (default 10)" }
                     },
@@ -47,7 +50,7 @@ impl ToolHandler for GitTool {
                 }),
             },
             tier: ToolTier::Core,
-            domain: CapabilityDomain::FilesWrite,
+            domain: CapabilityDomain::Process,
             read_only: false,
         }
     }
@@ -58,18 +61,41 @@ impl ToolHandler for GitTool {
         };
         match action {
             "status" => run_git(ctx, &["status", "--short", "--branch"], "git status"),
-            "diff" => run_git(ctx, &["diff"], "git diff"),
+            "diff" => {
+                let staged = args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let stat_only = args.get("stat_only").and_then(|v| v.as_bool()).unwrap_or(false);
+                let mut cmd_args: Vec<&str> = vec!["diff"];
+                if staged {
+                    cmd_args.push("--cached");
+                }
+                if stat_only {
+                    cmd_args.push("--stat");
+                }
+                if let Some(p) = args.get("path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    if let Err(e) = reject_flag_injection(p, "path") {
+                        return e;
+                    }
+                    cmd_args.push("--");
+                    cmd_args.push(p);
+                }
+                run_git(ctx, &cmd_args, "git diff")
+            }
             "log" => {
                 let n = args
                     .get("limit")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(10)
                     .clamp(1, 100);
-                run_git(
-                    ctx,
-                    &["log", "--oneline", "-n", &n.to_string()],
-                    "git log",
-                )
+                let n_str = n.to_string();
+                let mut cmd_args: Vec<&str> = vec!["log", "--oneline", "-n", &n_str];
+                if let Some(p) = args.get("path").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    if let Err(e) = reject_flag_injection(p, "path") {
+                        return e;
+                    }
+                    cmd_args.push("--");
+                    cmd_args.push(p);
+                }
+                run_git(ctx, &cmd_args, "git log")
             }
             "show" => {
                 let rev = args.get("target").and_then(|v| v.as_str()).unwrap_or("HEAD");

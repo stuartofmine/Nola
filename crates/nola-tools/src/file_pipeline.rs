@@ -17,6 +17,22 @@ use std::sync::Mutex;
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 const MAX_READ_TEXT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_READ_LINE_CHARS: usize = 2_000;
+const MAX_READ_RESPONSE_BYTES: usize = 32 * 1024;
+
+pub(crate) fn clip_read_line(line: &str) -> String {
+    let count = line.chars().count();
+    if count <= MAX_READ_LINE_CHARS {
+        line.to_string()
+    } else {
+        let prefix: String = line.chars().take(MAX_READ_LINE_CHARS).collect();
+        format!("{prefix}... [line truncated: {count} chars]")
+    }
+}
+
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8192).any(|&b| b == 0)
+}
 
 use nola_types::{
     sha256_hex, CapabilityDomain, ContentVersion, ResourceEffect, ResourceOperation,
@@ -262,6 +278,18 @@ impl ToolHandler for ReadFileTool {
             }
         };
         let digest = sha256_hex(&bytes);
+        if looks_binary(&bytes) {
+            return ToolExecutionResult::err_structured(
+                "binary_file",
+                format!(
+                    "file '{}' appears to be binary ({} bytes, sha256={}); use bash (file/hexdump/strings) to inspect",
+                    path.display(),
+                    bytes.len(),
+                    &digest[..16]
+                ),
+                Some(json!({"path": path.display().to_string(), "bytes": bytes.len(), "sha256": digest})),
+            );
+        }
         ctx.file_state.record(&path, digest.clone());
 
         let text = String::from_utf8_lossy(&bytes);
@@ -277,41 +305,52 @@ impl ToolHandler for ReadFileTool {
         } else {
             start.min(total_lines)
         };
-        let end = args
+        let requested_end = args
             .get("end_line")
             .and_then(|v| v.as_u64())
             .map(|n| (n as usize).max(clamped_start))
             .unwrap_or_else(|| clamped_start.saturating_add(399))
             .min(total_lines.max(1));
 
-        let numbered = if total_lines == 0 || start > total_lines {
-            String::new()
-        } else {
-            lines
+        let mut rendered = Vec::new();
+        let mut bytes_used = 0usize;
+        let mut actual_end = 0usize;
+        let mut byte_capped = false;
+        if total_lines > 0 && start <= total_lines {
+            for (idx, line) in lines
                 .iter()
                 .enumerate()
                 .skip(clamped_start.saturating_sub(1))
-                .take(end.saturating_sub(clamped_start).saturating_add(1))
-                .map(|(idx, line)| format!("{}: {}", idx + 1, line))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
+                .take(requested_end.saturating_sub(clamped_start).saturating_add(1))
+            {
+                let formatted = format!("{}: {}", idx + 1, clip_read_line(line));
+                if !rendered.is_empty() && bytes_used + formatted.len() + 1 > MAX_READ_RESPONSE_BYTES {
+                    byte_capped = true;
+                    break;
+                }
+                bytes_used += formatted.len() + 1;
+                actual_end = idx + 1;
+                rendered.push(formatted);
+            }
+        }
+        let numbered = rendered.join("\n");
+        let truncated = byte_capped || (total_lines > 0 && actual_end < total_lines);
 
         ToolExecutionResult::ok_structured(
             json!({
                 "path": path.display().to_string(),
                 "sha256": digest,
                 "start_line": start,
-                "end_line": end.min(total_lines),
+                "end_line": actual_end,
                 "total_lines": total_lines,
-                "truncated": end < total_lines,
+                "truncated": truncated,
                 "content": numbered
             }),
             format!(
                 "Read {} (lines {}-{} of {})",
                 path.display(),
                 start,
-                end.min(total_lines),
+                actual_end,
                 total_lines
             ),
         )
@@ -430,71 +469,162 @@ impl ToolHandler for EditFileTool {
             }
         };
 
-        let exact_count = original.matches(old_text).count();
-        let (updated, replaced_count, match_mode) = if exact_count > 0 {
-            if let Some(exp) = expected {
-                if exact_count != exp {
-                    return ToolExecutionResult::err_structured(
-                        "replacement_count_mismatch",
-                        format!("expected {exp} matches but found {exact_count}"),
-                        Some(json!({"found": exact_count, "expected": exp})),
-                    );
-                }
-            } else if !replace_all && exact_count > 1 {
-                return ToolExecutionResult::err_structured(
-                    "ambiguous_match",
-                    format!(
-                        "old_text matched {exact_count} locations; provide more context or set replace_all=true"
-                    ),
-                    Some(json!({"found": exact_count})),
-                );
-            }
-            let out = if replace_all || expected.map(|e| e > 1).unwrap_or(false) {
-                original.replace(old_text, new_text)
-            } else {
-                original.replacen(old_text, new_text, 1)
+        let current_sha = sha256_hex(original.as_bytes());
+        let modified_externally = ctx
+            .file_state
+            .last_seen(&path)
+            .is_some_and(|seen| !seen.is_empty() && seen != current_sha);
+
+        let (updated, replaced_count, match_mode, line_hint) =
+            match apply_text_edit(&original, old_text, new_text, replace_all, expected) {
+                Ok(v) => v,
+                Err(err_res) => return err_res,
             };
-            let count = if replace_all || expected.map(|e| e > 1).unwrap_or(false) {
-                exact_count
-            } else {
-                1
-            };
-            (out, count, "exact")
-        } else if expected.is_none_or(|e| e == 1) {
-            if let Some(out) = tolerant_trimmed_replace(&original, old_text, new_text) {
-                (out, 1, "trimmed_lines")
-            } else {
-                return ToolExecutionResult::err_structured(
-                    "not_found",
-                    "old_text not found in file (checked exact and whitespace-trimmed line match)",
-                    None,
-                );
-            }
-        } else {
-            return ToolExecutionResult::err_structured(
-                "not_found",
-                "old_text not found in file",
-                None,
-            );
-        };
 
         match FileMutationPipeline::write_bytes(ctx, &path, updated.as_bytes(), ResourceOperation::Edit) {
-            Ok(effect) => ToolExecutionResult::ok_structured(
-                json!({
+            Ok(effect) => {
+                let mut payload = json!({
                     "path": path.display().to_string(),
                     "replacements": replaced_count,
                     "match_mode": match_mode,
+                    "changed_lines": line_hint,
                     "transition": effect.transition
-                }),
-                format!("Edited {} ({replaced_count} replacement(s), {match_mode})", path.display()),
-            )
-            .with_effects(vec![effect]),
+                });
+                if modified_externally {
+                    payload["note"] = Value::String(
+                        "File changed on disk since last read_file; edit still matched cleanly."
+                            .into(),
+                    );
+                }
+                ToolExecutionResult::ok_structured(
+                    payload,
+                    format!("Edited {} ({replaced_count} replacement(s), {match_mode})", path.display()),
+                )
+                .with_effects(vec![effect])
+            }
             Err(e) => ToolExecutionResult::err_structured("write_error", e, None),
         }
     }
 }
 
-fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> Option<String> {
+/// Shared 3-tier replacement engine (exact -> CRLF-normalized -> indent-preserving trimmed block)
+/// with actionable line-number diagnostics and closest-match snippets on failure!
+pub(crate) fn apply_text_edit(
+    original: &str,
+    old_text: &str,
+    new_text: &str,
+    replace_all: bool,
+    expected: Option<usize>,
+) -> Result<(String, usize, &'static str, Value), ToolExecutionResult> {
+    let exact_positions: Vec<usize> = original.match_indices(old_text).map(|(i, _)| i).collect();
+    let exact_count = exact_positions.len();
+    if exact_count > 0 {
+        if let Some(exp) = expected {
+            if exact_count != exp {
+                let match_lines: Vec<usize> = exact_positions
+                    .iter()
+                    .take(20)
+                    .map(|&off| byte_offset_to_line(original, off))
+                    .collect();
+                return Err(ToolExecutionResult::err_structured(
+                    "replacement_count_mismatch",
+                    format!("expected {exp} matches but found {exact_count} at line(s) {match_lines:?}"),
+                    Some(json!({"found": exact_count, "expected": exp, "match_lines": match_lines})),
+                ));
+            }
+        } else if !replace_all && exact_count > 1 {
+            let match_lines: Vec<usize> = exact_positions
+                .iter()
+                .take(20)
+                .map(|&off| byte_offset_to_line(original, off))
+                .collect();
+            return Err(ToolExecutionResult::err_structured(
+                "ambiguous_match",
+                format!(
+                    "old_text matched {exact_count} locations at line(s) {match_lines:?}; provide more context or set replace_all=true"
+                ),
+                Some(json!({"found": exact_count, "match_lines": match_lines})),
+            ));
+        }
+        let first_line = byte_offset_to_line(original, exact_positions[0]);
+        let new_line_count = new_text.lines().count().max(1);
+        let do_all = replace_all || expected.map(|e| e > 1).unwrap_or(false);
+        let out = if do_all {
+            original.replace(old_text, new_text)
+        } else {
+            original.replacen(old_text, new_text, 1)
+        };
+        let count = if do_all { exact_count } else { 1 };
+        return Ok((
+            out,
+            count,
+            "exact",
+            json!({"start_line": first_line, "end_line": first_line + new_line_count.saturating_sub(1)}),
+        ));
+    }
+
+    // Tier 2: CRLF-normalized exact match (preserves original file's CRLF line endings!)
+    if original.contains("\r\n") && !old_text.contains("\r\n") {
+        let crlf_old = old_text.replace('\n', "\r\n");
+        let crlf_new = new_text.replace('\n', "\r\n");
+        let crlf_positions: Vec<usize> = original.match_indices(&crlf_old).map(|(i, _)| i).collect();
+        if !crlf_positions.is_empty()
+            && (replace_all || expected == Some(crlf_positions.len()) || (expected.is_none() && crlf_positions.len() == 1))
+        {
+            let first_line = byte_offset_to_line(original, crlf_positions[0]);
+            let new_line_count = new_text.lines().count().max(1);
+            let do_all = replace_all || expected.map(|e| e > 1).unwrap_or(false);
+            let out = if do_all {
+                original.replace(&crlf_old, &crlf_new)
+            } else {
+                original.replacen(&crlf_old, &crlf_new, 1)
+            };
+            let count = if do_all { crlf_positions.len() } else { 1 };
+            return Ok((
+                out,
+                count,
+                "crlf_normalized",
+                json!({"start_line": first_line, "end_line": first_line + new_line_count.saturating_sub(1)}),
+            ));
+        }
+    }
+
+    // Tier 3: Unique whitespace-trimmed block match preserving indentation delta
+    if expected.is_none_or(|e| e == 1) {
+        if let Some((out, start_line, end_line)) = tolerant_trimmed_replace(original, old_text, new_text) {
+            return Ok((
+                out,
+                1,
+                "trimmed_lines",
+                json!({"start_line": start_line, "end_line": end_line}),
+            ));
+        }
+    }
+
+    // Failure: compute closest-matching file window so the model can fix the edit in 1 step!
+    let hint = find_closest_match_snippet(original, old_text);
+    Err(ToolExecutionResult::err_structured(
+        "not_found",
+        "old_text not found in file (checked exact, CRLF, and whitespace-trimmed line match)",
+        hint,
+    ))
+}
+
+fn byte_offset_to_line(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset.min(text.len())]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+        + 1
+}
+
+fn leading_ws(s: &str) -> &str {
+    let idx = s.find(|c: char| !c.is_whitespace()).unwrap_or(s.len());
+    &s[..idx]
+}
+
+fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> Option<(String, usize, usize)> {
+    let line_ending = if original.contains("\r\n") { "\r\n" } else { "\n" };
     let orig_lines: Vec<&str> = original.lines().collect();
     let needle_lines: Vec<&str> = old_text.lines().collect();
     if needle_lines.is_empty() || needle_lines.len() > orig_lines.len() {
@@ -514,19 +644,104 @@ fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> O
         return None;
     }
     let idx = hits[0];
+    // Preserve indentation shift if model's old_text had uniform leading indent offset
+    let orig_indent = orig_lines[idx..idx + needle_lines.len()]
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| leading_ws(l))
+        .unwrap_or("");
+    let needle_indent = needle_lines
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| leading_ws(l))
+        .unwrap_or("");
+
+    let adjusted_new: Vec<String> = new_text
+        .lines()
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else if orig_indent != needle_indent {
+                let stripped = l.strip_prefix(needle_indent).unwrap_or(l);
+                format!("{orig_indent}{stripped}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    let new_len = adjusted_new.len();
     let mut out_lines: Vec<String> = Vec::new();
     out_lines.extend(orig_lines[..idx].iter().map(|s| s.to_string()));
-    out_lines.extend(new_text.lines().map(|s| s.to_string()));
+    out_lines.extend(adjusted_new);
     out_lines.extend(
         orig_lines[idx + needle_lines.len()..]
             .iter()
             .map(|s| s.to_string()),
     );
-    let mut joined = out_lines.join("\n");
+    let mut joined = out_lines.join(line_ending);
     if original.ends_with('\n') {
-        joined.push('\n');
+        joined.push_str(line_ending);
     }
-    Some(joined)
+    Some((joined, idx + 1, idx + new_len.max(1)))
+}
+
+fn find_closest_match_snippet(original: &str, old_text: &str) -> Option<Value> {
+    let orig_lines: Vec<&str> = original.lines().collect();
+    let needle_lines: Vec<&str> = old_text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if orig_lines.is_empty() || needle_lines.is_empty() {
+        return None;
+    }
+    let win = needle_lines.len().clamp(1, 15);
+    let mut best_score = 0usize;
+    let mut best_start = 0usize;
+    for i in 0..orig_lines.len() {
+        let end = (i + win).min(orig_lines.len());
+        let mut score = 0usize;
+        for nl in &needle_lines {
+            if orig_lines[i..end].iter().any(|ol| {
+                let ot = ol.trim();
+                !ot.is_empty() && (ot == *nl || ot.contains(nl) || nl.contains(ot))
+            }) {
+                score += 2;
+            } else {
+                // Token overlap fallback for slight typos
+                let toks: Vec<&str> = nl.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|t| t.len() >= 3).collect();
+                if !toks.is_empty()
+                    && orig_lines[i..end]
+                        .iter()
+                        .any(|ol| toks.iter().filter(|&&t| ol.contains(t)).count() * 2 >= toks.len())
+                {
+                    score += 1;
+                }
+            }
+        }
+        if score > best_score {
+            best_score = score;
+            best_start = i;
+        }
+    }
+    if best_score == 0 {
+        return None;
+    }
+    let ctx_start = best_start.saturating_sub(2);
+    let ctx_end = (best_start + win + 2).min(orig_lines.len());
+    let snippet = orig_lines[ctx_start..ctx_end]
+        .iter()
+        .enumerate()
+        .map(|(k, l)| format!("{}: {}", ctx_start + k + 1, clip_read_line(l)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(json!({
+        "closest_match": {
+            "start_line": ctx_start + 1,
+            "end_line": ctx_end,
+            "snippet": snippet
+        }
+    }))
 }
 
 // --- 4. apply_patch (Pure Rust Unified Diff, dry_run = false by default, ZERO `git` dep!) ---
@@ -830,7 +1045,20 @@ fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
         let target_idx = ((hunk.old_start.saturating_sub(1)) as isize + offset)
             .clamp(min_next_idx as isize, lines.len() as isize) as usize;
         let found = find_hunk_position(&lines, &expected_old, target_idx, min_next_idx)
-            .ok_or_else(|| format!("hunk at line {} failed to match file context", hunk.old_start))?;
+            .ok_or_else(|| {
+                let s = target_idx.saturating_sub(2);
+                let e = (target_idx + expected_old.len().min(8) + 2).min(lines.len());
+                let actual = lines[s..e]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, l)| format!("{}: {}", s + k + 1, l))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "hunk at line {} failed to match file context; actual lines nearby:\n{actual}",
+                    hunk.old_start
+                )
+            })?;
         let old_len = expected_old.len();
         let new_len = replacement.len();
         lines.splice(found..(found + old_len), replacement);
@@ -849,7 +1077,7 @@ fn find_hunk_position(lines: &[String], expected: &[&str], hint: usize, min_idx:
     if expected.len() > lines.len() {
         return None;
     }
-    let matches_at = |idx: usize| -> bool {
+    let exact_at = |idx: usize| -> bool {
         idx >= min_idx
             && idx + expected.len() <= lines.len()
             && lines[idx..idx + expected.len()]
@@ -857,17 +1085,47 @@ fn find_hunk_position(lines: &[String], expected: &[&str], hint: usize, min_idx:
                 .zip(expected.iter())
                 .all(|(a, b)| a == b)
     };
-    if matches_at(hint) {
+    if exact_at(hint) {
         return Some(hint);
     }
-    for delta in 1..=50 {
+    for delta in 1..=100 {
         if let Some(lo) = hint.checked_sub(delta) {
-            if matches_at(lo) {
+            if exact_at(lo) {
                 return Some(lo);
             }
         }
         let hi = hint + delta;
-        if matches_at(hi) {
+        if exact_at(hi) {
+            return Some(hi);
+        }
+    }
+    // Full-file unique exact match when line numbers drifted > 100 lines
+    let exact_hits: Vec<usize> = (min_idx..=lines.len().saturating_sub(expected.len()))
+        .filter(|&i| exact_at(i))
+        .collect();
+    if exact_hits.len() == 1 {
+        return Some(exact_hits[0]);
+    }
+    // Whitespace-trimmed fallback within ±100 lines
+    let trimmed_at = |idx: usize| -> bool {
+        idx >= min_idx
+            && idx + expected.len() <= lines.len()
+            && lines[idx..idx + expected.len()]
+                .iter()
+                .zip(expected.iter())
+                .all(|(a, b)| a.trim() == b.trim())
+    };
+    if trimmed_at(hint) {
+        return Some(hint);
+    }
+    for delta in 1..=100 {
+        if let Some(lo) = hint.checked_sub(delta) {
+            if trimmed_at(lo) {
+                return Some(lo);
+            }
+        }
+        let hi = hint + delta;
+        if trimmed_at(hi) {
             return Some(hi);
         }
     }

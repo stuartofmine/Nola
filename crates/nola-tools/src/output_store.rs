@@ -18,8 +18,67 @@ use serde_json::{json, Value};
 use crate::{ToolContext, ToolHandler};
 
 pub const DEFAULT_SPILL_THRESHOLD_BYTES: usize = 24 * 1024;
-const PREVIEW_HEAD_CHARS: usize = 3_000;
-const PREVIEW_TAIL_CHARS: usize = 1_500;
+const PREVIEW_HEAD_CHARS: usize = 2_400;
+const PREVIEW_TAIL_CHARS: usize = 1_600;
+const MAX_LINE_CHARS: usize = 2_000;
+const MAX_READ_RESPONSE_BYTES: usize = 24 * 1024;
+
+fn clip_line(line: &str) -> String {
+    let char_count = line.chars().count();
+    if char_count <= MAX_LINE_CHARS {
+        line.to_string()
+    } else {
+        let prefix: String = line.chars().take(MAX_LINE_CHARS).collect();
+        format!("{prefix}... [line truncated: {char_count} chars]")
+    }
+}
+
+/// Convert a `ToolModelPayload` into clean multi-line text for line-oriented `tool_output`
+/// inspection, plus preserve key scalar metadata fields directly in the compact spilled envelope.
+fn render_spillable_text(payload: &ToolModelPayload) -> (String, serde_json::Map<String, Value>) {
+    let mut preserved = serde_json::Map::new();
+    match payload {
+        ToolModelPayload::Text(s) => (s.clone(), preserved),
+        ToolModelPayload::Structured { model_data, .. } => {
+            if let Some(obj) = model_data.as_object() {
+                for key in [
+                    "exit_code",
+                    "timed_out",
+                    "duration_ms",
+                    "path",
+                    "count",
+                    "total_lines",
+                    "truncated",
+                    "status",
+                    "error",
+                    "message",
+                    "command",
+                ] {
+                    if let Some(v) = obj.get(key) {
+                        if !v.is_object() && !v.is_array() {
+                            preserved.insert(key.to_string(), v.clone());
+                        }
+                    }
+                }
+                // Extract dominant multi-line text fields with REAL unescaped newlines!
+                let mut sections = Vec::new();
+                for key in ["stdout", "stderr", "content", "output"] {
+                    if let Some(s) = obj.get(key).and_then(|v| v.as_str()) {
+                        if !s.is_empty() {
+                            sections.push(format!("=== {key} ===\n{s}"));
+                        }
+                    }
+                }
+                if !sections.is_empty() {
+                    return (sections.join("\n\n"), preserved);
+                }
+            }
+            let pretty = serde_json::to_string_pretty(model_data)
+                .unwrap_or_else(|_| payload.to_model_string());
+            (pretty, preserved)
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct StoredOutputMeta {
@@ -77,29 +136,44 @@ impl OutputStore {
         payload: &ToolModelPayload,
         threshold_bytes: usize,
     ) -> Option<(ToolModelPayload, StoredOutputMeta)> {
-        let full = payload.to_model_string();
-        if full.len() <= threshold_bytes {
+        let serialized_len = payload.to_model_string().len();
+        if serialized_len <= threshold_bytes {
             return None;
         }
+        let (full, preserved) = render_spillable_text(payload);
         let meta = self.store_text(tool_name, &full).ok()?;
         let head: String = full.chars().take(PREVIEW_HEAD_CHARS).collect();
         let total_chars = full.chars().count();
-        let tail: String = full
-            .chars()
-            .skip(total_chars.saturating_sub(PREVIEW_TAIL_CHARS))
-            .collect();
+        let tail: String = if total_chars > PREVIEW_HEAD_CHARS {
+            full.chars()
+                .skip(total_chars.saturating_sub(PREVIEW_TAIL_CHARS))
+                .collect()
+        } else {
+            String::new()
+        };
         let summary = payload.ui_summary().to_string();
+        let mut envelope = serde_json::Map::new();
+        envelope.insert("spilled".into(), Value::Bool(true));
+        envelope.insert("output_id".into(), Value::String(meta.output_id.clone()));
+        envelope.insert("tool".into(), Value::String(tool_name.to_string()));
+        envelope.insert("total_bytes".into(), json!(meta.total_bytes));
+        envelope.insert("total_lines".into(), json!(meta.total_lines));
+        for (k, v) in preserved {
+            envelope.entry(k).or_insert(v);
+        }
+        envelope.insert(
+            "hint".into(),
+            Value::String(
+                "Use tool_output (action=read|tail|search) with this output_id to inspect full content."
+                    .into(),
+            ),
+        );
+        envelope.insert("head_preview".into(), Value::String(head));
+        if !tail.is_empty() {
+            envelope.insert("tail_preview".into(), Value::String(tail));
+        }
         let compact = ToolModelPayload::structured(
-            json!({
-                "spilled": true,
-                "output_id": meta.output_id,
-                "tool": tool_name,
-                "total_bytes": meta.total_bytes,
-                "total_lines": meta.total_lines,
-                "hint": "Use tool_output (action=read or search) with this output_id to inspect full content.",
-                "head_preview": head,
-                "tail_preview": tail
-            }),
+            Value::Object(envelope),
             format!("{summary} [spilled {} bytes -> {}]", meta.total_bytes, meta.output_id),
         );
         Some((compact, meta))
@@ -126,28 +200,52 @@ impl OutputStore {
         let text = fs::read_to_string(&path)
             .map_err(|e| format!("failed to read stored output: {e}"))?;
         let lines: Vec<&str> = text.lines().collect();
+        let total_lines = lines.len();
         let start = start_line.max(1);
-        // Cap single read to at most 400 lines so tool_output cannot blow up context!
-        let end = end_line
+        let requested_end = end_line
             .max(start)
             .min(start.saturating_add(399))
-            .min(lines.len().max(1));
-        let slice = lines
-            .iter()
-            .enumerate()
-            .skip(start.saturating_sub(1))
-            .take(end.saturating_sub(start).saturating_add(1))
-            .map(|(i, l)| format!("{}: {l}", i + 1))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .min(total_lines.max(1));
+
+        let mut rendered = Vec::new();
+        let mut bytes_used = 0usize;
+        let mut actual_end = start.saturating_sub(1);
+        let mut byte_capped = false;
+        if total_lines > 0 && start <= total_lines {
+            for (i, line) in lines
+                .iter()
+                .enumerate()
+                .skip(start.saturating_sub(1))
+                .take(requested_end.saturating_sub(start).saturating_add(1))
+            {
+                let formatted = format!("{}: {}", i + 1, clip_line(line));
+                if !rendered.is_empty() && bytes_used + formatted.len() + 1 > MAX_READ_RESPONSE_BYTES {
+                    byte_capped = true;
+                    break;
+                }
+                bytes_used += formatted.len() + 1;
+                actual_end = i + 1;
+                rendered.push(formatted);
+            }
+        }
         Ok(json!({
             "output_id": output_id,
             "start_line": start,
-            "end_line": end.min(lines.len()),
-            "total_lines": lines.len(),
-            "truncated": end < lines.len(),
-            "content": slice
+            "end_line": actual_end,
+            "total_lines": total_lines,
+            "truncated": byte_capped || actual_end < total_lines,
+            "content": rendered.join("\n")
         }))
+    }
+
+    pub fn read_tail(&self, output_id: &str, tail_lines: usize) -> Result<Value, String> {
+        let path = self.resolve_output_path(output_id)?;
+        let text = fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read stored output: {e}"))?;
+        let total = text.lines().count();
+        let count = tail_lines.clamp(1, 400);
+        let start = total.saturating_sub(count).saturating_add(1).max(1);
+        self.read_range(output_id, start, total.max(1))
     }
 
     pub fn search(&self, output_id: &str, pattern: &str, max_matches: usize) -> Result<Value, String> {
@@ -159,10 +257,20 @@ impl OutputStore {
         let text = fs::read_to_string(&path)
             .map_err(|e| format!("failed to read stored output: {e}"))?;
         let mut hits = Vec::new();
+        let mut bytes_used = 0usize;
+        let limit = max_matches.clamp(1, 200);
+        let mut truncated = false;
         for (i, line) in text.lines().enumerate() {
             if re.is_match(line) {
-                hits.push(json!({"line": i + 1, "text": line}));
-                if hits.len() >= max_matches.clamp(1, 200) {
+                let clipped = clip_line(line);
+                if !hits.is_empty() && bytes_used + clipped.len() + 32 > MAX_READ_RESPONSE_BYTES {
+                    truncated = true;
+                    break;
+                }
+                bytes_used += clipped.len() + 32;
+                hits.push(json!({"line": i + 1, "text": clipped}));
+                if hits.len() >= limit {
+                    truncated = true;
                     break;
                 }
             }
@@ -171,6 +279,7 @@ impl OutputStore {
             "output_id": output_id,
             "pattern": pattern,
             "count": hits.len(),
+            "truncated": truncated,
             "matches": hits
         }))
     }
@@ -202,14 +311,15 @@ impl ToolHandler for ToolOutputTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "tool_output".into(),
-                description: "Inspect spilled oversized tool outputs (action: list|read|search).".into(),
+                description: "Inspect spilled oversized tool outputs (action: list|read|tail|search).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "action": { "type": "string", "enum": ["list", "read", "search"] },
+                        "action": { "type": "string", "enum": ["list", "read", "tail", "search"] },
                         "output_id": { "type": "string" },
                         "start_line": { "type": "integer", "description": "1-based start line for read" },
                         "end_line": { "type": "integer", "description": "1-based inclusive end line for read" },
+                        "tail_lines": { "type": "integer", "description": "Number of trailing lines for action=tail (default 100)" },
                         "pattern": { "type": "string", "description": "Regex pattern for search" }
                     },
                     "required": ["action"]
@@ -242,6 +352,16 @@ impl ToolHandler for ToolOutputTool {
                     .unwrap_or(start.saturating_add(199) as u64) as usize;
                 match ctx.output_store.read_range(id, start, end) {
                     Ok(v) => ToolExecutionResult::ok_structured(v, format!("Read lines {start}-{end} of {id}")),
+                    Err(e) => ToolExecutionResult::err_structured("output_read_error", e, None),
+                }
+            }
+            "tail" => {
+                let Some(id) = args.get("output_id").and_then(|v| v.as_str()) else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'output_id'", None);
+                };
+                let tail_lines = args.get("tail_lines").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+                match ctx.output_store.read_tail(id, tail_lines) {
+                    Ok(v) => ToolExecutionResult::ok_structured(v, format!("Read last {tail_lines} lines of {id}")),
                     Err(e) => ToolExecutionResult::err_structured("output_read_error", e, None),
                 }
             }

@@ -70,6 +70,7 @@ pub fn run_tui(store: Store, suite: Arc<ModulesSuite>, workspace: &Path) -> Resu
     let engine = AgentEngine::new(store.clone(), Arc::clone(&registry), caller);
 
     let mut ctx = ToolContext::new(workspace);
+    ctx.interactive_user_input = true;
     ctx.permission_profile = PermissionProfile::AcceptEdits;
     ctx.sandbox_mode = SandboxMode::from_env();
 

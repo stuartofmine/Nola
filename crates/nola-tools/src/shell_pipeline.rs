@@ -6,7 +6,7 @@
 //! - `output_artifacts` pre/post SHA-256 hashing -> authoritative `VersionTransition` effects!
 //! - `validation_snapshot` ignoring `.git`, `__pycache__`, `target`, `node_modules`, `.venv`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -27,6 +27,122 @@ use crate::sandbox::build_shell_command;
 use crate::{ToolContext, ToolHandler};
 
 const MAX_CAPTURED_BYTES: usize = 256 * 1024;
+const FOREGROUND_HEAD_BYTES: usize = 64 * 1024;
+const FOREGROUND_TAIL_BYTES: usize = 192 * 1024;
+
+/// Head+Tail bounded pipe accumulator so huge build/test logs NEVER lose the final traceback!
+#[derive(Default)]
+struct HeadTailCapture {
+    head: Vec<u8>,
+    tail: VecDeque<u8>,
+    total_bytes: usize,
+}
+
+impl HeadTailCapture {
+    fn push(&mut self, data: &[u8]) {
+        self.total_bytes = self.total_bytes.saturating_add(data.len());
+        let head_rem = FOREGROUND_HEAD_BYTES.saturating_sub(self.head.len());
+        let to_head = data.len().min(head_rem);
+        if to_head > 0 {
+            self.head.extend_from_slice(&data[..to_head]);
+        }
+        let rest = &data[to_head..];
+        if !rest.is_empty() {
+            if rest.len() >= FOREGROUND_TAIL_BYTES {
+                self.tail.clear();
+                self.tail
+                    .extend(&rest[rest.len() - FOREGROUND_TAIL_BYTES..]);
+            } else {
+                let overflow = (self.tail.len() + rest.len()).saturating_sub(FOREGROUND_TAIL_BYTES);
+                if overflow > 0 {
+                    self.tail.drain(..overflow);
+                }
+                self.tail.extend(rest);
+            }
+        }
+    }
+
+    fn into_string_and_omitted(self) -> (String, usize) {
+        let kept = self.head.len() + self.tail.len();
+        let omitted = self.total_bytes.saturating_sub(kept);
+        let head_s = strip_ansi(&String::from_utf8_lossy(&self.head));
+        if self.tail.is_empty() {
+            return (head_s, 0);
+        }
+        let tail_vec: Vec<u8> = self.tail.into_iter().collect();
+        let tail_s = strip_ansi(&String::from_utf8_lossy(&tail_vec));
+        if omitted == 0 {
+            (format!("{head_s}{tail_s}"), 0)
+        } else {
+            (
+                format!("{head_s}\n... [{omitted} bytes omitted in middle] ...\n{tail_s}"),
+                omitted,
+            )
+        }
+    }
+}
+
+/// Strip ANSI CSI/OSC escape sequences so colored test/compiler logs stay compact and clean.
+pub fn strip_ansi(input: &str) -> String {
+    if !input.contains('\x1b') {
+        return input.to_string();
+    }
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'[' => {
+                    // CSI sequence: ESC [ ... final byte 0x40..=0x7E
+                    i += 2;
+                    while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                        i += 1;
+                    }
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                    continue;
+                }
+                b']' => {
+                    // OSC sequence: ESC ] ... BEL or ESC \
+                    i += 2;
+                    while i < bytes.len() {
+                        if bytes[i] == 0x07 {
+                            i += 1;
+                            break;
+                        }
+                        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => {
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn drain_head_tail(reader: &mut dyn Read, target: &Mutex<HeadTailCapture>) {
+    let mut chunk = [0u8; 4096];
+    while let Ok(n) = reader.read(&mut chunk) {
+        if n == 0 {
+            break;
+        }
+        if let Ok(mut cap) = target.lock() {
+            cap.push(&chunk[..n]);
+        }
+    }
+}
 
 fn kill_process_group(child: &mut Child) {
     #[cfg(unix)]
@@ -358,18 +474,19 @@ impl ToolHandler for BashTool {
             }
         };
 
-        let out_buf = Arc::new(Mutex::new(Vec::new()));
-        let err_buf = Arc::new(Mutex::new(Vec::new()));
+        let started = Instant::now();
+        let out_buf = Arc::new(Mutex::new(HeadTailCapture::default()));
+        let err_buf = Arc::new(Mutex::new(HeadTailCapture::default()));
         let t_out = child.stdout.take().map(|mut s| {
             let b = Arc::clone(&out_buf);
-            thread::spawn(move || drain_pipe(&mut s, &b))
+            thread::spawn(move || drain_head_tail(&mut s, &b))
         });
         let t_err = child.stderr.take().map(|mut s| {
             let b = Arc::clone(&err_buf);
-            thread::spawn(move || drain_pipe(&mut s, &b))
+            thread::spawn(move || drain_head_tail(&mut s, &b))
         });
 
-        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+        let deadline = started + Duration::from_secs(timeout_secs);
         let mut timed_out = false;
         let exit_code = loop {
             match child.try_wait() {
@@ -391,9 +508,12 @@ impl ToolHandler for BashTool {
         if let Some(h) = t_err {
             let _ = h.join();
         }
+        let duration_ms = started.elapsed().as_millis() as u64;
 
-        let stdout = String::from_utf8_lossy(&out_buf.lock().unwrap()).into_owned();
-        let stderr = String::from_utf8_lossy(&err_buf.lock().unwrap()).into_owned();
+        let (stdout, stdout_omitted) =
+            std::mem::take(&mut *out_buf.lock().unwrap()).into_string_and_omitted();
+        let (stderr, stderr_omitted) =
+            std::mem::take(&mut *err_buf.lock().unwrap()).into_string_and_omitted();
 
         // Compute authoritative VersionTransitions for declared output_artifacts
         let mut effects = Vec::new();
@@ -431,13 +551,17 @@ impl ToolHandler for BashTool {
             });
         }
 
-        let data = json!({
+        let mut data = json!({
             "exit_code": exit_code,
             "timed_out": timed_out,
+            "duration_ms": duration_ms,
             "stdout": stdout,
             "stderr": stderr,
             "effects": effects
         });
+        if stdout_omitted > 0 || stderr_omitted > 0 {
+            data["omitted_bytes"] = json!({"stdout": stdout_omitted, "stderr": stderr_omitted});
+        }
         let summary = if timed_out {
             format!("Shell command timed out after {timeout_secs}s")
         } else {

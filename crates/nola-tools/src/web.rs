@@ -117,37 +117,71 @@ impl ToolHandler for WebFetchTool {
             .unwrap_or(20_000)
             .clamp(256, 200_000) as usize;
 
-        let (url, host, addrs) = match resolve_and_validate_public_url(raw_url) {
-            Ok(v) => v,
-            Err(e) => return ToolExecutionResult::err_structured("ssrf_blocked", e, None),
-        };
-
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(20))
-            .redirect(reqwest::redirect::Policy::none())
-            .resolve_to_addrs(&host, &addrs)
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolExecutionResult::err_structured(
-                    "http_client_error",
-                    e.to_string(),
-                    None,
-                )
+        // Safely follow up to 5 HTTP redirects by re-validating & DNS-pinning EVERY hop!
+        const MAX_REDIRECTS: usize = 5;
+        let mut current_url_str = raw_url.to_string();
+        let mut resp_opt = None;
+        for hop in 0..=MAX_REDIRECTS {
+            let (url, host, addrs) = match resolve_and_validate_public_url(&current_url_str) {
+                Ok(v) => v,
+                Err(e) => return ToolExecutionResult::err_structured("ssrf_blocked", e, None),
+            };
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve_to_addrs(&host, &addrs)
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return ToolExecutionResult::err_structured(
+                        "http_client_error",
+                        e.to_string(),
+                        None,
+                    )
+                }
+            };
+            let resp = match client.get(url.clone()).send() {
+                Ok(r) => r,
+                Err(e) => {
+                    return ToolExecutionResult::err_structured(
+                        "fetch_error",
+                        format!("HTTP request failed: {e}"),
+                        Some(json!({"url": current_url_str})),
+                    )
+                }
+            };
+            let status_code = resp.status().as_u16();
+            if matches!(status_code, 301 | 302 | 303 | 307 | 308) {
+                if hop == MAX_REDIRECTS {
+                    return ToolExecutionResult::err_structured(
+                        "too_many_redirects",
+                        format!("exceeded {MAX_REDIRECTS} redirects fetching {raw_url}"),
+                        None,
+                    );
+                }
+                let Some(loc) = resp.headers().get("location").and_then(|v| v.to_str().ok()) else {
+                    resp_opt = Some(resp);
+                    break;
+                };
+                match url.join(loc) {
+                    Ok(next) => {
+                        current_url_str = next.to_string();
+                        continue;
+                    }
+                    Err(e) => {
+                        return ToolExecutionResult::err_structured(
+                            "invalid_redirect",
+                            format!("invalid redirect Location '{loc}': {e}"),
+                            None,
+                        );
+                    }
+                }
             }
-        };
-
-        let resp = match client.get(url.clone()).send() {
-            Ok(r) => r,
-            Err(e) => {
-                return ToolExecutionResult::err_structured(
-                    "fetch_error",
-                    format!("HTTP request failed: {e}"),
-                    Some(json!({"url": raw_url})),
-                )
-            }
-        };
+            resp_opt = Some(resp);
+            break;
+        }
+        let resp = resp_opt.unwrap();
         let status = resp.status().as_u16();
         let content_type = resp
             .headers()
@@ -168,8 +202,8 @@ impl ToolHandler for WebFetchTool {
             let preview: String = body.chars().take(2_000).collect();
             return ToolExecutionResult::err_structured(
                 "http_error",
-                format!("HTTP {status} from {raw_url}"),
-                Some(json!({"status": status, "url": raw_url, "body": preview})),
+                format!("HTTP {status} from {current_url_str}"),
+                Some(json!({"status": status, "url": current_url_str, "body": preview})),
             );
         }
 
@@ -183,13 +217,13 @@ impl ToolHandler for WebFetchTool {
 
         ToolExecutionResult::ok_structured(
             json!({
-                "url": raw_url,
+                "url": current_url_str,
                 "status": status,
                 "content_type": content_type,
                 "truncated": truncated,
                 "content": text
             }),
-            format!("Fetched {raw_url} (HTTP {status})"),
+            format!("Fetched {current_url_str} (HTTP {status})"),
         )
     }
 }

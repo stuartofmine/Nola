@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use ignore::WalkBuilder;
 use nola_types::{
@@ -19,7 +19,10 @@ use nola_types::{
 use regex::Regex;
 use serde_json::{json, Value};
 
-use crate::file_pipeline::{path_within_workspace, resolve_path, FileMutationPipeline};
+use crate::file_pipeline::{
+    apply_text_edit, clip_read_line, looks_binary, path_within_workspace, resolve_path,
+    FileMutationPipeline,
+};
 use crate::{ToolContext, ToolHandler};
 
 // --- Workspace Checkpoint Manager ---
@@ -204,22 +207,24 @@ impl ToolHandler for MultiEditFileTool {
                     None,
                 );
             };
-            let count = content.matches(old_text).count();
-            if count == 0 {
-                return ToolExecutionResult::err_structured(
-                    "edit_not_found",
-                    format!("edit[{idx}] old_text not found; rolled back atomically"),
-                    None,
-                );
+            match apply_text_edit(&content, old_text, new_text, false, Some(1)) {
+                Ok((updated, _, _, _)) => content = updated,
+                Err(mut err_res) => {
+                    let mut val = err_res.payload.to_model_value();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("failed_edit_index".into(), json!(idx));
+                        obj.insert(
+                            "rollback".into(),
+                            Value::String("all edits rolled back atomically".into()),
+                        );
+                    }
+                    err_res.payload = nola_types::ToolModelPayload::structured(
+                        val,
+                        format!("edit[{idx}] failed; rolled back atomically"),
+                    );
+                    return err_res;
+                }
             }
-            if count > 1 {
-                return ToolExecutionResult::err_structured(
-                    "ambiguous_match",
-                    format!("edit[{idx}] matched {count} locations; add context to disambiguate"),
-                    None,
-                );
-            }
-            content = content.replacen(old_text, new_text, 1);
         }
         match FileMutationPipeline::write_bytes(ctx, &path, content.as_bytes(), ResourceOperation::Edit) {
             Ok(eff) => ToolExecutionResult::ok_structured(
@@ -373,28 +378,46 @@ impl ToolHandler for ReadManyFilesTool {
             .unwrap_or(200)
             .clamp(10, 1_000) as usize;
         let mut results = Vec::new();
+        let mut total_budget_bytes = 48 * 1024usize;
         for p in paths.iter().filter_map(|v| v.as_str()).take(20) {
             let full = resolve_path(&ctx.workspace_root, p);
+            if let Ok(meta) = fs::metadata(&full) {
+                if meta.len() > 4 * 1024 * 1024 {
+                    results.push(json!({"path": p, "error": "file exceeds 4 MiB read_many_files limit"}));
+                    continue;
+                }
+            }
             match fs::read(&full) {
                 Ok(bytes) => {
+                    if looks_binary(&bytes) {
+                        results.push(json!({"path": p, "error": "binary file skipped"}));
+                        continue;
+                    }
                     let sha = sha256_hex(&bytes);
                     ctx.file_state.record(&full, sha.clone());
                     let text = String::from_utf8_lossy(&bytes);
                     let lines: Vec<&str> = text.lines().collect();
-                    let snippet = lines
-                        .iter()
-                        .take(max_lines)
-                        .enumerate()
-                        .map(|(i, l)| format!("{}: {l}", i + 1))
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    let mut rendered = Vec::new();
+                    let mut budget_hit = false;
+                    for (i, l) in lines.iter().take(max_lines).enumerate() {
+                        let formatted = format!("{}: {}", i + 1, clip_read_line(l));
+                        if formatted.len() + 1 > total_budget_bytes {
+                            budget_hit = true;
+                            break;
+                        }
+                        total_budget_bytes = total_budget_bytes.saturating_sub(formatted.len() + 1);
+                        rendered.push(formatted);
+                    }
                     results.push(json!({
                         "path": full.display().to_string(),
                         "sha256": sha,
                         "total_lines": lines.len(),
-                        "truncated": lines.len() > max_lines,
-                        "content": snippet
+                        "truncated": budget_hit || lines.len() > max_lines,
+                        "content": rendered.join("\n")
                     }));
+                    if budget_hit {
+                        break;
+                    }
                 }
                 Err(e) => results.push(json!({"path": p, "error": e.to_string()})),
             }
@@ -593,18 +616,32 @@ impl ToolHandler for RepoMapTool {
             .unwrap_or(200)
             .clamp(1, 1000) as usize;
 
-        let sym_re = Regex::new(
-            r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(fn|struct|enum|trait|impl|class|def|interface|type|func|export\s+(?:async\s+)?function)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-        .unwrap();
+        static SYM_RE: OnceLock<Regex> = OnceLock::new();
+        let sym_re = SYM_RE.get_or_init(|| {
+            Regex::new(
+                r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(fn|struct|enum|trait|impl|class|def|interface|type|func|export\s+(?:async\s+)?function)\s+([A-Za-z_][A-Za-z0-9_]*)",
+            )
+            .unwrap()
+        });
 
-        let mut symbols = Vec::new();
+        let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut total_count = 0usize;
+        let mut truncated = false;
         let walker = WalkBuilder::new(&base)
             .hidden(false)
-            .filter_entry(|e| e.file_name() != ".git")
+            .filter_entry(|e| {
+                e.depth() == 0
+                    || !matches!(
+                        e.file_name().to_string_lossy().as_ref(),
+                        ".git" | "target" | "node_modules" | "__pycache__" | ".venv"
+                    )
+            })
             .build();
         'outer: for dent in walker.flatten() {
             if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            if dent.metadata().map(|m| m.len() > 1024 * 1024).unwrap_or(true) {
                 continue;
             }
             let ext = dent
@@ -632,23 +669,22 @@ impl ToolHandler for RepoMapTool {
                     let kind = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                     let name = caps.get(2).map(|m| m.as_str()).unwrap_or("");
                     if query.is_empty() || name.to_ascii_lowercase().contains(&query) {
-                        symbols.push(json!({
-                            "file": rel,
-                            "line": i + 1,
-                            "kind": kind,
-                            "name": name
-                        }));
-                        if symbols.len() >= max_symbols {
+                        grouped
+                            .entry(rel.clone())
+                            .or_default()
+                            .push(format!("L{}: {kind} {name}", i + 1));
+                        total_count += 1;
+                        if total_count >= max_symbols {
+                            truncated = true;
                             break 'outer;
                         }
                     }
                 }
             }
         }
-        let count = symbols.len();
         ToolExecutionResult::ok_structured(
-            json!({"count": count, "symbols": symbols}),
-            format!("Mapped {count} symbol(s)"),
+            json!({"count": total_count, "truncated": truncated, "files": grouped}),
+            format!("Mapped {total_count} symbol(s) across {} file(s)", grouped.len()),
         )
     }
 }

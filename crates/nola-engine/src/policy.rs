@@ -135,8 +135,18 @@ impl EffectivePolicy {
             };
         }
 
+        let is_git_read_only = tool_name == "git"
+            && matches!(
+                args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+                "status" | "diff" | "log" | "show" | "blame" | "worktree_list"
+            );
+        let is_git_worktree_write = tool_name == "git"
+            && matches!(
+                args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+                "worktree_create" | "worktree_remove"
+            );
         let resources = extract_resources(tool_name, args, workspace_root);
-        let write_paths = if domain == CapabilityDomain::FilesWrite {
+        let write_paths = if domain == CapabilityDomain::FilesWrite || is_git_worktree_write {
             extract_write_target_paths(tool_name, args, workspace_root)
         } else {
             Vec::new()
@@ -170,10 +180,10 @@ impl EffectivePolicy {
             };
         }
 
-        // Security invariant: for FilesWrite tools, enforce workspace boundary BEFORE
-        // Project/ProjectLocal Allow rules! Only AllowAll profile or an explicit User/CliOverride
-        // Allow rule can permit writing outside the workspace.
-        if domain == CapabilityDomain::FilesWrite {
+        // Security invariant: for FilesWrite & git worktree mutations, enforce workspace boundary
+        // BEFORE Project/ProjectLocal Allow rules! Only AllowAll profile or an explicit
+        // User/CliOverride Allow rule can permit writing outside the workspace.
+        if domain == CapabilityDomain::FilesWrite || is_git_worktree_write {
             if write_paths.is_empty() && tool_name != "workspace_checkpoint" {
                 return PermissionDecision {
                     action: PermissionAction::Deny,
@@ -215,6 +225,7 @@ impl EffectivePolicy {
 
         // Default profile behavior
         if spec.read_only
+            || is_git_read_only
             || matches!(tool_name, "update_agent_todos" | "propose_agent_plan")
             || (tool_name == "task_control"
                 && matches!(
