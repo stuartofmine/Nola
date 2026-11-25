@@ -2,7 +2,7 @@
 
 [简体中文](SOFTWARE_UPDATE_ARCHITECTURE.md) · English
 
-Nola distributes complete artifacts through GitHub Releases. The packaged source configuration specifies the feed URL, channel and public verification key. The Rust update Host verifies a signed feed and selects an offer for the current platform, architecture, distribution and Store contract. Publishing metadata and installing an artifact are separate operations. [Source configuration](../../../release/update-source.json) · [Update Host](../../../core/nola-update-host/src/lib.rs)
+Nola distributes complete artifacts through GitHub Releases. The packaged source configuration specifies the feed URL, channel and public verification key. The Rust update Host verifies a signed feed and selects an offer for the current platform, architecture, distribution and Store contract. Publishing metadata and installing an artifact are separate operations. [Source configuration](../../../release/update-source.json) · [Update Host](../../../crates/nola-modules/src/updater.rs)
 
 1. An explicit check loads the compiled source and verifies the feed signature, validity interval and compatibility. A disabled source, current version, missing target, incompatible data and a verification error have distinct outcomes.
 2. When the user requests a download, revalidate the offer identity. A changed release requires a fresh choice. Fetch over HTTPS using the update client’s credentials policy and redirect restrictions.

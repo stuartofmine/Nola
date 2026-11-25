@@ -14,7 +14,7 @@ Disconnect after sending and recover with the original request identity. Test re
 
 ## Implementation
 
-- [src/web_parts/routes.rs](../../../../apps/cli/src/web_parts/routes.rs)
+- [src/web_parts/routes.rs](../../../../crates/nola-app/src/web_server.rs)
 - [transport/tailcat/README.md](../../../../transport/tailcat/README.md)
 
 ## Detailed references

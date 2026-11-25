@@ -3,7 +3,7 @@
 //! schema validation, and route resolver supporting Nola JSON/JSONC configs
 //! (including Harbor/Terminal-Bench `model apply-config` payloads).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,41 @@ pub const KV_APPLIED_CONFIG: &str = "nola_v2_applied_config";
 pub const KV_VAULT_PATH: &str = "nola_vault_path";
 pub const MAX_CONFIG_FILE_BYTES: u64 = 1024 * 1024; // 1 MiB
 
+/// Optional fallback route declaration accepted on `llm.fallbacks`, top-level `fallbacks`,
+/// or per-connection `fallbacks`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FallbackRouteConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, alias = "base_url", alias = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(default, alias = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, alias = "apiKeyEnv", skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    #[serde(default, alias = "credentialRef", skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
+}
+
+/// Preserved extended metadata for a connection (`name`, `credential_ref`, `fallbacks`,
+/// and per-model display `name`s) stored alongside `LlmSection` without changing
+/// external struct literal layouts for `ConnectionConfig` / `ModelEntry`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionExtras {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, alias = "credentialRef", skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallbacks: Vec<FallbackRouteConfig>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_names: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppliedConfig {
     #[serde(default)]
@@ -29,6 +64,10 @@ pub struct AppliedConfig {
     pub instructions: Vec<String>,
     #[serde(default)]
     pub model_capabilities: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connection_extras: BTreeMap<String, ConnectionExtras>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallbacks: Vec<FallbackRouteConfig>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -393,6 +432,123 @@ pub fn validate_config(cfg: &AppliedConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_fallback_entry(val: &Value) -> Option<FallbackRouteConfig> {
+    if let Some(s) = val.as_str() {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Some((conn, model)) = trimmed.split_once('/') {
+            return Some(FallbackRouteConfig {
+                connection: Some(conn.trim().to_string()),
+                model: Some(model.trim().to_string()),
+                ..Default::default()
+            });
+        }
+        return Some(FallbackRouteConfig {
+            model: Some(trimmed.to_string()),
+            ..Default::default()
+        });
+    }
+    serde_json::from_value::<FallbackRouteConfig>(val.clone()).ok()
+}
+
+fn parse_fallback_array(val: Option<&Value>) -> Vec<FallbackRouteConfig> {
+    val.and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(parse_fallback_entry).collect())
+        .unwrap_or_default()
+}
+
+fn harvest_config_extras(raw: &Value, cfg: &mut AppliedConfig) {
+    if let Some(conns) = raw.pointer("/llm/connections").and_then(|v| v.as_array()) {
+        for c in conns {
+            let Some(cid) = c
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let entry = cfg.connection_extras.entry(cid.to_string()).or_default();
+            if let Some(name) = c
+                .get("name")
+                .or_else(|| c.get("display_name"))
+                .or_else(|| c.get("displayName"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                entry.name = Some(name.to_string());
+            }
+            if let Some(cred_ref) = c
+                .get("credential_ref")
+                .or_else(|| c.get("credentialRef"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                entry.credential_ref = Some(cred_ref.to_string());
+            }
+            let conn_fallbacks = parse_fallback_array(c.get("fallbacks"));
+            if !conn_fallbacks.is_empty() {
+                entry.fallbacks = conn_fallbacks;
+            }
+            if let Some(models) = c.get("models").and_then(|v| v.as_array()) {
+                for m in models {
+                    let Some(mid) = m
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    if let Some(mname) = m
+                        .get("name")
+                        .or_else(|| m.get("display_name"))
+                        .or_else(|| m.get("displayName"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        entry.model_names.insert(mid.to_string(), mname.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let llm_fallbacks = parse_fallback_array(raw.pointer("/llm/fallbacks"));
+    if !llm_fallbacks.is_empty() {
+        cfg.fallbacks = llm_fallbacks;
+    } else if cfg.fallbacks.is_empty() {
+        let root_fallbacks = parse_fallback_array(raw.get("fallbacks"));
+        if !root_fallbacks.is_empty() {
+            cfg.fallbacks = root_fallbacks;
+        }
+    }
+
+    // Prune completely empty ConnectionExtras entries so serialized kv stays lean.
+    cfg.connection_extras.retain(|_, ex| {
+        ex.name.is_some()
+            || ex.credential_ref.is_some()
+            || !ex.fallbacks.is_empty()
+            || !ex.model_names.is_empty()
+    });
+}
+
+/// Parse cleaned JSON (after `strip_jsonc`) into `AppliedConfig`, preserving connection/model
+/// `name` fields, `credential_ref` / `credentialRef`, and optional `fallbacks` arrays.
+pub fn parse_applied_config_json(clean_json: &str) -> Result<AppliedConfig, String> {
+    let raw: Value = serde_json::from_str(clean_json)
+        .map_err(|e| format!("failed to parse config JSON: {e}"))?;
+    let mut cfg: AppliedConfig = serde_json::from_value(raw.clone())
+        .map_err(|e| format!("failed to decode config schema: {e}"))?;
+    harvest_config_extras(&raw, &mut cfg);
+    Ok(cfg)
+}
+
 /// Save `AppliedConfig` into `store`, extracting every non-empty literal `api_key` into the
 /// AES-256-GCM `Vault` under `model_conn_key:<conn.id>` and NEVER writing plaintext keys to SQLite `kv`.
 pub fn save_applied_config(store: &Store, cfg: &AppliedConfig) -> Result<(), String> {
@@ -402,11 +558,20 @@ pub fn save_applied_config(store: &Store, cfg: &AppliedConfig) -> Result<(), Str
 
     for conn in &mut persisted.llm.connections {
         let key_name = vault_secret_key(&conn.id);
+        let has_cred_ref = persisted
+            .connection_extras
+            .get(&conn.id)
+            .and_then(|e| e.credential_ref.as_deref())
+            .is_some_and(|s| !s.trim().is_empty());
         match conn.api_key.as_deref().map(str::trim) {
             Some(raw) if !raw.is_empty() && !raw.starts_with("env:") => {
-                vault
-                    .set_secret(&key_name, raw)
-                    .map_err(|e| format!("failed to store API key for '{}' in vault: {e}", conn.id))?;
+                // Only write to `model_conn_key:<id>` when not backed purely by an external credential_ref
+                // (or update vault key if inline key was explicitly provided).
+                if !has_cred_ref {
+                    vault.set_secret(&key_name, raw).map_err(|e| {
+                        format!("failed to store API key for '{}' in vault: {e}", conn.id)
+                    })?;
+                }
                 // Strip plaintext secret before writing to SQLite kv!
                 conn.api_key = None;
             }
@@ -414,8 +579,38 @@ pub fn save_applied_config(store: &Store, cfg: &AppliedConfig) -> Result<(), Str
                 // Keep `env:VAR_NAME` reference intact (not a secret).
             }
             _ => {
-                let _ = vault.delete_secret(&key_name);
+                if !has_cred_ref {
+                    let _ = vault.delete_secret(&key_name);
+                }
                 conn.api_key = None;
+            }
+        }
+    }
+
+    // Also strip any literal plaintext api_key inside fallback entries before writing to kv.
+    for fb in &mut persisted.fallbacks {
+        if let Some(raw) = fb.api_key.as_deref().map(str::trim) {
+            if !raw.is_empty() && !raw.starts_with("env:") {
+                let fb_key = format!(
+                    "fallback_key:{}:{}",
+                    fb.connection.as_deref().unwrap_or("default"),
+                    fb.model.as_deref().unwrap_or("default")
+                );
+                let _ = vault.set_secret(&fb_key, raw);
+                fb.credential_ref = Some(fb_key);
+                fb.api_key = None;
+            }
+        }
+    }
+    for (cid, ex) in &mut persisted.connection_extras {
+        for (idx, fb) in ex.fallbacks.iter_mut().enumerate() {
+            if let Some(raw) = fb.api_key.as_deref().map(str::trim) {
+                if !raw.is_empty() && !raw.starts_with("env:") {
+                    let fb_key = format!("fallback_key:{cid}:{idx}");
+                    let _ = vault.set_secret(&fb_key, raw);
+                    fb.credential_ref = Some(fb_key);
+                    fb.api_key = None;
+                }
             }
         }
     }
@@ -427,17 +622,41 @@ pub fn save_applied_config(store: &Store, cfg: &AppliedConfig) -> Result<(), Str
 }
 
 /// Apply a config file into `store` (supports JSON and JSONC, rejects symlinks & >1 MiB files,
-/// validates config, and stores API keys strictly in `Vault`).
+/// validates config, preserves connection/model names, `credential_ref`, and `fallbacks`,
+/// and stores API keys strictly in `Vault`).
 pub fn apply_config_file(store: &Store, path: &Path) -> Result<AppliedConfig, String> {
     let raw = read_config_file_safe(path)?;
     let clean = strip_jsonc(&raw);
-    let cfg: AppliedConfig = serde_json::from_str(&clean)
+    let mut cfg = parse_applied_config_json(&clean)
         .map_err(|e| format!("failed to parse config JSON {}: {e}", path.display()))?;
     save_applied_config(store, &cfg)?;
+    hydrate_secrets_from_vault(store, &mut cfg);
     Ok(cfg)
 }
 
-/// Hydrate connection API keys from the AES-256-GCM `Vault` (preserving any legacy plaintext key
+fn lookup_vault_credential_ref(vault: &Vault, cred_ref: &str) -> Option<String> {
+    let trimmed = cred_ref.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with("env:") {
+        return Some(trimmed.to_string());
+    }
+    if let Ok(Some(secret)) = vault.get_secret(trimmed) {
+        if !secret.trim().is_empty() {
+            return Some(secret);
+        }
+    }
+    if let Ok(Some(secret)) = vault.get_secret(&format!("credential:{trimmed}")) {
+        if !secret.trim().is_empty() {
+            return Some(secret);
+        }
+    }
+    None
+}
+
+/// Hydrate connection API keys from the AES-256-GCM `Vault` (honoring `credential_ref` /
+/// `credentialRef` first, then `model_conn_key:<id>`, and preserving any legacy plaintext key
 /// still in `kv` for graceful backward-compatible fallback until the next save migrates it).
 fn hydrate_secrets_from_vault(store: &Store, cfg: &mut AppliedConfig) {
     let Ok(vault) = open_vault_for_store(store) else {
@@ -450,9 +669,39 @@ fn hydrate_secrets_from_vault(store: &Store, cfg: &mut AppliedConfig) {
             .map(|s| s.trim().is_empty())
             .unwrap_or(true);
         if needs_hydration {
+            if let Some(cred_ref) = cfg
+                .connection_extras
+                .get(&conn.id)
+                .and_then(|e| e.credential_ref.as_deref())
+            {
+                if let Some(secret) = lookup_vault_credential_ref(&vault, cred_ref) {
+                    conn.api_key = Some(secret);
+                    continue;
+                }
+            }
             if let Ok(Some(secret)) = vault.get_secret(&vault_secret_key(&conn.id)) {
                 if !secret.trim().is_empty() {
                     conn.api_key = Some(secret);
+                }
+            }
+        }
+    }
+    for fb in &mut cfg.fallbacks {
+        if fb.api_key.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if let Some(cred_ref) = fb.credential_ref.as_deref() {
+                if let Some(secret) = lookup_vault_credential_ref(&vault, cred_ref) {
+                    fb.api_key = Some(secret);
+                }
+            }
+        }
+    }
+    for ex in cfg.connection_extras.values_mut() {
+        for fb in &mut ex.fallbacks {
+            if fb.api_key.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                if let Some(cred_ref) = fb.credential_ref.as_deref() {
+                    if let Some(secret) = lookup_vault_credential_ref(&vault, cred_ref) {
+                        fb.api_key = Some(secret);
+                    }
                 }
             }
         }
@@ -464,7 +713,8 @@ fn hydrate_secrets_from_vault(store: &Store, cfg: &mut AppliedConfig) {
 /// then `$HOME/.nola/config.jsonc` / `$HOME/.nola/config.json`).
 pub fn load_applied_config(store: &Store) -> AppliedConfig {
     if let Ok(Some(val)) = store.get_kv(KV_APPLIED_CONFIG) {
-        if let Ok(mut cfg) = serde_json::from_value::<AppliedConfig>(val) {
+        if let Ok(mut cfg) = serde_json::from_value::<AppliedConfig>(val.clone()) {
+            harvest_config_extras(&val, &mut cfg);
             hydrate_secrets_from_vault(store, &mut cfg);
             return cfg;
         }
@@ -473,7 +723,7 @@ pub fn load_applied_config(store: &Store) -> AppliedConfig {
     if let Some(discovered) = discover_config_path(&cwd) {
         if let Ok(raw) = read_config_file_safe(&discovered) {
             let clean = strip_jsonc(&raw);
-            if let Ok(mut cfg) = serde_json::from_str::<AppliedConfig>(&clean) {
+            if let Ok(mut cfg) = parse_applied_config_json(&clean) {
                 hydrate_secrets_from_vault(store, &mut cfg);
                 return cfg;
             }
@@ -534,6 +784,186 @@ pub fn redacted_llm_config(llm: &LlmSection) -> Value {
         "default_model": llm.default_model,
         "connections": connections
     })
+}
+
+/// Serialize `AppliedConfig`'s LLM section with all plaintext `api_key` values stripped,
+/// preserving connection `name`, `credential_ref`, per-model `name`, and `fallbacks`.
+pub fn redacted_applied_llm_config(cfg: &AppliedConfig) -> Value {
+    let connections: Vec<Value> = cfg
+        .llm
+        .connections
+        .iter()
+        .map(|conn| {
+            let configured = connection_has_api_key(conn);
+            let extras = cfg.connection_extras.get(&conn.id);
+            let models: Vec<Value> = conn
+                .models
+                .iter()
+                .map(|m| {
+                    let mut mv = serde_json::to_value(m).unwrap_or_else(|_| json!({"id": m.id}));
+                    if let Some(mname) = extras.and_then(|e| e.model_names.get(&m.id)) {
+                        if let Some(obj) = mv.as_object_mut() {
+                            obj.insert("name".into(), json!(mname));
+                        }
+                    }
+                    mv
+                })
+                .collect();
+            let mut obj = json!({
+                "id": conn.id,
+                "endpoint": conn.endpoint,
+                "protocol": conn.protocol,
+                "provider": conn.provider,
+                "api_key": "",
+                "api_key_env": conn.api_key_env,
+                "hasApiKey": configured,
+                "apiKeyConfigured": configured,
+                "has_api_key": configured,
+                "models": models
+            });
+            if let Some(ex) = extras {
+                if let Some(map) = obj.as_object_mut() {
+                    if let Some(ref name) = ex.name {
+                        map.insert("name".into(), json!(name));
+                    }
+                    if let Some(ref cred_ref) = ex.credential_ref {
+                        map.insert("credential_ref".into(), json!(cred_ref));
+                    }
+                    if !ex.fallbacks.is_empty() {
+                        let fbs: Vec<Value> = ex
+                            .fallbacks
+                            .iter()
+                            .map(|fb| {
+                                json!({
+                                    "connection": fb.connection,
+                                    "model": fb.model,
+                                    "endpoint": fb.endpoint,
+                                    "protocol": fb.protocol,
+                                    "api_key_env": fb.api_key_env,
+                                    "credential_ref": fb.credential_ref
+                                })
+                            })
+                            .collect();
+                        map.insert("fallbacks".into(), Value::Array(fbs));
+                    }
+                }
+            }
+            obj
+        })
+        .collect();
+    let fallbacks: Vec<Value> = cfg
+        .fallbacks
+        .iter()
+        .map(|fb| {
+            json!({
+                "connection": fb.connection,
+                "model": fb.model,
+                "endpoint": fb.endpoint,
+                "protocol": fb.protocol,
+                "api_key_env": fb.api_key_env,
+                "credential_ref": fb.credential_ref
+            })
+        })
+        .collect();
+    let mut out = json!({
+        "default_model": cfg.llm.default_model,
+        "connections": connections
+    });
+    if !fallbacks.is_empty() {
+        out["fallbacks"] = Value::Array(fallbacks);
+    }
+    out
+}
+
+/// Resolve any configured fallback routes (from the active connection's `fallbacks` and
+/// top-level `cfg.fallbacks`) into concrete `ModelRouteConfig` entries.
+pub fn resolve_fallback_routes(cfg: &AppliedConfig) -> Vec<ModelRouteConfig> {
+    let mut specs: Vec<FallbackRouteConfig> = Vec::new();
+    if let Some(sel) = &cfg.llm.default_model {
+        if let Some(ex) = cfg.connection_extras.get(&sel.connection) {
+            specs.extend(ex.fallbacks.iter().cloned());
+        }
+    }
+    specs.extend(cfg.fallbacks.iter().cloned());
+
+    let mut routes = Vec::new();
+    for fb in specs {
+        if let Some(conn_id) = fb.connection.as_deref().filter(|s| !s.trim().is_empty()) {
+            if let Some(conn) = cfg.llm.connections.iter().find(|c| c.id == conn_id) {
+                let model_id = fb
+                    .model
+                    .clone()
+                    .or_else(|| conn.models.first().map(|m| m.id.clone()))
+                    .unwrap_or_default();
+                if model_id.is_empty() {
+                    continue;
+                }
+                let entry = conn.models.iter().find(|m| m.id == model_id);
+                let proto_raw = fb
+                    .protocol
+                    .as_deref()
+                    .or(conn.protocol.as_deref())
+                    .or(conn.provider.as_deref())
+                    .unwrap_or("chat_completions");
+                let protocol = ModelProtocol::parse(proto_raw).unwrap_or(ModelProtocol::OpenAiChat);
+                routes.push(ModelRouteConfig {
+                    connection_id: conn.id.clone(),
+                    endpoint: fb.endpoint.clone().unwrap_or_else(|| conn.endpoint.clone()),
+                    protocol,
+                    model: model_id,
+                    api_key: resolve_api_key(conn),
+                    context_window: entry.and_then(|e| e.context_window).unwrap_or(128_000),
+                    max_output_tokens: entry.and_then(|e| e.max_output_tokens),
+                    temperature: entry.and_then(|e| e.temperature),
+                    top_p: entry.and_then(|e| e.top_p),
+                    capabilities: entry.and_then(|e| e.capabilities.clone()).unwrap_or_default(),
+                    reasoning_effort: entry.and_then(|e| e.reasoning_effort.clone()),
+                    prompt_cache_key: Some(format!("nola-v2-{}", conn.id)),
+                });
+                continue;
+            }
+        }
+        if let (Some(ep), Some(model_id)) = (
+            fb.endpoint.as_deref().filter(|s| !s.trim().is_empty()),
+            fb.model.as_deref().filter(|s| !s.trim().is_empty()),
+        ) {
+            let protocol = fb
+                .protocol
+                .as_deref()
+                .and_then(ModelProtocol::parse)
+                .unwrap_or(ModelProtocol::OpenAiChat);
+            let api_key = fb
+                .api_key_env
+                .as_deref()
+                .and_then(|k| std::env::var(k).ok())
+                .filter(|v| !v.trim().is_empty())
+                .or_else(|| {
+                    fb.api_key.as_deref().map(|raw| {
+                        if let Some(env_name) = raw.strip_prefix("env:") {
+                            std::env::var(env_name.trim()).unwrap_or_default()
+                        } else {
+                            raw.to_string()
+                        }
+                    })
+                })
+                .unwrap_or_default();
+            routes.push(ModelRouteConfig {
+                connection_id: fb.connection.unwrap_or_else(|| "fallback".into()),
+                endpoint: ep.to_string(),
+                protocol,
+                model: model_id.to_string(),
+                api_key,
+                context_window: 128_000,
+                max_output_tokens: None,
+                temperature: None,
+                top_p: None,
+                capabilities: ModelCapabilities::default(),
+                reasoning_effort: None,
+                prompt_cache_key: Some("nola-v2-fallback".into()),
+            });
+        }
+    }
+    routes
 }
 
 /// Resolve the active `ModelRouteConfig` from `AppliedConfig` + environment fallbacks.
@@ -794,5 +1224,98 @@ mod tests {
             PathBuf::from(r"C:\Users\Alice")
         );
         assert_eq!(resolve_home_dir_from_lookup(|_| None), PathBuf::from("."));
+    }
+
+    #[test]
+    fn apply_config_resolves_credential_ref_preserves_names_and_parses_fallbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let vault_path = dir.path().join("vault.json");
+        bind_store_vault_path(&store, &vault_path).unwrap();
+
+        // Pre-populate Vault with secrets referenced via `credential_ref` and `credentialRef`
+        let vault = Vault::open(vault_path).unwrap();
+        vault.set_secret("vault_primary_key", "sk-vault-primary-123").unwrap();
+        vault.set_secret("vault_backup_key", "sk-vault-backup-456").unwrap();
+
+        let cfg_path = dir.path().join("config.jsonc");
+        fs::write(
+            &cfg_path,
+            r#"{
+              "llm": {
+                "default_model": { "connection": "primary", "model": "gpt-4.1" },
+                "connections": [
+                  {
+                    "id": "primary",
+                    "name": "Primary OpenAI",
+                    "endpoint": "https://api.openai.com/v1",
+                    "protocol": "responses",
+                    "credential_ref": "vault_primary_key",
+                    "models": [
+                      { "id": "gpt-4.1", "name": "GPT-4.1 Flagship" }
+                    ],
+                    "fallbacks": [
+                      { "connection": "backup", "model": "claude-sonnet" }
+                    ]
+                  },
+                  {
+                    "id": "backup",
+                    "name": "Backup Anthropic",
+                    "endpoint": "https://api.anthropic.com/v1",
+                    "protocol": "anthropic",
+                    "credentialRef": "vault_backup_key",
+                    "models": [
+                      { "id": "claude-sonnet", "name": "Claude Sonnet" }
+                    ]
+                  }
+                ],
+                "fallbacks": [
+                  {
+                    "endpoint": "https://fallback.example.com/v1",
+                    "model": "qwen3-coder",
+                    "protocol": "chat_completions"
+                  }
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let applied = apply_config_file(&store, &cfg_path).unwrap();
+        assert_eq!(applied.llm.connections[0].api_key.as_deref(), Some("sk-vault-primary-123"));
+
+        let loaded = load_applied_config(&store);
+        assert_eq!(loaded.llm.connections[0].api_key.as_deref(), Some("sk-vault-primary-123"));
+        assert_eq!(loaded.llm.connections[1].api_key.as_deref(), Some("sk-vault-backup-456"));
+        assert_eq!(
+            loaded.connection_extras.get("primary").and_then(|e| e.name.as_deref()),
+            Some("Primary OpenAI")
+        );
+        assert_eq!(
+            loaded
+                .connection_extras
+                .get("primary")
+                .and_then(|e| e.model_names.get("gpt-4.1").map(String::as_str)),
+            Some("GPT-4.1 Flagship")
+        );
+
+        let redacted = redacted_applied_llm_config(&loaded);
+        let redacted_str = serde_json::to_string(&redacted).unwrap();
+        assert!(!redacted_str.contains("sk-vault-primary-123"));
+        assert!(!redacted_str.contains("sk-vault-backup-456"));
+        assert_eq!(redacted["connections"][0]["name"], "Primary OpenAI");
+        assert_eq!(redacted["connections"][0]["credential_ref"], "vault_primary_key");
+        assert_eq!(redacted["connections"][0]["models"][0]["name"], "GPT-4.1 Flagship");
+        assert_eq!(redacted["connections"][0]["hasApiKey"], true);
+        assert_eq!(redacted["connections"][1]["name"], "Backup Anthropic");
+        assert_eq!(redacted["connections"][1]["credential_ref"], "vault_backup_key");
+
+        let fallbacks = resolve_fallback_routes(&loaded);
+        assert_eq!(fallbacks.len(), 2);
+        assert_eq!(fallbacks[0].connection_id, "backup");
+        assert_eq!(fallbacks[0].model, "claude-sonnet");
+        assert_eq!(fallbacks[0].api_key, "sk-vault-backup-456");
+        assert_eq!(fallbacks[1].endpoint, "https://fallback.example.com/v1");
+        assert_eq!(fallbacks[1].model, "qwen3-coder");
     }
 }

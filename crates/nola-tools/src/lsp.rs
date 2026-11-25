@@ -6,6 +6,8 @@
 //! - Properly kills & reaps LSP child processes on `Drop` and evicts dead/timed-out sessions
 //! - Enforces 8 MiB `Content-Length` cap, 8 KiB header cap, and rejects duplicate `Content-Length`
 //! - Session-isolated pool keyed by `(session_id, workspace_root, language_id)`
+//! - Built-in servers for Rust, Python, TypeScript/JS, Go, C/C++, Swift (`sourcekit-lsp`),
+//!   and Kotlin (`kotlin-language-server`), plus `NOLA_LSP_SERVERS_JSON` env override
 //! - Returns explicit structured errors when LSP servers are unavailable (no silent fallbacks!)
 
 use std::collections::BTreeMap;
@@ -28,41 +30,232 @@ const MAX_LSP_POOL_SESSIONS: usize = 8;
 pub(crate) const MAX_LSP_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_LSP_HEADER_BYTES: usize = 8 * 1024;
 
+#[derive(Debug, Clone)]
 struct LspServerSpec {
-    language_id: &'static str,
-    bin: &'static str,
-    args: &'static [&'static str],
+    language_id: String,
+    bin: String,
+    args: Vec<String>,
+    extensions: Vec<String>,
+    source: &'static str,
+}
+
+fn builtin_lsp_servers() -> Vec<LspServerSpec> {
+    vec![
+        LspServerSpec {
+            language_id: "rust".into(),
+            bin: "rust-analyzer".into(),
+            args: vec![],
+            extensions: vec!["rs".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "python".into(),
+            bin: "pyright-langserver".into(),
+            args: vec!["--stdio".into()],
+            extensions: vec!["py".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "typescript".into(),
+            bin: "typescript-language-server".into(),
+            args: vec!["--stdio".into()],
+            extensions: vec!["ts".into(), "tsx".into(), "js".into(), "jsx".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "go".into(),
+            bin: "gopls".into(),
+            args: vec![],
+            extensions: vec!["go".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "cpp".into(),
+            bin: "clangd".into(),
+            args: vec![],
+            extensions: vec!["c".into(), "cc".into(), "cpp".into(), "h".into(), "hpp".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "swift".into(),
+            bin: "sourcekit-lsp".into(),
+            args: vec![],
+            extensions: vec!["swift".into()],
+            source: "builtin",
+        },
+        LspServerSpec {
+            language_id: "kotlin".into(),
+            bin: "kotlin-language-server".into(),
+            args: vec![],
+            extensions: vec!["kt".into(), "kts".into()],
+            source: "builtin",
+        },
+    ]
+}
+
+fn parse_env_lsp_overrides(raw: &str) -> Vec<LspServerSpec> {
+    let Ok(val) = serde_json::from_str::<Value>(raw) else {
+        return Vec::new();
+    };
+    let mut overrides = Vec::new();
+    let parse_obj = |obj: &serde_json::Map<String, Value>, fallback_lang: Option<&str>| -> Option<LspServerSpec> {
+        let bin = obj.get("bin").or_else(|| obj.get("command")).and_then(|v| v.as_str())?.trim();
+        if bin.is_empty() {
+            return None;
+        }
+        let language_id = obj
+            .get("language_id")
+            .and_then(|v| v.as_str())
+            .or(fallback_lang)
+            .unwrap_or("custom")
+            .trim()
+            .to_ascii_lowercase();
+        let args: Vec<String> = obj
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut extensions: Vec<String> = obj
+            .get("extensions")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| {
+                        v.as_str()
+                            .map(|s| s.trim().trim_start_matches('.').to_ascii_lowercase())
+                    })
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if extensions.is_empty() {
+            if let Some(ext) = fallback_lang.map(|s| s.trim_start_matches('.').to_ascii_lowercase()) {
+                extensions.push(ext);
+            }
+        }
+        Some(LspServerSpec {
+            language_id,
+            bin: bin.to_string(),
+            args,
+            extensions,
+            source: "env",
+        })
+    };
+
+    match val {
+        Value::Array(arr) => {
+            for item in arr {
+                if let Some(obj) = item.as_object() {
+                    if let Some(spec) = parse_obj(obj, None) {
+                        overrides.push(spec);
+                    }
+                }
+            }
+        }
+        Value::Object(map) => {
+            for (k, v) in map {
+                if let Some(obj) = v.as_object() {
+                    if let Some(spec) = parse_obj(obj, Some(&k)) {
+                        overrides.push(spec);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    overrides
+}
+
+fn configured_lsp_servers() -> Vec<LspServerSpec> {
+    let mut specs = builtin_lsp_servers();
+    if let Ok(raw) = std::env::var("NOLA_LSP_SERVERS_JSON") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let env_specs = parse_env_lsp_overrides(trimmed);
+            for ov in env_specs {
+                if let Some(existing) = specs
+                    .iter_mut()
+                    .find(|s| s.language_id == ov.language_id)
+                {
+                    *existing = ov;
+                } else {
+                    specs.push(ov);
+                }
+            }
+        }
+    }
+    specs
 }
 
 fn detect_lsp_server(ext: &str) -> Option<LspServerSpec> {
-    match ext {
-        "rs" => Some(LspServerSpec {
-            language_id: "rust",
-            bin: "rust-analyzer",
-            args: &[],
-        }),
-        "py" => Some(LspServerSpec {
-            language_id: "python",
-            bin: "pyright-langserver",
-            args: &["--stdio"],
-        }),
-        "ts" | "tsx" | "js" | "jsx" => Some(LspServerSpec {
-            language_id: "typescript",
-            bin: "typescript-language-server",
-            args: &["--stdio"],
-        }),
-        "go" => Some(LspServerSpec {
-            language_id: "go",
-            bin: "gopls",
-            args: &[],
-        }),
-        "c" | "cc" | "cpp" | "h" | "hpp" => Some(LspServerSpec {
-            language_id: "cpp",
-            bin: "clangd",
-            args: &[],
-        }),
-        _ => None,
+    let norm = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    if norm.is_empty() {
+        return None;
     }
+    // Check env overrides first so custom entries take precedence even if extension overlaps.
+    let specs = configured_lsp_servers();
+    specs
+        .iter()
+        .find(|s| s.source == "env" && s.extensions.iter().any(|e| e == &norm))
+        .or_else(|| {
+            specs
+                .iter()
+                .find(|s| s.extensions.iter().any(|e| e == &norm))
+        })
+        .cloned()
+}
+
+fn is_binary_available(bin: &str) -> bool {
+    let p = Path::new(bin);
+    if p.components().count() > 1 {
+        return p.is_file();
+    }
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let cand = dir.join(bin);
+            if cand.is_file() {
+                return true;
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let cand_exe = dir.join(format!("{bin}.exe"));
+                if cand_exe.is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Optional best-effort post-edit diagnostics collector.
+/// Returns `None` immediately when no LSP server binary is configured/installed for `path`'s
+/// extension, avoiding stalls on hosts without external language servers.
+pub fn collect_post_edit_diagnostics(ctx: &ToolContext, path: &Path) -> Option<Value> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let spec = detect_lsp_server(&ext)?;
+    if !is_binary_available(&spec.bin) {
+        return None;
+    }
+    ctx.lsp
+        .query_scoped(
+            &ctx.session_id,
+            &ctx.workspace_root,
+            path,
+            "diagnostics",
+            0,
+            0,
+            None,
+        )
+        .ok()
 }
 
 fn path_to_uri(path: &Path) -> String {
@@ -120,8 +313,8 @@ impl Drop for LspSession {
 
 impl LspSession {
     fn spawn(spec: &LspServerSpec, workspace_root: &Path) -> Result<Self, String> {
-        let mut child = Command::new(spec.bin)
-            .args(spec.args)
+        let mut child = Command::new(&spec.bin)
+            .args(&spec.args)
             .current_dir(workspace_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -412,6 +605,23 @@ pub struct LspPool {
 }
 
 impl LspPool {
+    pub fn list_servers(&self) -> Vec<Value> {
+        configured_lsp_servers()
+            .into_iter()
+            .map(|s| {
+                let available = is_binary_available(&s.bin);
+                json!({
+                    "language_id": s.language_id,
+                    "bin": s.bin,
+                    "args": s.args,
+                    "extensions": s.extensions,
+                    "available": available,
+                    "source": s.source
+                })
+            })
+            .collect()
+    }
+
     fn get_or_spawn(
         &self,
         session_id: &str,
@@ -421,7 +631,7 @@ impl LspPool {
         let key: LspPoolKey = (
             session_id.to_string(),
             workspace_root.to_path_buf(),
-            spec.language_id.to_string(),
+            spec.language_id.clone(),
         );
         if let Some(existing) = self.sessions.lock().unwrap().get(&key).cloned() {
             if existing.is_healthy() {
@@ -489,7 +699,7 @@ impl LspPool {
             if action == "workspace_symbols" {
                 return session.request("workspace/symbol", json!({"query": query.unwrap_or("")}));
             }
-            let uri = session.sync_document(path, spec.language_id)?;
+            let uri = session.sync_document(path, &spec.language_id)?;
             match action {
                 "hover" => session.request(
                     "textDocument/hover",
@@ -542,7 +752,7 @@ impl LspPool {
             let key: LspPoolKey = (
                 session_id.to_string(),
                 workspace_root.to_path_buf(),
-                spec.language_id.to_string(),
+                spec.language_id,
             );
             self.sessions.lock().unwrap().remove(&key);
         }
@@ -557,21 +767,29 @@ impl ToolHandler for LspDiagnosticsTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "lsp".into(),
-                description: "Query Language Server Protocol (diagnostics, definition, implementation, references, hover, document_symbols, workspace_symbols). Spawns external LSP servers under Process permission admission.".into(),
+                description: "Query Language Server Protocol (list_servers, diagnostics, definition, implementation, references, hover, document_symbols, workspace_symbols). Spawns external LSP servers under Process permission admission.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["diagnostics", "definition", "implementation", "references", "hover", "document_symbols", "workspace_symbols"],
+                            "enum": [
+                                "list_servers",
+                                "diagnostics",
+                                "definition",
+                                "implementation",
+                                "references",
+                                "hover",
+                                "document_symbols",
+                                "workspace_symbols"
+                            ],
                             "description": "Default 'diagnostics'"
                         },
-                        "path": { "type": "string" },
+                        "path": { "type": "string", "description": "Target file path (required for all actions except list_servers)" },
                         "line": { "type": "integer", "description": "0-based line number" },
                         "character": { "type": "integer", "description": "0-based character column" },
                         "query": { "type": "string", "description": "Query string for workspace_symbols" }
-                    },
-                    "required": ["path"]
+                    }
                 }),
             },
             tier: ToolTier::Deferred,
@@ -581,13 +799,34 @@ impl ToolHandler for LspDiagnosticsTool {
     }
 
     fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
-        let Some(raw_path) = args.get("path").and_then(|v| v.as_str()) else {
-            return ToolExecutionResult::err_structured("missing_param", "missing 'path'", None);
-        };
         let action = args
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("diagnostics");
+
+        if action == "list_servers" {
+            let servers = ctx.lsp.list_servers();
+            let available_count = servers
+                .iter()
+                .filter(|s| s["available"].as_bool() == Some(true))
+                .count();
+            return ToolExecutionResult::ok_structured(
+                json!({
+                    "action": "list_servers",
+                    "count": servers.len(),
+                    "available_count": available_count,
+                    "servers": servers
+                }),
+                format!(
+                    "Listed {} configured LSP server(s) ({available_count} available on host)",
+                    servers.len()
+                ),
+            );
+        }
+
+        let Some(raw_path) = args.get("path").and_then(|v| v.as_str()) else {
+            return ToolExecutionResult::err_structured("missing_param", "missing 'path'", None);
+        };
         let line = args.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let character = args.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let query = args.get("query").and_then(|v| v.as_str());

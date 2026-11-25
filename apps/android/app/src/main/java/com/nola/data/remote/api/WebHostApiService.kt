@@ -146,6 +146,7 @@ interface WebHostApiService {
         reasoningEffort: String? = null,
         permissionProfile: String? = null,
         selectedExperts: kotlinx.serialization.json.JsonArray? = null,
+        deviceBridge: JsonObject? = null,
     ): kotlinx.coroutines.flow.Flow<SseEvent> {
         error("v2 SSE message streaming is unavailable")
     }

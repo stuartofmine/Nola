@@ -14,12 +14,12 @@ Distinguish a catalog read from an inference attempt. Test repeated startup, a b
 
 ## Implementation
 
-- [nola-application/src/model.rs](../../../../core/nola-application/src/model.rs)
-- [nola-application/src/model_profile_resolution.rs](../../../../core/nola-application/src/model_profile_resolution.rs)
-- [nola-credential-host/src/lib.rs](../../../../core/nola-credential-host/src/lib.rs)
-- [cli/src/config_files.rs](../../../../apps/cli/src/config_files.rs)
-- [cli/src/model_acquisition.rs](../../../../apps/cli/src/model_acquisition.rs)
-- [nola-application/src/model_connection.rs](../../../../core/nola-application/src/model_connection.rs)
+- [nola-application/src/model.rs](../../../../crates/nola-llm/src/lib.rs)
+- [nola-application/src/model_profile_resolution.rs](../../../../crates/nola-app/src/config.rs)
+- [nola-credential-host/src/lib.rs](../../../../crates/nola-store/src/vault.rs)
+- [cli/src/config_files.rs](../../../../crates/nola-app/src/config.rs)
+- [cli/src/model_acquisition.rs](../../../../crates/nola-modules/src/local_models_plugins.rs)
+- [nola-application/src/model_connection.rs](../../../../crates/nola-app/src/config.rs)
 
 ## Redaction before inference
 
@@ -33,7 +33,7 @@ Run `python3 scripts/test_model_request_privacy.py` to inspect first-turn and re
 
 ## Repetitive reasoning resample and stream presentation (2026-11-24)
 
-On tool-capable turns, when `ReasoningProgressGuard` aborts degenerate reasoning (`model_repetitive_reasoning`) before any visible `TextDelta` is emitted, the CLI streaming adapter ([streaming.rs](../../../../apps/cli/src/llm_parts/streaming.rs)) performs a single transactional resample (`LlmEvent::Retrying`, with `LlmEvent::SamplingStarted` clearing prior reasoning buffers). `ModelTextPresentationGate::push_text_against_reasoning` preserves opening assistant words that happen to share a short prefix with `<think>`.
+On tool-capable turns, when `ReasoningProgressGuard` aborts degenerate reasoning (`model_repetitive_reasoning`) before any visible `TextDelta` is emitted, the CLI streaming adapter ([streaming.rs](../../../../crates/nola-llm/src/sse.rs)) performs a single transactional resample (`LlmEvent::Retrying`, with `LlmEvent::SamplingStarted` clearing prior reasoning buffers). `ModelTextPresentationGate::push_text_against_reasoning` preserves opening assistant words that happen to share a short prefix with `<think>`.
 
 ## Detailed references
 

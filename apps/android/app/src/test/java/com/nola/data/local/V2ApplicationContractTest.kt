@@ -24,6 +24,7 @@ class V2ApplicationContractTest {
         }
         val writes = listOf(
             "session_create", "session_delete", "module_upsert", "module_delete", "memory_save", "memory_delete",
+            "branch_conversation", "truncate_conversation", "compact_conversation",
         )
         for (cmd in writes) {
             assertFalse("$cmd should be a mutation", ApplicationCommandEffect.isObservation(buildJsonObject { put("type", cmd) }))
@@ -43,6 +44,59 @@ class V2ApplicationContractTest {
             put("scope", "sess-42")
         })
         assertEquals(ApplicationCommandScope.Conversation("sess-42"), evScope)
+
+        for (cmd in listOf("branch_conversation", "truncate_conversation", "compact_conversation")) {
+            val scope = ApplicationCommandScope.command(buildJsonObject {
+                put("type", cmd)
+                put("conversation_id", "conv-99")
+            })
+            assertEquals("$cmd should scope by conversation_id", ApplicationCommandScope.Conversation("conv-99"), scope)
+        }
+    }
+
+    @Test
+    fun v2WorkspaceReviewParserHandlesGitAndNonGitPayloads() {
+        val gitPayload = buildJsonObject {
+            put("workspace_root", "/repo/nola")
+            put("is_git_repository", true)
+            put("truncated", false)
+            put("review", buildJsonObject {
+                put("inventory", buildJsonObject {
+                    put("entries", JsonArray(listOf(buildJsonObject {
+                        put("path", "src/main.rs")
+                        put("index_status", "M")
+                        put("worktree_status", " ")
+                    })))
+                })
+                put("staged", buildJsonObject { put("text", "+fn hello() {}") })
+                put("unstaged", buildJsonObject { put("text", "-old\n+new") })
+            })
+        }
+        val parsedGit = com.nola.ui.screen.chat.parseV2WorkspaceReview(gitPayload)
+        assertTrue(parsedGit.isGitRepository)
+        assertEquals("/repo/nola", parsedGit.workspaceRoot)
+        assertEquals(1, parsedGit.entries.size)
+        assertEquals("src/main.rs", parsedGit.entries[0].path)
+        assertEquals("M", parsedGit.entries[0].status)
+        assertEquals("+fn hello() {}", parsedGit.stagedDiff)
+        assertEquals("-old\n+new", parsedGit.unstagedDiff)
+
+        val dirPayload = buildJsonObject {
+            put("workspace_root", "/tmp/scratch")
+            put("is_git_repository", false)
+            put("truncated", true)
+            put("files", JsonArray(listOf(buildJsonObject {
+                put("path", "notes.md")
+                put("is_dir", false)
+                put("size", 128)
+            })))
+        }
+        val parsedDir = com.nola.ui.screen.chat.parseV2WorkspaceReview(dirPayload)
+        assertFalse(parsedDir.isGitRepository)
+        assertTrue(parsedDir.truncated)
+        assertEquals(1, parsedDir.entries.size)
+        assertEquals("notes.md", parsedDir.entries[0].path)
+        assertEquals(128L, parsedDir.entries[0].sizeBytes)
     }
 
     @Test

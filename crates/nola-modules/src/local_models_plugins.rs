@@ -3,26 +3,32 @@
 //! and Harness Plugins / Desktop Plugin Pages catalog.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nola_store::Store;
 use nola_tools::{path_within_workspace, ToolContext, ToolHandler, ToolRegistry};
 use nola_types::{
-    new_id, now_ms, CapabilityDomain, LocalModelRecord, PluginRecord, ToolExecutionResult,
-    ToolSchema, ToolSpec, ToolTier,
+    new_id, now_ms, sha256_hex, CapabilityDomain, LocalModelRecord, McpServerConfig, McpTransport,
+    PluginRecord, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
 use crate::ModulesSuite;
 
 const MAX_PROBE_BODY_BYTES: u64 = 256 * 1024;
 const MAX_PLUGIN_HTML_BYTES: usize = 512 * 1024;
+const MAX_PLUGIN_STAGED_FILES: usize = 64;
+const MAX_PLUGIN_STAGED_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const KV_MODEL_DOWNLOAD_STATUS: &str = "local_model_download_status";
 
 pub const KIND_LOCAL_MODEL: &str = "local_model";
 pub const KIND_PLUGIN: &str = "plugin";
@@ -278,6 +284,13 @@ pub fn probe_engine_status(engine: &str) -> Value {
             None,
             "metal",
         ),
+        "lmstudio" | "lm-studio" | "lm_studio" | "lms" => (
+            "lmstudio",
+            std::env::var("NOLA_LMSTUDIO_BIN").ok(),
+            &["lms"],
+            Some("https://lmstudio.ai/download"),
+            "lmstudio",
+        ),
         _ => (
             engine.trim(),
             None,
@@ -300,15 +313,55 @@ pub fn probe_engine_status(engine: &str) -> Value {
         }
     }
 
-    let ready = binary_path.is_some();
+    let mut lmstudio_endpoint: Option<String> = None;
+    let mut lmstudio_reachable = false;
+    if canonical_engine == "lmstudio" {
+        let ep = std::env::var("NOLA_LMSTUDIO_ENDPOINT")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:1234/v1".to_string());
+        let probe_url = format!("{ep}/models");
+        if let Ok(parsed) = Url::parse(&probe_url) {
+            let is_loopback = match parsed.host() {
+                Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+                Some(Host::Ipv4(v4)) => v4.is_loopback(),
+                Some(Host::Ipv6(v6)) => v6.is_loopback(),
+                None => false,
+            };
+            if is_loopback {
+                if let Ok(resp) = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_millis(400))
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .and_then(|c| c.get(parsed).send())
+                {
+                    if resp.status().is_success() {
+                        lmstudio_reachable = true;
+                    }
+                }
+            }
+        }
+        lmstudio_endpoint = Some(ep);
+    }
+
+    let ready = binary_path.is_some() || lmstudio_reachable;
     let backend = if canonical_engine == "llama.cpp" {
         backend_env.unwrap_or_else(|| default_backend.to_string())
     } else {
         default_backend.to_string()
     };
-    let can_install = matches!(canonical_engine, "llama.cpp" | "ollama" | "vllm");
+    let can_install = matches!(
+        canonical_engine,
+        "llama.cpp" | "ollama" | "vllm" | "mlx" | "lmstudio"
+    );
     let message = match &binary_path {
         Some(p) => format!("{canonical_engine} ready at {}", p.display()),
+        None if lmstudio_reachable => format!(
+            "lmstudio server reachable at {}",
+            lmstudio_endpoint.as_deref().unwrap_or("http://127.0.0.1:1234/v1")
+        ),
         None if bin_candidates.is_empty() => format!("unsupported local model engine '{engine}'"),
         None => format!(
             "{canonical_engine} binary ({}) not found on PATH",
@@ -320,6 +373,8 @@ pub fn probe_engine_status(engine: &str) -> Value {
         "engine": canonical_engine,
         "ready": ready,
         "binaryPath": binary_path.map(|p| p.display().to_string()),
+        "endpoint": lmstudio_endpoint,
+        "serverReachable": lmstudio_reachable,
         "backend": backend,
         "canInstall": can_install,
         "guideUrl": guide_url,
@@ -464,6 +519,9 @@ impl LocalModelProcessManager {
             "ollama" => {
                 cmd.env("OLLAMA_HOST", format!("127.0.0.1:{effective_port}"));
                 cmd.arg("serve");
+            }
+            "lmstudio" => {
+                cmd.args(["server", "start", "--port", &effective_port.to_string()]);
             }
             other => {
                 return Err(format!("cannot spawn unsupported local engine '{other}'"));
@@ -677,6 +735,1264 @@ pub fn recommend_local_models(hardware: &Value) -> Value {
         "candidates": candidates,
         "recommendationSource": "catalog"
     })
+}
+
+fn is_loopback_parsed_url(parsed: &Url) -> bool {
+    match parsed.host() {
+        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(v4)) => v4.is_loopback(),
+        Some(Host::Ipv6(v6)) => v6.is_loopback(),
+        None => false,
+    }
+}
+
+/// Real HuggingFace / HF-mirror model search (`/api/models?search=...&limit=10`) with
+/// graceful offline fallback to hardware-curated recommendations.
+pub fn search_hub_models(
+    query: &str,
+    engine: &str,
+    mirror_base: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let q = query.trim();
+    let eng_norm = engine.trim().to_ascii_lowercase();
+    let base_raw = mirror_base
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            std::env::var("NOLA_HF_MIRROR")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "https://huggingface.co".to_string());
+
+    let mut api_url = Url::parse(&format!("{}/api/models", base_raw.trim_end_matches('/')))
+        .map_err(|e| format!("invalid hub mirror base URL '{base_raw}': {e}"))?;
+    let effective_query = if q.is_empty() {
+        match eng_norm.as_str() {
+            "mlx" => "mlx",
+            "llama.cpp" | "llama" | "lmstudio" => "gguf",
+            _ => "qwen",
+        }
+    } else {
+        q
+    };
+    api_url
+        .query_pairs_mut()
+        .append_pair("search", effective_query)
+        .append_pair("limit", "10");
+
+    let live_res: Option<Vec<Value>> = (|| {
+        let is_loopback = is_loopback_parsed_url(&api_url);
+        let client = if is_loopback {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .user_agent("Nola/2.0")
+                .build()
+                .ok()?
+        } else {
+            let (_parsed, host, addrs) =
+                nola_tools::web::resolve_and_validate_public_url(api_url.as_str()).ok()?;
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(6))
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve_to_addrs(&host, &addrs)
+                .user_agent("Nola/2.0")
+                .build()
+                .ok()?
+        };
+        let resp = client.get(api_url.clone()).send().ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let mut buf = Vec::new();
+        resp.take(MAX_PROBE_BODY_BYTES).read_to_end(&mut buf).ok()?;
+        let arr: Vec<Value> = serde_json::from_slice(&buf).ok()?;
+        let mapped: Vec<Value> = arr
+            .into_iter()
+            .take(10)
+            .filter_map(|item| {
+                let repo_id = item
+                    .get("id")
+                    .or_else(|| item.get("modelId"))
+                    .and_then(|v| v.as_str())?
+                    .to_string();
+                let tags: Vec<String> = item
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|t| t.as_str().map(ToString::to_string))
+                            .take(12)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(json!({
+                    "id": repo_id,
+                    "repository": repo_id,
+                    "engine": if eng_norm.is_empty() { "llama.cpp" } else { eng_norm.as_str() },
+                    "downloads": item.get("downloads").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "likes": item.get("likes").and_then(|v| v.as_u64()).unwrap_or(0),
+                    "tags": tags,
+                    "url": format!("{}/{}", base_raw.trim_end_matches('/'), repo_id),
+                    "source": "huggingface",
+                    "offlineFallback": false
+                }))
+            })
+            .collect();
+        (!mapped.is_empty()).then_some(mapped)
+    })();
+
+    if let Some(items) = live_res {
+        return Ok(items);
+    }
+
+    // Graceful offline fallback to curated hardware-fitted recommendations
+    let hw = probe_hardware();
+    let rec = recommend_local_models(&hw);
+    let q_lower = q.to_ascii_lowercase();
+    let all_candidates = rec
+        .get("candidates")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut filtered: Vec<Value> = all_candidates
+        .iter()
+        .filter(|c| {
+            if q_lower.is_empty() {
+                return true;
+            }
+            let hay = format!(
+                "{} {}",
+                c.get("repository").and_then(|v| v.as_str()).unwrap_or(""),
+                c.get("variant").and_then(|v| v.as_str()).unwrap_or("")
+            )
+            .to_ascii_lowercase();
+            q_lower.split_whitespace().any(|tok| hay.contains(tok))
+        })
+        .cloned()
+        .collect();
+    if filtered.is_empty() {
+        filtered = all_candidates;
+    }
+    let fallback: Vec<Value> = filtered
+        .into_iter()
+        .map(|mut c| {
+            if let Some(obj) = c.as_object_mut() {
+                obj.insert("source".into(), json!("curated_fallback"));
+                obj.insert("offlineFallback".into(), json!(true));
+                if !eng_norm.is_empty() {
+                    obj.insert("engine".into(), json!(eng_norm));
+                }
+            }
+            c
+        })
+        .collect();
+    Ok(fallback)
+}
+
+/// Download specification for `ModelDownloadManager::start_download`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDownloadPlan {
+    #[serde(default, alias = "download_id")]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default = "default_download_engine")]
+    pub engine: String,
+    pub url: String,
+    #[serde(alias = "dest_path")]
+    pub dest_path: String,
+    #[serde(default)]
+    pub sha256: Option<String>,
+    #[serde(default)]
+    pub quantization: Option<String>,
+    #[serde(default, alias = "expected_bytes")]
+    pub expected_bytes: Option<u64>,
+}
+
+fn default_download_engine() -> String {
+    "llama.cpp".into()
+}
+
+/// Live & persisted download state exposed by `ModelDownloadManager`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDownloadState {
+    pub download_id: String,
+    pub name: String,
+    pub engine: String,
+    pub url: String,
+    pub dest_path: String,
+    pub part_path: String,
+    pub status: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub percent: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    pub started_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Resumable, SHA-256-verifying background local model downloader.
+pub struct ModelDownloadManager {
+    cancels: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+    latest: Mutex<Option<ModelDownloadState>>,
+}
+
+impl Default for ModelDownloadManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn compute_percent(downloaded: u64, total: Option<u64>) -> f64 {
+    match total {
+        Some(t) if t > 0 => ((downloaded as f64 / t as f64) * 100.0).min(100.0),
+        _ => 0.0,
+    }
+}
+
+fn persist_download_state(
+    manager_latest: &Mutex<Option<ModelDownloadState>>,
+    store: &Store,
+    state: &ModelDownloadState,
+) {
+    if let Ok(mut guard) = manager_latest.lock() {
+        *guard = Some(state.clone());
+    }
+    if let Ok(val) = serde_json::to_value(state) {
+        let _ = store.set_kv(KV_MODEL_DOWNLOAD_STATUS, &val);
+        let _ = store.set_kv(&format!("local_model_download:{}", state.download_id), &val);
+    }
+}
+
+fn stream_file_sha256_hex(path: &Path) -> Result<String, String> {
+    let mut f = fs::File::open(path).map_err(|e| format!("failed to open downloaded file: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65_536];
+    loop {
+        let n = f
+            .read(&mut buf)
+            .map_err(|e| format!("failed reading file for SHA-256: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+impl ModelDownloadManager {
+    pub fn new() -> Self {
+        Self {
+            cancels: Mutex::new(BTreeMap::new()),
+            latest: Mutex::new(None),
+        }
+    }
+
+    pub fn global() -> &'static Self {
+        static GLOBAL: OnceLock<ModelDownloadManager> = OnceLock::new();
+        GLOBAL.get_or_init(ModelDownloadManager::new)
+    }
+
+    /// Start (or resume via `Range: bytes=<existing>-`) a background local model download.
+    /// Verifies HTTPS (or loopback HTTP for local mirrors/tests), streams into `<dest>.part`,
+    /// verifies optional SHA-256, atomically renames to `<dest>`, and registers `LocalModelRecord`.
+    pub fn start_download(
+        &'static self,
+        store: &Store,
+        plan: ModelDownloadPlan,
+    ) -> Result<ModelDownloadState, String> {
+        let parsed = Url::parse(plan.url.trim())
+            .map_err(|e| format!("invalid model download URL: {e}"))?;
+        let is_loopback = is_loopback_parsed_url(&parsed);
+        if parsed.scheme() != "https" && !(is_loopback && parsed.scheme() == "http") {
+            return Err("model download URL must use https:// (or loopback http://)".into());
+        }
+        let resolved_remote = if is_loopback {
+            None
+        } else {
+            Some(nola_tools::web::resolve_and_validate_public_url(parsed.as_str())?)
+        };
+
+        let dest_trimmed = plan.dest_path.trim();
+        if dest_trimmed.is_empty() {
+            return Err("dest_path must not be empty".into());
+        }
+        let dest_path = PathBuf::from(dest_trimmed);
+        let part_path = PathBuf::from(format!("{}.part", dest_path.display()));
+        if let Some(parent) = dest_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create download directory: {e}"))?;
+            }
+        }
+
+        let existing_bytes = fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
+        let download_id = plan
+            .id
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(new_id);
+        let started_at_ms = now_ms();
+        let initial_state = ModelDownloadState {
+            download_id: download_id.clone(),
+            name: plan.name.clone(),
+            engine: plan.engine.clone(),
+            url: plan.url.clone(),
+            dest_path: dest_path.display().to_string(),
+            part_path: part_path.display().to_string(),
+            status: "downloading".into(),
+            downloaded_bytes: existing_bytes,
+            total_bytes: plan.expected_bytes,
+            percent: compute_percent(existing_bytes, plan.expected_bytes),
+            sha256: plan.sha256.clone(),
+            error: None,
+            model_id: None,
+            started_at_ms,
+            updated_at_ms: started_at_ms,
+        };
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut guard) = self.cancels.lock() {
+            guard.insert(download_id.clone(), Arc::clone(&cancel_flag));
+        }
+        persist_download_state(&self.latest, store, &initial_state);
+
+        let store_bg = store.clone();
+        let mut state_bg = initial_state.clone();
+        let plan_bg = plan;
+        std::thread::Builder::new()
+            .name(format!("nola-model-dl-{}", &download_id[..download_id.len().min(8)]))
+            .spawn(move || {
+                let outcome: Result<(), String> = (|| {
+                    let mut builder = reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(300))
+                        .redirect(reqwest::redirect::Policy::limited(5))
+                        .user_agent("Nola/2.0");
+                    if is_loopback {
+                        builder = builder.no_proxy();
+                    } else if let Some((_, ref host, ref addrs)) = resolved_remote {
+                        builder = builder.resolve_to_addrs(host, addrs);
+                    }
+                    let client = builder.build().map_err(|e| e.to_string())?;
+
+                    let mut req = client.get(parsed);
+                    if existing_bytes > 0 {
+                        req = req.header(
+                            reqwest::header::RANGE,
+                            format!("bytes={existing_bytes}-"),
+                        );
+                    }
+                    let mut resp = req.send().map_err(|e| format!("download request failed: {e}"))?;
+                    let status_code = resp.status();
+
+                    if status_code.as_u16() == 416 && existing_bytes > 0 {
+                        // Existing `.part` is already at or beyond server size; proceed to verification.
+                        state_bg.downloaded_bytes = existing_bytes;
+                        state_bg.total_bytes = Some(existing_bytes);
+                        state_bg.percent = 100.0;
+                    } else if status_code.is_success() || status_code.as_u16() == 206 {
+                        let is_partial = status_code.as_u16() == 206 && existing_bytes > 0;
+                        let content_len = resp.content_length();
+                        let total = if is_partial {
+                            content_len
+                                .map(|rem| existing_bytes.saturating_add(rem))
+                                .or(plan_bg.expected_bytes)
+                        } else {
+                            content_len.or(plan_bg.expected_bytes)
+                        };
+                        let mut file = if is_partial {
+                            state_bg.downloaded_bytes = existing_bytes;
+                            OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open(&part_path)
+                                .map_err(|e| format!("failed to open .part for resume: {e}"))?
+                        } else {
+                            state_bg.downloaded_bytes = 0;
+                            OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .truncate(true)
+                                .open(&part_path)
+                                .map_err(|e| format!("failed to create .part file: {e}"))?
+                        };
+                        state_bg.total_bytes = total;
+                        state_bg.percent = compute_percent(state_bg.downloaded_bytes, total);
+                        state_bg.updated_at_ms = now_ms();
+                        persist_download_state(&self.latest, &store_bg, &state_bg);
+
+                        let mut buf = [0u8; 65_536];
+                        let mut since_flush_bytes = 0u64;
+                        let mut last_persist = Instant::now();
+                        loop {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                state_bg.status = "cancelled".into();
+                                state_bg.updated_at_ms = now_ms();
+                                persist_download_state(&self.latest, &store_bg, &state_bg);
+                                return Ok(());
+                            }
+                            let n = resp
+                                .read(&mut buf)
+                                .map_err(|e| format!("download stream error: {e}"))?;
+                            if n == 0 {
+                                break;
+                            }
+                            file.write_all(&buf[..n])
+                                .map_err(|e| format!("disk write error: {e}"))?;
+                            state_bg.downloaded_bytes =
+                                state_bg.downloaded_bytes.saturating_add(n as u64);
+                            since_flush_bytes = since_flush_bytes.saturating_add(n as u64);
+                            if since_flush_bytes >= 262_144
+                                || last_persist.elapsed() >= Duration::from_millis(200)
+                            {
+                                state_bg.percent =
+                                    compute_percent(state_bg.downloaded_bytes, state_bg.total_bytes);
+                                state_bg.updated_at_ms = now_ms();
+                                persist_download_state(&self.latest, &store_bg, &state_bg);
+                                since_flush_bytes = 0;
+                                last_persist = Instant::now();
+                            }
+                        }
+                        file.flush().map_err(|e| format!("disk flush error: {e}"))?;
+                    } else {
+                        return Err(format!("download server returned HTTP {status_code}"));
+                    }
+
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        state_bg.status = "cancelled".into();
+                        state_bg.updated_at_ms = now_ms();
+                        persist_download_state(&self.latest, &store_bg, &state_bg);
+                        return Ok(());
+                    }
+
+                    // Verification phase
+                    state_bg.status = "verifying".into();
+                    state_bg.percent = compute_percent(
+                        state_bg.downloaded_bytes,
+                        state_bg.total_bytes.or(Some(state_bg.downloaded_bytes)),
+                    );
+                    state_bg.updated_at_ms = now_ms();
+                    persist_download_state(&self.latest, &store_bg, &state_bg);
+
+                    let computed_sha = stream_file_sha256_hex(&part_path)?;
+                    if let Some(expected_sha) = plan_bg
+                        .sha256
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        if !computed_sha.eq_ignore_ascii_case(expected_sha) {
+                            let _ = fs::remove_file(&part_path);
+                            return Err(format!(
+                                "SHA-256 mismatch: expected {expected_sha}, got {computed_sha}"
+                            ));
+                        }
+                    }
+                    state_bg.sha256 = Some(computed_sha);
+
+                    // Atomic rename & register local model in Store
+                    fs::rename(&part_path, &dest_path)
+                        .map_err(|e| format!("atomic rename failed: {e}"))?;
+                    let final_size = fs::metadata(&dest_path)
+                        .map(|m| m.len())
+                        .unwrap_or(state_bg.downloaded_bytes);
+                    let model_rec = LocalModelRecord {
+                        id: new_id(),
+                        name: plan_bg.name.clone(),
+                        engine: plan_bg.engine.clone(),
+                        path: Some(dest_path.display().to_string()),
+                        size_bytes: final_size,
+                        quantization: plan_bg.quantization.clone(),
+                        installed: true,
+                        updated_at_ms: now_ms(),
+                    };
+                    store_bg
+                        .put_module_record(KIND_LOCAL_MODEL, &model_rec.id, &model_rec)
+                        .map_err(|e| format!("failed to register local model: {e}"))?;
+
+                    state_bg.status = "completed".into();
+                    state_bg.downloaded_bytes = final_size;
+                    state_bg.total_bytes = Some(final_size);
+                    state_bg.percent = 100.0;
+                    state_bg.model_id = Some(model_rec.id);
+                    state_bg.updated_at_ms = now_ms();
+                    persist_download_state(&self.latest, &store_bg, &state_bg);
+                    Ok(())
+                })();
+
+                if let Err(err) = outcome {
+                    state_bg.status = "failed".into();
+                    state_bg.error = Some(err);
+                    state_bg.updated_at_ms = now_ms();
+                    persist_download_state(&self.latest, &store_bg, &state_bg);
+                }
+                if let Ok(mut guard) = self.cancels.lock() {
+                    guard.remove(&state_bg.download_id);
+                }
+            })
+            .map_err(|e| format!("failed to spawn download thread: {e}"))?;
+
+        Ok(initial_state)
+    }
+
+    /// Cooperatively cancel an active download by ID (preserving `.part` for resume).
+    pub fn cancel_download(&self, store: &Store, download_id: &str) -> Result<Value, String> {
+        let mut found = false;
+        if let Ok(guard) = self.cancels.lock() {
+            if let Some(flag) = guard.get(download_id) {
+                flag.store(true, Ordering::Relaxed);
+                found = true;
+            }
+        }
+        if let Ok(Some(mut st)) = store.get_kv(&format!("local_model_download:{download_id}")) {
+            if let Some(obj) = st.as_object_mut() {
+                if obj.get("status").and_then(|v| v.as_str()) == Some("downloading") {
+                    obj.insert("status".into(), json!("cancelled"));
+                    obj.insert("updatedAtMs".into(), json!(now_ms()));
+                    let _ = store.set_kv(&format!("local_model_download:{download_id}"), &st);
+                    let _ = store.set_kv(KV_MODEL_DOWNLOAD_STATUS, &st);
+                }
+            }
+        }
+        Ok(json!({
+            "downloadId": download_id,
+            "cancelRequested": found
+        }))
+    }
+
+    /// Return the latest download status (preferring live in-memory state, falling back to KV).
+    pub fn current_status(&self, store: &Store) -> Value {
+        if let Ok(guard) = self.latest.lock() {
+            if let Some(ref st) = *guard {
+                if let Ok(v) = serde_json::to_value(st) {
+                    return v;
+                }
+            }
+        }
+        store
+            .get_kv(KV_MODEL_DOWNLOAD_STATUS)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| json!({ "status": "idle" }))
+    }
+}
+
+/// Check local inference engine presence and return real actionable installation steps
+/// (or run the package installer when explicitly opted in via `opt_in_install` or
+/// `NOLA_ALLOW_ENGINE_AUTO_INSTALL=1`). NEVER pretends an engine is ready when missing.
+pub fn run_engine_setup(engine: &str) -> Value {
+    let opt_in = std::env::var("NOLA_ALLOW_ENGINE_AUTO_INSTALL")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    run_engine_setup_with_opt_in(engine, opt_in)
+}
+
+pub fn run_engine_setup_with_opt_in(engine: &str, opt_in_install: bool) -> Value {
+    let probed = probe_engine_status(engine);
+    let canonical = probed
+        .get("engine")
+        .and_then(|v| v.as_str())
+        .unwrap_or(engine)
+        .to_string();
+    let ready = probed.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+    if ready {
+        return json!({
+            "engine": canonical,
+            "ready": true,
+            "installed": true,
+            "attemptedInstall": false,
+            "status": probed,
+            "steps": [],
+            "message": probed.get("message").and_then(|v| v.as_str()).unwrap_or("engine ready")
+        });
+    }
+
+    let is_macos = std::env::consts::OS == "macos";
+    let (steps, auto_cmd): (Vec<&str>, Option<(&str, Vec<&str>)>) = match canonical.as_str() {
+        "llama.cpp" => {
+            if is_macos {
+                (
+                    vec![
+                        "Install llama.cpp via Homebrew: brew install llama.cpp",
+                        "Verify installation: llama-server --version",
+                    ],
+                    Some(("brew", vec!["install", "llama.cpp"])),
+                )
+            } else {
+                (
+                    vec![
+                        "Build or install llama-server from https://github.com/ggml-org/llama.cpp",
+                        "Ensure `llama-server` is on PATH or set NOLA_LLAMA_SERVER=/path/to/llama-server",
+                    ],
+                    None,
+                )
+            }
+        }
+        "ollama" => {
+            if is_macos {
+                (
+                    vec![
+                        "Install Ollama via Homebrew: brew install ollama",
+                        "Start daemon: ollama serve",
+                    ],
+                    Some(("brew", vec!["install", "ollama"])),
+                )
+            } else {
+                (
+                    vec![
+                        "Install Ollama: curl -fsSL https://ollama.com/install.sh | sh",
+                        "Start daemon: ollama serve",
+                    ],
+                    None,
+                )
+            }
+        }
+        "vllm" => (
+            vec![
+                "Install vLLM in Python: pip3 install vllm",
+                "Verify installation: vllm --help",
+            ],
+            Some(("pip3", vec!["install", "vllm"])),
+        ),
+        "mlx" => (
+            vec![
+                "Install MLX-LM on Apple Silicon: pip3 install mlx-lm",
+                "Verify installation: mlx_lm.server --help",
+            ],
+            Some(("pip3", vec!["install", "mlx-lm"])),
+        ),
+        "lmstudio" => {
+            if is_macos {
+                (
+                    vec![
+                        "Install LM Studio: brew install --cask lm-studio (or download from https://lmstudio.ai/download)",
+                        "Bootstrap CLI (`lms`) from LM Studio or start its local server on http://127.0.0.1:1234/v1",
+                    ],
+                    Some(("brew", vec!["install", "--cask", "lm-studio"])),
+                )
+            } else {
+                (
+                    vec![
+                        "Download LM Studio from https://lmstudio.ai/download",
+                        "Install `lms` CLI or start LM Studio Local Server on http://127.0.0.1:1234/v1",
+                    ],
+                    None,
+                )
+            }
+        }
+        _ => (
+            vec!["Unsupported local engine; choose llama.cpp, ollama, vllm, mlx, or lmstudio."],
+            None,
+        ),
+    };
+
+    if opt_in_install {
+        if let Some((bin, cmd_args)) = auto_cmd {
+            if let Some(bin_path) = find_binary_on_path(bin) {
+                match Command::new(&bin_path).args(&cmd_args).output() {
+                    Ok(out) => {
+                        let post = probe_engine_status(&canonical);
+                        let post_ready =
+                            post.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+                        return json!({
+                            "engine": canonical,
+                            "ready": post_ready,
+                            "installed": post_ready,
+                            "attemptedInstall": true,
+                            "command": format!("{bin} {}", cmd_args.join(" ")),
+                            "exitCode": out.status.code(),
+                            "stdout": String::from_utf8_lossy(&out.stdout).chars().take(1_000).collect::<String>(),
+                            "stderr": String::from_utf8_lossy(&out.stderr).chars().take(1_000).collect::<String>(),
+                            "status": post,
+                            "steps": steps,
+                            "message": post.get("message").and_then(|v| v.as_str()).unwrap_or("install command finished")
+                        });
+                    }
+                    Err(e) => {
+                        return json!({
+                            "engine": canonical,
+                            "ready": false,
+                            "installed": false,
+                            "attemptedInstall": true,
+                            "error": format!("failed to execute {bin}: {e}"),
+                            "status": probed,
+                            "steps": steps,
+                            "message": format!("Automatic install via {bin} failed: {e}")
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    json!({
+        "engine": canonical,
+        "ready": false,
+        "installed": false,
+        "attemptedInstall": false,
+        "status": probed,
+        "steps": steps,
+        "message": probed.get("message").and_then(|v| v.as_str()).unwrap_or("engine not installed")
+    })
+}
+
+/// Summary of reconciled enabled plugins' declared runtime contributions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginRuntimeSummary {
+    pub enabled_plugins: Vec<Value>,
+    pub mcp_servers: Vec<McpServerConfig>,
+    pub skill_dirs: Vec<PathBuf>,
+    pub pages: Vec<Value>,
+    pub errors: Vec<String>,
+}
+
+fn sanitize_plugin_dir_name(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect()
+}
+
+fn stage_plugin_directory(src_dir: &Path, dest_dir: &Path) -> Result<(usize, String), String> {
+    fs::create_dir_all(dest_dir).map_err(|e| format!("failed to create plugin dir: {e}"))?;
+    let mut stack = vec![src_dir.to_path_buf()];
+    let mut files: Vec<(PathBuf, PathBuf)> = Vec::new();
+    while let Some(cur) = stack.pop() {
+        let entries = fs::read_dir(&cur).map_err(|e| format!("failed reading plugin source: {e}"))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path)
+                .map_err(|e| format!("failed reading entry metadata: {e}"))?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push(path);
+            } else if meta.is_file() {
+                if files.len() >= MAX_PLUGIN_STAGED_FILES {
+                    return Err(format!(
+                        "plugin exceeds maximum of {MAX_PLUGIN_STAGED_FILES} files"
+                    ));
+                }
+                if meta.len() > MAX_PLUGIN_STAGED_FILE_BYTES {
+                    return Err(format!(
+                        "plugin file '{}' exceeds 4 MiB limit",
+                        path.display()
+                    ));
+                }
+                let rel = path
+                    .strip_prefix(src_dir)
+                    .map_err(|_| "plugin file escaped source directory".to_string())?
+                    .to_path_buf();
+                if rel
+                    .components()
+                    .any(|c| !matches!(c, Component::Normal(_)))
+                {
+                    return Err(format!("unsafe plugin relative path '{}'", rel.display()));
+                }
+                files.push((rel, path));
+            }
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = Sha256::new();
+    for (rel, abs) in &files {
+        let target = dest_dir.join(rel);
+        if !path_within_workspace(dest_dir, &target) {
+            return Err(format!("plugin path '{}' escapes destination", rel.display()));
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("failed creating dir: {e}"))?;
+        }
+        let bytes = fs::read(abs).map_err(|e| format!("failed reading plugin file: {e}"))?;
+        hasher.update(rel.to_string_lossy().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(&bytes);
+        fs::write(&target, &bytes).map_err(|e| format!("failed writing staged plugin file: {e}"))?;
+    }
+    Ok((files.len(), hex::encode(hasher.finalize())))
+}
+
+/// Install a plugin package either by staging a local directory/manifest into
+/// `<workspace>/.nola/plugins/<name>/` (with SHA-256 verification) OR by invoking
+/// `pi`/`dsh` CLI when present on `PATH`, then recording `PluginRecord` in `Store`.
+pub fn install_plugin_package(
+    store: &Store,
+    workspace_root: &Path,
+    runtime: &str,
+    profile: &str,
+    source: &str,
+) -> Result<PluginRecord, String> {
+    let src_trimmed = source.trim();
+    if src_trimmed.is_empty() {
+        return Err("plugin source must not be empty".into());
+    }
+    let rt = if runtime.trim().is_empty() {
+        "dsh"
+    } else {
+        runtime.trim()
+    };
+    let prof = if profile.trim().is_empty() {
+        if rt == "pi" { "pi" } else { "web" }
+    } else {
+        profile.trim()
+    };
+
+    let src_path = Path::new(src_trimmed);
+    if src_path.exists() {
+        let (src_dir, manifest_path) = if src_path.is_file() {
+            let parent = src_path
+                .parent()
+                .ok_or_else(|| "plugin manifest has no parent directory".to_string())?;
+            (parent.to_path_buf(), src_path.to_path_buf())
+        } else {
+            (src_path.to_path_buf(), src_path.join("nola-plugin.json"))
+        };
+
+        let raw_manifest = fs::read_to_string(&manifest_path).map_err(|e| {
+            format!(
+                "local plugin missing readable nola-plugin.json at '{}': {e}",
+                manifest_path.display()
+            )
+        })?;
+        let manifest: Value = serde_json::from_str(&raw_manifest)
+            .map_err(|e| format!("invalid nola-plugin.json: {e}"))?;
+
+        let raw_id = manifest
+            .get("id")
+            .or_else(|| manifest.get("name"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| src_dir.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("plugin");
+        let safe_name = sanitize_plugin_dir_name(raw_id);
+        if safe_name.is_empty() {
+            return Err("could not derive valid plugin directory name".into());
+        }
+
+        // Verify optional entry file SHA-256 digest declared in manifest before staging
+        let entry_rel = manifest
+            .get("entry_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if let Some(expected_sha) = manifest
+            .get("sha256")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let target_to_hash = if !entry_rel.is_empty() {
+                src_dir.join(&entry_rel)
+            } else {
+                manifest_path.clone()
+            };
+            let bytes = fs::read(&target_to_hash)
+                .map_err(|e| format!("failed to read plugin file for sha256 check: {e}"))?;
+            let actual = sha256_hex(&bytes);
+            if !actual.eq_ignore_ascii_case(expected_sha) {
+                return Err(format!(
+                    "plugin SHA-256 digest mismatch: expected {expected_sha}, got {actual}"
+                ));
+            }
+        }
+
+        let dest_dir = workspace_root.join(".nola/plugins").join(&safe_name);
+        let (_file_count, bundle_sha) = stage_plugin_directory(&src_dir, &dest_dir)?;
+
+        let name = manifest
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&safe_name)
+            .to_string();
+        let version = manifest
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.1.0")
+            .to_string();
+        let mut capabilities: Vec<String> = manifest
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let rt_cap = format!("runtime:{rt}");
+        if !capabilities.contains(&rt_cap) {
+            capabilities.push(rt_cap);
+        }
+        let prof_cap = format!("profile:{prof}");
+        if !capabilities.contains(&prof_cap) {
+            capabilities.push(prof_cap);
+        }
+        capabilities.push(format!("sha256:{bundle_sha}"));
+
+        let rec = PluginRecord {
+            id: safe_name,
+            name,
+            version,
+            entry_path: if entry_rel.is_empty() {
+                dest_dir.join("nola-plugin.json").display().to_string()
+            } else {
+                dest_dir.join(&entry_rel).display().to_string()
+            },
+            enabled: manifest
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            capabilities,
+        };
+        store
+            .put_module_record(KIND_PLUGIN, &rec.id, &rec)
+            .map_err(|e| e.to_string())?;
+        return Ok(rec);
+    }
+
+    // Remote / package-manager install via `pi` or `dsh` CLI if present on PATH
+    let cli_bin = match rt.to_ascii_lowercase().as_str() {
+        "pi" => "pi",
+        "dsh" => "dsh",
+        other => {
+            return Err(format!(
+                "plugin source '{src_trimmed}' not found locally and unsupported runtime '{other}'"
+            ));
+        }
+    };
+    let Some(bin_path) = find_binary_on_path(cli_bin) else {
+        return Err(format!(
+            "plugin source '{src_trimmed}' does not exist locally and '{cli_bin}' CLI is not installed on PATH"
+        ));
+    };
+    let out = Command::new(&bin_path)
+        .args(["install", src_trimmed])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| format!("failed to invoke '{cli_bin}': {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "'{cli_bin} install {src_trimmed}' failed (exit {:?}): {}",
+            out.status.code(),
+            stderr.trim()
+        ));
+    }
+
+    let safe_id = sanitize_plugin_dir_name(src_trimmed);
+    let id = if safe_id.is_empty() { new_id() } else { safe_id };
+    let rec = PluginRecord {
+        id: id.clone(),
+        name: src_trimmed.to_string(),
+        version: "0.1.0".into(),
+        entry_path: String::new(),
+        enabled: true,
+        capabilities: vec![format!("runtime:{rt}"), format!("profile:{prof}")],
+    };
+    store
+        .put_module_record(KIND_PLUGIN, &rec.id, &rec)
+        .map_err(|e| e.to_string())?;
+    Ok(rec)
+}
+
+fn parse_plugin_mcp_server(plugin_id: &str, raw: &Value) -> Result<McpServerConfig, String> {
+    if let Ok(mut cfg) = serde_json::from_value::<McpServerConfig>(raw.clone()) {
+        if cfg.id.trim().is_empty() {
+            cfg.id = format!("plugin:{plugin_id}:{}", cfg.name);
+        }
+        return Ok(cfg);
+    }
+    let name = raw
+        .get("name")
+        .or_else(|| raw.get("id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| format!("plugin '{plugin_id}' MCP entry missing name/id"))?
+        .to_string();
+    let id = raw
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("plugin:{plugin_id}:{name}"));
+    let transport = match raw
+        .get("transport")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "streamable_http" | "http" => McpTransport::StreamableHttp,
+        "server_sent_events" | "sse" => McpTransport::ServerSentEvents,
+        _ if raw.get("url").and_then(|v| v.as_str()).is_some() => McpTransport::StreamableHttp,
+        _ => McpTransport::Stdio,
+    };
+    let command = raw
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let args = raw
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let env = raw
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let url = raw
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let headers = raw
+        .get("headers")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(McpServerConfig {
+        id,
+        name,
+        transport,
+        enabled: raw.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+        command,
+        args,
+        env,
+        url,
+        headers,
+        oauth_client_id: raw
+            .get("oauth_client_id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        oauth_scopes: raw
+            .get("oauth_scopes")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+/// Reconcile enabled plugins from `<workspace>/.nola/plugins/*/nola-plugin.json` and `Store`,
+/// loading their declared MCP server configs, skill directories, and custom page entries.
+pub fn reconcile_enabled_plugins(store: &Store, workspace_root: &Path) -> PluginRuntimeSummary {
+    let mut summary = PluginRuntimeSummary::default();
+    let stored: BTreeMap<String, PluginRecord> = store
+        .list_module_records::<PluginRecord>(KIND_PLUGIN)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.id.clone(), r))
+        .collect();
+
+    let plugins_dir = workspace_root.join(".nola/plugins");
+    let Ok(entries) = fs::read_dir(&plugins_dir) else {
+        return summary;
+    };
+
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+
+    for dir in dirs {
+        let manifest_path = dir.join("nola-plugin.json");
+        let Ok(raw) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let manifest: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                summary.errors.push(format!(
+                    "failed to parse {}: {e}",
+                    manifest_path.display()
+                ));
+                continue;
+            }
+        };
+        let folder_name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plugin")
+            .to_string();
+        let id = manifest
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&folder_name)
+            .to_string();
+        let enabled = stored
+            .get(&id)
+            .map(|r| r.enabled)
+            .unwrap_or_else(|| manifest.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true));
+        if !enabled {
+            continue;
+        }
+
+        let name = manifest
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&id)
+            .to_string();
+        let version = manifest
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.1.0")
+            .to_string();
+        summary.enabled_plugins.push(json!({
+            "id": id,
+            "name": name,
+            "version": version,
+            "directory": dir.display().to_string()
+        }));
+
+        // 1. Declared MCP servers (`mcp_servers` or `mcpServers`)
+        if let Some(mcp_val) = manifest
+            .get("mcp_servers")
+            .or_else(|| manifest.get("mcpServers"))
+        {
+            match mcp_val {
+                Value::Array(arr) => {
+                    for entry in arr {
+                        match parse_plugin_mcp_server(&id, entry) {
+                            Ok(cfg) if cfg.enabled => summary.mcp_servers.push(cfg),
+                            Ok(_) => {}
+                            Err(e) => summary.errors.push(e),
+                        }
+                    }
+                }
+                Value::Object(map) => {
+                    for (key, val) in map {
+                        let mut merged = val.clone();
+                        if let Some(obj) = merged.as_object_mut() {
+                            obj.entry("name").or_insert_with(|| json!(key));
+                        }
+                        match parse_plugin_mcp_server(&id, &merged) {
+                            Ok(cfg) if cfg.enabled => summary.mcp_servers.push(cfg),
+                            Ok(_) => {}
+                            Err(e) => summary.errors.push(e),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // 2. Declared skill directories (`skill_dirs` / `skills`) or implicit `skills/`
+        let mut declared_skill_paths: Vec<String> = manifest
+            .get("skill_dirs")
+            .or_else(|| manifest.get("skills"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if declared_skill_paths.is_empty() && dir.join("skills").is_dir() {
+            declared_skill_paths.push("skills".into());
+        }
+        for rel in declared_skill_paths {
+            let candidate = dir.join(&rel);
+            if candidate.is_dir()
+                && path_within_workspace(&dir, &candidate)
+                && !summary.skill_dirs.contains(&candidate)
+            {
+                summary.skill_dirs.push(candidate);
+            }
+        }
+
+        // 3. Custom pages (`pages.json` or manifest `pages`)
+        let raw_pages: Vec<Value> = if let Ok(raw_p) = fs::read_to_string(dir.join("pages.json")) {
+            match serde_json::from_str::<Value>(&raw_p) {
+                Ok(Value::Array(arr)) => arr,
+                Ok(Value::Object(map)) => map
+                    .get("pages")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        } else {
+            manifest
+                .get("pages")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+        };
+        for item in raw_pages {
+            let Some(pid) = item
+                .get("id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                continue;
+            };
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(pid);
+            let html = if let Some(inline) = item.get("html").and_then(|v| v.as_str()) {
+                inline.to_string()
+            } else if let Some(rel_file) = item
+                .get("html_path")
+                .or_else(|| item.get("file"))
+                .and_then(|v| v.as_str())
+            {
+                let candidate = dir.join(rel_file);
+                if path_within_workspace(&dir, &candidate) {
+                    fs::read_to_string(&candidate)
+                        .ok()
+                        .filter(|s| s.len() <= MAX_PLUGIN_HTML_BYTES)
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            summary.pages.push(json!({
+                "id": pid,
+                "title": title,
+                "plugin_id": id,
+                "package": folder_name,
+                "html": html
+            }));
+        }
+    }
+
+    summary
 }
 
 /// Scan `<workspace>/.nola/plugins/*/nola-plugin.json`, merge persisted `PluginRecord`s,
@@ -964,18 +2280,46 @@ impl ToolHandler for LocalModelManageTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "local_model_manage".into(),
-                description: "Register, list, probe hardware/engines, recommend, start/stop, or delete local LLM engines (llama.cpp/Ollama/vLLM/MLX).".into(),
+                description: "Register, list, probe hardware/engines, search HuggingFace hub, download/resume, run setup, recommend, start/stop, or delete local LLM engines (llama.cpp/Ollama/vLLM/MLX/LM Studio).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["register", "list", "probe", "hardware", "engine_status", "recommend", "running", "delete"]
+                            "enum": [
+                                "register",
+                                "list",
+                                "probe",
+                                "hardware",
+                                "engine_status",
+                                "recommend",
+                                "search_hub",
+                                "setup",
+                                "start",
+                                "stop",
+                                "running",
+                                "download_start",
+                                "download_status",
+                                "download_cancel",
+                                "delete"
+                            ]
                         },
                         "id": { "type": "string" },
                         "name": { "type": "string" },
                         "engine": { "type": "string" },
-                        "endpoint": { "type": "string" }
+                        "endpoint": { "type": "string" },
+                        "model_path": { "type": "string" },
+                        "path": { "type": "string" },
+                        "port": { "type": "integer" },
+                        "extra_args": { "type": "array", "items": { "type": "string" } },
+                        "query": { "type": "string" },
+                        "mirror_base": { "type": "string" },
+                        "url": { "type": "string" },
+                        "dest_path": { "type": "string" },
+                        "sha256": { "type": "string" },
+                        "quantization": { "type": "string" },
+                        "download_id": { "type": "string" },
+                        "opt_in_install": { "type": "boolean" }
                     },
                     "required": ["action"]
                 }),
@@ -1049,10 +2393,171 @@ impl ToolHandler for LocalModelManageTool {
                     .to_string();
                 ToolExecutionResult::ok_structured(st, msg)
             }
+            "setup" => {
+                let engine = args
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("llama.cpp");
+                let opt_in = args
+                    .get("opt_in_install")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let res = run_engine_setup_with_opt_in(engine, opt_in);
+                let msg = res
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Engine setup evaluated")
+                    .to_string();
+                ToolExecutionResult::ok_structured(res, msg)
+            }
             "recommend" => {
                 let hw = probe_hardware();
                 let recs = recommend_local_models(&hw);
                 ToolExecutionResult::ok_structured(recs, "Computed local model recommendations")
+            }
+            "search_hub" => {
+                let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                let engine = args
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("llama.cpp");
+                let mirror = args.get("mirror_base").and_then(|v| v.as_str());
+                match search_hub_models(query, engine, mirror) {
+                    Ok(models) => {
+                        let count = models.len();
+                        ToolExecutionResult::ok_structured(
+                            json!({"query": query, "engine": engine, "count": count, "models": models}),
+                            format!("Found {count} hub model candidate(s)"),
+                        )
+                    }
+                    Err(e) => ToolExecutionResult::err_structured("hub_search_error", e, None),
+                }
+            }
+            "start" => {
+                let id_arg = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let stored = (!id_arg.is_empty())
+                    .then(|| self.suite.get_record::<LocalModelRecord>(KIND_LOCAL_MODEL, id_arg).ok().flatten())
+                    .flatten();
+                let engine = args
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .or_else(|| stored.as_ref().map(|r| r.engine.clone()))
+                    .unwrap_or_else(|| "llama.cpp".into());
+                let model_path = args
+                    .get("model_path")
+                    .or_else(|| args.get("path"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .or_else(|| stored.as_ref().and_then(|r| r.path.clone()))
+                    .or_else(|| stored.as_ref().map(|r| r.name.clone()))
+                    .unwrap_or_default();
+                let port = args
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|p| u16::try_from(p).ok())
+                    .unwrap_or(8081);
+                let extra_args: Vec<String> = args
+                    .get("extra_args")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(ToString::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match LocalModelProcessManager::global().start_local_model(
+                    id_arg,
+                    &engine,
+                    &model_path,
+                    port,
+                    &extra_args,
+                ) {
+                    Ok(started) => ToolExecutionResult::ok_structured(
+                        started,
+                        format!("Started local model server ({engine}) on port {port}"),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("start_failed", e, None),
+                }
+            }
+            "stop" => {
+                let Some(id) = args.get("id").and_then(|v| v.as_str()) else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'id'", None);
+                };
+                match LocalModelProcessManager::global().stop_local_model(id) {
+                    Ok(res) => ToolExecutionResult::ok_structured(
+                        res,
+                        format!("Stop requested for local model '{id}'"),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("stop_failed", e, None),
+                }
+            }
+            "download_start" => {
+                if !ctx.network_allowed {
+                    return ToolExecutionResult::err_structured(
+                        "network_denied",
+                        "model download blocked by network policy",
+                        None,
+                    );
+                }
+                let Some(url) = args.get("url").and_then(|v| v.as_str()) else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'url'", None);
+                };
+                let Some(dest_path) = args
+                    .get("dest_path")
+                    .or_else(|| args.get("path"))
+                    .and_then(|v| v.as_str())
+                else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'dest_path'", None);
+                };
+                let plan = ModelDownloadPlan {
+                    id: args.get("download_id").and_then(|v| v.as_str()).map(ToString::to_string),
+                    name: args
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("local-model")
+                        .to_string(),
+                    engine: args
+                        .get("engine")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("llama.cpp")
+                        .to_string(),
+                    url: url.to_string(),
+                    dest_path: dest_path.to_string(),
+                    sha256: args.get("sha256").and_then(|v| v.as_str()).map(ToString::to_string),
+                    quantization: args
+                        .get("quantization")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    expected_bytes: args.get("expected_bytes").and_then(|v| v.as_u64()),
+                };
+                match ModelDownloadManager::global().start_download(&self.suite.store, plan) {
+                    Ok(st) => ToolExecutionResult::ok_structured(
+                        serde_json::to_value(&st).unwrap_or(json!({})),
+                        format!("Started model download '{}'", st.download_id),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("download_error", e, None),
+                }
+            }
+            "download_status" => {
+                let st = ModelDownloadManager::global().current_status(&self.suite.store);
+                ToolExecutionResult::ok_structured(st, "Fetched model download status")
+            }
+            "download_cancel" => {
+                let Some(dl_id) = args
+                    .get("download_id")
+                    .or_else(|| args.get("id"))
+                    .and_then(|v| v.as_str())
+                else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'download_id'", None);
+                };
+                match ModelDownloadManager::global().cancel_download(&self.suite.store, dl_id) {
+                    Ok(res) => ToolExecutionResult::ok_structured(
+                        res,
+                        format!("Cancelled model download '{dl_id}'"),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("download_error", e, None),
+                }
             }
             "running" => {
                 let running = LocalModelProcessManager::global().list_running_models();
@@ -1149,15 +2654,18 @@ impl ToolHandler for PluginManageTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "plugin_manage".into(),
-                description: "Register, list, inspect harness catalog/pages, or remove Harness Plugins.".into(),
+                description: "Register, install, reconcile, list, inspect harness catalog/pages, or remove Harness Plugins.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "action": { "type": "string", "enum": ["register", "list", "catalog", "pages", "delete"] },
+                        "action": { "type": "string", "enum": ["register", "install", "reconcile", "list", "catalog", "pages", "delete"] },
                         "id": { "type": "string" },
                         "name": { "type": "string" },
                         "version": { "type": "string" },
-                        "entry_path": { "type": "string" }
+                        "entry_path": { "type": "string" },
+                        "runtime": { "type": "string" },
+                        "profile": { "type": "string" },
+                        "source": { "type": "string" }
                     },
                     "required": ["action"]
                 }),
@@ -1202,6 +2710,35 @@ impl ToolHandler for PluginManageTool {
                     ),
                     Err(e) => ToolExecutionResult::err_structured("plugin_error", e.to_string(), None),
                 }
+            }
+            "install" => {
+                let Some(source) = args.get("source").and_then(|v| v.as_str()) else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'source'", None);
+                };
+                let runtime = args.get("runtime").and_then(|v| v.as_str()).unwrap_or("dsh");
+                let profile = args.get("profile").and_then(|v| v.as_str()).unwrap_or("web");
+                match install_plugin_package(
+                    &self.suite.store,
+                    &self.suite.workspace_root,
+                    runtime,
+                    profile,
+                    source,
+                ) {
+                    Ok(rec) => ToolExecutionResult::ok_structured(
+                        serde_json::to_value(&rec).unwrap_or(json!({})),
+                        format!("Installed plugin '{}'", rec.name),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("plugin_install_error", e, None),
+                }
+            }
+            "reconcile" => {
+                let summary =
+                    reconcile_enabled_plugins(&self.suite.store, &self.suite.workspace_root);
+                let count = summary.enabled_plugins.len();
+                ToolExecutionResult::ok_structured(
+                    serde_json::to_value(&summary).unwrap_or(json!({})),
+                    format!("Reconciled {count} enabled plugin(s)"),
+                )
             }
             "list" => match self.suite.list_records::<PluginRecord>(KIND_PLUGIN) {
                 Ok(items) => {
@@ -1346,5 +2883,156 @@ mod tests {
         let profiles = cat2["profiles"].as_array().unwrap();
         assert_eq!(profiles[0]["packages"].as_array().unwrap().len(), 1);
         assert_eq!(profiles[2]["packages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lmstudio_probe_hub_search_fallback_setup_resumable_downloader_and_plugin_runtime_work() {
+        // 1. LM Studio probe & setup (truthful when missing)
+        let lms_st = probe_engine_status("lmstudio");
+        assert_eq!(lms_st["engine"], "lmstudio");
+        assert_eq!(lms_st["canInstall"], true);
+        let setup_missing = run_engine_setup_with_opt_in("nonexistent-engine-xyz", false);
+        assert_eq!(setup_missing["ready"], false);
+        assert!(!setup_missing["steps"].as_array().unwrap().is_empty());
+
+        // 2. Hub search falls back cleanly to curated models when mirror is unreachable
+        let hub_results =
+            search_hub_models("qwen", "llama.cpp", Some("http://127.0.0.1:1")).unwrap();
+        assert!(!hub_results.is_empty());
+        assert_eq!(hub_results[0]["offlineFallback"], true);
+
+        // 3. Real resumable background ModelDownloadManager with Range + SHA-256 verification
+        let payload = b"GGUF_FAKE_MODEL_HEADER_0123456789_PAYLOAD_END".to_vec();
+        let expected_sha = sha256_hex(&payload);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_payload = payload.clone();
+        let server_thread = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req_buf = [0u8; 2048];
+                let n = stream.read(&mut req_buf).unwrap_or(0);
+                let req_str = String::from_utf8_lossy(&req_buf[..n]);
+                let range_start = req_str
+                    .lines()
+                    .find_map(|l| {
+                        let lower = l.to_ascii_lowercase();
+                        lower.strip_prefix("range: bytes=").and_then(|rest| {
+                            rest.split('-').next().and_then(|s| s.trim().parse::<usize>().ok())
+                        })
+                    })
+                    .unwrap_or(0);
+                let slice = &server_payload[range_start.min(server_payload.len())..];
+                let header = if range_start > 0 {
+                    format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                        slice.len(),
+                        range_start,
+                        server_payload.len() - 1,
+                        server_payload.len()
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        slice.len()
+                    )
+                };
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(slice);
+                let _ = stream.flush();
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let dest_path = dir.path().join("models/test.gguf");
+        fs::create_dir_all(dest_path.parent().unwrap()).unwrap();
+        // Pre-seed first 10 bytes in .part to verify Range resume!
+        let part_path = PathBuf::from(format!("{}.part", dest_path.display()));
+        fs::write(&part_path, &payload[..10]).unwrap();
+
+        let mgr: &'static ModelDownloadManager = Box::leak(Box::new(ModelDownloadManager::new()));
+        let started = mgr
+            .start_download(
+                &store,
+                ModelDownloadPlan {
+                    id: Some("dl-resume-1".into()),
+                    name: "test-gguf".into(),
+                    engine: "llama.cpp".into(),
+                    url: format!("http://{addr}/test.gguf"),
+                    dest_path: dest_path.display().to_string(),
+                    sha256: Some(expected_sha.clone()),
+                    quantization: Some("Q4_K_M".into()),
+                    expected_bytes: Some(payload.len() as u64),
+                },
+            )
+            .unwrap();
+        assert_eq!(started.download_id, "dl-resume-1");
+
+        let mut final_status = json!({});
+        for _ in 0..50 {
+            final_status = mgr.current_status(&store);
+            if matches!(
+                final_status["status"].as_str(),
+                Some("completed") | Some("failed") | Some("cancelled")
+            ) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        let _ = server_thread.join();
+        assert_eq!(final_status["status"], "completed", "status: {final_status}");
+        assert_eq!(final_status["sha256"], expected_sha);
+        assert_eq!(fs::read(&dest_path).unwrap(), payload);
+        let models: Vec<LocalModelRecord> = store.list_module_records(KIND_LOCAL_MODEL).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "test-gguf");
+
+        // 4. Plugin install (with SHA-256 verification) & runtime reconciliation (MCP + skills + pages)
+        let src_plugin = dir.path().join("src-plugin");
+        fs::create_dir_all(src_plugin.join("skills/demo")).unwrap();
+        fs::write(src_plugin.join("entry.js"), "console.log('hi');").unwrap();
+        let entry_sha = sha256_hex(b"console.log('hi');");
+        fs::write(
+            src_plugin.join("skills/demo/SKILL.md"),
+            "---\nname: plugin-skill\ndescription: From plugin\n---\nBody\n",
+        )
+        .unwrap();
+        fs::write(
+            src_plugin.join("nola-plugin.json"),
+            serde_json::to_string(&json!({
+                "id": "acme-kit",
+                "name": "Acme Kit",
+                "version": "2.0.0",
+                "entry_path": "entry.js",
+                "sha256": entry_sha,
+                "mcp_servers": [
+                    { "name": "acme-mcp", "transport": "stdio", "command": "echo", "args": ["ok"], "enabled": true }
+                ],
+                "skill_dirs": ["skills"],
+                "pages": [
+                    { "id": "acme-dash", "title": "Acme Dashboard", "html": "<p>Acme</p>" }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let installed = install_plugin_package(
+            &store,
+            dir.path(),
+            "dsh",
+            "web",
+            &src_plugin.display().to_string(),
+        )
+        .unwrap();
+        assert_eq!(installed.id, "acme-kit");
+
+        let reconciled = reconcile_enabled_plugins(&store, dir.path());
+        assert_eq!(reconciled.enabled_plugins.len(), 1);
+        assert_eq!(reconciled.mcp_servers.len(), 1);
+        assert_eq!(reconciled.mcp_servers[0].name, "acme-mcp");
+        assert_eq!(reconciled.skill_dirs.len(), 1);
+        assert_eq!(reconciled.pages.len(), 1);
+        assert_eq!(reconciled.pages[0]["id"], "acme-dash");
     }
 }

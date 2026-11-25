@@ -2,14 +2,15 @@
 //! SQLite WAL + FTS5 unified store with per-scope event retention,
 //! atomic `VACUUM INTO` backup, and generic typed business-module CRUD.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nola_types::{now_ms, McpServerConfig, MemoryItem, Session, SessionEvent};
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -19,6 +20,9 @@ pub const DEFAULT_MAX_EVENTS_PER_SCOPE: i64 = 10_000;
 pub const NOLA_SQLITE_APPLICATION_ID: u32 = 0x4E4F_4C41;
 /// SQLite `PRAGMA user_version` for Nola v2 schema.
 pub const NOLA_SQLITE_USER_VERSION: u32 = 2;
+
+/// Stored transcript event alias matching `nola_types::SessionEvent`.
+pub type StoredEvent = SessionEvent;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -32,8 +36,93 @@ pub enum StoreError {
     Crypto(String),
     #[error("service lock busy: {0}")]
     LockBusy(String),
+    #[error("incompatible schema: {0}")]
+    IncompatibleSchema(String),
     #[error("store error: {0}")]
     Other(String),
+}
+
+/// Sync outbox/change-log record persisted in `sync_changes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncChangeRecord {
+    pub id: String,
+    pub scope: String,
+    pub entity_kind: String,
+    pub entity_id: String,
+    pub payload_json: String,
+    pub created_at_ms: i64,
+    pub resolved: bool,
+}
+
+/// Document chunk input/storage record persisted in `doc_chunks`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocChunkRecord {
+    pub id: String,
+    pub source_id: String,
+    pub path: String,
+    pub chunk_index: i64,
+    pub content: String,
+    pub sha256: String,
+    pub updated_at_ms: i64,
+}
+
+/// Ranked document chunk hit returned by `Store::search_doc_chunks`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DocChunkHit {
+    pub id: String,
+    pub source_id: String,
+    pub path: String,
+    pub chunk_index: i64,
+    pub content: String,
+    pub sha256: String,
+    pub updated_at_ms: i64,
+    pub score: f64,
+}
+
+/// Indexed source file metadata stored in `code_files`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeFileRow {
+    pub workspace_root: String,
+    pub rel_path: String,
+    pub sha256: String,
+    pub language: String,
+    pub line_count: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Indexed AST symbol stored in `code_symbols` / `code_symbols_fts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeSymbolRow {
+    pub id: String,
+    pub workspace_root: String,
+    pub rel_path: String,
+    pub name: String,
+    pub qualified_name: String,
+    pub kind: String,
+    pub language: String,
+    pub start_line: i64,
+    pub end_line: i64,
+    pub signature: String,
+}
+
+/// Directed symbol reference / call-graph edge stored in `code_edges`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeEdgeRow {
+    pub workspace_root: String,
+    pub from_symbol: String,
+    pub to_symbol: String,
+    pub rel_path: String,
+    pub line: i64,
+    pub edge_kind: String,
+}
+
+/// Summary counts for a workspace's SQLite code index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeIndexStats {
+    pub file_count: i64,
+    pub symbol_count: i64,
+    pub edge_count: i64,
+    pub last_updated_at_ms: Option<i64>,
 }
 
 /// Result of reading events after a cursor in a specific scope.
@@ -86,14 +175,31 @@ impl Store {
         })?;
 
         if app_id != 0 && app_id != NOLA_SQLITE_APPLICATION_ID {
-            return Err(StoreError::Other(format!(
+            return Err(StoreError::IncompatibleSchema(format!(
                 "refusing to open foreign SQLite database with application_id 0x{app_id:08X} (expected 0x{NOLA_SQLITE_APPLICATION_ID:08X})"
             )));
         }
-        if app_id == NOLA_SQLITE_APPLICATION_ID && user_ver > NOLA_SQLITE_USER_VERSION {
-            return Err(StoreError::Other(format!(
+        if app_id == NOLA_SQLITE_APPLICATION_ID && user_ver == 1 {
+            return Err(StoreError::IncompatibleSchema(
+                "legacy Nola v1 database (user_version = 1) is unsupported by the Nola v2 baseline and was NOT modified; use a fresh v2 database path"
+                    .into(),
+            ));
+        }
+        if user_ver > NOLA_SQLITE_USER_VERSION {
+            return Err(StoreError::IncompatibleSchema(format!(
                 "database schema user_version {user_ver} is newer than supported version {NOLA_SQLITE_USER_VERSION}"
             )));
+        }
+        if app_id == NOLA_SQLITE_APPLICATION_ID && user_ver != NOLA_SQLITE_USER_VERSION {
+            return Err(StoreError::IncompatibleSchema(format!(
+                "incompatible Nola database schema user_version {user_ver} (expected {NOLA_SQLITE_USER_VERSION}); database was NOT modified"
+            )));
+        }
+        if app_id == 0 && user_ver == 1 {
+            return Err(StoreError::IncompatibleSchema(
+                "legacy database (user_version = 1) is unsupported by the Nola v2 baseline and was NOT modified"
+                    .into(),
+            ));
         }
         if app_id == 0 {
             let table_count: i64 = conn.query_row(
@@ -107,7 +213,7 @@ impl Store {
                 |r| r.get(0),
             )?;
             if table_count > 0 && has_sessions == 0 {
-                return Err(StoreError::Other(
+                return Err(StoreError::IncompatibleSchema(
                     "refusing to open non-Nola SQLite database (missing 'sessions' table and application_id)"
                         .into(),
                 ));
@@ -139,6 +245,14 @@ impl Store {
                  payload_json TEXT NOT NULL,
                  created_at_ms INTEGER NOT NULL,
                  PRIMARY KEY (scope, seq)
+             );
+
+             CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+                 scope_id UNINDEXED,
+                 seq UNINDEXED,
+                 kind UNINDEXED,
+                 text,
+                 tokenize='unicode61'
              );
 
              CREATE TABLE IF NOT EXISTS event_watermarks (
@@ -185,7 +299,95 @@ impl Store {
                  PRIMARY KEY (kind, id)
              );
              CREATE INDEX IF NOT EXISTS idx_module_records_kind_updated
-                 ON module_records (kind, updated_at_ms DESC);"
+                 ON module_records (kind, updated_at_ms DESC);
+
+             CREATE TABLE IF NOT EXISTS sync_changes (
+                 id TEXT PRIMARY KEY,
+                 scope TEXT NOT NULL,
+                 entity_kind TEXT NOT NULL,
+                 entity_id TEXT NOT NULL,
+                 payload_json TEXT NOT NULL,
+                 created_at_ms INTEGER NOT NULL,
+                 resolved INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX IF NOT EXISTS idx_sync_changes_pending
+                 ON sync_changes (resolved, created_at_ms ASC);
+
+             CREATE TABLE IF NOT EXISTS sync_cursors (
+                 peer_id TEXT PRIMARY KEY,
+                 cursor TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
+
+             CREATE TABLE IF NOT EXISTS doc_chunks (
+                 id TEXT PRIMARY KEY,
+                 source_id TEXT NOT NULL,
+                 path TEXT NOT NULL,
+                 chunk_index INTEGER NOT NULL,
+                 content TEXT NOT NULL,
+                 sha256 TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_doc_chunks_source
+                 ON doc_chunks (source_id, path, chunk_index);
+
+             CREATE VIRTUAL TABLE IF NOT EXISTS doc_chunks_fts USING fts5(
+                 id UNINDEXED,
+                 source_id UNINDEXED,
+                 path,
+                 content,
+                 tokenize='unicode61'
+             );
+
+             CREATE TABLE IF NOT EXISTS code_files (
+                 workspace_root TEXT NOT NULL,
+                 rel_path TEXT NOT NULL,
+                 sha256 TEXT NOT NULL,
+                 language TEXT NOT NULL,
+                 line_count INTEGER NOT NULL,
+                 updated_at_ms INTEGER NOT NULL,
+                 PRIMARY KEY (workspace_root, rel_path)
+             );
+
+             CREATE TABLE IF NOT EXISTS code_symbols (
+                 id TEXT PRIMARY KEY,
+                 workspace_root TEXT NOT NULL,
+                 rel_path TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 qualified_name TEXT NOT NULL,
+                 kind TEXT NOT NULL,
+                 language TEXT NOT NULL,
+                 start_line INTEGER NOT NULL,
+                 end_line INTEGER NOT NULL,
+                 signature TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_code_symbols_ws_file
+                 ON code_symbols (workspace_root, rel_path);
+
+             CREATE VIRTUAL TABLE IF NOT EXISTS code_symbols_fts USING fts5(
+                 id UNINDEXED,
+                 workspace_root UNINDEXED,
+                 rel_path,
+                 name,
+                 qualified_name,
+                 signature,
+                 tokenize='unicode61'
+             );
+
+             CREATE TABLE IF NOT EXISTS code_edges (
+                 workspace_root TEXT NOT NULL,
+                 from_symbol TEXT NOT NULL,
+                 to_symbol TEXT NOT NULL,
+                 rel_path TEXT NOT NULL,
+                 line INTEGER NOT NULL,
+                 edge_kind TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_code_edges_from
+                 ON code_edges (workspace_root, from_symbol);
+             CREATE INDEX IF NOT EXISTS idx_code_edges_to
+                 ON code_edges (workspace_root, to_symbol);
+             CREATE INDEX IF NOT EXISTS idx_code_edges_file
+                 ON code_edges (workspace_root, rel_path);"
         );
         conn.execute_batch(&schema_batch)?;
         Ok(Self {
@@ -337,6 +539,7 @@ impl Store {
         self.run_write_tx(|tx| {
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM events WHERE scope = ?1", params![id])?;
+            tx.execute("DELETE FROM events_fts WHERE scope_id = ?1", params![id])?;
             tx.execute("DELETE FROM event_watermarks WHERE scope = ?1", params![id])?;
             tx.execute(
                 "DELETE FROM kv WHERE key IN (?1, ?2, ?3)",
@@ -357,6 +560,7 @@ impl Store {
     ) -> Result<SessionEvent, StoreError> {
         let cap = max_events_per_scope.max(1);
         let payload_json = serde_json::to_string(&payload)?;
+        let searchable_text = extract_searchable_event_text(&payload);
         let ts = now_ms();
         self.run_write_tx(|tx| {
             let current_max: i64 = tx
@@ -373,11 +577,22 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![scope, next_seq, kind, payload_json, ts],
             )?;
+            if !searchable_text.is_empty() {
+                tx.execute(
+                    "INSERT INTO events_fts (scope_id, seq, kind, text)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![scope, next_seq, kind, searchable_text],
+                )?;
+            }
             // Per-scope pruning: NEVER evicts events belonging to any other scope!
             let cutoff_seq = next_seq.saturating_sub(cap);
             if cutoff_seq > 0 {
                 tx.execute(
                     "DELETE FROM events WHERE scope = ?1 AND seq <= ?2",
+                    params![scope, cutoff_seq],
+                )?;
+                tx.execute(
+                    "DELETE FROM events_fts WHERE scope_id = ?1 AND CAST(seq AS INTEGER) <= ?2",
                     params![scope, cutoff_seq],
                 )?;
             }
@@ -411,6 +626,10 @@ impl Store {
                 "DELETE FROM events WHERE scope = ?1 AND seq >= ?2",
                 params![scope, from_seq],
             )?;
+            tx.execute(
+                "DELETE FROM events_fts WHERE scope_id = ?1 AND CAST(seq AS INTEGER) >= ?2",
+                params![scope, from_seq],
+            )?;
             let new_max: i64 = tx
                 .query_row(
                     "SELECT COALESCE(MAX(seq), 0) FROM events WHERE scope = ?1",
@@ -434,6 +653,130 @@ impl Store {
                 params![scope, new_min, new_max],
             )?;
             Ok(deleted)
+        })
+    }
+
+    /// Full-text search across conversation transcript events (`events_fts`) with BM25 ranking,
+    /// capped token expression depth, and CJK / non-ASCII `LIKE` fallback.
+    pub fn search_events_fts(
+        &self,
+        scope_id: Option<&str>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
+        let sanitized: String = query.chars().filter(|&c| c != '\0').collect();
+        let trimmed = sanitized.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lim = limit.max(1) as i64;
+        self.with_conn(|conn| {
+            let mut out = Vec::new();
+            if let Some(fts_query) = build_fts5_or_query(trimmed) {
+                let mut stmt = conn.prepare(
+                    "SELECT e.scope, e.seq, e.kind, e.payload_json, e.created_at_ms
+                     FROM events_fts f
+                     JOIN events e ON e.scope = f.scope_id AND e.seq = CAST(f.seq AS INTEGER)
+                     WHERE events_fts MATCH ?1
+                       AND (?2 IS NULL OR e.scope = ?2)
+                     ORDER BY bm25(events_fts) ASC, e.created_at_ms DESC, e.seq DESC
+                     LIMIT ?3",
+                )?;
+                let rows = stmt.query_map(params![fts_query, scope_id, lim], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (scope, seq, kind, raw, created_at_ms) = row?;
+                    let payload = serde_json::from_str(&raw)?;
+                    out.push(StoredEvent {
+                        scope,
+                        seq,
+                        kind,
+                        payload,
+                        created_at_ms,
+                    });
+                }
+            }
+
+            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+                let like_pat = escape_like_pattern(trimmed);
+                let mut stmt = conn.prepare(
+                    "SELECT e.scope, e.seq, e.kind, e.payload_json, e.created_at_ms
+                     FROM events_fts f
+                     JOIN events e ON e.scope = f.scope_id AND e.seq = CAST(f.seq AS INTEGER)
+                     WHERE (?1 IS NULL OR e.scope = ?1)
+                       AND f.text LIKE ?2 ESCAPE '\\'
+                     ORDER BY e.created_at_ms DESC, e.seq DESC
+                     LIMIT ?3",
+                )?;
+                let rows = stmt.query_map(params![scope_id, like_pat, lim], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (scope, seq, kind, raw, created_at_ms) = row?;
+                    let payload = serde_json::from_str(&raw)?;
+                    out.push(StoredEvent {
+                        scope,
+                        seq,
+                        kind,
+                        payload,
+                        created_at_ms,
+                    });
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Read an ordered slice of transcript events starting at `from_seq` (inclusive).
+    pub fn read_event_range(
+        &self,
+        scope_id: &str,
+        from_seq: i64,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>, StoreError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT scope, seq, kind, payload_json, created_at_ms
+                 FROM events
+                 WHERE scope = ?1 AND seq >= ?2
+                 ORDER BY seq ASC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![scope_id, from_seq, limit.max(1) as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (scope, seq, kind, raw, created_at_ms) = row?;
+                let payload = serde_json::from_str(&raw)?;
+                out.push(StoredEvent {
+                    scope,
+                    seq,
+                    kind,
+                    payload,
+                    created_at_ms,
+                });
+            }
+            Ok(out)
         })
     }
 
@@ -815,6 +1158,632 @@ impl Store {
         })
     }
 
+    // --- Sync Engine (Changes & Peer Cursors) ---
+
+    pub fn record_sync_change(&self, record: &SyncChangeRecord) -> Result<(), StoreError> {
+        self.with_write_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sync_changes (id, scope, entity_kind, entity_id, payload_json, created_at_ms, resolved)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                   scope = excluded.scope,
+                   entity_kind = excluded.entity_kind,
+                   entity_id = excluded.entity_id,
+                   payload_json = excluded.payload_json,
+                   created_at_ms = excluded.created_at_ms,
+                   resolved = excluded.resolved",
+                params![
+                    record.id,
+                    record.scope,
+                    record.entity_kind,
+                    record.entity_id,
+                    record.payload_json,
+                    record.created_at_ms,
+                    i64::from(record.resolved),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_pending_sync_changes(
+        &self,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SyncChangeRecord>, StoreError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, scope, entity_kind, entity_id, payload_json, created_at_ms, resolved
+                 FROM sync_changes
+                 WHERE resolved = 0
+                   AND (?1 IS NULL OR scope = ?1)
+                 ORDER BY created_at_ms ASC, id ASC
+                 LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![scope, limit.max(1) as i64], |r| {
+                    Ok(SyncChangeRecord {
+                        id: r.get(0)?,
+                        scope: r.get(1)?,
+                        entity_kind: r.get(2)?,
+                        entity_id: r.get(3)?,
+                        payload_json: r.get(4)?,
+                        created_at_ms: r.get(5)?,
+                        resolved: r.get::<_, i64>(6)? != 0,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn resolve_sync_change(&self, id: &str) -> Result<bool, StoreError> {
+        self.with_write_conn(|conn| {
+            let n = conn.execute(
+                "UPDATE sync_changes SET resolved = 1 WHERE id = ?1",
+                params![id],
+            )?;
+            Ok(n > 0)
+        })
+    }
+
+    pub fn get_sync_cursor(&self, peer_id: &str) -> Result<Option<String>, StoreError> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT cursor FROM sync_cursors WHERE peer_id = ?1",
+                params![peer_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(StoreError::from)
+        })
+    }
+
+    pub fn save_sync_cursor(&self, peer_id: &str, cursor: &str) -> Result<(), StoreError> {
+        let ts = now_ms();
+        self.with_write_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sync_cursors (peer_id, cursor, updated_at_ms)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(peer_id) DO UPDATE SET
+                   cursor = excluded.cursor,
+                   updated_at_ms = excluded.updated_at_ms",
+                params![peer_id, cursor, ts],
+            )?;
+            Ok(())
+        })
+    }
+
+    // --- Data Source Document Chunks FTS5 (RAG) ---
+
+    pub fn replace_source_chunks(
+        &self,
+        source_id: &str,
+        chunks: &[DocChunkRecord],
+    ) -> Result<usize, StoreError> {
+        self.run_write_tx(|tx| {
+            tx.execute(
+                "DELETE FROM doc_chunks WHERE source_id = ?1",
+                params![source_id],
+            )?;
+            tx.execute(
+                "DELETE FROM doc_chunks_fts WHERE source_id = ?1",
+                params![source_id],
+            )?;
+            for chunk in chunks {
+                tx.execute(
+                    "INSERT INTO doc_chunks (id, source_id, path, chunk_index, content, sha256, updated_at_ms)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        chunk.id,
+                        source_id,
+                        chunk.path,
+                        chunk.chunk_index,
+                        chunk.content,
+                        chunk.sha256,
+                        chunk.updated_at_ms,
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO doc_chunks_fts (id, source_id, path, content)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![chunk.id, source_id, chunk.path, chunk.content],
+                )?;
+            }
+            Ok(chunks.len())
+        })
+    }
+
+    pub fn delete_source_chunks(&self, source_id: &str) -> Result<usize, StoreError> {
+        self.run_write_tx(|tx| {
+            let deleted = tx.execute(
+                "DELETE FROM doc_chunks WHERE source_id = ?1",
+                params![source_id],
+            )?;
+            tx.execute(
+                "DELETE FROM doc_chunks_fts WHERE source_id = ?1",
+                params![source_id],
+            )?;
+            Ok(deleted)
+        })
+    }
+
+    pub fn search_doc_chunks(
+        &self,
+        source_ids: Option<&[String]>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<DocChunkHit>, StoreError> {
+        if let Some(ids) = source_ids {
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+        }
+        let sanitized: String = query.chars().filter(|&c| c != '\0').collect();
+        let trimmed = sanitized.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        let lim = limit.max(1) as i64;
+        self.with_conn(|conn| {
+            let mut out = Vec::new();
+            if let Some(fts_query) = build_fts5_or_query(trimmed) {
+                let (sql, bind_values) = match source_ids {
+                    Some(ids) => {
+                        let placeholders = vec!["?"; ids.len()].join(", ");
+                        let sql = format!(
+                            "SELECT d.id, d.source_id, d.path, d.chunk_index, d.content, d.sha256, d.updated_at_ms, bm25(doc_chunks_fts)
+                             FROM doc_chunks_fts f
+                             JOIN doc_chunks d ON d.id = f.id
+                             WHERE doc_chunks_fts MATCH ?
+                               AND d.source_id IN ({placeholders})
+                             ORDER BY bm25(doc_chunks_fts) ASC, d.updated_at_ms DESC, d.chunk_index ASC
+                             LIMIT ?"
+                        );
+                        let mut vals: Vec<rusqlite::types::Value> =
+                            Vec::with_capacity(ids.len() + 2);
+                        vals.push(rusqlite::types::Value::Text(fts_query));
+                        for id in ids {
+                            vals.push(rusqlite::types::Value::Text(id.clone()));
+                        }
+                        vals.push(rusqlite::types::Value::Integer(lim));
+                        (sql, vals)
+                    }
+                    None => (
+                        "SELECT d.id, d.source_id, d.path, d.chunk_index, d.content, d.sha256, d.updated_at_ms, bm25(doc_chunks_fts)
+                         FROM doc_chunks_fts f
+                         JOIN doc_chunks d ON d.id = f.id
+                         WHERE doc_chunks_fts MATCH ?
+                         ORDER BY bm25(doc_chunks_fts) ASC, d.updated_at_ms DESC, d.chunk_index ASC
+                         LIMIT ?"
+                            .to_string(),
+                        vec![
+                            rusqlite::types::Value::Text(fts_query),
+                            rusqlite::types::Value::Integer(lim),
+                        ],
+                    ),
+                };
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(params_from_iter(bind_values), |r| {
+                    Ok(DocChunkHit {
+                        id: r.get(0)?,
+                        source_id: r.get(1)?,
+                        path: r.get(2)?,
+                        chunk_index: r.get(3)?,
+                        content: r.get(4)?,
+                        sha256: r.get(5)?,
+                        updated_at_ms: r.get(6)?,
+                        score: r.get(7)?,
+                    })
+                })?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+
+            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+                let like_pat = escape_like_pattern(trimmed);
+                let (sql, bind_values) = match source_ids {
+                    Some(ids) => {
+                        let placeholders = vec!["?"; ids.len()].join(", ");
+                        let sql = format!(
+                            "SELECT id, source_id, path, chunk_index, content, sha256, updated_at_ms
+                             FROM doc_chunks
+                             WHERE source_id IN ({placeholders})
+                               AND (path LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+                             ORDER BY updated_at_ms DESC, chunk_index ASC
+                             LIMIT ?"
+                        );
+                        let mut vals: Vec<rusqlite::types::Value> =
+                            Vec::with_capacity(ids.len() + 3);
+                        for id in ids {
+                            vals.push(rusqlite::types::Value::Text(id.clone()));
+                        }
+                        vals.push(rusqlite::types::Value::Text(like_pat.clone()));
+                        vals.push(rusqlite::types::Value::Text(like_pat));
+                        vals.push(rusqlite::types::Value::Integer(lim));
+                        (sql, vals)
+                    }
+                    None => (
+                        "SELECT id, source_id, path, chunk_index, content, sha256, updated_at_ms
+                         FROM doc_chunks
+                         WHERE path LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'
+                         ORDER BY updated_at_ms DESC, chunk_index ASC
+                         LIMIT ?"
+                            .to_string(),
+                        vec![
+                            rusqlite::types::Value::Text(like_pat.clone()),
+                            rusqlite::types::Value::Text(like_pat),
+                            rusqlite::types::Value::Integer(lim),
+                        ],
+                    ),
+                };
+                let mut stmt = conn.prepare(&sql)?;
+                let rows = stmt.query_map(params_from_iter(bind_values), |r| {
+                    Ok(DocChunkHit {
+                        id: r.get(0)?,
+                        source_id: r.get(1)?,
+                        path: r.get(2)?,
+                        chunk_index: r.get(3)?,
+                        content: r.get(4)?,
+                        sha256: r.get(5)?,
+                        updated_at_ms: r.get(6)?,
+                        score: 0.0,
+                    })
+                })?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    // --- Code Memory (Tree-sitter AST Index & Call Graph) ---
+
+    pub fn get_code_file_hashes(
+        &self,
+        workspace_root: &str,
+    ) -> Result<HashMap<String, String>, StoreError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT rel_path, sha256 FROM code_files WHERE workspace_root = ?1",
+            )?;
+            let rows = stmt.query_map(params![workspace_root], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?;
+            let mut out = HashMap::new();
+            for row in rows {
+                let (rel_path, sha) = row?;
+                out.insert(rel_path, sha);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn replace_code_file_index(
+        &self,
+        file: &CodeFileRow,
+        symbols: &[CodeSymbolRow],
+        edges: &[CodeEdgeRow],
+    ) -> Result<(), StoreError> {
+        self.run_write_tx(|tx| {
+            tx.execute(
+                "INSERT INTO code_files (workspace_root, rel_path, sha256, language, line_count, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(workspace_root, rel_path) DO UPDATE SET
+                   sha256 = excluded.sha256,
+                   language = excluded.language,
+                   line_count = excluded.line_count,
+                   updated_at_ms = excluded.updated_at_ms",
+                params![
+                    file.workspace_root,
+                    file.rel_path,
+                    file.sha256,
+                    file.language,
+                    file.line_count,
+                    file.updated_at_ms,
+                ],
+            )?;
+            tx.execute(
+                "DELETE FROM code_symbols_fts
+                 WHERE id IN (
+                     SELECT id FROM code_symbols WHERE workspace_root = ?1 AND rel_path = ?2
+                 )",
+                params![file.workspace_root, file.rel_path],
+            )?;
+            tx.execute(
+                "DELETE FROM code_symbols WHERE workspace_root = ?1 AND rel_path = ?2",
+                params![file.workspace_root, file.rel_path],
+            )?;
+            tx.execute(
+                "DELETE FROM code_edges WHERE workspace_root = ?1 AND rel_path = ?2",
+                params![file.workspace_root, file.rel_path],
+            )?;
+            for sym in symbols {
+                tx.execute(
+                    "INSERT INTO code_symbols (id, workspace_root, rel_path, name, qualified_name, kind, language, start_line, end_line, signature)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        sym.id,
+                        file.workspace_root,
+                        file.rel_path,
+                        sym.name,
+                        sym.qualified_name,
+                        sym.kind,
+                        sym.language,
+                        sym.start_line,
+                        sym.end_line,
+                        sym.signature,
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO code_symbols_fts (id, workspace_root, rel_path, name, qualified_name, signature)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        sym.id,
+                        file.workspace_root,
+                        file.rel_path,
+                        sym.name,
+                        sym.qualified_name,
+                        sym.signature,
+                    ],
+                )?;
+            }
+            for edge in edges {
+                tx.execute(
+                    "INSERT INTO code_edges (workspace_root, from_symbol, to_symbol, rel_path, line, edge_kind)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        file.workspace_root,
+                        edge.from_symbol,
+                        edge.to_symbol,
+                        file.rel_path,
+                        edge.line,
+                        edge.edge_kind,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn prune_missing_code_files(
+        &self,
+        workspace_root: &str,
+        existing_rel_paths: &HashSet<String>,
+    ) -> Result<usize, StoreError> {
+        self.run_write_tx(|tx| {
+            let mut stmt =
+                tx.prepare("SELECT rel_path FROM code_files WHERE workspace_root = ?1")?;
+            let indexed_paths = stmt
+                .query_map(params![workspace_root], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(stmt);
+
+            let mut pruned = 0usize;
+            for rel_path in indexed_paths {
+                if existing_rel_paths.contains(&rel_path) {
+                    continue;
+                }
+                tx.execute(
+                    "DELETE FROM code_symbols_fts
+                     WHERE id IN (
+                         SELECT id FROM code_symbols WHERE workspace_root = ?1 AND rel_path = ?2
+                     )",
+                    params![workspace_root, rel_path],
+                )?;
+                tx.execute(
+                    "DELETE FROM code_symbols WHERE workspace_root = ?1 AND rel_path = ?2",
+                    params![workspace_root, rel_path],
+                )?;
+                tx.execute(
+                    "DELETE FROM code_edges WHERE workspace_root = ?1 AND rel_path = ?2",
+                    params![workspace_root, rel_path],
+                )?;
+                tx.execute(
+                    "DELETE FROM code_files WHERE workspace_root = ?1 AND rel_path = ?2",
+                    params![workspace_root, rel_path],
+                )?;
+                pruned += 1;
+            }
+            Ok(pruned)
+        })
+    }
+
+    pub fn search_code_symbols(
+        &self,
+        workspace_root: &str,
+        query: &str,
+        kind: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CodeSymbolRow>, StoreError> {
+        let sanitized: String = query.chars().filter(|&c| c != '\0').collect();
+        let trimmed = sanitized.trim();
+        let lim = limit.max(1) as i64;
+        self.with_conn(|conn| {
+            if trimmed.is_empty() {
+                let mut stmt = conn.prepare(
+                    "SELECT id, workspace_root, rel_path, name, qualified_name, kind, language, start_line, end_line, signature
+                     FROM code_symbols
+                     WHERE workspace_root = ?1
+                       AND (?2 IS NULL OR kind = ?2)
+                     ORDER BY rel_path ASC, start_line ASC
+                     LIMIT ?3",
+                )?;
+                let rows = stmt
+                    .query_map(params![workspace_root, kind, lim], |r| {
+                        Ok(CodeSymbolRow {
+                            id: r.get(0)?,
+                            workspace_root: r.get(1)?,
+                            rel_path: r.get(2)?,
+                            name: r.get(3)?,
+                            qualified_name: r.get(4)?,
+                            kind: r.get(5)?,
+                            language: r.get(6)?,
+                            start_line: r.get(7)?,
+                            end_line: r.get(8)?,
+                            signature: r.get(9)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(rows);
+            }
+
+            let mut out = Vec::new();
+            if let Some(fts_query) = build_fts5_or_query(trimmed) {
+                let mut stmt = conn.prepare(
+                    "SELECT s.id, s.workspace_root, s.rel_path, s.name, s.qualified_name, s.kind, s.language, s.start_line, s.end_line, s.signature
+                     FROM code_symbols_fts f
+                     JOIN code_symbols s ON s.id = f.id
+                     WHERE code_symbols_fts MATCH ?1
+                       AND s.workspace_root = ?2
+                       AND (?3 IS NULL OR s.kind = ?3)
+                     ORDER BY bm25(code_symbols_fts) ASC, s.rel_path ASC, s.start_line ASC
+                     LIMIT ?4",
+                )?;
+                let rows = stmt.query_map(params![fts_query, workspace_root, kind, lim], |r| {
+                    Ok(CodeSymbolRow {
+                        id: r.get(0)?,
+                        workspace_root: r.get(1)?,
+                        rel_path: r.get(2)?,
+                        name: r.get(3)?,
+                        qualified_name: r.get(4)?,
+                        kind: r.get(5)?,
+                        language: r.get(6)?,
+                        start_line: r.get(7)?,
+                        end_line: r.get(8)?,
+                        signature: r.get(9)?,
+                    })
+                })?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+
+            // Substring fallback handles partial identifier prefixes (e.g. `parse_st`) and CJK.
+            if out.is_empty() {
+                let like_pat = escape_like_pattern(trimmed);
+                let mut stmt = conn.prepare(
+                    "SELECT id, workspace_root, rel_path, name, qualified_name, kind, language, start_line, end_line, signature
+                     FROM code_symbols
+                     WHERE workspace_root = ?1
+                       AND (?2 IS NULL OR kind = ?2)
+                       AND (name LIKE ?3 ESCAPE '\\'
+                            OR qualified_name LIKE ?3 ESCAPE '\\'
+                            OR signature LIKE ?3 ESCAPE '\\'
+                            OR rel_path LIKE ?3 ESCAPE '\\')
+                     ORDER BY rel_path ASC, start_line ASC
+                     LIMIT ?4",
+                )?;
+                let rows = stmt.query_map(params![workspace_root, kind, like_pat, lim], |r| {
+                    Ok(CodeSymbolRow {
+                        id: r.get(0)?,
+                        workspace_root: r.get(1)?,
+                        rel_path: r.get(2)?,
+                        name: r.get(3)?,
+                        qualified_name: r.get(4)?,
+                        kind: r.get(5)?,
+                        language: r.get(6)?,
+                        start_line: r.get(7)?,
+                        end_line: r.get(8)?,
+                        signature: r.get(9)?,
+                    })
+                })?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn list_code_edges_from(
+        &self,
+        workspace_root: &str,
+        from_symbol: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeEdgeRow>, StoreError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT workspace_root, from_symbol, to_symbol, rel_path, line, edge_kind
+                 FROM code_edges
+                 WHERE workspace_root = ?1 AND from_symbol = ?2
+                 ORDER BY rel_path ASC, line ASC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt
+                .query_map(params![workspace_root, from_symbol, limit.max(1) as i64], |r| {
+                    Ok(CodeEdgeRow {
+                        workspace_root: r.get(0)?,
+                        from_symbol: r.get(1)?,
+                        to_symbol: r.get(2)?,
+                        rel_path: r.get(3)?,
+                        line: r.get(4)?,
+                        edge_kind: r.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn list_code_edges_to(
+        &self,
+        workspace_root: &str,
+        to_symbol: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeEdgeRow>, StoreError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT workspace_root, from_symbol, to_symbol, rel_path, line, edge_kind
+                 FROM code_edges
+                 WHERE workspace_root = ?1 AND to_symbol = ?2
+                 ORDER BY rel_path ASC, line ASC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt
+                .query_map(params![workspace_root, to_symbol, limit.max(1) as i64], |r| {
+                    Ok(CodeEdgeRow {
+                        workspace_root: r.get(0)?,
+                        from_symbol: r.get(1)?,
+                        to_symbol: r.get(2)?,
+                        rel_path: r.get(3)?,
+                        line: r.get(4)?,
+                        edge_kind: r.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    pub fn code_index_stats(&self, workspace_root: &str) -> Result<CodeIndexStats, StoreError> {
+        self.with_conn(|conn| {
+            let (file_count, last_updated_at_ms): (i64, Option<i64>) = conn.query_row(
+                "SELECT COUNT(*), MAX(updated_at_ms) FROM code_files WHERE workspace_root = ?1",
+                params![workspace_root],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            let symbol_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM code_symbols WHERE workspace_root = ?1",
+                params![workspace_root],
+                |r| r.get(0),
+            )?;
+            let edge_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM code_edges WHERE workspace_root = ?1",
+                params![workspace_root],
+                |r| r.get(0),
+            )?;
+            Ok(CodeIndexStats {
+                file_count,
+                symbol_count,
+                edge_count,
+                last_updated_at_ms,
+            })
+        })
+    }
+
     // --- Atomic WAL-Safe Backup & Validated Restore ---
 
     /// Atomically snapshot the live database (including active WAL frames) using `VACUUM INTO`
@@ -892,8 +1861,22 @@ impl Store {
                 Ok(v as u32)
             })?;
             if app_id != 0 && app_id != NOLA_SQLITE_APPLICATION_ID {
-                return Err(StoreError::Other(format!(
+                return Err(StoreError::IncompatibleSchema(format!(
                     "backup has foreign application_id 0x{app_id:08X}"
+                )));
+            }
+            let user_ver: u32 = conn.query_row("PRAGMA user_version;", [], |r| {
+                let v: i64 = r.get(0)?;
+                Ok(v as u32)
+            })?;
+            if user_ver > NOLA_SQLITE_USER_VERSION {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "backup schema user_version {user_ver} is newer than supported version {NOLA_SQLITE_USER_VERSION}"
+                )));
+            }
+            if user_ver != NOLA_SQLITE_USER_VERSION {
+                return Err(StoreError::IncompatibleSchema(format!(
+                    "backup schema user_version {user_ver} is incompatible with supported version {NOLA_SQLITE_USER_VERSION}"
                 )));
             }
             let has_sessions: i64 = conn.query_row(
@@ -902,7 +1885,7 @@ impl Store {
                 |r| r.get(0),
             )?;
             if has_sessions == 0 {
-                return Err(StoreError::Other(
+                return Err(StoreError::IncompatibleSchema(
                     "backup database is missing required 'sessions' table".into(),
                 ));
             }
@@ -930,6 +1913,90 @@ impl Store {
         let _ = std::fs::remove_file(format!("{}-shm", dest_path.display()));
         Ok(())
     }
+}
+
+fn build_fts5_or_query(trimmed: &str) -> Option<String> {
+    // Bound tokens to 24 to prevent SQLite FTS5 expression-depth errors on long prompts.
+    let tokens: Vec<String> = trimmed
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .take(24)
+        .map(|tok| format!("\"{}\"", tok.replace('"', "\"\"")))
+        .collect();
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens.join(" OR "))
+    }
+}
+
+fn escape_like_pattern(trimmed: &str) -> String {
+    format!(
+        "%{}%",
+        trimmed
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    )
+}
+
+fn extract_searchable_event_text(payload: &Value) -> String {
+    const MAX_BYTES: usize = 32_768;
+    const MAX_DEPTH: usize = 16;
+
+    fn visit(val: &Value, depth: usize, out: &mut String) {
+        if depth > MAX_DEPTH || out.len() >= MAX_BYTES {
+            return;
+        }
+        match val {
+            Value::String(s) => {
+                let t = s.trim();
+                if t.is_empty() || t.starts_with("data:") && t.len() > 256 {
+                    return;
+                }
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                let remaining = MAX_BYTES.saturating_sub(out.len());
+                if t.len() <= remaining {
+                    out.push_str(t);
+                } else {
+                    let mut end = remaining;
+                    while end > 0 && !t.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    out.push_str(&t[..end]);
+                }
+            }
+            Value::Array(arr) => {
+                for item in arr {
+                    visit(item, depth + 1, out);
+                    if out.len() >= MAX_BYTES {
+                        break;
+                    }
+                }
+            }
+            Value::Object(map) => {
+                for (k, v) in map {
+                    if matches!(
+                        k.as_str(),
+                        "image_base64" | "audio_base64" | "data_url" | "base64" | "bytes_b64"
+                    ) {
+                        continue;
+                    }
+                    visit(v, depth + 1, out);
+                    if out.len() >= MAX_BYTES {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = String::new();
+    visit(payload, 0, &mut out);
+    out
 }
 
 #[cfg(test)]
@@ -1170,5 +2237,432 @@ mod tests {
         assert_eq!(hits.len(), 1);
         let miss = store.search_memory(r"测试\fooXbarYbaz", Some("default"), 10).unwrap();
         assert!(miss.is_empty());
+    }
+
+    #[test]
+    fn fail_closed_rejects_v1_and_future_schemas_in_open_and_restore_without_modification() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // 1. Legacy v1 database (application_id = NOLA, user_version = 1)
+        let v1_path = dir.path().join("legacy_v1.db");
+        {
+            let conn = Connection::open(&v1_path).unwrap();
+            conn.execute_batch(&format!(
+                "PRAGMA application_id = {NOLA_SQLITE_APPLICATION_ID};
+                 PRAGMA user_version = 1;
+                 CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL);"
+            ))
+            .unwrap();
+        }
+        let err = Store::open(&v1_path).err().unwrap();
+        assert!(
+            matches!(err, StoreError::IncompatibleSchema(_)),
+            "expected IncompatibleSchema for v1 db, got {err:?}"
+        );
+        // Verify v1 DB was NEVER upgraded or modified
+        {
+            let conn = Connection::open(&v1_path).unwrap();
+            let user_ver: i64 = conn
+                .query_row("PRAGMA user_version;", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(user_ver, 1, "v1 database user_version must remain untouched");
+        }
+
+        // 2. Future schema database (user_version = 99)
+        let future_path = dir.path().join("future_v99.db");
+        {
+            let conn = Connection::open(&future_path).unwrap();
+            conn.execute_batch(&format!(
+                "PRAGMA application_id = {NOLA_SQLITE_APPLICATION_ID};
+                 PRAGMA user_version = 99;
+                 CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL);"
+            ))
+            .unwrap();
+        }
+        let err = Store::open(&future_path).err().unwrap();
+        assert!(matches!(err, StoreError::IncompatibleSchema(_)));
+
+        // 3. restore_from_backup rejects both v1 and future backups BEFORE overwriting dest_path
+        let dest_path = dir.path().join("live_v2.db");
+        {
+            let live = Store::open(&dest_path).unwrap();
+            live.set_kv("sentinel", &json!("intact")).unwrap();
+        }
+        let err_v1 = Store::restore_from_backup(&v1_path, &dest_path).unwrap_err();
+        assert!(matches!(err_v1, StoreError::IncompatibleSchema(_)));
+        let err_v99 = Store::restore_from_backup(&future_path, &dest_path).unwrap_err();
+        assert!(matches!(err_v99, StoreError::IncompatibleSchema(_)));
+
+        // Verify live_v2.db was untouched
+        let reopened = Store::open(&dest_path).unwrap();
+        assert_eq!(reopened.get_kv("sentinel").unwrap(), Some(json!("intact")));
+    }
+
+    #[test]
+    fn events_fts_search_recall_cjk_pruning_truncation_and_session_delete() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_session(&Session {
+                id: "s1".into(),
+                title: "Main".into(),
+                workspace_root: "/ws".into(),
+                model_connection: None,
+                model_id: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+
+        let e1 = store
+            .append_event(
+                "s1",
+                "user_message",
+                json!({"text": "Investigate SQLite WAL checkpoint contention"}),
+                10,
+            )
+            .unwrap();
+        let e2 = store
+            .append_event(
+                "s1",
+                "assistant_message",
+                json!({"text": "中文检索测试：数据库索引与召回方案"}),
+                10,
+            )
+            .unwrap();
+        let e3 = store
+            .append_event(
+                "s1",
+                "assistant_message",
+                json!({"text": "Second step uses truncate cleanup check"}),
+                10,
+            )
+            .unwrap();
+        store
+            .append_event(
+                "s2",
+                "user_message",
+                json!({"text": "Unrelated scope SQLite checkpoint discussion"}),
+                10,
+            )
+            .unwrap();
+
+        // Scoped FTS5 search
+        let hits = store
+            .search_events_fts(Some("s1"), "SQLite checkpoint", 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].seq, e1.seq);
+
+        // Cross-scope FTS5 search
+        let all_hits = store
+            .search_events_fts(None, "SQLite checkpoint", 10)
+            .unwrap();
+        assert_eq!(all_hits.len(), 2);
+
+        // CJK LIKE fallback
+        let cjk_hits = store
+            .search_events_fts(Some("s1"), "数据库索引", 10)
+            .unwrap();
+        assert_eq!(cjk_hits.len(), 1);
+        assert_eq!(cjk_hits[0].seq, e2.seq);
+
+        // read_event_range inclusive from_seq
+        let range = store.read_event_range("s1", e2.seq, 10).unwrap();
+        assert_eq!(
+            range.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![e2.seq, e3.seq]
+        );
+
+        // Truncation cleans events_fts
+        let removed = store.truncate_events_from("s1", e3.seq).unwrap();
+        assert_eq!(removed, 1);
+        assert!(store
+            .search_events_fts(Some("s1"), "truncate cleanup", 10)
+            .unwrap()
+            .is_empty());
+
+        // Per-scope pruning cleans events_fts
+        for i in 0..4 {
+            store
+                .append_event("s_prune", "msg", json!({"text": format!("prune_token_{i}")}), 2)
+                .unwrap();
+        }
+        assert!(store
+            .search_events_fts(Some("s_prune"), "prune_token_0", 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_events_fts(Some("s_prune"), "prune_token_3", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // delete_session cleans events_fts
+        store.delete_session("s1").unwrap();
+        assert!(store
+            .search_events_fts(Some("s1"), "SQLite checkpoint", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn sync_changes_and_cursors_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        assert_eq!(store.get_sync_cursor("peer-a").unwrap(), None);
+        store.save_sync_cursor("peer-a", "cur-100").unwrap();
+        assert_eq!(
+            store.get_sync_cursor("peer-a").unwrap().as_deref(),
+            Some("cur-100")
+        );
+        store.save_sync_cursor("peer-a", "cur-200").unwrap();
+        assert_eq!(
+            store.get_sync_cursor("peer-a").unwrap().as_deref(),
+            Some("cur-200")
+        );
+
+        let c1 = SyncChangeRecord {
+            id: "chg-1".into(),
+            scope: "memory".into(),
+            entity_kind: "memory_item".into(),
+            entity_id: "m1".into(),
+            payload_json: r#"{"op":"upsert"}"#.into(),
+            created_at_ms: 10,
+            resolved: false,
+        };
+        let c2 = SyncChangeRecord {
+            id: "chg-2".into(),
+            scope: "sessions".into(),
+            entity_kind: "session".into(),
+            entity_id: "s1".into(),
+            payload_json: r#"{"op":"upsert"}"#.into(),
+            created_at_ms: 20,
+            resolved: false,
+        };
+        store.record_sync_change(&c1).unwrap();
+        store.record_sync_change(&c2).unwrap();
+
+        let pending_all = store.list_pending_sync_changes(None, 10).unwrap();
+        assert_eq!(pending_all, vec![c1.clone(), c2.clone()]);
+        let pending_mem = store.list_pending_sync_changes(Some("memory"), 10).unwrap();
+        assert_eq!(pending_mem, vec![c1]);
+
+        assert!(store.resolve_sync_change("chg-1").unwrap());
+        assert!(!store.resolve_sync_change("missing").unwrap());
+        let after = store.list_pending_sync_changes(None, 10).unwrap();
+        assert_eq!(after, vec![c2]);
+    }
+
+    #[test]
+    fn doc_chunks_fts5_replace_search_cjk_and_delete() {
+        let store = Store::open_in_memory().unwrap();
+        let inserted = store
+            .replace_source_chunks(
+                "src-a",
+                &[
+                    DocChunkRecord {
+                        id: "c1".into(),
+                        source_id: "src-a".into(),
+                        path: "docs/architecture.md".into(),
+                        chunk_index: 0,
+                        content: "Nola uses SQLite WAL with FTS5 BM25 ranking".into(),
+                        sha256: "aaa".into(),
+                        updated_at_ms: 100,
+                    },
+                    DocChunkRecord {
+                        id: "c2".into(),
+                        source_id: "src-a".into(),
+                        path: "docs/zh.md".into(),
+                        chunk_index: 1,
+                        content: "文档检索支持中文子串回退策略".into(),
+                        sha256: "bbb".into(),
+                        updated_at_ms: 101,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(inserted, 2);
+
+        store
+            .replace_source_chunks(
+                "src-b",
+                &[DocChunkRecord {
+                    id: "c3".into(),
+                    source_id: "src-b".into(),
+                    path: "notes/wal.md".into(),
+                    chunk_index: 0,
+                    content: "SQLite WAL notes from source B".into(),
+                    sha256: "ccc".into(),
+                    updated_at_ms: 102,
+                }],
+            )
+            .unwrap();
+
+        let all_hits = store.search_doc_chunks(None, "SQLite WAL", 10).unwrap();
+        assert_eq!(all_hits.len(), 2);
+
+        let only_a = store
+            .search_doc_chunks(Some(&["src-a".to_string()]), "SQLite WAL", 10)
+            .unwrap();
+        assert_eq!(only_a.len(), 1);
+        assert_eq!(only_a[0].id, "c1");
+
+        // Explicit empty source_ids filter returns empty
+        assert!(store
+            .search_doc_chunks(Some(&[]), "SQLite WAL", 10)
+            .unwrap()
+            .is_empty());
+
+        // CJK LIKE fallback
+        let cjk = store
+            .search_doc_chunks(Some(&["src-a".to_string()]), "中文子串回退", 10)
+            .unwrap();
+        assert_eq!(cjk.len(), 1);
+        assert_eq!(cjk[0].id, "c2");
+
+        // Replace source-a removes old chunks cleanly
+        store
+            .replace_source_chunks(
+                "src-a",
+                &[DocChunkRecord {
+                    id: "c4".into(),
+                    source_id: "src-a".into(),
+                    path: "docs/new.md".into(),
+                    chunk_index: 0,
+                    content: "Brand new replacement document".into(),
+                    sha256: "ddd".into(),
+                    updated_at_ms: 200,
+                }],
+            )
+            .unwrap();
+        assert!(store
+            .search_doc_chunks(Some(&["src-a".to_string()]), "BM25", 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_doc_chunks(Some(&["src-a".to_string()]), "replacement", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let deleted = store.delete_source_chunks("src-a").unwrap();
+        assert_eq!(deleted, 1);
+        assert!(store
+            .search_doc_chunks(Some(&["src-a".to_string()]), "replacement", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn code_memory_index_search_edges_stats_and_prune() {
+        let store = Store::open_in_memory().unwrap();
+        let ws = "/repo/nola";
+
+        let file1 = CodeFileRow {
+            workspace_root: ws.into(),
+            rel_path: "src/policy.rs".into(),
+            sha256: "hash1".into(),
+            language: "rust".into(),
+            line_count: 120,
+            updated_at_ms: 1000,
+        };
+        let sym1 = CodeSymbolRow {
+            id: "sym:parse_strict".into(),
+            workspace_root: ws.into(),
+            rel_path: "src/policy.rs".into(),
+            name: "parse_strict".into(),
+            qualified_name: "PermissionProfile::parse_strict".into(),
+            kind: "function".into(),
+            language: "rust".into(),
+            start_line: 35,
+            end_line: 44,
+            signature: "pub fn parse_strict(raw: &str) -> Result<Self, String>".into(),
+        };
+        let edge1 = CodeEdgeRow {
+            workspace_root: ws.into(),
+            from_symbol: "daemon::handle_mode".into(),
+            to_symbol: "PermissionProfile::parse_strict".into(),
+            rel_path: "src/policy.rs".into(),
+            line: 40,
+            edge_kind: "call".into(),
+        };
+        store
+            .replace_code_file_index(&file1, &[sym1.clone()], &[edge1.clone()])
+            .unwrap();
+
+        let file2 = CodeFileRow {
+            workspace_root: ws.into(),
+            rel_path: "src/legacy.rs".into(),
+            sha256: "hash2".into(),
+            language: "rust".into(),
+            line_count: 45,
+            updated_at_ms: 1050,
+        };
+        let sym2 = CodeSymbolRow {
+            id: "sym:old_helper".into(),
+            workspace_root: ws.into(),
+            rel_path: "src/legacy.rs".into(),
+            name: "old_helper".into(),
+            qualified_name: "legacy::old_helper".into(),
+            kind: "struct".into(),
+            language: "rust".into(),
+            start_line: 1,
+            end_line: 10,
+            signature: "pub struct old_helper".into(),
+        };
+        store
+            .replace_code_file_index(&file2, &[sym2], &[])
+            .unwrap();
+
+        let hashes = store.get_code_file_hashes(ws).unwrap();
+        assert_eq!(hashes.get("src/policy.rs").map(String::as_str), Some("hash1"));
+        assert_eq!(hashes.get("src/legacy.rs").map(String::as_str), Some("hash2"));
+
+        // FTS5 symbol search + kind filter
+        let hits = store
+            .search_code_symbols(ws, "parse_strict", Some("function"), 10)
+            .unwrap();
+        assert_eq!(hits, vec![sym1.clone()]);
+
+        // Substring prefix fallback
+        let prefix_hits = store
+            .search_code_symbols(ws, "parse_str", None, 10)
+            .unwrap();
+        assert_eq!(prefix_hits, vec![sym1]);
+
+        // Call graph edges
+        let outgoing = store
+            .list_code_edges_from(ws, "daemon::handle_mode", 10)
+            .unwrap();
+        assert_eq!(outgoing, vec![edge1.clone()]);
+        let incoming = store
+            .list_code_edges_to(ws, "PermissionProfile::parse_strict", 10)
+            .unwrap();
+        assert_eq!(incoming, vec![edge1]);
+
+        let stats = store.code_index_stats(ws).unwrap();
+        assert_eq!(
+            stats,
+            CodeIndexStats {
+                file_count: 2,
+                symbol_count: 2,
+                edge_count: 1,
+                last_updated_at_ms: Some(1050),
+            }
+        );
+
+        // Prune missing file removes file, symbols, FTS entries, and edges
+        let mut keep = HashSet::new();
+        keep.insert("src/policy.rs".to_string());
+        let pruned = store.prune_missing_code_files(ws, &keep).unwrap();
+        assert_eq!(pruned, 1);
+        assert!(store
+            .search_code_symbols(ws, "old_helper", None, 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.code_index_stats(ws).unwrap().file_count, 1);
     }
 }

@@ -8,19 +8,20 @@
 //! - Complete business module REST endpoints aligned with `apps/web/frontend`, iOS, macOS & Android
 //! - Safe static asset & SPA serving (`/ui/*`, `/static/*`, and SPA fallback).
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::{IpAddr, ToSocketAddrs};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use nola_engine::{
-    compact_session_now, register_planning_tools, register_subagent_tools, AgentEngine, AgentEvent,
+    approve_agent_plan, compact_session_now, is_plan_mode, load_session_plan, load_session_todos,
+    register_planning_tools, register_subagent_tools, set_plan_mode, AgentEngine, AgentEvent,
     AgentRunConfig, ApprovalCallback, EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller,
     ModelCaller, PlanningState, SubagentManager, UserInputCallback,
 };
@@ -32,18 +33,27 @@ use nola_modules::a2ui::{
     UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceRevisionRef,
 };
 use nola_modules::{
-    built_in_role_templates, check_for_update, download_update_package, list_data_source_usage,
-    list_desktop_plugin_pages, list_harness_plugins, parse_inbound_webhook_payload,
-    probe_engine_status, probe_hardware, recommend_local_models, spawn_background_scheduler,
-    test_data_source_connection, verify_inbound_webhook_token, AutomationScheduler, GoalWorker,
-    LocalModelProcessManager, ModulesSuite, RoomRuntime,
+    built_in_role_templates, check_for_update, download_update_package,
+    handle_inbound_webhook_turn, index_data_source, install_plugin_package,
+    list_data_source_usage, list_desktop_plugin_pages, list_harness_plugins,
+    parse_inbound_webhook_payload, probe_engine_status, probe_hardware, recommend_local_models,
+    reconcile_enabled_plugins, run_engine_setup_with_opt_in, search_hub_models,
+    spawn_background_goal_worker, spawn_background_scheduler, spawn_messaging_channel_worker,
+    test_data_source_connection, verify_inbound_webhook_token, AutomationScheduler,
+    ExtendedGoalRecord, GoalWorker, LocalModelProcessManager, ModelDownloadManager,
+    ModelDownloadPlan, ModulesSuite, RoomRuntime,
 };
 use nola_store::{EventPage, Store, Vault};
-use nola_tools::{BrowserManager, NativeBrowserBridge, SandboxMode, ToolContext, ToolRegistry};
+use nola_tools::git::GitTool;
+use nola_tools::{
+    extract_document_text_from_bytes, BrowserManager, NativeBrowserBridge, SandboxMode,
+    ToolContext, ToolHandler, ToolRegistry,
+};
 use nola_types::{
-    new_id, now_ms, sha256_hex, ExpertPeer, FrozenSystemBlock, HostCapabilities,
-    McpServerConfig, McpTransport, MediaAttachment, MemoryItem, ModelCapabilities,
-    PermissionAction, PermissionProfile, PermissionRule, PluginRecord, RuleScope, Session,
+    new_id, now_ms, sha256_hex, AgentRoom, CapabilityDomain, ExpertPeer, FrozenSystemBlock,
+    GoalStatus, HostCapabilities, McpServerConfig, McpTransport, MediaAttachment, MemoryItem,
+    ModelCapabilities, PermissionAction, PermissionProfile, PermissionRule, PluginRecord,
+    RuleScope, Session, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -151,12 +161,18 @@ struct PendingQuestionEntry {
     tx: mpsc::Sender<Option<String>>,
 }
 
-/// Pending interactive approval & user-question waiters bridged between SSE turns and REST,
-/// plus narrowly scoped `(conv_id, tool_name, target_key)` session permission grants.
+struct PendingDeviceToolEntry {
+    conversation_id: String,
+    tx: mpsc::Sender<Value>,
+}
+
+/// Pending interactive approval, user-question, & hybrid device-tool waiters bridged
+/// between SSE turns and REST, plus narrowly scoped `(conv_id, tool_name, target_key)` session grants.
 #[derive(Default)]
 struct PendingInteractions {
     approvals: Mutex<BTreeMap<String, PendingApprovalEntry>>,
     questions: Mutex<BTreeMap<String, PendingQuestionEntry>>,
+    device_tools: Mutex<BTreeMap<String, PendingDeviceToolEntry>>,
     session_grants: Mutex<HashSet<(String, String, String)>>,
 }
 
@@ -193,6 +209,31 @@ impl PendingInteractions {
         }
     }
 
+    fn register_device_tool(
+        &self,
+        request_id: String,
+        conversation_id: String,
+    ) -> mpsc::Receiver<Value> {
+        let (tx, rx) = mpsc::channel::<Value>();
+        self.device_tools.lock().unwrap().insert(
+            request_id,
+            PendingDeviceToolEntry {
+                conversation_id,
+                tx,
+            },
+        );
+        rx
+    }
+
+    fn resolve_device_tool(&self, request_id: &str, payload: Value) -> bool {
+        if let Some(entry) = self.device_tools.lock().unwrap().remove(request_id) {
+            let _ = entry.tx.send(payload);
+            true
+        } else {
+            false
+        }
+    }
+
     fn conversation_needs_response(&self, conv_id: &str) -> bool {
         let has_approval = self
             .approvals
@@ -203,7 +244,16 @@ impl PendingInteractions {
         if has_approval {
             return true;
         }
-        self.questions
+        let has_question = self
+            .questions
+            .lock()
+            .unwrap()
+            .values()
+            .any(|e| e.conversation_id == conv_id);
+        if has_question {
+            return true;
+        }
+        self.device_tools
             .lock()
             .unwrap()
             .values()
@@ -211,7 +261,9 @@ impl PendingInteractions {
     }
 
     fn any_needs_response(&self) -> bool {
-        !self.approvals.lock().unwrap().is_empty() || !self.questions.lock().unwrap().is_empty()
+        !self.approvals.lock().unwrap().is_empty()
+            || !self.questions.lock().unwrap().is_empty()
+            || !self.device_tools.lock().unwrap().is_empty()
     }
 
     fn clear_conversation(&self, conv_id: &str) {
@@ -227,6 +279,97 @@ impl PendingInteractions {
             .lock()
             .unwrap()
             .retain(|_, entry| entry.conversation_id != conv_id);
+        self.device_tools
+            .lock()
+            .unwrap()
+            .retain(|_, entry| entry.conversation_id != conv_id);
+    }
+}
+
+/// Hybrid device-tool proxy registered on a turn when a mobile/desktop client declares
+/// client-executed tools. Emits SSE `device_tool_request` and awaits REST callback resolution.
+struct DeviceToolProxy {
+    spec: ToolSpec,
+    conversation_id: String,
+    tx: mpsc::Sender<Vec<u8>>,
+    pending: Arc<PendingInteractions>,
+    cancel: Arc<AtomicBool>,
+    crypto_tok: Option<String>,
+}
+
+impl ToolHandler for DeviceToolProxy {
+    fn spec(&self) -> ToolSpec {
+        self.spec.clone()
+    }
+
+    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        let req_id = new_id();
+        let rx = self
+            .pending
+            .register_device_tool(req_id.clone(), self.conversation_id.clone());
+        let frame = json!({
+            "type": "device_tool_request",
+            "request_id": req_id,
+            "call_id": req_id,
+            "conversation_id": self.conversation_id,
+            "tool": self.spec.schema.name,
+            "arguments": args
+        });
+        let _ = self
+            .tx
+            .send(encode_sse_frame(&frame, self.crypto_tok.as_deref()));
+
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let resolved = loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                break None;
+            }
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(val) => break Some(val),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if Instant::now() >= deadline {
+                        break None;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+            }
+        };
+        self.pending.device_tools.lock().unwrap().remove(&req_id);
+        match resolved {
+            Some(payload) => {
+                let is_ok = payload
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or_else(|| payload.get("error").is_none());
+                if is_ok {
+                    let result_val = payload
+                        .get("result")
+                        .or_else(|| payload.get("output"))
+                        .or_else(|| payload.get("payload"))
+                        .cloned()
+                        .unwrap_or(payload);
+                    let summary = result_val
+                        .as_str()
+                        .map(|s| s.chars().take(240).collect::<String>())
+                        .unwrap_or_else(|| format!("Device tool '{}' completed", self.spec.schema.name));
+                    ToolExecutionResult::ok_structured(result_val, summary)
+                } else {
+                    let msg = payload
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("device tool execution failed");
+                    ToolExecutionResult::err_structured("device_tool_error", msg, None)
+                }
+            }
+            None => ToolExecutionResult::err_structured(
+                "device_tool_timeout",
+                format!(
+                    "device tool '{}' timed out or was cancelled waiting for client callback",
+                    self.spec.schema.name
+                ),
+                None,
+            ),
+        }
     }
 }
 
@@ -738,21 +881,37 @@ fn encode_sse_frame(frame: &Value, crypto_tok: Option<&str>) -> Vec<u8> {
     format!("data: {frame}\n\n").into_bytes()
 }
 
+fn maybe_encrypt_api_payload(value: &Value, encrypt_for_token: Option<&str>) -> Value {
+    if let Some(tok) = encrypt_for_token {
+        if let Ok(mut env) = encrypt_mobile_json_envelope(value, tok) {
+            if let Some(map) = env.as_object_mut() {
+                map.insert("type".into(), json!("encrypted"));
+            }
+            return env;
+        }
+    }
+    value.clone()
+}
+
 fn respond_api_json(
     req: Request,
     status: u16,
     value: &Value,
     encrypt_for_token: Option<&str>,
 ) -> std::io::Result<()> {
-    if let Some(tok) = encrypt_for_token {
-        if let Ok(mut env) = encrypt_mobile_json_envelope(value, tok) {
-            if let Some(map) = env.as_object_mut() {
-                map.insert("type".into(), json!("encrypted"));
-            }
-            return respond_json(req, status, &env);
-        }
-    }
-    respond_json(req, status, value)
+    let body = maybe_encrypt_api_payload(value, encrypt_for_token);
+    respond_json(req, status, &body)
+}
+
+fn respond_api_json_with_headers(
+    req: Request,
+    status: u16,
+    value: &Value,
+    extra_headers: Vec<Header>,
+    encrypt_for_token: Option<&str>,
+) -> std::io::Result<()> {
+    let body = maybe_encrypt_api_payload(value, encrypt_for_token);
+    respond_json_with_headers(req, status, &body, extra_headers)
 }
 
 fn respond_json_with_headers(
@@ -772,6 +931,647 @@ fn respond_json_with_headers(
     req.respond(resp)
 }
 
+// --- One-Time Mobile-to-Web Handoff Grants ---
+
+const HANDOFF_TTL_SECS: u64 = 60;
+const MAX_HANDOFF_GRANTS: usize = 64;
+
+struct HandoffGrant {
+    target: String,
+    created_at: Instant,
+    expires_at: Instant,
+}
+
+fn safe_handoff_target(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('/') && !trimmed.starts_with("//") && !trimmed.contains('\\') {
+        trimmed.to_string()
+    } else {
+        "/settings".to_string()
+    }
+}
+
+fn mint_web_handoff(
+    handoffs: &Mutex<HashMap<String, HandoffGrant>>,
+    raw_target: &str,
+    now: Instant,
+) -> (String, String) {
+    let safe_target = safe_handoff_target(raw_target);
+    let raw_code = generate_hex_token_32();
+    let digest = sha256_hex(raw_code.as_bytes());
+    let mut map = handoffs.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, g| g.expires_at > now);
+    while map.len() >= MAX_HANDOFF_GRANTS {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, g)| g.created_at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+    map.insert(
+        digest,
+        HandoffGrant {
+            target: safe_target.clone(),
+            created_at: now,
+            expires_at: now + Duration::from_secs(HANDOFF_TTL_SECS),
+        },
+    );
+    (raw_code, safe_target)
+}
+
+fn consume_web_handoff(
+    handoffs: &Mutex<HashMap<String, HandoffGrant>>,
+    raw_code: &str,
+    now: Instant,
+) -> Option<String> {
+    let trimmed = raw_code.trim();
+    if trimmed.is_empty() || trimmed.contains('/') {
+        return None;
+    }
+    let digest = sha256_hex(trimmed.as_bytes());
+    let mut map = handoffs.lock().unwrap_or_else(|e| e.into_inner());
+    map.retain(|_, g| g.expires_at > now);
+    map.remove(&digest)
+        .filter(|g| g.expires_at > now)
+        .map(|g| g.target)
+}
+
+fn issue_browser_session(sessions: &Mutex<BTreeMap<String, i64>>) -> String {
+    let session_tok = generate_hex_token_32();
+    let expiry = now_ms().saturating_add(SESSION_TTL_MS);
+    let mut map = sessions.lock().unwrap_or_else(|e| e.into_inner());
+    let now = now_ms();
+    map.retain(|_, exp| *exp > now);
+    while map.len() >= MAX_SESSIONS {
+        if let Some(oldest_key) = map
+            .iter()
+            .min_by_key(|(_, exp)| **exp)
+            .map(|(k, _)| k.clone())
+        {
+            map.remove(&oldest_key);
+        } else {
+            break;
+        }
+    }
+    map.insert(session_tok.clone(), expiry);
+    session_tok
+}
+
+// --- Tailcat Verified Binary, Ingress Management & Ephemeral Transport Leases ---
+
+const TAILCAT_GRANT_SECONDS: u64 = 20 * 60;
+const TAILCAT_GLOBAL_LEASE_LIMIT: usize = 32;
+const TAILCAT_PER_OWNER_LEASE_LIMIT: usize = 8;
+const TAILCAT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone)]
+struct TailcatConfig {
+    ingress: bool,
+    helper_path: Option<PathBuf>,
+    helper_sha256: Option<String>,
+    web_port: u16,
+}
+
+impl TailcatConfig {
+    fn is_available(&self) -> bool {
+        self.helper_path.is_some()
+    }
+}
+
+fn normalize_windows_verbatim(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn verified_tailcat_command(
+    program: &Path,
+    expected_sha256: Option<&str>,
+) -> Result<Command, String> {
+    if !program.is_absolute()
+        || program
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("An absolute Tailcat transport executable path without '..' is required".into());
+    }
+    if let Some(expected) = expected_sha256 {
+        if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Tailcat helper SHA-256 must be exactly 64 hex characters".into());
+        }
+    }
+    let canonical = program.canonicalize().map_err(|_| {
+        "Tailcat transport executable is unavailable; no alternate program was selected"
+    })?;
+    if !canonical.is_file() {
+        return Err("Tailcat transport executable must be an exact regular-file path".into());
+    }
+    if let Some(expected) = expected_sha256 {
+        let mut file =
+            fs::File::open(&canonical).map_err(|_| "Cannot open Tailcat transport executable")?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)
+            .map_err(|_| "Cannot hash Tailcat transport executable")?;
+        let actual = format!("{:x}", hasher.finalize());
+        if !ct_eq(&actual, &expected.to_ascii_lowercase()) {
+            return Err("Tailcat transport executable SHA-256 mismatch; launch refused".into());
+        }
+    }
+    let exec_path = normalize_windows_verbatim(&canonical);
+    let mut command = Command::new(exec_path);
+    command.env_clear();
+    #[cfg(not(windows))]
+    command.env("PATH", "/usr/bin:/bin");
+    #[cfg(windows)]
+    {
+        let system_root = std::env::var_os("SystemRoot")
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+        command
+            .env("PATH", r"C:\Windows\System32;C:\Windows")
+            .env("SystemRoot", system_root);
+        for key in ["TEMP", "TMP"] {
+            if let Some(v) = std::env::var_os(key).filter(|val| !val.is_empty()) {
+                command.env(key, v);
+            }
+        }
+    }
+    Ok(command)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TailcatLeaseCommand {
+    Renew,
+    Stop,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TailcatLeaseError {
+    status: u16,
+    code: &'static str,
+    detail: Option<String>,
+}
+
+impl TailcatLeaseError {
+    fn new(status: u16, code: &'static str) -> Self {
+        Self {
+            status,
+            code,
+            detail: None,
+        }
+    }
+
+    fn with_detail(status: u16, code: &'static str, detail: Option<String>) -> Self {
+        Self {
+            status,
+            code,
+            detail,
+        }
+    }
+}
+
+struct TailcatLease {
+    owner: String,
+    control: mpsc::Sender<TailcatLeaseCommand>,
+    finished: Arc<(Mutex<Option<bool>>, Condvar)>,
+}
+
+#[derive(Default)]
+struct TailcatLeaseManager {
+    leases: Mutex<HashMap<String, TailcatLease>>,
+}
+
+fn sanitize_tailcat_helper_detail(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > 96 {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("http://")
+        || lower.contains("https://")
+        || lower.contains("nodekey:")
+        || lower.contains("psk")
+    {
+        return None;
+    }
+    if trimmed
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'))
+    {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn extract_tailcat_helper_error_detail(frame: &Value) -> Option<String> {
+    if frame.get("protocolVersion").and_then(Value::as_u64) != Some(1)
+        || frame.get("event").and_then(Value::as_str) != Some("error")
+    {
+        return None;
+    }
+    let stage = frame
+        .get("stage")
+        .and_then(Value::as_str)
+        .and_then(sanitize_tailcat_helper_detail)?;
+    let detail = frame
+        .get("detail")
+        .and_then(Value::as_str)
+        .and_then(sanitize_tailcat_helper_detail);
+    Some(match detail {
+        Some(d) => format!("{stage}:{d}"),
+        None => stage,
+    })
+}
+
+fn wait_or_kill_tailcat_child(
+    child: &Mutex<Child>,
+    grace: Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + grace;
+    loop {
+        {
+            let mut guard = child.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(status) = guard.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                let _ = guard.kill();
+                return guard.wait();
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+impl TailcatLeaseManager {
+    fn create_lease(
+        self: &Arc<Self>,
+        cfg: &TailcatConfig,
+        host_id: &str,
+        owner: String,
+        client_public_key: &str,
+    ) -> Result<Value, TailcatLeaseError> {
+        self.create_lease_with_options(
+            cfg,
+            host_id,
+            owner,
+            client_public_key,
+            Duration::from_secs(35),
+            Duration::from_secs(TAILCAT_GRANT_SECONDS),
+            TAILCAT_SHUTDOWN_GRACE,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_lease_with_options(
+        self: &Arc<Self>,
+        cfg: &TailcatConfig,
+        host_id: &str,
+        owner: String,
+        client_public_key: &str,
+        startup_timeout: Duration,
+        grant_duration: Duration,
+        shutdown_grace: Duration,
+    ) -> Result<Value, TailcatLeaseError> {
+        let Some(ref program) = cfg.helper_path else {
+            return Err(TailcatLeaseError::new(409, "tailcat_not_available"));
+        };
+        if client_public_key.len() > 128 || !client_public_key.starts_with("nodekey:") {
+            return Err(TailcatLeaseError::new(400, "invalid_transport_public_key"));
+        }
+        let mut command = verified_tailcat_command(program, cfg.helper_sha256.as_deref())
+            .map_err(|_| TailcatLeaseError::new(503, "tailcat_helper_verification_failed"))?;
+
+        let id = new_id();
+        let (control_tx, control_rx) = mpsc::channel();
+        let finished = Arc::new((Mutex::new(None), Condvar::new()));
+        {
+            let mut leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+            if leases.len() >= TAILCAT_GLOBAL_LEASE_LIMIT {
+                return Err(TailcatLeaseError::new(503, "transport_capacity_reached"));
+            }
+            let owner_leases = leases.values().filter(|l| l.owner == owner).count();
+            if owner_leases >= TAILCAT_PER_OWNER_LEASE_LIMIT {
+                return Err(TailcatLeaseError::new(
+                    429,
+                    "transport_owner_capacity_reached",
+                ));
+            }
+            leases.insert(
+                id.clone(),
+                TailcatLease {
+                    owner,
+                    control: control_tx,
+                    finished: Arc::clone(&finished),
+                },
+            );
+        }
+
+        let mut child = match command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                self.leases
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+                return Err(TailcatLeaseError::new(503, "tailcat_start_failed"));
+            }
+        };
+        let mut input = child.stdin.take().expect("tailcat helper stdin");
+        let output = child.stdout.take().expect("tailcat helper stdout");
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                let mut sink = Vec::new();
+                let _ = stderr.take(4096).read_to_end(&mut sink);
+            });
+        }
+        let child = Arc::new(Mutex::new(child));
+        let child_for_timeout = Arc::clone(&child);
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let grant_id = id.clone();
+        let host_owned = host_id.to_string();
+        let pub_owned = client_public_key.to_string();
+        let origin = format!("http://127.0.0.1:{}", cfg.web_port);
+        let mgr = Arc::clone(self);
+        std::thread::spawn(move || {
+            let frame = json!({
+                "version": 1,
+                "kind": "host",
+                "host": {
+                    "origin": origin,
+                    "expectedHostId": host_owned,
+                    "allowedClientKeys": [pub_owned]
+                }
+            });
+            let startup: Result<String, Option<String>> = (|| {
+                serde_json::to_writer(&mut input, &frame).map_err(|_| None)?;
+                input
+                    .write_all(b"\n")
+                    .and_then(|_| input.flush())
+                    .map_err(|_| None)?;
+                let mut line = String::new();
+                std::io::BufReader::new(output)
+                    .take(64 * 1024)
+                    .read_line(&mut line)
+                    .map_err(|_| None)?;
+                let parsed: Value = serde_json::from_str(&line).map_err(|_| None)?;
+                if parsed.get("protocolVersion").and_then(Value::as_u64) != Some(1)
+                    || parsed.get("event").and_then(Value::as_str) != Some("ready")
+                {
+                    return Err(extract_tailcat_helper_error_detail(&parsed));
+                }
+                parsed
+                    .get("address")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .ok_or(None)
+            })();
+            let started = startup.is_ok();
+            if ready_tx.send(startup).is_ok() && started {
+                let mut deadline = Instant::now() + grant_duration;
+                loop {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    match control_rx.recv_timeout(deadline.saturating_duration_since(now)) {
+                        Ok(TailcatLeaseCommand::Renew) => {
+                            deadline = Instant::now() + grant_duration;
+                        }
+                        Ok(TailcatLeaseCommand::Stop)
+                        | Err(mpsc::RecvTimeoutError::Timeout)
+                        | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }
+            let _ = input.write_all(b"{\"version\":1,\"kind\":\"stop\"}\n");
+            let _ = input.flush();
+            drop(input);
+            let exit = wait_or_kill_tailcat_child(&child, shutdown_grace);
+            mgr.finish_lease(&grant_id, &finished, exit);
+        });
+
+        let address = match ready_rx.recv_timeout(startup_timeout) {
+            Ok(Ok(addr)) => addr,
+            Ok(Err(detail)) => {
+                return Err(TailcatLeaseError::with_detail(
+                    503,
+                    "tailcat_start_failed",
+                    detail,
+                ));
+            }
+            Err(_) => {
+                let mut guard = child_for_timeout.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = guard.kill();
+                drop(guard);
+                self.leases
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+                return Err(TailcatLeaseError::new(503, "tailcat_start_timeout"));
+            }
+        };
+        Ok(json!({
+            "version": 1,
+            "leaseId": id,
+            "address": address,
+            "hostId": host_id,
+            "expiresIn": TAILCAT_GRANT_SECONDS
+        }))
+    }
+
+    fn finish_lease(
+        &self,
+        id: &str,
+        finished: &(Mutex<Option<bool>>, Condvar),
+        exit: std::io::Result<std::process::ExitStatus>,
+    ) {
+        let (state, wake) = finished;
+        *state.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(exit.as_ref().is_ok_and(|s| s.success()));
+        wake.notify_all();
+        self.leases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+    }
+
+    fn renew_lease(&self, owner: &str, id: &str) -> Result<Value, TailcatLeaseError> {
+        let leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+        let lease = leases
+            .get(id)
+            .ok_or_else(|| TailcatLeaseError::new(404, "transport_lease_unavailable"))?;
+        if lease.owner != owner {
+            return Err(TailcatLeaseError::new(
+                403,
+                "transport_lease_owner_mismatch",
+            ));
+        }
+        lease
+            .control
+            .send(TailcatLeaseCommand::Renew)
+            .map_err(|_| TailcatLeaseError::new(404, "transport_lease_unavailable"))?;
+        Ok(json!({
+            "version": 1,
+            "leaseId": id,
+            "renewed": true,
+            "expiresIn": TAILCAT_GRANT_SECONDS
+        }))
+    }
+
+    fn close_lease(&self, owner: &str, id: &str) -> Result<Value, TailcatLeaseError> {
+        let finished = {
+            let leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+            let lease = leases
+                .get(id)
+                .ok_or_else(|| TailcatLeaseError::new(404, "transport_lease_unavailable"))?;
+            if lease.owner != owner {
+                return Err(TailcatLeaseError::new(
+                    403,
+                    "transport_lease_owner_mismatch",
+                ));
+            }
+            let _ = lease.control.send(TailcatLeaseCommand::Stop);
+            Arc::clone(&lease.finished)
+        };
+        let (state, wake) = &*finished;
+        let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        let (state, _) = wake
+            .wait_timeout_while(guard, TAILCAT_SHUTDOWN_GRACE, |v| v.is_none())
+            .unwrap_or_else(|e| e.into_inner());
+        Ok(json!({
+            "closed": *state == Some(true),
+            "closing": state.is_none(),
+            "stopUnconfirmed": *state == Some(false),
+            "runStateChanged": false
+        }))
+    }
+
+    fn shutdown_all(&self) {
+        let active: Vec<Arc<(Mutex<Option<bool>>, Condvar)>> = {
+            let leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+            leases
+                .values()
+                .map(|l| {
+                    let _ = l.control.send(TailcatLeaseCommand::Stop);
+                    Arc::clone(&l.finished)
+                })
+                .collect()
+        };
+        let deadline = Instant::now() + TAILCAT_SHUTDOWN_GRACE;
+        for finished in active {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let (state, wake) = &*finished;
+            let guard = state.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = wake
+                .wait_timeout_while(guard, remaining, |v| v.is_none())
+                .unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+struct TailcatIngressChild {
+    stdin: Option<std::process::ChildStdin>,
+    child: Mutex<Child>,
+}
+
+impl TailcatIngressChild {
+    fn spawn(cfg: &TailcatConfig, host_id: &str) -> Result<Self, String> {
+        let Some(ref helper) = cfg.helper_path else {
+            return Err("--tailcat-ingress requires --tailcat-helper".into());
+        };
+        let mut cmd = verified_tailcat_command(helper, cfg.helper_sha256.as_deref())?;
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed spawning Tailcat ingress helper: {e}"))?;
+        let mut stdin = child.stdin.take();
+        if let Some(ref mut input) = stdin {
+            let init = json!({
+                "version": 1,
+                "kind": "ingress",
+                "host": {
+                    "origin": format!("http://127.0.0.1:{}", cfg.web_port),
+                    "expectedHostId": host_id
+                }
+            });
+            let _ = serde_json::to_writer(&mut *input, &init);
+            let _ = input.write_all(b"\n");
+            let _ = input.flush();
+        }
+        if let Some(stdout) = child.stdout.take() {
+            std::thread::spawn(move || {
+                let mut sink = Vec::new();
+                let _ = stdout.take(64 * 1024).read_to_end(&mut sink);
+            });
+        }
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                let mut sink = Vec::new();
+                let _ = stderr.take(16 * 1024).read_to_end(&mut sink);
+            });
+        }
+        Ok(Self {
+            stdin,
+            child: Mutex::new(child),
+        })
+    }
+
+    fn shutdown(mut self) {
+        if let Some(mut input) = self.stdin.take() {
+            let _ = input.write_all(b"{\"version\":1,\"kind\":\"stop\"}\n");
+            let _ = input.flush();
+        }
+        let _ = wait_or_kill_tailcat_child(&self.child, TAILCAT_SHUTDOWN_GRACE);
+    }
+}
+
+// --- OAuth PKCE / Device-Code Flow State ---
+
+#[derive(Debug, Clone)]
+struct OAuthFlowState {
+    request_id: String,
+    account_id: String,
+    provider: String,
+    method: i64,
+    state: String,
+    csrf_state: String,
+    code_challenge: String,
+    authorization_url: Option<String>,
+    verification_url: Option<String>,
+    user_code: Option<String>,
+    callback_mode: Option<String>,
+    instructions: Option<String>,
+    poll_interval_seconds: Option<u64>,
+    cancellation_confirmed: Option<bool>,
+}
+
+fn generate_pkce_pair() -> (String, String) {
+    let verifier = base64url_encode(&random_bytes_32());
+    let challenge = base64url_encode(&Sha256::digest(verifier.as_bytes()));
+    (verifier, challenge)
+}
+
 struct WebServerState {
     store: Store,
     suite: Arc<ModulesSuite>,
@@ -782,12 +1582,18 @@ struct WebServerState {
     host_id: String,
     access_token: String,
     sessions: Arc<Mutex<BTreeMap<String, i64>>>,
+    handoffs: Arc<Mutex<HashMap<String, HandoffGrant>>>,
     nonces: Arc<Mutex<BoundedNonceCache>>,
     active_cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>>,
     pending_interactions: Arc<PendingInteractions>,
     native_browser: Arc<NativeBrowserBridge>,
     tool_plans: Arc<Mutex<BTreeMap<String, Value>>>,
     mcp_manager: Arc<McpManager>,
+    tailcat: TailcatConfig,
+    tailcat_leases: Arc<TailcatLeaseManager>,
+    messaging_worker: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    oauth_flows: Arc<Mutex<BTreeMap<String, OAuthFlowState>>>,
+    auxiliary_ops: Arc<Mutex<BTreeMap<String, Value>>>,
 }
 
 struct RequestSlotGuard {
@@ -861,8 +1667,46 @@ fn is_allowed_module_kind(kind: &str) -> bool {
 
 fn is_inbound_webhook_path(path: &str) -> bool {
     (path.starts_with("/api/messaging-channels/") && path.ends_with("/inbound"))
+        || path.starts_with("/api/messaging/webhooks/")
         || path.starts_with("/v1/channels/webhook/")
         || path.starts_with("/api/v1/channels/webhook/")
+}
+
+fn reconcile_messaging_worker(
+    worker_slot: &Mutex<Option<Arc<AtomicBool>>>,
+    store: &Store,
+    workspace_root: &Path,
+) -> bool {
+    let snap = load_messaging_worker_snapshot(store);
+    let enabled = snap
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let mut guard = worker_slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(prev) = guard.take() {
+        prev.store(true, Ordering::Relaxed);
+    }
+    if enabled {
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let vault_arc = Vault::open(resolve_vault_path_for_store(store))
+            .ok()
+            .map(Arc::new);
+        let store_for_route = store.clone();
+        let _handle = spawn_messaging_channel_worker(
+            store.clone(),
+            vault_arc,
+            move || {
+                let cfg = load_active_config(&store_for_route);
+                resolve_model_route(&cfg).ok()
+            },
+            workspace_root.to_path_buf(),
+            Arc::clone(&stop_flag),
+        );
+        *guard = Some(stop_flag);
+        true
+    } else {
+        false
+    }
 }
 
 pub fn run_web_server(
@@ -875,6 +1719,9 @@ pub fn run_web_server(
     let mut port: u16 = 5001;
     let mut web_root: Option<PathBuf> = None;
     let mut assets_override: Option<PathBuf> = None;
+    let mut tailcat_ingress = false;
+    let mut tailcat_helper: Option<PathBuf> = None;
+    let mut tailcat_helper_sha256: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -900,10 +1747,27 @@ pub fn run_web_server(
             i += 1;
             continue;
         }
-        if arg.starts_with("--tailcat-ingress=")
-            || arg.starts_with("--tailcat-helper=")
-            || arg.starts_with("--tailcat-helper-sha256=")
-        {
+        if let Some(val) = arg.strip_prefix("--tailcat-ingress=") {
+            tailcat_ingress = !matches!(
+                val.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off" | ""
+            );
+            i += 1;
+            continue;
+        }
+        if let Some(val) = arg.strip_prefix("--tailcat-helper=") {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                tailcat_helper = Some(PathBuf::from(trimmed));
+            }
+            i += 1;
+            continue;
+        }
+        if let Some(val) = arg.strip_prefix("--tailcat-helper-sha256=") {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                tailcat_helper_sha256 = Some(trimmed.to_string());
+            }
             i += 1;
             continue;
         }
@@ -935,10 +1799,30 @@ pub fn run_web_server(
                     assets_override = Some(PathBuf::from(a));
                 }
             }
-            "--tailcat-ingress" | "--tailcat-helper" | "--tailcat-helper-sha256" => {
-                if args.get(i + 1).is_some_and(|next| !next.starts_with("--")) {
+            "--tailcat-ingress" => {
+                if let Some(next) = args.get(i + 1).filter(|s| !s.starts_with("--")) {
+                    tailcat_ingress = !matches!(
+                        next.trim().to_ascii_lowercase().as_str(),
+                        "0" | "false" | "no" | "off"
+                    );
                     i += 1;
+                } else {
+                    tailcat_ingress = true;
                 }
+            }
+            "--tailcat-helper" => {
+                i += 1;
+                let Some(h) = args.get(i).filter(|s| !s.trim().is_empty()) else {
+                    return Err("missing value for --tailcat-helper".into());
+                };
+                tailcat_helper = Some(PathBuf::from(h.trim()));
+            }
+            "--tailcat-helper-sha256" => {
+                i += 1;
+                let Some(digest) = args.get(i).filter(|s| !s.trim().is_empty()) else {
+                    return Err("missing value for --tailcat-helper-sha256".into());
+                };
+                tailcat_helper_sha256 = Some(digest.trim().to_string());
             }
             "--json" => {
                 json_mode = true;
@@ -946,6 +1830,12 @@ pub fn run_web_server(
             _ => {}
         }
         i += 1;
+    }
+
+    if let Some(ref helper_path) = tailcat_helper {
+        let _ = verified_tailcat_command(helper_path, tailcat_helper_sha256.as_deref())?;
+    } else if tailcat_helper_sha256.is_some() {
+        return Err("--tailcat-helper-sha256 requires --tailcat-helper".into());
     }
 
     let (ui_dir, static_dir) = if let Some(root) = web_root {
@@ -977,6 +1867,18 @@ pub fn run_web_server(
     let host_id = ensure_host_id(&store);
     let token_path = mobile_access_token_path();
     let (access_token, env_token_override) = load_or_create_web_access_token();
+    let tailcat = TailcatConfig {
+        ingress: tailcat_ingress,
+        helper_path: tailcat_helper,
+        helper_sha256: tailcat_helper_sha256,
+        web_port: bound_port,
+    };
+    let tailcat_ingress_child = if tailcat.ingress && tailcat.helper_path.is_some() {
+        Some(TailcatIngressChild::spawn(&tailcat, &host_id)?)
+    } else {
+        None
+    };
+
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     if json_mode && stdin_is_pipe() {
         let server_stdin = Arc::clone(&server);
@@ -1011,12 +1913,21 @@ pub fn run_web_server(
         }
     }
     let sessions: Arc<Mutex<BTreeMap<String, i64>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let handoffs: Arc<Mutex<HashMap<String, HandoffGrant>>> = Arc::new(Mutex::new(HashMap::new()));
     let nonces = Arc::new(Mutex::new(BoundedNonceCache::default()));
     let active_cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
     let pending_interactions = Arc::new(PendingInteractions::default());
     let native_browser = Arc::new(NativeBrowserBridge::default());
     let tool_plans: Arc<Mutex<BTreeMap<String, Value>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let tailcat_leases = Arc::new(TailcatLeaseManager::default());
+    let messaging_worker: Arc<Mutex<Option<Arc<AtomicBool>>>> = Arc::new(Mutex::new(None));
+    let oauth_flows: Arc<Mutex<BTreeMap<String, OAuthFlowState>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
+    let auxiliary_ops: Arc<Mutex<BTreeMap<String, Value>>> = Arc::new(Mutex::new(BTreeMap::new()));
+
+    // Reconcile enabled harness plugins on startup so plugin MCP servers & skills are wired cleanly.
+    let _ = reconcile_enabled_plugins(&store, &suite.workspace_root);
 
     let vault_arc = Vault::open(resolve_vault_path_for_store(&store))
         .ok()
@@ -1033,6 +1944,22 @@ pub fn run_web_server(
         scheduler_llm,
         scheduler_route,
     );
+
+    // Spawn durable background goal worker alongside the automation scheduler.
+    let goal_worker_stop = Arc::new(AtomicBool::new(false));
+    let store_for_goals = store.clone();
+    let _goal_worker_handle = spawn_background_goal_worker(
+        store.clone(),
+        move || {
+            let cfg = load_active_config(&store_for_goals);
+            resolve_model_route(&cfg).ok()
+        },
+        suite.workspace_root.clone(),
+        Arc::clone(&goal_worker_stop),
+    );
+
+    // Start messaging channel worker if enabled in persisted KV settings.
+    let _ = reconcile_messaging_worker(&messaging_worker, &store, &suite.workspace_root);
 
     if json_mode {
         println!(
@@ -1054,12 +1981,18 @@ pub fn run_web_server(
         host_id,
         access_token,
         sessions,
+        handoffs,
         nonces,
         active_cancels,
         pending_interactions,
         native_browser,
         tool_plans,
         mcp_manager,
+        tailcat,
+        tailcat_leases: Arc::clone(&tailcat_leases),
+        messaging_worker: Arc::clone(&messaging_worker),
+        oauth_flows,
+        auxiliary_ops,
     });
     let request_limiter = Arc::new((Mutex::new(0usize), Condvar::new()));
 
@@ -1078,6 +2011,16 @@ pub fn run_web_server(
     }
 
     scheduler_stop.store(true, Ordering::Relaxed);
+    goal_worker_stop.store(true, Ordering::Relaxed);
+    if let Ok(mut guard) = messaging_worker.lock() {
+        if let Some(stop) = guard.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+    tailcat_leases.shutdown_all();
+    if let Some(ingress_child) = tailcat_ingress_child {
+        ingress_child.shutdown();
+    }
     Ok(0)
 }
 
@@ -1091,12 +2034,18 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
     let host_id = &state.host_id;
     let access_token = &state.access_token;
     let sessions = &state.sessions;
+    let handoffs = &state.handoffs;
     let nonces = &state.nonces;
     let active_cancels = &state.active_cancels;
     let pending_interactions = &state.pending_interactions;
     let native_browser = &state.native_browser;
     let tool_plans = &state.tool_plans;
     let mcp_manager = &state.mcp_manager;
+    let tailcat = &state.tailcat;
+    let tailcat_leases = &state.tailcat_leases;
+    let messaging_worker = &state.messaging_worker;
+    let oauth_flows = &state.oauth_flows;
+    let auxiliary_ops = &state.auxiliary_ops;
 
     let full_url = req.url().to_string();
     let (raw_path, query) = full_url.split_once('?').unwrap_or((full_url.as_str(), ""));
@@ -1236,6 +2185,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let session_auth = is_valid_session_cookie(&req, sessions);
                 let bearer_auth = !session_auth && req_authenticated;
                 let authed = session_auth || local_trust || bearer_auth;
+                let desktop_platform = std::env::var("NOLA_DESKTOP_PLATFORM")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
                 let _ = respond_api_json(
                     req,
                     200,
@@ -1244,13 +2197,83 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         "sessionAuthenticated": session_auth,
                         "bearerAuthenticated": bearer_auth,
                         "localTrust": local_trust,
-                        "tailcatAvailable": false,
-                        "transportIngress": "direct",
+                        "tailcatAvailable": tailcat.is_available(),
+                        "transportIngress": if tailcat.ingress { "tailcat" } else { "direct" },
+                        "desktopPlatform": desktop_platform,
                         "hostId": host_id,
                         "version": "2.0.0"
                     }),
                     crypto_tok,
                 );
+            }
+            (Method::Post, "/api/transport/tailcat") => {
+                let owner_tok = extract_bearer_token(&req)
+                    .map(ToString::to_string)
+                    .or_else(|| extract_cookie_value(&req, "nola_session"))
+                    .unwrap_or_else(|| access_token.clone());
+                let owner = sha256_hex(owner_tok.as_bytes());
+                let op = body
+                    .get("operation")
+                    .or_else(|| body.get("action"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim);
+                let result = match op {
+                    Some("connect") | Some("grant") => {
+                        let expected = body
+                            .get("expectedHostId")
+                            .or_else(|| body.get("expected_host_id"))
+                            .and_then(|v| v.as_str());
+                        if let Some(exp) = expected {
+                            if exp != host_id.as_str() {
+                                Err(TailcatLeaseError::new(
+                                    409,
+                                    "transport_host_identity_mismatch",
+                                ))
+                            } else if let Some(public) = body
+                                .get("clientPublicKey")
+                                .or_else(|| body.get("client_public_key"))
+                                .and_then(|v| v.as_str())
+                            {
+                                tailcat_leases.create_lease(tailcat, host_id, owner, public)
+                            } else {
+                                Err(TailcatLeaseError::new(400, "client_public_key_required"))
+                            }
+                        } else if let Some(public) = body
+                            .get("clientPublicKey")
+                            .or_else(|| body.get("client_public_key"))
+                            .and_then(|v| v.as_str())
+                        {
+                            tailcat_leases.create_lease(tailcat, host_id, owner, public)
+                        } else {
+                            Err(TailcatLeaseError::new(400, "client_public_key_required"))
+                        }
+                    }
+                    Some("renew") => body
+                        .get("leaseId")
+                        .or_else(|| body.get("lease_id"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| TailcatLeaseError::new(400, "transport_lease_required"))
+                        .and_then(|lease_id| tailcat_leases.renew_lease(&owner, lease_id)),
+                    Some("close") => body
+                        .get("leaseId")
+                        .or_else(|| body.get("lease_id"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| TailcatLeaseError::new(400, "transport_lease_required"))
+                        .and_then(|lease_id| tailcat_leases.close_lease(&owner, lease_id)),
+                    _ => Err(TailcatLeaseError::new(400, "unknown_transport_operation")),
+                };
+                match result {
+                    Ok(value) => {
+                        let _ = respond_api_json(req, 200, &value, crypto_tok);
+                    }
+                    Err(err) => {
+                        let payload = match err.detail {
+                            Some(detail) => json!({"error": err.code, "detail": detail}),
+                            None => json!({"error": err.code}),
+                        };
+                        let _ = respond_api_json(req, err.status, &payload, crypto_tok);
+                    }
+                }
             }
             (Method::Post, "/api/web/login") | (Method::Post, "/api/login") => {
                 let supplied_token = body
@@ -1279,25 +2302,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         crypto_tok,
                     );
                 } else {
-                    let session_tok = generate_hex_token_32();
-                    let expiry = now_ms().saturating_add(SESSION_TTL_MS);
-                    {
-                        let mut map = sessions.lock().unwrap();
-                        let now = now_ms();
-                        map.retain(|_, exp| *exp > now);
-                        while map.len() >= MAX_SESSIONS {
-                            if let Some(oldest_key) = map
-                                .iter()
-                                .min_by_key(|(_, exp)| **exp)
-                                .map(|(k, _)| k.clone())
-                            {
-                                map.remove(&oldest_key);
-                            } else {
-                                break;
-                            }
-                        }
-                        map.insert(session_tok.clone(), expiry);
-                    }
+                    let session_tok = issue_browser_session(sessions);
                     let cookie_val = format!(
                         "nola_session={session_tok}; HttpOnly; SameSite=Strict; Path=/"
                     );
@@ -1311,7 +2316,13 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         "token_type": "Bearer",
                         "expires_in": SESSION_TTL_MS / 1000
                     });
-                    let _ = respond_json_with_headers(req, 200, &payload, vec![set_cookie]);
+                    let _ = respond_api_json_with_headers(
+                        req,
+                        200,
+                        &payload,
+                        vec![set_cookie],
+                        crypto_tok,
+                    );
                 }
             }
             (Method::Post, "/api/web/logout") => {
@@ -1329,11 +2340,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     &b"nola_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"[..],
                 )
                 .unwrap();
-                let _ = respond_json_with_headers(
+                let _ = respond_api_json_with_headers(
                     req,
                     200,
                     &json!({"authenticated": false, "sessionAuthenticated": false}),
                     vec![clear_cookie],
+                    crypto_tok,
                 );
             }
             (Method::Get, "/api/software-update") | (Method::Post, "/api/software-update/check") => {
@@ -1683,26 +2695,51 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let raw_target = body
                     .get("target")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("/settings")
-                    .trim();
-                let safe_path = if raw_target.starts_with('/')
-                    && !raw_target.starts_with("//")
-                    && !raw_target.contains('\\')
-                {
-                    raw_target.to_string()
-                } else {
-                    "/settings".to_string()
-                };
+                    .unwrap_or("/settings");
+                let (code, safe_path) = mint_web_handoff(handoffs, raw_target, Instant::now());
+                let handoff_path = format!("/auth/mobile-handoff/{code}");
                 let _ = respond_api_json(
                     req,
                     200,
                     &json!({
                         "ok": true,
-                        "path": safe_path,
+                        "path": handoff_path,
+                        "code": code,
+                        "target": safe_path,
+                        "expiresIn": HANDOFF_TTL_SECS,
                         "hostId": host_id
                     }),
                     crypto_tok,
                 );
+            }
+            (Method::Get, p) if p.starts_with("/auth/mobile-handoff/") => {
+                let code = p.trim_start_matches("/auth/mobile-handoff/");
+                let no_store =
+                    Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap();
+                if let Some(target) = consume_web_handoff(handoffs, code, Instant::now()) {
+                    let session_tok = issue_browser_session(sessions);
+                    let cookie_val = format!(
+                        "nola_session={session_tok}; HttpOnly; SameSite=Strict; Path=/"
+                    );
+                    let set_cookie =
+                        Header::from_bytes(&b"Set-Cookie"[..], cookie_val.as_bytes()).unwrap();
+                    let loc = Header::from_bytes(&b"Location"[..], target.as_bytes()).unwrap();
+                    let resp = Response::empty(StatusCode(302))
+                        .with_header(loc)
+                        .with_header(set_cookie)
+                        .with_header(no_store);
+                    let _ = req.respond(resp);
+                } else {
+                    let loc = Header::from_bytes(
+                        &b"Location"[..],
+                        &b"/login?error=expired_handoff"[..],
+                    )
+                    .unwrap();
+                    let resp = Response::empty(StatusCode(302))
+                        .with_header(loc)
+                        .with_header(no_store);
+                    let _ = req.respond(resp);
+                }
             }
             (Method::Post, "/api/attachments/parse") => {
                 let filename = body
@@ -1723,27 +2760,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .unwrap_or("");
                 match base64_decode(b64) {
                     Ok(bytes) => {
-                        let text = match String::from_utf8(bytes.clone()) {
-                            Ok(s) => s.chars().take(65_536).collect::<String>(),
-                            Err(_) => format!(
-                                "[Binary attachment '{filename}' ({mime_type}, {} bytes, sha256={})]",
-                                bytes.len(),
-                                &sha256_hex(&bytes)[..16]
-                            ),
-                        };
-                        let _ = respond_api_json(
-                            req,
-                            200,
-                            &json!({
-                                "ok": true,
-                                "filename": filename,
-                                "mime_type": mime_type,
-                                "bytes": bytes.len(),
-                                "text": text,
-                                "content": text
-                            }),
-                            crypto_tok,
-                        );
+                        let parsed = parse_attachment_payload(filename, mime_type, &bytes);
+                        let _ = respond_api_json(req, 200, &parsed, crypto_tok);
                     }
                     Err(e) => {
                         let _ = respond_api_json(
@@ -1855,37 +2873,79 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     let _ = respond_api_json(req, 404, &json!({"error": "result_not_found"}), crypto_tok);
                 }
             }
+            (Method::Get, "/api/documents/search") => {
+                let q = parse_query_str(query, "q")
+                    .or_else(|| parse_query_str(query, "query"))
+                    .unwrap_or_default();
+                let limit = parse_query_i64(query, "limit")
+                    .unwrap_or(20)
+                    .clamp(1, 100) as usize;
+                let source_ids: Option<Vec<String>> = parse_query_str(query, "sourceId")
+                    .or_else(|| parse_query_str(query, "source_id"))
+                    .map(|s| {
+                        s.split(',')
+                            .map(str::trim)
+                            .filter(|x| !x.is_empty())
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| !v.is_empty());
+                let res = execute_documents_search(
+                    &store,
+                    &suite.workspace_root,
+                    &q,
+                    source_ids.as_deref(),
+                    limit,
+                );
+                let _ = respond_api_json(req, 200, &res, crypto_tok);
+            }
             (Method::Post, "/api/documents/search") => {
                 let q = body
                     .get("query")
                     .or_else(|| body.get("q"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let mem_hits: Vec<Value> = store
-                    .search_memory(&q, None, 20)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|m| json!({"kind": "memory", "id": m.id, "title": m.title, "snippet": m.content}))
-                    .collect();
-                let mut file_hits: Vec<Value> = Vec::new();
-                if !q.is_empty() {
-                    if let Ok(entries) = fs::read_dir(&suite.workspace_root) {
-                        for entry in entries.flatten().take(100) {
-                            let name = entry.file_name().to_string_lossy().into_owned();
-                            if name.to_ascii_lowercase().contains(&q.to_ascii_lowercase()) {
-                                file_hits.push(json!({"kind": "file", "path": name}));
-                            }
-                        }
-                    }
-                }
-                let _ = respond_api_json(
-                    req,
-                    200,
-                    &json!({"query": q, "memory": mem_hits, "files": file_hits}),
-                    crypto_tok,
+                    .unwrap_or("");
+                let limit = body
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(20)
+                    .clamp(1, 100) as usize;
+                let source_ids: Option<Vec<String>> = body
+                    .get("sourceIds")
+                    .or_else(|| body.get("source_ids"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| !v.is_empty())
+                    .or_else(|| {
+                        body.get("sourceId")
+                            .or_else(|| body.get("source_id"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| vec![s.to_string()])
+                    });
+                let res = execute_documents_search(
+                    &store,
+                    &suite.workspace_root,
+                    q,
+                    source_ids.as_deref(),
+                    limit,
                 );
+                let _ = respond_api_json(req, 200, &res, crypto_tok);
+            }
+            (Method::Get, "/api/workspace/worktrees") => {
+                let (status, payload) =
+                    handle_workspace_worktrees(&suite.workspace_root, false, &json!({}));
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
+            }
+            (Method::Post, "/api/workspace/worktrees") => {
+                let (status, payload) =
+                    handle_workspace_worktrees(&suite.workspace_root, true, &body);
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
             }
             (Method::Get, "/api/workspace/diff") => {
                 let review = build_workspace_review(&host_id, "workspace", &suite.workspace_root);
@@ -1959,6 +3019,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     "install" => {
                         let source = body
                             .get("source")
+                            .or_else(|| body.get("path"))
                             .or_else(|| body.get("name"))
                             .and_then(|v| v.as_str())
                             .map(str::trim)
@@ -1967,60 +3028,49 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             let _ = respond_api_json(
                                 req,
                                 400,
-                                &json!({"error": "missing_plugin_source"}),
+                                &json!({"ok": false, "error": "missing_plugin_source"}),
                                 crypto_tok,
                             );
                         } else {
-                            let cleaned = source.strip_prefix("npm:").unwrap_or(source);
-                            let (parsed_name, parsed_ver) =
-                                if let Some((n, v)) = cleaned.rsplit_once('@') {
-                                    if !n.is_empty() && !v.is_empty() && !v.contains('/') {
-                                        (n.to_string(), v.to_string())
-                                    } else {
-                                        (cleaned.to_string(), "latest".to_string())
-                                    }
-                                } else {
-                                    (cleaned.to_string(), "latest".to_string())
-                                };
                             let runtime = body
                                 .get("runtime")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("dsh")
-                                .to_string();
+                                .unwrap_or("dsh");
                             let profile = body
                                 .get("profile")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("web")
-                                .to_string();
-                            let id = body
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .map(str::trim)
-                                .filter(|s| !s.is_empty())
-                                .map(ToString::to_string)
-                                .unwrap_or_else(|| parsed_name.clone());
-                            let rec = PluginRecord {
-                                id: id.clone(),
-                                name: parsed_name,
-                                version: parsed_ver,
-                                entry_path: source.to_string(),
-                                enabled: true,
-                                capabilities: vec![runtime, profile],
-                            };
-                            if let Err(e) = suite.upsert_record("plugin", &id, &rec) {
-                                let _ = respond_api_json(
-                                    req,
-                                    500,
-                                    &json!({"error": e.to_string()}),
-                                    crypto_tok,
-                                );
-                            } else {
-                                let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
-                                let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                                .unwrap_or("web");
+                            match install_plugin_package(
+                                &store,
+                                &suite.workspace_root,
+                                runtime,
+                                profile,
+                                source,
+                            ) {
+                                Ok(rec) => {
+                                    let reconciled =
+                                        reconcile_enabled_plugins(&store, &suite.workspace_root);
+                                    let mut catalog =
+                                        list_harness_plugins(Some(&store), &suite.workspace_root);
+                                    if let Some(obj) = catalog.as_object_mut() {
+                                        obj.insert("ok".into(), json!(true));
+                                        obj.insert("installed".into(), serde_json::to_value(&rec).unwrap_or(Value::Null));
+                                        obj.insert("reconciled".into(), serde_json::to_value(&reconciled).unwrap_or(Value::Null));
+                                    }
+                                    let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                                }
+                                Err(e) => {
+                                    let _ = respond_api_json(
+                                        req,
+                                        400,
+                                        &json!({"ok": false, "error": e}),
+                                        crypto_tok,
+                                    );
+                                }
                             }
                         }
                     }
-                    "toggle" => {
+                    "enable" | "disable" | "toggle" => {
                         let target = body
                             .get("id")
                             .or_else(|| body.get("source"))
@@ -2028,7 +3078,11 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .and_then(|v| v.as_str())
                             .map(str::trim)
                             .unwrap_or("");
-                        let explicit_enabled = body.get("enabled").and_then(|v| v.as_bool());
+                        let explicit_enabled = match action {
+                            "enable" => Some(true),
+                            "disable" => Some(false),
+                            _ => body.get("enabled").and_then(|v| v.as_bool()),
+                        };
                         if !target.is_empty() {
                             let existing = suite
                                 .list_records::<PluginRecord>("plugin")
@@ -2058,7 +3112,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 let _ = suite.upsert_record("plugin", &rec.id, &rec);
                             }
                         }
-                        let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        let reconciled = reconcile_enabled_plugins(&store, &suite.workspace_root);
+                        let mut catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        if let Some(obj) = catalog.as_object_mut() {
+                            obj.insert("ok".into(), json!(true));
+                            obj.insert("reconciled".into(), serde_json::to_value(&reconciled).unwrap_or(Value::Null));
+                        }
                         let _ = respond_api_json(req, 200, &catalog, crypto_tok);
                     }
                     "remove" => {
@@ -2089,7 +3148,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 let _ = suite.delete_record("plugin", target);
                             }
                         }
-                        let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        let reconciled = reconcile_enabled_plugins(&store, &suite.workspace_root);
+                        let mut catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        if let Some(obj) = catalog.as_object_mut() {
+                            obj.insert("ok".into(), json!(true));
+                            obj.insert("reconciled".into(), serde_json::to_value(&reconciled).unwrap_or(Value::Null));
+                        }
                         let _ = respond_api_json(req, 200, &catalog, crypto_tok);
                     }
                     _ => {
@@ -3178,27 +4242,38 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let key = format!("conv_goal:{conv_id}");
                 let goal = store.get_kv(&key).ok().flatten().unwrap_or(Value::Null);
-                let _ = respond_api_json(req, 200, &json!({"goal": goal}), crypto_tok);
+                let epoch = ensure_source_store_epoch(&store);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "source_host_id": host_id,
+                        "source_store_epoch": epoch,
+                        "goal": goal
+                    }),
+                    crypto_tok,
+                );
             }
             (Method::Post, p) | (Method::Put, p)
-                if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
+                if (p.starts_with("/api/chat/conversations/") && p.ends_with("/goal"))
+                    || p == "/api/chat/agent/v2/goal" =>
             {
-                let conv_id = percent_decode_path(
-                    p.trim_start_matches("/api/chat/conversations/")
-                        .trim_end_matches("/goal"),
-                );
-                let mut goal_body = body;
-                let id = goal_body
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(new_id);
-                goal_body["id"] = json!(id);
-                goal_body["conversationId"] = json!(conv_id);
-                goal_body["updatedAt"] = json!(Utc::now().to_rfc3339());
-                let _ = store.set_kv(&format!("conv_goal:{conv_id}"), &goal_body);
-                let _ = suite.upsert_record("goal", &id, &goal_body);
-                let _ = respond_api_json(req, 200, &json!({"ok": true, "goal": goal_body}), crypto_tok);
+                let conv_id = if p == "/api/chat/agent/v2/goal" {
+                    body.get("conversation_id")
+                        .or_else(|| body.get("conversationId"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default")
+                        .to_string()
+                } else {
+                    percent_decode_path(
+                        p.trim_start_matches("/api/chat/conversations/")
+                            .trim_end_matches("/goal"),
+                    )
+                };
+                let (status, payload) =
+                    handle_conversation_goal_control(&store, &suite, host_id, &conv_id, &body);
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
             }
             (Method::Delete, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
@@ -3209,6 +4284,255 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let _ = store.set_kv(&format!("conv_goal:{conv_id}"), &Value::Null);
                 let _ = respond_api_json(req, 200, &json!({"ok": true, "deleted": true}), crypto_tok);
+            }
+            (Method::Post, p)
+                if (p.starts_with("/api/chat/conversations/") && p.ends_with("/device-tool"))
+                    || p == "/api/chat/agent/v2/device-tool" =>
+            {
+                let conv_id = if p == "/api/chat/agent/v2/device-tool" {
+                    body.get("conversation_id")
+                        .or_else(|| body.get("conversationId"))
+                        .or_else(|| body.get("session_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default")
+                        .to_string()
+                } else {
+                    percent_decode_path(
+                        p.trim_start_matches("/api/chat/conversations/")
+                            .trim_end_matches("/device-tool"),
+                    )
+                };
+                let req_id = body
+                    .get("request_id")
+                    .or_else(|| body.get("requestId"))
+                    .or_else(|| body.get("call_id"))
+                    .or_else(|| body.get("callId"))
+                    .or_else(|| body.get("tool_call_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_string();
+                let resolved = if req_id.is_empty() {
+                    false
+                } else {
+                    pending_interactions.resolve_device_tool(&req_id, body.clone())
+                };
+                let _ = store.append_event(
+                    &conv_id,
+                    "device_tool_result",
+                    json!({
+                        "request_id": req_id,
+                        "resolved": resolved,
+                        "ok": body.get("ok").and_then(|v| v.as_bool()).unwrap_or(true),
+                        "tool": body.get("tool").or_else(|| body.get("name")).cloned().unwrap_or(Value::Null)
+                    }),
+                    50_000,
+                );
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "resolved": resolved,
+                        "request_id": req_id,
+                        "conversation_id": conv_id,
+                        "source_host_id": host_id
+                    }),
+                    crypto_tok,
+                );
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/tasks/events") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/tasks/events"),
+                );
+                let after_cursor = parse_query_i64(query, "after")
+                    .or_else(|| parse_query_i64(query, "after_cursor"))
+                    .or_else(|| parse_query_i64(query, "after_seq"))
+                    .or_else(|| {
+                        header_value(&req, "last-event-id")
+                            .and_then(|s| s.trim().parse::<i64>().ok())
+                    })
+                    .unwrap_or(0);
+                let oneshot = parse_query_str(query, "oneshot")
+                    .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                stream_conversation_task_events(
+                    req,
+                    store.clone(),
+                    conv_id,
+                    after_cursor,
+                    oneshot,
+                    crypto_tok.map(ToString::to_string),
+                );
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/progress") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/progress"),
+                );
+                let active = active_cancels.lock().unwrap().contains_key(&conv_id);
+                let needs_resp = pending_interactions.conversation_needs_response(&conv_id);
+                let todos = load_session_todos(&store, &conv_id);
+                let plan = load_session_plan(&store, &conv_id);
+                let plan_mode = is_plan_mode(&store, &conv_id);
+                let goal = store
+                    .get_kv(&format!("conv_goal:{conv_id}"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null);
+                let usage = session_usage_json(&store, &conv_id);
+                let (_, raw_events) = reconstruct_v2_messages(&store, &conv_id);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "conversationId": conv_id,
+                        "source_host_id": host_id,
+                        "active": active,
+                        "needsResponse": needs_resp,
+                        "todos": todos,
+                        "plan": plan,
+                        "planMode": plan_mode,
+                        "goal": goal,
+                        "usage": usage,
+                        "eventCount": raw_events.len()
+                    }),
+                    crypto_tok,
+                );
+            }
+            (Method::Get, p) | (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/observe") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/observe"),
+                );
+                let active = active_cancels.lock().unwrap().contains_key(&conv_id);
+                let needs_resp = pending_interactions.conversation_needs_response(&conv_id);
+                let events = match store.events_after(&conv_id, 0, 500) {
+                    Ok(EventPage::Events(ev)) => ev,
+                    _ => Vec::new(),
+                };
+                let latest_seq = events.last().map(|e| e.seq).unwrap_or(0);
+                let recent: Vec<Value> = events
+                    .iter()
+                    .rev()
+                    .take(50)
+                    .rev()
+                    .filter_map(|e| serde_json::to_value(e).ok())
+                    .collect();
+                let todos = load_session_todos(&store, &conv_id);
+                let plan = load_session_plan(&store, &conv_id);
+                let plan_mode = is_plan_mode(&store, &conv_id);
+                let goal = store
+                    .get_kv(&format!("conv_goal:{conv_id}"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null);
+                let epoch = ensure_source_store_epoch(&store);
+                let inner = json!({
+                    "ok": true,
+                    "conversationId": conv_id,
+                    "source_host_id": host_id,
+                    "source_store_epoch": epoch,
+                    "active": active,
+                    "needsResponse": needs_resp,
+                    "latestSeq": latest_seq,
+                    "eventCount": events.len(),
+                    "todos": todos,
+                    "plan": plan,
+                    "planMode": plan_mode,
+                    "goal": goal,
+                    "recentEvents": recent
+                });
+                let payload = if method == Method::Post {
+                    wrap_paired_result(&store, host_id, &body, inner)
+                } else {
+                    inner
+                };
+                let _ = respond_api_json(req, 200, &payload, crypto_tok);
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/recall") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/recall"),
+                );
+                let res = handle_conversation_recall(&store, &conv_id, &body);
+                let _ = respond_api_json(req, 200, &res, crypto_tok);
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/artifacts") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/artifacts"),
+                );
+                let artifacts = collect_conversation_artifacts(&store, &conv_id);
+                let count = artifacts.len();
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "conversationId": conv_id,
+                        "artifacts": artifacts,
+                        "count": count
+                    }),
+                    crypto_tok,
+                );
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/plan") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/plan"),
+                );
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "conversationId": conv_id,
+                        "planMode": is_plan_mode(&store, &conv_id),
+                        "plan": load_session_plan(&store, &conv_id),
+                        "todos": load_session_todos(&store, &conv_id)
+                    }),
+                    crypto_tok,
+                );
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/plan") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/plan"),
+                );
+                let (status, payload) = handle_conversation_plan(&store, &conv_id, &body);
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
+            }
+            (Method::Post, "/api/auxiliary/prepare")
+            | (Method::Post, "/api/auxiliary/admit")
+            | (Method::Post, "/api/auxiliary/invoke")
+            | (Method::Post, "/api/auxiliary/inspect")
+            | (Method::Post, "/api/auxiliary/cancel") => {
+                let op = path.trim_start_matches("/api/auxiliary/");
+                let (status, payload) = handle_auxiliary_dispatch(
+                    &store,
+                    &suite,
+                    auxiliary_ops,
+                    host_id,
+                    op,
+                    &body,
+                );
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
             }
             (Method::Get, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/data-sources") =>
@@ -3904,11 +5228,23 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         m
                     })
                     .collect();
-                let acquisition = store
-                    .get_kv("local_model_acquisition")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null);
+                let dl_status = ModelDownloadManager::global().current_status(&store);
+                let acquisition = if dl_status.get("status").and_then(|v| v.as_str()) == Some("idle") {
+                    Value::Null
+                } else {
+                    let mut job = dl_status.clone();
+                    if let Some(obj) = job.as_object_mut() {
+                        if !obj.contains_key("id") {
+                            if let Some(dl_id) = obj.get("downloadId").cloned() {
+                                obj.insert("id".into(), dl_id);
+                            }
+                        }
+                        if obj.get("totalBytes").is_none() || obj.get("totalBytes") == Some(&Value::Null) {
+                            obj.insert("totalBytes".into(), json!(0));
+                        }
+                    }
+                    job
+                };
                 let _ = respond_api_json(
                     req,
                     200,
@@ -3923,10 +5259,59 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         ],
                         "runningRuntimes": running,
                         "hardware": hardware,
-                        "acquisition": acquisition
+                        "acquisition": acquisition,
+                        "downloadStatus": dl_status
                     }),
                     crypto_tok,
                 );
+            }
+            (Method::Get, "/api/local-models/search") => {
+                let q = parse_query_str(query, "q")
+                    .or_else(|| parse_query_str(query, "query"))
+                    .unwrap_or_default();
+                let eng = parse_query_str(query, "engine").unwrap_or_else(|| "llama.cpp".into());
+                let mirror = parse_query_str(query, "mirror");
+                match search_hub_models(&q, &eng, mirror.as_deref()) {
+                    Ok(results) => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "query": q, "engine": eng, "results": results, "models": results}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(req, 400, &json!({"ok": false, "error": e}), crypto_tok);
+                    }
+                }
+            }
+            (Method::Post, "/api/local-models/search") => {
+                let q = body
+                    .get("query")
+                    .or_else(|| body.get("q"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let eng = body
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("llama.cpp");
+                let mirror = body
+                    .get("mirror")
+                    .or_else(|| body.get("mirror_base"))
+                    .and_then(|v| v.as_str());
+                match search_hub_models(q, eng, mirror) {
+                    Ok(results) => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "query": q, "engine": eng, "results": results, "models": results}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(req, 400, &json!({"ok": false, "error": e}), crypto_tok);
+                    }
+                }
             }
             (Method::Get, "/api/local-models/hardware") => {
                 let hw = probe_hardware();
@@ -3972,15 +5357,25 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or("llama.cpp");
-                let st = probe_engine_status(eng);
-                let ready = st.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+                let opt_in = body
+                    .get("opt_in_install")
+                    .or_else(|| body.get("optInInstall"))
+                    .or_else(|| body.get("autoInstall"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let setup = run_engine_setup_with_opt_in(eng, opt_in);
+                let ready = setup.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
                 let _ = respond_api_json(
                     req,
                     200,
                     &json!({
                         "ok": true,
                         "ready": ready,
-                        "engineStatus": st
+                        "installed": setup.get("installed").and_then(|v| v.as_bool()).unwrap_or(ready),
+                        "engineStatus": setup.get("status").cloned().unwrap_or(Value::Null),
+                        "steps": setup.get("steps").cloned().unwrap_or_else(|| json!([])),
+                        "message": setup.get("message").cloned().unwrap_or(Value::Null),
+                        "setup": setup
                     }),
                     crypto_tok,
                 );
@@ -3988,67 +5383,189 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             (Method::Post, "/api/local-models/install-plan") => {
                 let eng = body
                     .get("engine")
+                    .or_else(|| body.pointer("/plan/engine"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("llama.cpp");
-                let src = body
-                    .get("source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("huggingface");
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("llama.cpp")
+                    .to_string();
                 let repo = body
                     .get("repository")
                     .or_else(|| body.pointer("/plan/repository"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let plan = body.get("plan").cloned().unwrap_or_else(|| {
-                    json!({"engine": eng, "repository": repo, "files": []})
-                });
-                let total_bytes: u64 = plan
-                    .get("files")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|f| f.get("bytes").and_then(|b| b.as_u64()))
-                            .sum()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let first_file = body
+                    .pointer("/plan/files/0")
+                    .or_else(|| body.pointer("/files/0"));
+                let file_name = first_file
+                    .and_then(|f| {
+                        f.get("filename")
+                            .or_else(|| f.get("name"))
+                            .or_else(|| f.get("path"))
+                            .and_then(|v| v.as_str())
                     })
-                    .unwrap_or(0);
-                let job = json!({
-                    "id": new_id(),
-                    "engine": eng,
-                    "source": src,
-                    "repository": repo,
-                    "plan": plan,
-                    "status": "downloading",
-                    "downloadedBytes": 0,
-                    "totalBytes": total_bytes
-                });
-                let _ = store.set_kv("local_model_acquisition", &job);
-                let _ = respond_api_json(req, 200, &json!({"ok": true, "job": job}), crypto_tok);
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                let url = body
+                    .get("url")
+                    .or_else(|| body.get("downloadUrl"))
+                    .or_else(|| body.get("download_url"))
+                    .or_else(|| body.pointer("/plan/url"))
+                    .or_else(|| first_file.and_then(|f| f.get("url")))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        if !repo.is_empty() {
+                            let fname = file_name.as_deref().unwrap_or("model.gguf");
+                            let mirror = std::env::var("NOLA_HF_MIRROR")
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| "https://huggingface.co".to_string());
+                            Some(format!(
+                                "{}/{}/resolve/main/{}",
+                                mirror.trim_end_matches('/'),
+                                repo.trim_matches('/'),
+                                fname.trim_start_matches('/')
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+                let Some(download_url) = url else {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({"ok": false, "error": "missing_download_url"}),
+                        crypto_tok,
+                    );
+                    return;
+                };
+                let model_name = body
+                    .get("name")
+                    .or_else(|| body.pointer("/plan/name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| file_name.clone())
+                    .or_else(|| (!repo.is_empty()).then(|| repo.clone()))
+                    .unwrap_or_else(|| format!("model-{}", &new_id()[..8]));
+                let safe_file: String = model_name
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect();
+                let dest_path = body
+                    .get("dest_path")
+                    .or_else(|| body.get("destPath"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| {
+                        default_home_dir()
+                            .join(".nola/models")
+                            .join(&safe_file)
+                            .display()
+                            .to_string()
+                    });
+                let expected_bytes = body
+                    .get("expected_bytes")
+                    .or_else(|| body.get("expectedBytes"))
+                    .or_else(|| body.get("totalBytes"))
+                    .or_else(|| first_file.and_then(|f| f.get("bytes")))
+                    .and_then(|v| v.as_u64());
+                let sha256 = body
+                    .get("sha256")
+                    .or_else(|| first_file.and_then(|f| f.get("sha256")))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                let quantization = body
+                    .get("quantization")
+                    .or_else(|| body.pointer("/plan/quantization"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let plan = ModelDownloadPlan {
+                    id: body
+                        .get("id")
+                        .or_else(|| body.get("downloadId"))
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    name: model_name,
+                    engine: eng,
+                    url: download_url,
+                    dest_path,
+                    sha256,
+                    quantization,
+                    expected_bytes,
+                };
+                match ModelDownloadManager::global().start_download(&store, plan) {
+                    Ok(dl_state) => {
+                        let mut job = serde_json::to_value(&dl_state).unwrap_or_else(|_| json!({}));
+                        if let Some(obj) = job.as_object_mut() {
+                            obj.insert("id".into(), json!(dl_state.download_id));
+                            if !repo.is_empty() {
+                                obj.insert("repository".into(), json!(repo));
+                            }
+                            if obj.get("totalBytes").is_none() || obj.get("totalBytes") == Some(&Value::Null) {
+                                obj.insert("totalBytes".into(), json!(expected_bytes.unwrap_or(0)));
+                            }
+                        }
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "job": job}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "error": e}),
+                            crypto_tok,
+                        );
+                    }
+                }
             }
             (Method::Post, "/api/local-models/cancel") => {
-                let mut job = store
-                    .get_kv("local_model_acquisition")
-                    .ok()
-                    .flatten()
-                    .filter(|v| v.is_object())
-                    .unwrap_or_else(|| {
-                        json!({
-                            "id": body.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                            "engine": "llama.cpp",
-                            "source": "huggingface",
-                            "repository": "",
-                            "status": "cancelled",
-                            "downloadedBytes": 0,
-                            "totalBytes": 0
-                        })
-                    });
-                if let Some(obj) = job.as_object_mut() {
-                    obj.insert("status".into(), json!("cancelled"));
-                }
-                let _ = store.set_kv("local_model_acquisition", &job);
+                let current = ModelDownloadManager::global().current_status(&store);
+                let dl_id = body
+                    .get("id")
+                    .or_else(|| body.get("downloadId"))
+                    .or_else(|| body.get("download_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        current
+                            .get("downloadId")
+                            .or_else(|| current.get("id"))
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                    })
+                    .unwrap_or_default();
+                let res = ModelDownloadManager::global()
+                    .cancel_download(&store, &dl_id)
+                    .unwrap_or_else(|e| json!({"error": e}));
+                let updated = ModelDownloadManager::global().current_status(&store);
                 let _ = respond_api_json(
                     req,
                     200,
-                    &json!({"ok": true, "cancelled": true, "job": job}),
+                    &json!({"ok": true, "cancelled": true, "result": res, "job": updated}),
                     crypto_tok,
                 );
             }
@@ -4505,10 +6022,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let _ = respond_api_json(req, 200, &inventory, crypto_tok);
             }
             (Method::Post, "/api/model-connections/kimi-login/owners")
-            | (Method::Post, "/api/model-connections/opencode-login/owners") => {
-                let _ = respond_api_json(req, 200, &json!([]), crypto_tok);
-            }
-            (Method::Get, "/api/model-connections/source-login/status")
+            | (Method::Post, "/api/model-connections/opencode-login/owners")
+            | (Method::Get, "/api/model-connections/source-login/status")
             | (Method::Post, "/api/model-connections/source-login/start")
             | (Method::Post, "/api/model-connections/source-login/status")
             | (Method::Post, "/api/model-connections/source-login/cancel")
@@ -4526,24 +6041,15 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             | (Method::Post, "/api/model-connections/opencode-login/authorize")
             | (Method::Post, "/api/model-connections/opencode-login/callback")
             | (Method::Post, "/api/model-connections/opencode-login/forget") => {
-                let is_cancel = path.ends_with("/cancel");
-                let is_forget = path.ends_with("/forget");
-                let _ = respond_api_json(
-                    req,
-                    200,
-                    &json!({
-                        "ok": is_cancel || is_forget,
-                        "supported": false,
-                        "status": "unsupported_on_v2_host",
-                        "state": "idle",
-                        "connected": false,
-                        "cancelled": is_cancel,
-                        "forgotten": is_forget,
-                        "accounts": [],
-                        "message": "Interactive source-login OAuth flows are not enabled on the v2 WebHost; configure an API key or import a connection instead."
-                    }),
-                    crypto_tok,
+                let (status, payload) = handle_source_oauth_route(
+                    &store,
+                    &suite,
+                    oauth_flows,
+                    path,
+                    query,
+                    &body,
                 );
+                let _ = respond_api_json(req, status, &payload, crypto_tok);
             }
             (Method::Post, "/api/model-connections/probe") => {
                 let probe_res = run_real_model_connection_probe(&store, &body);
@@ -6295,6 +7801,34 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let deleted = suite.delete_record("data_source", &id).unwrap_or(false);
                 let _ = respond_api_json(req, 200, &json!({"deleted": deleted, "id": id}), crypto_tok);
             }
+            (Method::Post, p) if p.starts_with("/api/data-sources/") && p.ends_with("/index") => {
+                let id = percent_decode_path(
+                    p.trim_start_matches("/api/data-sources/")
+                        .trim_end_matches("/index"),
+                );
+                match index_data_source(&store, &id) {
+                    Ok(chunks) => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({
+                                "ok": true,
+                                "sourceId": id,
+                                "indexedChunks": chunks
+                            }),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "sourceId": id, "error": e}),
+                            crypto_tok,
+                        );
+                    }
+                }
+            }
             (Method::Post, p) if p.starts_with("/api/data-sources/") && p.ends_with("/test") => {
                 let id = percent_decode_path(
                     p.trim_start_matches("/api/data-sources/")
@@ -6449,6 +7983,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             }
             (Method::Post, p)
                 if (p.starts_with("/api/messaging-channels/") && p.ends_with("/inbound"))
+                    || p.starts_with("/api/messaging/webhooks/")
                     || p.starts_with("/v1/channels/webhook/")
                     || p.starts_with("/api/v1/channels/webhook/") =>
             {
@@ -6457,6 +7992,14 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         percent_decode_path(
                             p.trim_start_matches("/api/messaging-channels/")
                                 .trim_end_matches("/inbound"),
+                        ),
+                        None,
+                    )
+                } else if p.starts_with("/api/messaging/webhooks/") {
+                    (
+                        percent_decode_path(
+                            p.trim_start_matches("/api/messaging/webhooks/")
+                                .trim_end_matches('/'),
                         ),
                         None,
                     )
@@ -6512,7 +8055,33 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             parsed.clone(),
                             10_000,
                         );
-                        let _ = respond_json(req, 200, &json!({"ok": true, "event": parsed}));
+                        // Spawn background AgentEngine turn so inbound messages trigger real replies.
+                        let cfg = load_active_config(&store);
+                        let turn_scheduled = if let Ok(route) = resolve_model_route(&cfg) {
+                            let store_bg = store.clone();
+                            let ws_bg = suite.workspace_root.clone();
+                            let id_bg = id.clone();
+                            let body_bg = body.clone();
+                            let _ = std::thread::Builder::new()
+                                .name(format!("nola-webhook-{}", &id_bg[..id_bg.len().min(8)]))
+                                .spawn(move || {
+                                    let _ = handle_inbound_webhook_turn(
+                                        &store_bg,
+                                        route,
+                                        &ws_bg,
+                                        &id_bg,
+                                        &body_bg,
+                                    );
+                                });
+                            true
+                        } else {
+                            false
+                        };
+                        let _ = respond_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "event": parsed, "turnScheduled": turn_scheduled}),
+                        );
                     }
                     Err(e) => {
                         let _ = respond_json(req, 400, &json!({"error": e}));
@@ -6520,7 +8089,14 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 }
             }
             (Method::Get, "/api/messaging-channel-worker") => {
-                let val = load_messaging_worker_snapshot(&store);
+                let mut val = load_messaging_worker_snapshot(&store);
+                let running = messaging_worker
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_some();
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("running".into(), json!(running));
+                }
                 let _ = respond_api_json(req, 200, &val, crypto_tok);
             }
             (Method::Put, "/api/messaging-channel-worker") => {
@@ -6563,8 +8139,14 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     if let Some(v) = body.get("turn_timeout_seconds").and_then(|v| v.as_i64()) {
                         dst.insert("turn_timeout_seconds".into(), json!(v.clamp(30, 14400)));
                     }
-                    if let Some(v) = body.get("poll_seconds").and_then(|v| v.as_i64()) {
-                        dst.insert("poll_seconds".into(), json!(v.clamp(1, 300)));
+                    if let Some(v) = body
+                        .get("poll_seconds")
+                        .or_else(|| body.get("poll_interval_secs"))
+                        .and_then(|v| v.as_i64())
+                    {
+                        let clamped = v.clamp(1, 300);
+                        dst.insert("poll_seconds".into(), json!(clamped));
+                        dst.insert("poll_interval_secs".into(), json!(clamped));
                     }
                     if body.get("project_root").is_some() {
                         let pr = body
@@ -6580,6 +8162,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     dst.remove("access_token");
                 }
                 let _ = store.set_kv("messaging_channel_worker", &current);
+                let worker_root = current
+                    .get("project_root")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_dir())
+                    .unwrap_or_else(|| suite.workspace_root.clone());
+                let running =
+                    reconcile_messaging_worker(messaging_worker, &store, &worker_root);
+                if let Some(dst) = current.as_object_mut() {
+                    dst.insert("running".into(), json!(running));
+                }
                 let _ = respond_api_json(req, 200, &current, crypto_tok);
             }
 
@@ -8098,9 +9691,36 @@ fn build_model_connections_inventory(store: &Store, suite: &ModulesSuite) -> Val
         }));
     }
 
+    let accounts: Vec<Value> = suite
+        .list_records::<Value>("source_account")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|rec| {
+            let id = rec.get("id").and_then(|v| v.as_str())?.to_string();
+            let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+            let display_name = rec
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id);
+            let source = rec
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom");
+            Some(json!({
+                "revision": rev,
+                "account": {
+                    "id": id,
+                    "display_name": display_name,
+                    "source": source,
+                    "state": rec.get("state").and_then(|v| v.as_str()).unwrap_or("connected")
+                }
+            }))
+        })
+        .collect();
+
     json!({
         "connections": connections,
-        "accounts": [],
+        "accounts": accounts,
         "selections": selections
     })
 }
@@ -8737,15 +10357,36 @@ fn load_messaging_worker_snapshot(store: &Store) -> Value {
         .ok()
         .flatten()
         .unwrap_or_else(|| json!({}));
-    json!({
+    let poll_secs = saved
+        .get("poll_seconds")
+        .or_else(|| saved.get("poll_interval_secs"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(5)
+        .clamp(1, 300);
+    let mut out = json!({
         "enabled": saved.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
         "backend_url": saved.get("backend_url").or_else(|| saved.get("url")).and_then(|v| v.as_str()).unwrap_or(""),
         "has_access_token": saved.get("has_access_token").and_then(|v| v.as_bool()).unwrap_or(false),
         "execution_backend": saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola"),
         "turn_timeout_seconds": saved.get("turn_timeout_seconds").and_then(|v| v.as_i64()).unwrap_or(600).clamp(30, 14400),
-        "poll_seconds": saved.get("poll_seconds").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 300),
+        "poll_seconds": poll_secs,
+        "poll_interval_secs": poll_secs,
         "project_root": saved.get("project_root").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| json!(s)).unwrap_or(Value::Null)
-    })
+    });
+    if let Some(dst) = out.as_object_mut() {
+        for key in [
+            "heartbeat_at_ms",
+            "polls",
+            "messages_processed",
+            "outbound_sent",
+            "last_error",
+        ] {
+            if let Some(val) = saved.get(key) {
+                dst.insert(key.into(), val.clone());
+            }
+        }
+    }
+    out
 }
 
 fn channel_vault_secret_key(conn_id: &str) -> String {
@@ -8831,11 +10472,24 @@ fn normalize_messaging_channel(store: &Store, raw: &Value) -> Value {
         .is_some_and(|s| !s.trim().is_empty());
     let has_webhook_secret = has_vault_secret || has_legacy_secret;
 
+    let endpoint = raw
+        .get("endpoint")
+        .or_else(|| provider_config.get("endpoint"))
+        .or_else(|| provider_config.get("webhook_url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let updated_at_ms = raw
+        .get("updated_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(now_ms);
+
     let mut out = json!({
         "id": conn_id,
         "connection_id": conn_id,
         "kind": kind,
+        "name": display_name,
         "display_name": display_name,
+        "endpoint": endpoint,
         "account_id": account_id,
         "credential_ref": credential_ref,
         "webhook_secret_ref": webhook_secret_ref,
@@ -8843,7 +10497,8 @@ fn normalize_messaging_channel(store: &Store, raw: &Value) -> Value {
         "provider_config": provider_config,
         "enabled": enabled,
         "state": state,
-        "has_webhook_secret": has_webhook_secret
+        "has_webhook_secret": has_webhook_secret,
+        "updated_at_ms": updated_at_ms
     });
     if let Some(last_rx) = raw.get("last_received_at").and_then(|v| v.as_str()) {
         out["last_received_at"] = json!(last_rx);
@@ -9354,57 +11009,27 @@ fn handle_sse_chat_turn(
     }
 
     // Honor `selected_experts` / `selectedExperts` (accepting strings AND `{agent_id}`/`{id}`/`{expert_id}` objects!)
-    if let Some(selected_arr) = body
+    let selected_expert_ids: Vec<String> = body
         .get("selected_experts")
         .or_else(|| body.get("selectedExperts"))
         .and_then(|v| v.as_array())
-    {
-        let ids: Vec<&str> = selected_arr
-            .iter()
-            .filter_map(|v| {
-                v.as_str().or_else(|| {
-                    v.get("agent_id")
-                        .or_else(|| v.get("agentId"))
-                        .or_else(|| v.get("expert_id"))
-                        .or_else(|| v.get("id"))
-                        .and_then(|s| s.as_str())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    v.as_str().or_else(|| {
+                        v.get("agent_id")
+                            .or_else(|| v.get("agentId"))
+                            .or_else(|| v.get("expert_id"))
+                            .or_else(|| v.get("id"))
+                            .and_then(|s| s.as_str())
+                    })
                 })
-            })
-            .filter(|s| !s.trim().is_empty())
-            .collect();
-        if !ids.is_empty() {
-            let stored_experts = suite.list_records::<ExpertPeer>("expert_peer").unwrap_or_default();
-            let builtins = built_in_role_templates();
-            let mut expert_notes = Vec::new();
-            for eid in ids {
-                if let Some(exp) = stored_experts
-                    .iter()
-                    .find(|e| e.id == eid || e.name.eq_ignore_ascii_case(eid))
-                {
-                    expert_notes.push(format!(
-                        "- {} ({}): {}",
-                        exp.name, exp.role, exp.system_prompt
-                    ));
-                } else if let Some(tpl) = builtins
-                    .iter()
-                    .find(|t| t.get("id").and_then(|v| v.as_str()) == Some(eid))
-                {
-                    let name = tpl.get("name").and_then(|v| v.as_str()).unwrap_or(eid);
-                    let role = tpl.get("role").and_then(|v| v.as_str()).unwrap_or(eid);
-                    let sp = tpl.get("system_prompt").and_then(|v| v.as_str()).unwrap_or("");
-                    expert_notes.push(format!("- {name} ({role}): {sp}"));
-                } else {
-                    expert_notes.push(format!("- {eid}"));
-                }
-            }
-            if !expert_notes.is_empty() {
-                prompt.push_str(&format!(
-                    "\n\n[Selected Expert Context]\n{}",
-                    expert_notes.join("\n")
-                ));
-            }
-        }
-    }
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Honor `ui_action` / `uiAction`
     if let Some(ui_act) = body
@@ -9677,6 +11302,127 @@ fn handle_sse_chat_turn(
         })
         .unwrap_or(true);
 
+    // Real multi-agent `@expert` execution via `RoomRuntime::send_message_with_parallel` when `selectedExperts` is non-empty!
+    if !selected_expert_ids.is_empty() {
+        let suite_for_room = Arc::clone(&suite);
+        let room_ws = effective_workspace_root.clone();
+        let conv_id_room = conversation_id.clone();
+        let cancels_room = Arc::clone(&cancels);
+        let cancel_room = Arc::clone(&cancel);
+        let cancel_for_reader = Arc::clone(&cancel);
+        let store_room = store.clone();
+        let crypto_for_room = crypto_tok;
+        let requested_room_id = body
+            .get("roomId")
+            .or_else(|| body.get("room_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let (tx_room, rx_room) = mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let room_res = dispatch_selected_experts_parallel(
+                &suite_for_room,
+                Arc::clone(&caller),
+                route,
+                policy,
+                &room_ws,
+                &conv_id_room,
+                requested_room_id.as_deref(),
+                &selected_expert_ids,
+                &prompt,
+            );
+            match room_res {
+                Ok((room_id, replies)) => {
+                    let mut combined_sections: Vec<String> = Vec::new();
+                    for reply in &replies {
+                        let expert_name = reply
+                            .get("expert_name")
+                            .or_else(|| reply.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Expert");
+                        let content = reply
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let expert_frame = json!({
+                            "type": "expert_reply",
+                            "room_id": room_id,
+                            "expert_id": reply.get("expert_id").cloned().unwrap_or(Value::Null),
+                            "expert_name": expert_name,
+                            "role": reply.get("role").cloned().unwrap_or(Value::Null),
+                            "content": content,
+                            "reply": reply
+                        });
+                        let _ = tx_room
+                            .send(encode_sse_frame(&expert_frame, crypto_for_room.as_deref()));
+                        let section = if replies.len() > 1 {
+                            format!("### @{expert_name}\n\n{content}")
+                        } else {
+                            content.to_string()
+                        };
+                        if !section.trim().is_empty() {
+                            let delta_text = if combined_sections.is_empty() {
+                                section.clone()
+                            } else {
+                                format!("\n\n{section}")
+                            };
+                            let delta_frame = json!({
+                                "type": "text_delta",
+                                "delta": delta_text
+                            });
+                            let _ = tx_room
+                                .send(encode_sse_frame(&delta_frame, crypto_for_room.as_deref()));
+                            combined_sections.push(section);
+                        }
+                    }
+                    let final_content = combined_sections.join("\n\n");
+                    let _ = store_room.append_event(
+                        &conv_id_room,
+                        "chat_assistant",
+                        json!({
+                            "content": final_content,
+                            "reasoning": "",
+                            "toolCalls": [],
+                            "uiSurfaces": [],
+                            "roomId": room_id,
+                            "expertReplies": replies
+                        }),
+                        50_000,
+                    );
+                }
+                Err(e) => {
+                    let err_frame = json!({"type": "error", "message": e});
+                    let _ = tx_room.send(encode_sse_frame(&err_frame, crypto_for_room.as_deref()));
+                }
+            }
+            let _ = tx_room.send(b"data: [DONE]\n\n".to_vec());
+            if let Ok(mut map) = cancels_room.lock() {
+                if map
+                    .get(&conv_id_room)
+                    .is_some_and(|existing| Arc::ptr_eq(existing, &cancel_room))
+                {
+                    map.remove(&conv_id_room);
+                }
+            }
+        });
+        let headers = vec![
+            Header::from_bytes(&b"Content-Type"[..], &b"text/event-stream; charset=utf-8"[..])
+                .unwrap(),
+            Header::from_bytes(&b"Cache-Control"[..], &b"no-cache"[..]).unwrap(),
+            Header::from_bytes(&b"X-Accel-Buffering"[..], &b"no"[..]).unwrap(),
+        ];
+        let resp = Response::new(
+            StatusCode(200),
+            headers,
+            ChannelReader::with_cancel(rx_room, cancel_for_reader),
+            None,
+            None,
+        );
+        let _ = req.respond(resp);
+        return;
+    }
+
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
     // Live interactive approval callback with narrow session-scoped grant check `(conv_id, tool_name, target_key)`
@@ -9785,6 +11531,53 @@ fn handle_sse_chat_turn(
     }
     // Override A2UI tools with conversation + host scoped authority!
     register_a2ui_tools(&suite, &mut registry, &host_id, &conversation_id);
+    // Register any client-declared hybrid device tools so model calls emit SSE `device_tool_request`
+    // and suspend until `POST /api/chat/conversations/{id}/device-tool` resolves them!
+    if let Some(dev_tools) = body
+        .get("deviceTools")
+        .or_else(|| body.get("device_tools"))
+        .and_then(|v| v.as_array())
+    {
+        for dt in dev_tools {
+            let Some(name) = dt
+                .get("name")
+                .or_else(|| dt.get("tool_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let desc = dt
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Client-executed hybrid device tool")
+                .to_string();
+            let params = dt
+                .get("parameters")
+                .filter(|v| v.is_object())
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+            let spec = ToolSpec {
+                schema: ToolSchema {
+                    name: name.to_string(),
+                    description: desc,
+                    parameters: params,
+                },
+                tier: ToolTier::Core,
+                domain: CapabilityDomain::InteractiveUi,
+                read_only: dt.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+            registry.register(Arc::new(DeviceToolProxy {
+                spec,
+                conversation_id: conversation_id.clone(),
+                tx: tx.clone(),
+                pending: Arc::clone(&pending),
+                cancel: Arc::clone(&cancel),
+                crypto_tok: crypto_tok.clone(),
+            }));
+        }
+    }
     let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
     subagents.configure_parent(route.clone(), policy.clone());
     subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
@@ -9936,6 +11729,2030 @@ fn handle_sse_chat_turn(
         None,
     );
     let _ = req.respond(resp);
+}
+
+fn parse_attachment_payload(filename: &str, mime_type: &str, bytes: &[u8]) -> Value {
+    let (text, extracted) = match extract_document_text_from_bytes(filename, mime_type, bytes) {
+        Some(s) => (s.chars().take(200_000).collect::<String>(), true),
+        None => (
+            format!(
+                "[Binary attachment '{filename}' ({mime_type}, {} bytes, sha256={})]",
+                bytes.len(),
+                &sha256_hex(bytes)[..16]
+            ),
+            false,
+        ),
+    };
+    json!({
+        "ok": true,
+        "filename": filename,
+        "mime_type": mime_type,
+        "bytes": bytes.len(),
+        "extracted": extracted,
+        "text": text,
+        "content": text
+    })
+}
+
+fn execute_documents_search(
+    store: &Store,
+    workspace_root: &Path,
+    raw_query: &str,
+    source_ids: Option<&[String]>,
+    limit: usize,
+) -> Value {
+    let q = raw_query.trim();
+    let doc_hits: Vec<Value> = store
+        .search_doc_chunks(source_ids, q, limit)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| {
+            let snippet: String = h.content.chars().take(400).collect();
+            json!({
+                "kind": "document_chunk",
+                "id": h.id,
+                "sourceId": h.source_id,
+                "source_id": h.source_id,
+                "path": h.path,
+                "chunkIndex": h.chunk_index,
+                "content": h.content,
+                "snippet": snippet,
+                "sha256": h.sha256,
+                "score": h.score,
+                "updatedAtMs": h.updated_at_ms
+            })
+        })
+        .collect();
+    let mem_hits: Vec<Value> = store
+        .search_memory(q, None, limit.min(20))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| {
+            json!({
+                "kind": "memory",
+                "id": m.id,
+                "title": m.title,
+                "snippet": m.content
+            })
+        })
+        .collect();
+    let mut file_hits: Vec<Value> = Vec::new();
+    if !q.is_empty() {
+        let q_lower = q.to_ascii_lowercase();
+        if let Ok(entries) = fs::read_dir(workspace_root) {
+            for entry in entries.flatten().take(100) {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.to_ascii_lowercase().contains(&q_lower) {
+                    file_hits.push(json!({"kind": "file", "path": name}));
+                }
+            }
+        }
+    }
+    json!({
+        "ok": true,
+        "query": q,
+        "count": doc_hits.len(),
+        "documents": doc_hits,
+        "chunks": doc_hits,
+        "hits": doc_hits,
+        "memory": mem_hits,
+        "files": file_hits
+    })
+}
+
+fn parse_git_worktree_porcelain(raw: &str) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut cur_path: Option<String> = None;
+    let mut cur_head: Option<String> = None;
+    let mut cur_branch: Option<String> = None;
+    let mut cur_bare = false;
+    let mut cur_detached = false;
+    let flush = |out: &mut Vec<Value>,
+                 path: &mut Option<String>,
+                 head: &mut Option<String>,
+                 branch: &mut Option<String>,
+                 bare: &mut bool,
+                 detached: &mut bool| {
+        if let Some(p) = path.take() {
+            out.push(json!({
+                "path": p,
+                "head": head.take().unwrap_or_default(),
+                "branch": branch.take(),
+                "bare": *bare,
+                "detached": *detached
+            }));
+            *bare = false;
+            *detached = false;
+        }
+    };
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            flush(
+                &mut out,
+                &mut cur_path,
+                &mut cur_head,
+                &mut cur_branch,
+                &mut cur_bare,
+                &mut cur_detached,
+            );
+        } else if let Some(p) = trimmed.strip_prefix("worktree ") {
+            flush(
+                &mut out,
+                &mut cur_path,
+                &mut cur_head,
+                &mut cur_branch,
+                &mut cur_bare,
+                &mut cur_detached,
+            );
+            cur_path = Some(p.trim().to_string());
+        } else if let Some(h) = trimmed.strip_prefix("HEAD ") {
+            cur_head = Some(h.trim().to_string());
+        } else if let Some(b) = trimmed.strip_prefix("branch ") {
+            cur_branch = Some(
+                b.trim()
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(b.trim())
+                    .to_string(),
+            );
+        } else if trimmed == "bare" {
+            cur_bare = true;
+        } else if trimmed == "detached" {
+            cur_detached = true;
+        }
+    }
+    flush(
+        &mut out,
+        &mut cur_path,
+        &mut cur_head,
+        &mut cur_branch,
+        &mut cur_bare,
+        &mut cur_detached,
+    );
+    out
+}
+
+fn handle_workspace_worktrees(workspace_root: &Path, is_post: bool, body: &Value) -> (u16, Value) {
+    let raw_action = if !is_post {
+        "worktree_list"
+    } else {
+        body.get("action")
+            .or_else(|| body.get("operation"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("worktree_list")
+    };
+    let git_action = match raw_action {
+        "list" | "worktree_list" => "worktree_list",
+        "create" | "add" | "worktree_create" => "worktree_create",
+        "remove" | "delete" | "worktree_remove" => "worktree_remove",
+        "integrate" | "merge" | "worktree_integrate" => "worktree_integrate",
+        other => {
+            return (
+                400,
+                json!({"ok": false, "error": "unsupported_worktree_action", "action": other}),
+            );
+        }
+    };
+    let mut args = json!({ "action": git_action });
+    if let Some(target) = body
+        .get("target")
+        .or_else(|| body.get("path"))
+        .and_then(|v| v.as_str())
+    {
+        args["target"] = json!(target);
+    }
+    if let Some(branch) = body.get("branch").and_then(|v| v.as_str()) {
+        args["branch"] = json!(branch);
+    }
+    if let Some(strategy) = body.get("strategy").and_then(|v| v.as_str()) {
+        args["strategy"] = json!(strategy);
+    }
+
+    let ctx = ToolContext::new(workspace_root);
+    let res = GitTool.execute(&ctx, args);
+    let model_val = res.payload.to_model_value();
+    let summary_text = res.payload.ui_summary().to_string();
+    if res.is_error {
+        return (
+            400,
+            json!({
+                "ok": false,
+                "action": git_action,
+                "error": summary_text,
+                "detail": model_val
+            }),
+        );
+    }
+    if git_action == "worktree_list" {
+        let stdout = model_val
+            .get("output")
+            .or_else(|| model_val.get("stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let worktrees = parse_git_worktree_porcelain(stdout);
+        return (
+            200,
+            json!({
+                "ok": true,
+                "action": git_action,
+                "worktrees": worktrees,
+                "output": stdout,
+                "summary": summary_text
+            }),
+        );
+    }
+    // After create/remove/integrate, also return updated worktree list for UI convenience.
+    let list_res = GitTool.execute(&ctx, json!({"action": "worktree_list"}));
+    let worktrees = if !list_res.is_error {
+        let mv = list_res.payload.to_model_value();
+        let stdout = mv
+            .get("output")
+            .or_else(|| mv.get("stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        parse_git_worktree_porcelain(&stdout)
+    } else {
+        Vec::new()
+    };
+    (
+        200,
+        json!({
+            "ok": true,
+            "action": git_action,
+            "result": model_val,
+            "worktrees": worktrees,
+            "summary": summary_text
+        }),
+    )
+}
+
+fn handle_conversation_goal_control(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    host_id: &str,
+    conv_id: &str,
+    body: &Value,
+) -> (u16, Value) {
+    let epoch = ensure_source_store_epoch(store);
+    let key = format!("conv_goal:{conv_id}");
+    let existing_kv = store.get_kv(&key).ok().flatten();
+    let control_obj = body.get("control").filter(|v| v.is_object());
+    let raw_action = body
+        .get("action")
+        .or_else(|| body.get("operation"))
+        .or_else(|| control_obj.and_then(|c| c.get("action").or_else(|| c.get("kind"))))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let existing_id = body
+        .get("id")
+        .or_else(|| body.get("goal_id"))
+        .or_else(|| body.get("goalId"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            existing_kv
+                .as_ref()
+                .and_then(|g| g.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
+        });
+
+    let action = raw_action.unwrap_or_else(|| {
+        if existing_id.is_some()
+            && body.get("title").is_none()
+            && body.get("objective").is_none()
+            && body.get("description").is_none()
+        {
+            "run"
+        } else {
+            "create"
+        }
+    });
+
+    let now = now_ms();
+    let mut record = existing_id
+        .as_deref()
+        .and_then(|gid| suite.get_record::<ExtendedGoalRecord>("goal", gid).ok().flatten())
+        .unwrap_or_else(|| {
+            let gid = existing_id.clone().unwrap_or_else(new_id);
+            let title = body
+                .get("title")
+                .or_else(|| control_obj.and_then(|c| c.get("title")))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    existing_kv
+                        .as_ref()
+                        .and_then(|g| g.get("title").and_then(|v| v.as_str()))
+                })
+                .unwrap_or("Conversation Goal")
+                .to_string();
+            let objective = body
+                .get("objective")
+                .or_else(|| body.get("description"))
+                .or_else(|| control_obj.and_then(|c| c.get("objective").or_else(|| c.get("goal"))))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    existing_kv.as_ref().and_then(|g| {
+                        g.get("objective")
+                            .or_else(|| g.get("description"))
+                            .and_then(|v| v.as_str())
+                    })
+                })
+                .unwrap_or(&title)
+                .to_string();
+            ExtendedGoalRecord {
+                id: gid,
+                title,
+                objective,
+                workspace_root: suite.workspace_root.display().to_string(),
+                status: GoalStatus::Pending,
+                progress_notes: Vec::new(),
+                created_at_ms: now,
+                updated_at_ms: now,
+                lease_until_ms: None,
+                retry_count: 0,
+                next_retry_at_ms: None,
+                needs_user_question: None,
+                acceptance_criteria: Vec::new(),
+                accepted: false,
+            }
+        });
+
+    if let Some(t) = body
+        .get("title")
+        .or_else(|| control_obj.and_then(|c| c.get("title")))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        record.title = t.to_string();
+    }
+    if let Some(obj) = body
+        .get("objective")
+        .or_else(|| body.get("description"))
+        .or_else(|| control_obj.and_then(|c| c.get("objective").or_else(|| c.get("goal"))))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        record.objective = obj.to_string();
+    }
+    if let Some(criteria) = body
+        .get("acceptance_criteria")
+        .or_else(|| body.get("acceptanceCriteria"))
+        .and_then(|v| v.as_array())
+    {
+        record.acceptance_criteria = criteria
+            .iter()
+            .filter_map(|x| x.as_str().map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string))
+            .collect();
+    }
+
+    let mut cancelled = false;
+    match action.to_ascii_lowercase().as_str() {
+        "create" | "upsert" => {
+            record.status = GoalStatus::Pending;
+            record.lease_until_ms = None;
+            record.next_retry_at_ms = None;
+        }
+        "run" | "start" => {
+            record.status = GoalStatus::Pending;
+            record.lease_until_ms = None;
+            record.next_retry_at_ms = None;
+            record.needs_user_question = None;
+        }
+        "pause" => {
+            record.status = GoalStatus::Paused;
+            record.lease_until_ms = None;
+            record.progress_notes.push("Paused via goal control".into());
+        }
+        "resume" => {
+            record.status = GoalStatus::Pending;
+            record.lease_until_ms = None;
+            record.next_retry_at_ms = None;
+            record.needs_user_question = None;
+            record.progress_notes.push("Resumed via goal control".into());
+        }
+        "cancel" | "stop" => {
+            record.status = GoalStatus::Failed;
+            record.lease_until_ms = None;
+            record.progress_notes.push("Cancelled via goal control".into());
+            cancelled = true;
+        }
+        "complete" | "finish" => {
+            record.status = GoalStatus::Completed;
+            record.lease_until_ms = None;
+            record.accepted = true;
+            record.progress_notes.push("Completed via goal control".into());
+        }
+        other => {
+            return (
+                400,
+                json!({
+                    "ok": false,
+                    "error": "unknown_goal_action",
+                    "action": other,
+                    "source_host_id": host_id
+                }),
+            );
+        }
+    }
+    record.updated_at_ms = now;
+    let _ = suite.upsert_record("goal", &record.id, &record);
+
+    let control_state = if cancelled {
+        "cancelled"
+    } else {
+        match record.status {
+            GoalStatus::Pending => "pending",
+            GoalStatus::Running => "running",
+            GoalStatus::Paused => "paused",
+            GoalStatus::Completed => "completed",
+            GoalStatus::Failed => "failed",
+        }
+    };
+    let mut goal_json = serde_json::to_value(&record).unwrap_or_else(|_| json!({}));
+    if let Some(obj) = goal_json.as_object_mut() {
+        obj.insert("conversationId".into(), json!(conv_id));
+        obj.insert("conversation_id".into(), json!(conv_id));
+        obj.insert("description".into(), json!(record.objective));
+        obj.insert("controlState".into(), json!(control_state));
+        obj.insert("cancelled".into(), json!(cancelled));
+        obj.insert("updatedAt".into(), json!(ms_to_rfc3339(record.updated_at_ms)));
+    }
+    let _ = store.set_kv(&key, &goal_json);
+    let _ = store.append_event(
+        conv_id,
+        "goal_updated",
+        json!({
+            "action": action,
+            "goal_id": record.id,
+            "status": control_state,
+            "title": record.title
+        }),
+        50_000,
+    );
+
+    // If caller asked to "run"/"start", trigger an immediate background GoalWorker turn when a route is configured.
+    if matches!(action.to_ascii_lowercase().as_str(), "run" | "start") {
+        let cfg = load_active_config(store);
+        if let Ok(route) = resolve_model_route(&cfg) {
+            if let Ok(caller) = HttpModelCaller::new(300) {
+                let suite_bg = Arc::clone(suite);
+                let gid_bg = record.id.clone();
+                let policy = EffectivePolicy::load(
+                    &suite.workspace_root,
+                    suite.user_home.as_deref(),
+                    false,
+                    Some(PermissionProfile::Cautious),
+                    true,
+                );
+                let _ = std::thread::Builder::new()
+                    .name(format!("nola-goal-run-{}", &gid_bg[..gid_bg.len().min(8)]))
+                    .spawn(move || {
+                        let _ = GoalWorker::execute_goal(
+                            &suite_bg,
+                            Arc::new(caller),
+                            route,
+                            policy,
+                            &gid_bg,
+                            24,
+                            Arc::new(AtomicBool::new(false)),
+                        );
+                    });
+            }
+        }
+    }
+
+    (
+        200,
+        json!({
+            "ok": true,
+            "source_host_id": host_id,
+            "source_store_epoch": epoch,
+            "action": action,
+            "goal": goal_json
+        }),
+    )
+}
+
+fn stream_conversation_task_events(
+    req: Request,
+    store: Store,
+    conv_id: String,
+    after_cursor: i64,
+    oneshot: bool,
+    crypto_tok: Option<String>,
+) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_for_reader = Arc::clone(&cancel);
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    std::thread::Builder::new()
+        .name(format!("nola-task-sse-{}", &conv_id[..conv_id.len().min(8)]))
+        .spawn(move || {
+            let mut cursor = after_cursor.max(0);
+            // Emit initial snapshot of current goal + todos so newly attached clients hydrate immediately.
+            let goal = store
+                .get_kv(&format!("conv_goal:{conv_id}"))
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null);
+            let todos = load_session_todos(&store, &conv_id);
+            let snapshot_frame = json!({
+                "type": "task_snapshot",
+                "conversation_id": conv_id,
+                "cursor": cursor,
+                "goal": goal,
+                "todos": todos,
+                "plan_mode": is_plan_mode(&store, &conv_id)
+            });
+            if tx
+                .send(encode_sse_frame(&snapshot_frame, crypto_tok.as_deref()))
+                .is_err()
+            {
+                return;
+            }
+
+            let mut ticks_since_ping = 0u32;
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Ok(EventPage::Events(events)) = store.events_after(&conv_id, cursor, 100) {
+                    for ev in events {
+                        cursor = ev.seq;
+                        let is_task_event = ev.kind.starts_with("goal_")
+                            || ev.kind.starts_with("subagent_")
+                            || ev.kind.starts_with("task_")
+                            || ev.kind.starts_with("tool_")
+                            || ev.kind.starts_with("plan_")
+                            || ev.kind.starts_with("device_tool_");
+                        if is_task_event {
+                            let frame = json!({
+                                "type": "task_event",
+                                "id": ev.seq,
+                                "seq": ev.seq,
+                                "kind": ev.kind,
+                                "conversation_id": conv_id,
+                                "created_at_ms": ev.created_at_ms,
+                                "payload": ev.payload
+                            });
+                            if tx
+                                .send(encode_sse_frame(&frame, crypto_tok.as_deref()))
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+                if oneshot {
+                    let _ = tx.send(b"data: [DONE]\n\n".to_vec());
+                    break;
+                }
+                ticks_since_ping += 1;
+                if ticks_since_ping >= 40 {
+                    ticks_since_ping = 0;
+                    if tx.send(b": keepalive\n\n".to_vec()).is_err() {
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        })
+        .ok();
+
+    let headers = vec![
+        Header::from_bytes(&b"Content-Type"[..], &b"text/event-stream; charset=utf-8"[..]).unwrap(),
+        Header::from_bytes(&b"Cache-Control"[..], &b"no-cache"[..]).unwrap(),
+        Header::from_bytes(&b"X-Accel-Buffering"[..], &b"no"[..]).unwrap(),
+    ];
+    let resp = Response::new(
+        StatusCode(200),
+        headers,
+        ChannelReader::with_cancel(rx, cancel_for_reader),
+        None,
+        None,
+    );
+    let _ = req.respond(resp);
+}
+
+fn handle_conversation_recall(store: &Store, conv_id: &str, body: &Value) -> Value {
+    let query = body
+        .get("query")
+        .or_else(|| body.get("q"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    let limit = body
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 200) as usize;
+    let from_seq = body
+        .get("from_seq")
+        .or_else(|| body.get("fromSeq"))
+        .and_then(|v| v.as_i64());
+
+    let events = if let Some(seq) = from_seq {
+        store.read_event_range(conv_id, seq, limit).unwrap_or_default()
+    } else if !query.is_empty() {
+        let scope_opt = if body
+            .get("allConversations")
+            .or_else(|| body.get("all_conversations"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            None
+        } else {
+            Some(conv_id)
+        };
+        store
+            .search_events_fts(scope_opt, query, limit)
+            .unwrap_or_default()
+    } else {
+        store.read_event_range(conv_id, 0, limit).unwrap_or_default()
+    };
+
+    let projected: Vec<Value> = events
+        .into_iter()
+        .map(|ev| {
+            json!({
+                "scope": ev.scope,
+                "seq": ev.seq,
+                "kind": ev.kind,
+                "payload": ev.payload,
+                "createdAtMs": ev.created_at_ms
+            })
+        })
+        .collect();
+    let count = projected.len();
+    json!({
+        "ok": true,
+        "conversationId": conv_id,
+        "query": query,
+        "fromSeq": from_seq,
+        "count": count,
+        "matches": projected,
+        "events": projected
+    })
+}
+
+fn collect_conversation_artifacts(store: &Store, conv_id: &str) -> Vec<Value> {
+    let mut artifacts: Vec<Value> = Vec::new();
+    for res in collect_conversation_resources(store, conv_id) {
+        artifacts.push(json!({
+            "kind": "attachment",
+            "source": "conversation_resource",
+            "item": res
+        }));
+    }
+    for snap in list_conversation_surfaces(store, conv_id) {
+        if let Ok(v) = serde_json::to_value(&snap) {
+            artifacts.push(json!({
+                "kind": "ui_surface",
+                "id": snap.identity.surface_id,
+                "item": v
+            }));
+        }
+    }
+    if let Ok(EventPage::Events(events)) = store.events_after(conv_id, 0, 1000) {
+        for ev in events {
+            if let Some(arr) = ev.payload.get("output_artifacts").and_then(|v| v.as_array()) {
+                for art in arr {
+                    artifacts.push(json!({
+                        "kind": "tool_output_artifact",
+                        "seq": ev.seq,
+                        "createdAtMs": ev.created_at_ms,
+                        "item": art
+                    }));
+                }
+            }
+            if ev.kind == "tool_finished" || ev.kind == "file_modified" {
+                if let Some(path) = ev.payload.get("path").and_then(|v| v.as_str()) {
+                    artifacts.push(json!({
+                        "kind": "file",
+                        "seq": ev.seq,
+                        "path": path,
+                        "createdAtMs": ev.created_at_ms
+                    }));
+                }
+            }
+        }
+    }
+    artifacts
+}
+
+fn handle_conversation_plan(store: &Store, conv_id: &str, body: &Value) -> (u16, Value) {
+    let action = body
+        .get("action")
+        .or_else(|| body.get("operation"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase());
+    let approve_req = action.as_deref() == Some("approve")
+        || body
+            .get("approve")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    if approve_req {
+        return match approve_agent_plan(store, conv_id) {
+            Ok(plan) => {
+                let _ = store.append_event(
+                    conv_id,
+                    "plan_approved",
+                    json!({"plan": plan}),
+                    50_000,
+                );
+                (
+                    200,
+                    json!({
+                        "ok": true,
+                        "approved": true,
+                        "conversationId": conv_id,
+                        "planMode": is_plan_mode(store, conv_id),
+                        "plan": plan
+                    }),
+                )
+            }
+            Err(e) => (
+                404,
+                json!({
+                    "ok": false,
+                    "error": "plan_approval_failed",
+                    "message": e,
+                    "conversationId": conv_id
+                }),
+            ),
+        };
+    }
+
+    let enabled_opt = body
+        .get("enabled")
+        .or_else(|| body.get("planMode"))
+        .or_else(|| body.get("plan_mode"))
+        .and_then(|v| v.as_bool())
+        .or_else(|| match action.as_deref() {
+            Some("enter") | Some("enable") | Some("on") => Some(true),
+            Some("exit") | Some("disable") | Some("off") => Some(false),
+            _ => None,
+        });
+
+    if let Some(enabled) = enabled_opt {
+        if let Err(e) = set_plan_mode(store, conv_id, enabled) {
+            return (500, json!({"ok": false, "error": e.to_string()}));
+        }
+        let _ = store.append_event(
+            conv_id,
+            "plan_mode_updated",
+            json!({"enabled": enabled}),
+            50_000,
+        );
+    }
+
+    (
+        200,
+        json!({
+            "ok": true,
+            "conversationId": conv_id,
+            "planMode": is_plan_mode(store, conv_id),
+            "plan": load_session_plan(store, conv_id),
+            "todos": load_session_todos(store, conv_id)
+        }),
+    )
+}
+
+fn handle_auxiliary_dispatch(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    auxiliary_ops: &Mutex<BTreeMap<String, Value>>,
+    host_id: &str,
+    action: &str,
+    body: &Value,
+) -> (u16, Value) {
+    if let Some(exp) = body
+        .get("expected_host_id")
+        .or_else(|| body.get("expectedHostId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        if exp != host_id {
+            return (
+                409,
+                json!({
+                    "ok": false,
+                    "error": "host_identity_mismatch",
+                    "source_host_id": host_id
+                }),
+            );
+        }
+    }
+    let epoch = ensure_source_store_epoch(store);
+    let op_id = body
+        .get("operation_id")
+        .or_else(|| body.get("operationId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let attempt_id = body
+        .get("attempt_id")
+        .or_else(|| body.get("attemptId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{op_id}:physical"));
+
+    let make_receipt = |state: &str, output: Option<&Value>, error: Option<&str>| -> Value {
+        json!({
+            "operation": {
+                "id": op_id,
+                "attempt_id": attempt_id,
+                "state": state,
+                "revision": now_ms(),
+                "owner": {
+                    "kind": "source_authority",
+                    "source_host_id": host_id
+                },
+                "output": output.cloned().unwrap_or(Value::Null),
+                "error": error
+            }
+        })
+    };
+
+    match action {
+        "prepare" => {
+            let cfg = load_active_config(store);
+            let (conn_id, model_id, profile_id) = cfg
+                .llm
+                .default_model
+                .as_ref()
+                .map(|d| {
+                    (
+                        d.connection.clone(),
+                        d.model.clone(),
+                        format!("{}:{}", d.connection, d.model),
+                    )
+                })
+                .unwrap_or_else(|| ("default".into(), "unconfigured".into(), "default:unconfigured".into()));
+            (
+                200,
+                json!({
+                    "ok": true,
+                    "source_host_id": host_id,
+                    "source_store_epoch": epoch,
+                    "profile_id": profile_id,
+                    "connection_id": conn_id,
+                    "model_id": model_id,
+                    "revision": 1,
+                    "ready": model_id != "unconfigured"
+                }),
+            )
+        }
+        "admit" => {
+            let receipt = make_receipt("admitted", None, None);
+            let envelope = json!({
+                "ok": true,
+                "source_host_id": host_id,
+                "source_store_epoch": epoch,
+                "operation_id": op_id,
+                "attempt_id": attempt_id,
+                "receipt": receipt
+            });
+            auxiliary_ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(op_id.clone(), envelope.clone());
+            let _ = store.set_kv(&format!("aux_op:{op_id}"), &envelope);
+            (200, envelope)
+        }
+        "inspect" => {
+            let found = auxiliary_ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&op_id)
+                .cloned()
+                .or_else(|| store.get_kv(&format!("aux_op:{op_id}")).ok().flatten());
+            match found {
+                Some(env) => (200, env),
+                None => (
+                    404,
+                    json!({
+                        "ok": false,
+                        "error": "auxiliary_operation_not_found",
+                        "source_host_id": host_id,
+                        "operation_id": op_id,
+                        "attempt_id": attempt_id
+                    }),
+                ),
+            }
+        }
+        "cancel" => {
+            let receipt = make_receipt("cancelled", None, None);
+            let envelope = json!({
+                "ok": true,
+                "cancelled": true,
+                "source_host_id": host_id,
+                "source_store_epoch": epoch,
+                "operation_id": op_id,
+                "attempt_id": attempt_id,
+                "receipt": receipt
+            });
+            auxiliary_ops
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(op_id.clone(), envelope.clone());
+            let _ = store.set_kv(&format!("aux_op:{op_id}"), &envelope);
+            (200, envelope)
+        }
+        "invoke" => {
+            let cfg = load_active_config(store);
+            let route = match resolve_model_route(&cfg) {
+                Ok(r) => r,
+                Err(e) => {
+                    let receipt = make_receipt("failed", None, Some(&e));
+                    let env = json!({
+                        "ok": false,
+                        "error": e,
+                        "source_host_id": host_id,
+                        "source_store_epoch": epoch,
+                        "operation_id": op_id,
+                        "attempt_id": attempt_id,
+                        "receipt": receipt
+                    });
+                    auxiliary_ops
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(op_id.clone(), env.clone());
+                    let _ = store.set_kv(&format!("aux_op:{op_id}"), &env);
+                    return (400, env);
+                }
+            };
+            let prompt = body
+                .get("prompt")
+                .or_else(|| body.get("content"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    body.get("input_json")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                })
+                .or_else(|| body.get("input").and_then(|v| serde_json::to_string(v).ok()))
+                .unwrap_or_default();
+
+            let room_id = body
+                .get("room_id")
+                .or_else(|| body.get("roomId"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let expert_id = body
+                .get("expert_id")
+                .or_else(|| body.get("expertId"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            let caller: Arc<dyn ModelCaller> = match HttpModelCaller::new(120) {
+                Ok(c) => Arc::new(c),
+                Err(e) => {
+                    let msg = e.to_string();
+                    let receipt = make_receipt("failed", None, Some(&msg));
+                    return (
+                        500,
+                        json!({
+                            "ok": false,
+                            "error": msg,
+                            "source_host_id": host_id,
+                            "operation_id": op_id,
+                            "attempt_id": attempt_id,
+                            "receipt": receipt
+                        }),
+                    );
+                }
+            };
+
+            let run_result: Result<Value, String> = if let Some(rid) = room_id {
+                let policy = EffectivePolicy::load(
+                    &suite.workspace_root,
+                    suite.user_home.as_deref(),
+                    false,
+                    Some(PermissionProfile::Cautious),
+                    true,
+                );
+                RoomRuntime::send_message_with_parallel(
+                    suite,
+                    caller,
+                    route,
+                    policy,
+                    rid,
+                    &prompt,
+                    expert_id,
+                    true,
+                )
+                .map(|replies| {
+                    let text = replies
+                        .iter()
+                        .filter_map(|r| r.get("content").and_then(|v| v.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    json!({
+                        "text": text,
+                        "content": text,
+                        "replies": replies,
+                        "finish_reason": "stop",
+                        "has_tool_calls": false
+                    })
+                })
+            } else {
+                let req_body = nola_types::StructuredModelRequest {
+                    frozen_system_prefix: vec![FrozenSystemBlock {
+                        id: "auxiliary".into(),
+                        text: "You are a concise Nola auxiliary completion worker.".into(),
+                    }],
+                    prefix_stable_tools: Vec::new(),
+                    history: vec![nola_types::HistoryMessage::User {
+                        content: prompt,
+                        media: Vec::new(),
+                    }],
+                    ephemeral_tail_reminders: Vec::new(),
+                    max_output_tokens: 2048,
+                    json_schema: None,
+                };
+                caller
+                    .call(&route, &req_body, false, &mut |_| {})
+                    .map(|resp| {
+                        json!({
+                            "text": resp.content,
+                            "content": resp.content,
+                            "finish_reason": "stop",
+                            "has_tool_calls": !resp.tool_calls.is_empty(),
+                            "usage": resp.usage
+                        })
+                    })
+                    .map_err(|e| e.to_string())
+            };
+
+            match run_result {
+                Ok(output) => {
+                    let receipt = make_receipt("succeeded", Some(&output), None);
+                    let env = json!({
+                        "ok": true,
+                        "source_host_id": host_id,
+                        "source_store_epoch": epoch,
+                        "operation_id": op_id,
+                        "attempt_id": attempt_id,
+                        "receipt": receipt,
+                        "output": output,
+                        "finish_reason": output.get("finish_reason").cloned().unwrap_or_else(|| json!("stop")),
+                        "has_tool_calls": output.get("has_tool_calls").cloned().unwrap_or_else(|| json!(false))
+                    });
+                    auxiliary_ops
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(op_id.clone(), env.clone());
+                    let _ = store.set_kv(&format!("aux_op:{op_id}"), &env);
+                    (200, env)
+                }
+                Err(e) => {
+                    let receipt = make_receipt("failed", None, Some(&e));
+                    let env = json!({
+                        "ok": false,
+                        "error": e,
+                        "source_host_id": host_id,
+                        "source_store_epoch": epoch,
+                        "operation_id": op_id,
+                        "attempt_id": attempt_id,
+                        "receipt": receipt
+                    });
+                    auxiliary_ops
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(op_id.clone(), env.clone());
+                    let _ = store.set_kv(&format!("aux_op:{op_id}"), &env);
+                    (502, env)
+                }
+            }
+        }
+        other => (
+            400,
+            json!({"ok": false, "error": "unknown_auxiliary_action", "action": other}),
+        ),
+    }
+}
+
+fn handle_source_oauth_route(
+    store: &Store,
+    suite: &Arc<ModulesSuite>,
+    oauth_flows: &Mutex<BTreeMap<String, OAuthFlowState>>,
+    path: &str,
+    query: &str,
+    body: &Value,
+) -> (u16, Value) {
+    let vault = Vault::open(resolve_vault_path_for_store(store)).ok();
+    match path {
+        "/api/model-connections/kimi-login/owners" => {
+            let owners: Vec<Value> = suite
+                .list_records::<Value>("source_account")
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| r.get("source").and_then(|v| v.as_str()) == Some("kimi"))
+                .map(|r| {
+                    let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    json!({
+                        "account_id": id,
+                        "revision": r.get("revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                        "display_name": r.get("display_name").and_then(|v| v.as_str()).unwrap_or("Kimi Code"),
+                        "origin": r.get("origin").and_then(|v| v.as_str()).unwrap_or(""),
+                        "server_id": r.get("server_id").and_then(|v| v.as_str()).unwrap_or("kimi-local")
+                    })
+                })
+                .collect();
+            (200, Value::Array(owners))
+        }
+        "/api/model-connections/opencode-login/owners" => {
+            let owners: Vec<Value> = suite
+                .list_records::<Value>("source_account")
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| r.get("source").and_then(|v| v.as_str()) == Some("opencode"))
+                .map(|r| {
+                    let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    json!({
+                        "account_id": id,
+                        "revision": r.get("revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                        "display_name": r.get("display_name").and_then(|v| v.as_str()).unwrap_or("OpenCode"),
+                        "origin": r.get("origin").and_then(|v| v.as_str()).unwrap_or(""),
+                        "directory": r.get("directory").and_then(|v| v.as_str()).unwrap_or("")
+                    })
+                })
+                .collect();
+            (200, Value::Array(owners))
+        }
+        "/api/model-connections/kimi-login/connect" => {
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let origin = body
+                .get("origin")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let bearer = body
+                .get("server_bearer")
+                .or_else(|| body.get("api_key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if origin.is_empty() || bearer.is_empty() {
+                return (
+                    400,
+                    json!({"ok": false, "error": "origin_and_bearer_required"}),
+                );
+            }
+            if let Some(ref v) = vault {
+                let _ = v.set_secret(&format!("kimi_bearer:{account_id}"), &bearer);
+            }
+            let prev_rev = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten()
+                .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                .unwrap_or(0);
+            let rev = prev_rev + 1;
+            let server_id = format!("kimi-{}", &sha256_hex(origin.as_bytes())[..8]);
+            let display_name = body
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("Kimi Code");
+            let rec = json!({
+                "id": account_id,
+                "source": "kimi",
+                "display_name": display_name,
+                "origin": origin,
+                "server_id": server_id,
+                "revision": rev,
+                "state": "connected",
+                "updated_at_ms": now_ms()
+            });
+            let _ = suite.upsert_record("source_account", &account_id, &rec);
+            (
+                200,
+                json!({
+                    "account": { "revision": rev, "account": { "id": account_id } },
+                    "origin": origin,
+                    "server_id": server_id,
+                    "state": "connected",
+                    "flow_id": Value::Null,
+                    "verification_url": Value::Null,
+                    "user_code": Value::Null,
+                    "poll_interval_seconds": Value::Null,
+                    "inference_supported": true,
+                    "cancellation_confirmed": Value::Null
+                }),
+            )
+        }
+        "/api/model-connections/kimi-login/start"
+        | "/api/model-connections/kimi-login/status"
+        | "/api/model-connections/kimi-login/cancel" => {
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| parse_query_str(query, "account_id").as_deref().map(|_| ""))
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "account_id"))
+                .unwrap_or_else(new_id);
+            let saved = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| json!({"id": account_id, "revision": 1, "origin": "", "server_id": "kimi-local"}));
+            let rev = saved.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+            let origin = saved
+                .get("origin")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let server_id = saved
+                .get("server_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("kimi-local")
+                .to_string();
+            let flow_id_in = body
+                .get("flow_id")
+                .or_else(|| body.get("request_id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let mut flows = oauth_flows.lock().unwrap_or_else(|e| e.into_inner());
+            if path.ends_with("/start") {
+                let flow_id = new_id();
+                let (_verifier, challenge) = generate_pkce_pair();
+                let csrf_state = generate_hex_token_32();
+                let user_code = format!(
+                    "{}-{}",
+                    &csrf_state[..4].to_ascii_uppercase(),
+                    &csrf_state[4..8].to_ascii_uppercase()
+                );
+                let base_origin = if origin.is_empty() {
+                    "https://kimi.moonshot.cn".to_string()
+                } else {
+                    origin.trim_end_matches('/').to_string()
+                };
+                let verification_url = format!(
+                    "{base_origin}/oauth/device?user_code={user_code}&code_challenge={challenge}&code_challenge_method=S256&state={}",
+                    &csrf_state[..16]
+                );
+                let flow = OAuthFlowState {
+                    request_id: flow_id.clone(),
+                    account_id: account_id.clone(),
+                    provider: "kimi".into(),
+                    method: 0,
+                    state: "pending".into(),
+                    csrf_state,
+                    code_challenge: challenge,
+                    authorization_url: Some(verification_url.clone()),
+                    verification_url: Some(verification_url.clone()),
+                    user_code: Some(user_code.clone()),
+                    callback_mode: Some("device_code".into()),
+                    instructions: Some("Open verification URL and enter the user code.".into()),
+                    poll_interval_seconds: Some(5),
+                    cancellation_confirmed: None,
+                };
+                flows.insert(flow_id.clone(), flow);
+                (
+                    200,
+                    json!({
+                        "account": { "revision": rev, "account": { "id": account_id } },
+                        "origin": origin,
+                        "server_id": server_id,
+                        "state": "pending",
+                        "flow_id": flow_id,
+                        "verification_url": verification_url,
+                        "user_code": user_code,
+                        "poll_interval_seconds": 5,
+                        "inference_supported": true,
+                        "cancellation_confirmed": Value::Null
+                    }),
+                )
+            } else if path.ends_with("/cancel") {
+                let fid = flow_id_in.unwrap_or_default();
+                let confirmed = if let Some(flow) = flows.get_mut(&fid) {
+                    flow.state = "cancelled".into();
+                    flow.cancellation_confirmed = Some(true);
+                    true
+                } else {
+                    true
+                };
+                (
+                    200,
+                    json!({
+                        "account": { "revision": rev, "account": { "id": account_id } },
+                        "origin": origin,
+                        "server_id": server_id,
+                        "state": "cancelled",
+                        "flow_id": if fid.is_empty() { Value::Null } else { json!(fid) },
+                        "verification_url": Value::Null,
+                        "user_code": Value::Null,
+                        "poll_interval_seconds": Value::Null,
+                        "inference_supported": true,
+                        "cancellation_confirmed": confirmed
+                    }),
+                )
+            } else {
+                let flow_opt = flow_id_in
+                    .as_deref()
+                    .and_then(|id| flows.get(id))
+                    .or_else(|| flows.values().rev().find(|f| f.account_id == account_id));
+                let has_secret = vault
+                    .as_ref()
+                    .and_then(|v| v.get_secret(&format!("kimi_bearer:{account_id}")).ok().flatten())
+                    .is_some();
+                match flow_opt {
+                    Some(f) => (
+                        200,
+                        json!({
+                            "account": { "revision": rev, "account": { "id": account_id } },
+                            "origin": origin,
+                            "server_id": server_id,
+                            "state": f.state,
+                            "flow_id": f.request_id,
+                            "verification_url": f.verification_url,
+                            "user_code": f.user_code,
+                            "poll_interval_seconds": f.poll_interval_seconds,
+                            "inference_supported": true,
+                            "cancellation_confirmed": f.cancellation_confirmed
+                        }),
+                    ),
+                    None => (
+                        200,
+                        json!({
+                            "account": { "revision": rev, "account": { "id": account_id } },
+                            "origin": origin,
+                            "server_id": server_id,
+                            "state": if has_secret { "connected" } else { "idle" },
+                            "flow_id": Value::Null,
+                            "verification_url": Value::Null,
+                            "user_code": Value::Null,
+                            "poll_interval_seconds": Value::Null,
+                            "inference_supported": has_secret,
+                            "cancellation_confirmed": Value::Null
+                        }),
+                    ),
+                }
+            }
+        }
+        "/api/model-connections/opencode-login/connect"
+        | "/api/model-connections/opencode-login/inspect" => {
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "account_id"))
+                .unwrap_or_else(new_id);
+            let existing = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten();
+            let (origin, directory, rev) = if path.ends_with("/connect") {
+                let origin = body
+                    .get("origin")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let directory = body
+                    .get("directory")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let password = body
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if origin.is_empty() {
+                    return (400, json!({"ok": false, "error": "origin_required"}));
+                }
+                if !password.is_empty() {
+                    if let Some(ref v) = vault {
+                        let _ = v.set_secret(&format!("opencode_password:{account_id}"), password);
+                    }
+                }
+                let rev = existing
+                    .as_ref()
+                    .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                    .unwrap_or(0)
+                    + 1;
+                let rec = json!({
+                    "id": account_id,
+                    "source": "opencode",
+                    "display_name": body.get("display_name").and_then(|v| v.as_str()).unwrap_or("OpenCode"),
+                    "origin": origin,
+                    "directory": directory,
+                    "username": body.get("username").and_then(|v| v.as_str()).unwrap_or("opencode"),
+                    "revision": rev,
+                    "state": "connected",
+                    "updated_at_ms": now_ms()
+                });
+                let _ = suite.upsert_record("source_account", &account_id, &rec);
+                (origin, directory, rev)
+            } else {
+                let Some(ex) = existing else {
+                    return (404, json!({"ok": false, "error": "opencode_owner_not_found"}));
+                };
+                (
+                    ex.get("origin").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    ex.get("directory").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    ex.get("revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                )
+            };
+            let methods = json!([
+                {
+                    "provider": "opencode",
+                    "method": 0,
+                    "binding": "pkce-oauth",
+                    "declaration": {
+                        "type": "oauth",
+                        "label": "PKCE OAuth Authorization Code",
+                        "prompts": []
+                    }
+                }
+            ]);
+            (
+                200,
+                json!({
+                    "account": { "revision": rev, "account": { "id": account_id } },
+                    "origin": origin,
+                    "directory": directory,
+                    "methods": methods
+                }),
+            )
+        }
+        "/api/model-connections/opencode-login/authorize" => {
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("opencode")
+                .to_string();
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let provider = body
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("opencode")
+                .to_string();
+            let method_idx = body.get("method").and_then(|v| v.as_i64()).unwrap_or(0);
+            let (_verifier, challenge) = generate_pkce_pair();
+            let csrf_state = generate_hex_token_32();
+            let origin = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten()
+                .and_then(|r| r.get("origin").and_then(|v| v.as_str()).map(ToString::to_string))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4096".to_string());
+            let auth_url = format!(
+                "{}/oauth/authorize?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={}",
+                origin.trim_end_matches('/'),
+                &csrf_state[..16]
+            );
+            let flow = OAuthFlowState {
+                request_id: request_id.clone(),
+                account_id,
+                provider: provider.clone(),
+                method: method_idx,
+                state: "pending".into(),
+                csrf_state,
+                code_challenge: challenge,
+                authorization_url: Some(auth_url.clone()),
+                verification_url: None,
+                user_code: None,
+                callback_mode: Some("code".into()),
+                instructions: Some("Complete authorization and paste the returned code.".into()),
+                poll_interval_seconds: None,
+                cancellation_confirmed: None,
+            };
+            oauth_flows
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(request_id.clone(), flow);
+            (
+                200,
+                json!({
+                    "request_id": request_id,
+                    "provider": provider,
+                    "method": method_idx,
+                    "state": "pending",
+                    "authorization_url": auth_url,
+                    "callback_mode": "code",
+                    "instructions": "Complete authorization and paste the returned code."
+                }),
+            )
+        }
+        "/api/model-connections/opencode-login/callback" => {
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "request_id"))
+                .or_else(|| parse_query_str(query, "state"))
+                .unwrap_or_default();
+            let code = body
+                .get("code")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "code"))
+                .unwrap_or_default();
+            let mut flows = oauth_flows.lock().unwrap_or_else(|e| e.into_inner());
+            let matched_key = if flows.contains_key(&request_id) {
+                Some(request_id.clone())
+            } else {
+                let st = parse_query_str(query, "state").unwrap_or_default();
+                if st.is_empty() {
+                    None
+                } else {
+                    flows
+                        .iter()
+                        .find(|(_, f)| f.csrf_state.starts_with(&st))
+                        .map(|(k, _)| k.clone())
+                }
+            };
+            let Some(flow_key) = matched_key else {
+                return (404, json!({"ok": false, "error": "oauth_flow_not_found"}));
+            };
+            let Some(flow) = flows.get_mut(&flow_key) else {
+                return (404, json!({"ok": false, "error": "oauth_flow_not_found"}));
+            };
+            if code.trim().is_empty() {
+                return (400, json!({"ok": false, "error": "authorization_code_required"}));
+            }
+            if let Some(ref v) = vault {
+                let _ = v.set_secret(&format!("source_account_token:{}", flow.account_id), code.trim());
+            }
+            flow.state = "connected".into();
+            flow.authorization_url = None;
+            flow.instructions = None;
+            (
+                200,
+                json!({
+                    "request_id": flow.request_id,
+                    "provider": flow.provider,
+                    "method": flow.method,
+                    "state": flow.state,
+                    "authorization_url": Value::Null,
+                    "callback_mode": flow.callback_mode,
+                    "instructions": Value::Null
+                }),
+            )
+        }
+        "/api/model-connections/opencode-login/forget" => {
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let removed = oauth_flows
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&request_id);
+            let provider = removed
+                .as_ref()
+                .map(|f| f.provider.as_str())
+                .unwrap_or("opencode");
+            let method_idx = removed.as_ref().map(|f| f.method).unwrap_or(0);
+            (
+                200,
+                json!({
+                    "ok": true,
+                    "forgotten": true,
+                    "request_id": request_id,
+                    "provider": provider,
+                    "method": method_idx,
+                    "state": "idle",
+                    "authorization_url": Value::Null,
+                    "callback_mode": Value::Null,
+                    "instructions": Value::Null
+                }),
+            )
+        }
+        "/api/model-connections/source-login/start" => {
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let display_name = body
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("Codex");
+            let source_kind = body
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("codex");
+            let (_verifier, challenge) = generate_pkce_pair();
+            let csrf_state = generate_hex_token_32();
+            let auth_url = format!(
+                "http://127.0.0.1:1455/auth/callback?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={}",
+                &csrf_state[..16]
+            );
+            let prev_rev = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten()
+                .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                .unwrap_or(0);
+            let rev = prev_rev + 1;
+            let account_rec = json!({
+                "id": account_id,
+                "source": source_kind,
+                "display_name": display_name,
+                "revision": rev,
+                "state": "pending",
+                "updated_at_ms": now_ms()
+            });
+            let _ = suite.upsert_record("source_account", &account_id, &account_rec);
+            let flow = OAuthFlowState {
+                request_id: request_id.clone(),
+                account_id: account_id.clone(),
+                provider: source_kind.into(),
+                method: 0,
+                state: "pending".into(),
+                csrf_state,
+                code_challenge: challenge.clone(),
+                authorization_url: Some(auth_url.clone()),
+                verification_url: None,
+                user_code: None,
+                callback_mode: Some("loopback".into()),
+                instructions: Some("Complete PKCE authorization in browser.".into()),
+                poll_interval_seconds: Some(2),
+                cancellation_confirmed: None,
+            };
+            oauth_flows
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(request_id.clone(), flow);
+            (
+                200,
+                json!({
+                    "request_id": request_id,
+                    "state": "pending",
+                    "authorization_url": auth_url,
+                    "pkce_challenge": challenge,
+                    "pkce_method": "S256",
+                    "inference_supported": true,
+                    "account": {
+                        "revision": rev,
+                        "account": {
+                            "id": account_id,
+                            "display_name": display_name,
+                            "source": source_kind
+                        }
+                    }
+                }),
+            )
+        }
+        "/api/model-connections/source-login/status" => {
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "request_id"))
+                .unwrap_or_default();
+            let account_id = body
+                .get("account_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| parse_query_str(query, "account_id"))
+                .unwrap_or_default();
+            let flows = oauth_flows.lock().unwrap_or_else(|e| e.into_inner());
+            let flow = flows.get(&request_id).or_else(|| {
+                (!account_id.is_empty())
+                    .then(|| flows.values().rev().find(|f| f.account_id == account_id))
+                    .flatten()
+            });
+            let eff_account_id = flow
+                .map(|f| f.account_id.clone())
+                .unwrap_or(account_id);
+            let acct_val = suite
+                .get_record::<Value>("source_account", &eff_account_id)
+                .ok()
+                .flatten()
+                .map(|r| {
+                    json!({
+                        "revision": r.get("revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                        "account": {
+                            "id": eff_account_id,
+                            "display_name": r.get("display_name").and_then(|v| v.as_str()).unwrap_or("Account"),
+                            "source": r.get("source").and_then(|v| v.as_str()).unwrap_or("codex")
+                        }
+                    })
+                });
+            match flow {
+                Some(f) => (
+                    200,
+                    json!({
+                        "request_id": f.request_id,
+                        "state": f.state,
+                        "authorization_url": f.authorization_url,
+                        "pkce_challenge": f.code_challenge,
+                        "inference_supported": true,
+                        "account": acct_val
+                    }),
+                ),
+                None => (
+                    200,
+                    json!({
+                        "request_id": request_id,
+                        "state": if acct_val.is_some() { "connected" } else { "idle" },
+                        "authorization_url": Value::Null,
+                        "inference_supported": acct_val.is_some(),
+                        "account": acct_val
+                    }),
+                ),
+            }
+        }
+        "/api/model-connections/source-login/cancel" => {
+            let request_id = body
+                .get("request_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut flows = oauth_flows.lock().unwrap_or_else(|e| e.into_inner());
+            let acct_id = if let Some(f) = flows.get_mut(&request_id) {
+                f.state = "cancelled".into();
+                f.authorization_url = None;
+                f.cancellation_confirmed = Some(true);
+                f.account_id.clone()
+            } else {
+                body.get("account_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let acct_val = suite
+                .get_record::<Value>("source_account", &acct_id)
+                .ok()
+                .flatten()
+                .map(|r| {
+                    json!({
+                        "revision": r.get("revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                        "account": {
+                            "id": acct_id,
+                            "display_name": r.get("display_name").and_then(|v| v.as_str()).unwrap_or("Account"),
+                            "source": r.get("source").and_then(|v| v.as_str()).unwrap_or("codex")
+                        }
+                    })
+                });
+            (
+                200,
+                json!({
+                    "request_id": request_id,
+                    "state": "cancelled",
+                    "cancelled": true,
+                    "authorization_url": Value::Null,
+                    "inference_supported": false,
+                    "account": acct_val
+                }),
+            )
+        }
+        "/api/model-connections/source-accounts/bind" => {
+            let account_id = body
+                .get("account_id")
+                .or_else(|| body.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let token = body
+                .get("token")
+                .or_else(|| body.get("access_token"))
+                .or_else(|| body.get("api_key"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if let (Some(tok), Some(ref v)) = (token, vault.as_ref()) {
+                let _ = v.set_secret(&format!("source_account_token:{account_id}"), tok);
+            }
+            let prev = suite
+                .get_record::<Value>("source_account", &account_id)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| json!({"id": account_id, "source": "custom", "display_name": account_id}));
+            let rev = prev.get("revision").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+            let mut rec = prev;
+            if let Some(obj) = rec.as_object_mut() {
+                obj.insert("id".into(), json!(account_id));
+                obj.insert("revision".into(), json!(rev));
+                obj.insert("state".into(), json!("connected"));
+                obj.insert("updated_at_ms".into(), json!(now_ms()));
+                if let Some(conn_id) = body.get("connection_id").and_then(|v| v.as_str()) {
+                    obj.insert("connection_id".into(), json!(conn_id));
+                }
+            }
+            let _ = suite.upsert_record("source_account", &account_id, &rec);
+            (
+                200,
+                json!({
+                    "ok": true,
+                    "bound": true,
+                    "account": rec
+                }),
+            )
+        }
+        "/api/model-connections/source-accounts/refresh" => {
+            let account_id = body
+                .get("account_id")
+                .or_else(|| body.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let Some(mut rec) = suite
+                .get_record::<Value>("source_account", account_id)
+                .ok()
+                .flatten()
+            else {
+                return (404, json!({"ok": false, "error": "source_account_not_found"}));
+            };
+            let has_token = vault
+                .as_ref()
+                .is_some_and(|v| {
+                    v.get_secret(&format!("source_account_token:{account_id}"))
+                        .ok()
+                        .flatten()
+                        .is_some()
+                        || v.get_secret(&format!("kimi_bearer:{account_id}"))
+                            .ok()
+                            .flatten()
+                            .is_some()
+                        || v.get_secret(&format!("opencode_password:{account_id}"))
+                            .ok()
+                            .flatten()
+                            .is_some()
+                });
+            let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1) + 1;
+            if let Some(obj) = rec.as_object_mut() {
+                obj.insert("revision".into(), json!(rev));
+                obj.insert("has_token".into(), json!(has_token));
+                obj.insert("refreshed_at_ms".into(), json!(now_ms()));
+            }
+            let _ = suite.upsert_record("source_account", account_id, &rec);
+            (
+                200,
+                json!({
+                    "ok": true,
+                    "refreshed": true,
+                    "has_token": has_token,
+                    "account": rec
+                }),
+            )
+        }
+        _ => (404, json!({"ok": false, "error": "not_found"})),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_selected_experts_parallel(
+    suite: &Arc<ModulesSuite>,
+    caller: Arc<dyn ModelCaller>,
+    route: nola_types::ModelRouteConfig,
+    policy: EffectivePolicy,
+    workspace_root: &Path,
+    conversation_id: &str,
+    requested_room_id: Option<&str>,
+    selected_expert_ids: &[String],
+    prompt: &str,
+) -> Result<(String, Vec<Value>), String> {
+    let stored_experts = suite
+        .list_records::<ExpertPeer>("expert_peer")
+        .unwrap_or_default();
+    let builtins = built_in_role_templates();
+    let mut participant_ids: Vec<String> = Vec::new();
+    let mut mention_names: Vec<String> = Vec::new();
+    let now = now_ms();
+
+    for raw_eid in selected_expert_ids {
+        if let Some(exp) = stored_experts
+            .iter()
+            .find(|e| e.id == *raw_eid || e.name.eq_ignore_ascii_case(raw_eid))
+        {
+            if !participant_ids.contains(&exp.id) {
+                participant_ids.push(exp.id.clone());
+                mention_names.push(exp.name.clone());
+            }
+        } else if let Some(tpl) = builtins.iter().find(|t| {
+            t.get("id").and_then(|v| v.as_str()) == Some(raw_eid.as_str())
+                || t.get("name")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case(raw_eid))
+        }) {
+            let id = tpl
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(raw_eid)
+                .to_string();
+            let name = tpl
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+            let role = tpl
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Expert")
+                .to_string();
+            let system_prompt = tpl
+                .get("system_prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("You are a helpful domain expert.")
+                .to_string();
+            let peer = ExpertPeer {
+                id: id.clone(),
+                name: name.clone(),
+                role,
+                system_prompt,
+                model_override: None,
+                allowed_tools: Vec::new(),
+                updated_at_ms: now,
+            };
+            let _ = suite.upsert_record("expert_peer", &peer.id, &peer);
+            if !participant_ids.contains(&id) {
+                participant_ids.push(id);
+                mention_names.push(name);
+            }
+        }
+    }
+
+    if participant_ids.is_empty() {
+        return Err("no matching expert peers found for selectedExperts".into());
+    }
+
+    let room_id = requested_room_id
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("conv-room-{conversation_id}"));
+    let mut room = suite
+        .get_record::<AgentRoom>("agent_room", &room_id)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| AgentRoom {
+            id: room_id.clone(),
+            name: format!("Conversation {conversation_id}"),
+            workspace_root: workspace_root.display().to_string(),
+            participant_expert_ids: participant_ids.clone(),
+            session_id: conversation_id.to_string(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        });
+    room.participant_expert_ids = participant_ids.clone();
+    room.workspace_root = workspace_root.display().to_string();
+    room.updated_at_ms = now;
+    suite
+        .upsert_record("agent_room", &room.id, &room)
+        .map_err(|e| e.to_string())?;
+
+    let target_recipient = if participant_ids.len() == 1 {
+        mention_names.first().map(String::as_str)
+    } else {
+        None
+    };
+
+    let replies = RoomRuntime::send_message_with_parallel(
+        suite,
+        caller,
+        route,
+        policy,
+        &room.id,
+        prompt,
+        target_recipient,
+        true,
+    )?;
+    Ok((room.id, replies))
 }
 
 fn parse_query_str(query: &str, key: &str) -> Option<String> {
@@ -11041,5 +14858,532 @@ mod tests {
         assert_eq!(map_proto("gemini"), "gemini");
         assert_eq!(map_proto("google_gemini"), "gemini");
         assert_eq!(map_proto("responses"), "openai_responses");
+    }
+
+    #[test]
+    fn tailcat_verified_command_and_lease_grant_renew_close_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().canonicalize().unwrap().join("fake-tailcat.sh");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(
+                &script,
+                "#!/bin/sh\nread _init\nprintf '{\"protocolVersion\":1,\"event\":\"ready\",\"address\":\"tailcat://100.64.0.1:443\"}\\n'\nread _stop\nexit 0\n",
+            )
+            .unwrap();
+            let mut perms = fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script, perms).unwrap();
+        }
+        #[cfg(not(unix))]
+        fs::write(&script, b"fixture").unwrap();
+
+        let digest = sha256_hex(&fs::read(&script).unwrap());
+        // Relative & parent-dir paths are rejected
+        assert!(verified_tailcat_command(Path::new("relative/helper"), Some(&digest)).is_err());
+        assert!(verified_tailcat_command(Path::new("/tmp/../bin/helper"), Some(&digest)).is_err());
+        // Wrong SHA-256 is refused
+        assert!(verified_tailcat_command(&script, Some(&"0".repeat(64))).is_err());
+        // Valid binary produces scrubbed env with zero argv leaks
+        let cmd = verified_tailcat_command(&script, Some(&digest)).unwrap();
+        assert_eq!(cmd.get_args().count(), 0);
+        assert!(cmd
+            .get_envs()
+            .all(|(k, _)| matches!(k.to_str(), Some("PATH" | "SystemRoot" | "TEMP" | "TMP"))));
+
+        #[cfg(unix)]
+        {
+            let mgr = Arc::new(TailcatLeaseManager::default());
+            let cfg = TailcatConfig {
+                ingress: true,
+                helper_path: Some(script.clone()),
+                helper_sha256: Some(digest),
+                web_port: 18080,
+            };
+            assert!(cfg.is_available());
+
+            // Invalid public key rejected
+            let bad_key = mgr
+                .create_lease(&cfg, "host-1", "owner-a".into(), "not-a-nodekey")
+                .unwrap_err();
+            assert_eq!(bad_key.status, 400);
+
+            // Grant / connect succeeds and returns real leaseId + address
+            let granted = mgr
+                .create_lease(&cfg, "host-1", "owner-a".into(), "nodekey:deadbeef")
+                .unwrap();
+            let lease_id = granted["leaseId"].as_str().unwrap().to_string();
+            assert_eq!(granted["address"], "tailcat://100.64.0.1:443");
+            assert_eq!(granted["hostId"], "host-1");
+            assert_eq!(granted["expiresIn"], TAILCAT_GRANT_SECONDS);
+
+            // Wrong owner cannot renew or close
+            assert_eq!(
+                mgr.renew_lease("owner-b", &lease_id).unwrap_err().status,
+                403
+            );
+            assert_eq!(
+                mgr.close_lease("owner-b", &lease_id).unwrap_err().status,
+                403
+            );
+
+            // Original owner can renew and cleanly close
+            let renewed = mgr.renew_lease("owner-a", &lease_id).unwrap();
+            assert_eq!(renewed["renewed"], true);
+            assert_eq!(renewed["leaseId"], lease_id);
+
+            let closed = mgr.close_lease("owner-a", &lease_id).unwrap();
+            assert_eq!(closed["closed"], true);
+            assert_eq!(closed["runStateChanged"], false);
+
+            // Closed lease is no longer available
+            assert_eq!(
+                mgr.renew_lease("owner-a", &lease_id).unwrap_err().status,
+                404
+            );
+        }
+    }
+
+    #[test]
+    fn mobile_to_web_one_time_handoff_consumes_atomically_and_enforces_ttl_and_safe_paths() {
+        let handoffs: Mutex<HashMap<String, HandoffGrant>> = Mutex::new(HashMap::new());
+        let t0 = Instant::now();
+
+        // Unsafe targets are sanitized to /settings
+        let (code_unsafe, target_unsafe) =
+            mint_web_handoff(&handoffs, "https://evil.example/phish", t0);
+        assert_eq!(target_unsafe, "/settings");
+        assert_eq!(
+            consume_web_handoff(&handoffs, &code_unsafe, t0 + Duration::from_secs(1)),
+            Some("/settings".to_string())
+        );
+
+        // Safe target is preserved and strictly single-use
+        let (code, target) = mint_web_handoff(&handoffs, "/settings?section=messaging", t0);
+        assert_eq!(target, "/settings?section=messaging");
+        assert!(code.len() >= 32);
+        assert_eq!(
+            consume_web_handoff(&handoffs, &code, t0 + Duration::from_secs(10)),
+            Some("/settings?section=messaging".to_string())
+        );
+        // Replay fails closed
+        assert_eq!(
+            consume_web_handoff(&handoffs, &code, t0 + Duration::from_secs(11)),
+            None
+        );
+
+        // Expired code (>60s) is rejected
+        let (exp_code, _) = mint_web_handoff(&handoffs, "/chat", t0);
+        assert_eq!(
+            consume_web_handoff(
+                &handoffs,
+                &exp_code,
+                t0 + Duration::from_secs(HANDOFF_TTL_SECS + 1)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn encrypted_login_response_never_leaks_plaintext_session_token_when_aes_gcm_requested() {
+        let session_tok = "super-secret-session-token-123456";
+        let payload = json!({
+            "authenticated": true,
+            "sessionAuthenticated": true,
+            "hostId": "nola-host-abc",
+            "token": session_tok,
+            "token_type": "Bearer",
+            "expires_in": 604800
+        });
+        let mobile_tok = "mobile-access-token-xyz";
+        let encrypted = maybe_encrypt_api_payload(&payload, Some(mobile_tok));
+        assert_eq!(encrypted["type"], "encrypted");
+        assert_eq!(encrypted["alg"], "AES-256-GCM");
+        let serialized = serde_json::to_string(&encrypted).unwrap();
+        assert!(
+            !serialized.contains(session_tok),
+            "session token must never appear in plaintext when aes-gcm-v1 is requested"
+        );
+        let decrypted = decrypt_mobile_json_envelope(&encrypted, mobile_tok).unwrap();
+        assert_eq!(decrypted["token"], session_tok);
+        assert_eq!(decrypted["authenticated"], true);
+
+        // Without mobile crypto header, returns plaintext payload directly
+        let plain = maybe_encrypt_api_payload(&payload, None);
+        assert_eq!(plain["token"], session_tok);
+    }
+
+    #[test]
+    fn workspace_worktrees_endpoint_lists_creates_and_removes_real_git_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        let init_ok = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !init_ok {
+            return;
+        }
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@nola.local"])
+            .current_dir(&repo)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Nola Test"])
+            .current_dir(&repo)
+            .status();
+        fs::write(repo.join("README.md"), "# Worktree Test\n").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(&repo)
+            .status();
+        let commit_ok = Command::new("git")
+            .args(["commit", "-q", "-m", "init"])
+            .current_dir(&repo)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(commit_ok);
+
+        let (st_list, listed) = handle_workspace_worktrees(&repo, false, &json!({}));
+        assert_eq!(st_list, 200);
+        assert_eq!(listed["ok"], true);
+        assert_eq!(listed["worktrees"].as_array().unwrap().len(), 1);
+
+        let (st_create, created) = handle_workspace_worktrees(
+            &repo,
+            true,
+            &json!({"action": "create", "target": ".worktrees/feat-x", "branch": "feat-x"}),
+        );
+        assert_eq!(st_create, 200, "create failed: {created}");
+        assert_eq!(created["worktrees"].as_array().unwrap().len(), 2);
+
+        let (st_remove, removed) = handle_workspace_worktrees(
+            &repo,
+            true,
+            &json!({"action": "remove", "target": ".worktrees/feat-x"}),
+        );
+        assert_eq!(st_remove, 200, "remove failed: {removed}");
+        assert_eq!(removed["worktrees"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn attachments_parse_extracts_real_text_from_utf8_docx_and_pdf() {
+        // 1. UTF-8 text
+        let txt = parse_attachment_payload("notes.txt", "text/plain", b"Hello Nola v2");
+        assert_eq!(txt["extracted"], true);
+        assert_eq!(txt["text"], "Hello Nola v2");
+
+        // 2. Real minimal in-memory DOCX (uncompressed ZIP with word/document.xml)
+        let xml = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Quarterly Revenue Summary</w:t></w:r></w:p></w:body></w:document>";
+        let docx_bytes = build_minimal_stored_zip("word/document.xml", xml);
+        let parsed_docx = parse_attachment_payload(
+            "report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            &docx_bytes,
+        );
+        assert_eq!(parsed_docx["extracted"], true, "docx parse: {parsed_docx}");
+        assert!(
+            parsed_docx["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Quarterly Revenue Summary"),
+            "expected extracted DOCX text, got: {parsed_docx}"
+        );
+
+        // 3. Real minimal valid PDF with a Tj text operator
+        let pdf_bytes = build_minimal_pdf("Invoice Total 4200");
+        let parsed_pdf = parse_attachment_payload("invoice.pdf", "application/pdf", &pdf_bytes);
+        assert_eq!(parsed_pdf["extracted"], true, "pdf parse: {parsed_pdf}");
+        assert!(
+            parsed_pdf["text"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Invoice Total 4200"),
+            "expected extracted PDF text, got: {parsed_pdf}"
+        );
+    }
+
+    fn crc32_ieee(data: &[u8]) -> u32 {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        for &b in data {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                let mask = (crc & 1).wrapping_neg();
+                crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+            }
+        }
+        !crc
+    }
+
+    fn build_minimal_stored_zip(filename: &str, content: &[u8]) -> Vec<u8> {
+        let name_bytes = filename.as_bytes();
+        let crc = crc32_ieee(content);
+        let size = content.len() as u32;
+        let mut out = Vec::new();
+        // Local file header
+        out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // method=store
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(name_bytes);
+        out.extend_from_slice(content);
+        let cd_offset = out.len() as u32;
+        // Central directory header
+        out.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(name_bytes);
+        let cd_size = (out.len() as u32) - cd_offset;
+        // End of central directory
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn build_minimal_pdf(text: &str) -> Vec<u8> {
+        let stream = format!("BT /F1 12 Tf 72 720 Td ({text}) Tj ET");
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        let objs = [
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n".to_string(),
+            format!(
+                "4 0 obj\n<< /Length {} >>\nstream\n{stream}\nendstream\nendobj\n",
+                stream.len()
+            ),
+            "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+        ];
+        for obj in &objs {
+            offsets.push(pdf.len());
+            pdf.push_str(obj);
+        }
+        let xref_pos = pdf.len();
+        pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1));
+        for off in offsets {
+            pdf.push_str(&format!("{off:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n",
+            objs.len() + 1
+        ));
+        pdf.into_bytes()
+    }
+
+    #[test]
+    fn documents_search_queries_indexed_doc_chunks_and_goal_plan_recall_oauth_work_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_file = dir.path().join("architecture.md");
+        fs::write(
+            &doc_file,
+            "# Architecture\nNola uses SQLite FTS5 chunk indexing for lightning fast local document search.\n",
+        )
+        .unwrap();
+        let store = Store::open_in_memory().unwrap();
+        crate::config::bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        let suite = Arc::new(ModulesSuite::new(
+            store.clone(),
+            dir.path().to_path_buf(),
+            None,
+        ));
+
+        // 1. Index data source & search doc chunks (both GET and POST share `execute_documents_search`)
+        let ds_rec = nola_types::DataSourceRecord {
+            id: "ds-arch".into(),
+            name: "Architecture Docs".into(),
+            kind: "localFile".into(),
+            location: doc_file.display().to_string(),
+            metadata: json!({}),
+            usage_count: 0,
+            updated_at_ms: now_ms(),
+        };
+        suite.upsert_record("data_source", "ds-arch", &ds_rec).unwrap();
+        let indexed = index_data_source(&store, "ds-arch").unwrap();
+        assert!(indexed >= 1);
+
+        let search_res = execute_documents_search(
+            &store,
+            dir.path(),
+            "lightning fast local document",
+            Some(&["ds-arch".to_string()]),
+            10,
+        );
+        assert_eq!(search_res["ok"], true);
+        assert!(search_res["count"].as_u64().unwrap() >= 1);
+        assert_eq!(search_res["documents"][0]["sourceId"], "ds-arch");
+
+        // 2. Goal control lifecycle (create -> pause -> resume -> complete)
+        let (st, created) = handle_conversation_goal_control(
+            &store,
+            &suite,
+            "host-1",
+            "conv-g1",
+            &json!({"action": "create", "title": "Ship Wave 3", "objective": "Pass all checks"}),
+        );
+        assert_eq!(st, 200);
+        assert_eq!(created["ok"], true);
+        assert_eq!(created["source_host_id"], "host-1");
+        assert_eq!(created["goal"]["controlState"], "pending");
+
+        let (_, paused) = handle_conversation_goal_control(
+            &store,
+            &suite,
+            "host-1",
+            "conv-g1",
+            &json!({"action": "pause"}),
+        );
+        assert_eq!(paused["goal"]["controlState"], "paused");
+
+        let (_, completed) = handle_conversation_goal_control(
+            &store,
+            &suite,
+            "host-1",
+            "conv-g1",
+            &json!({"action": "complete"}),
+        );
+        assert_eq!(completed["goal"]["controlState"], "completed");
+        assert_eq!(completed["goal"]["accepted"], true);
+
+        // 3. Plan Mode toggle & approval
+        let (pst, entered) = handle_conversation_plan(&store, "conv-p1", &json!({"enabled": true}));
+        assert_eq!(pst, 200);
+        assert_eq!(entered["planMode"], true);
+        store
+            .set_kv(
+                "plan:conv-p1",
+                &json!({"title": "Rollout Plan", "content": "1. Test\n2. Ship", "status": "proposed"}),
+            )
+            .unwrap();
+        let (ast, approved) =
+            handle_conversation_plan(&store, "conv-p1", &json!({"action": "approve"}));
+        assert_eq!(ast, 200);
+        assert_eq!(approved["approved"], true);
+        assert_eq!(approved["planMode"], false);
+        assert_eq!(approved["plan"]["status"], "approved");
+
+        // 4. Conversation recall (FTS + range)
+        store
+            .append_event(
+                "conv-r1",
+                "chat_user",
+                json!({"content": "Deploy kubernetes canary safely"}),
+                100,
+            )
+            .unwrap();
+        let recalled = handle_conversation_recall(&store, "conv-r1", &json!({"query": "canary"}));
+        assert!(recalled["count"].as_u64().unwrap() >= 1);
+        let ranged = handle_conversation_recall(&store, "conv-r1", &json!({"from_seq": 1, "limit": 5}));
+        assert!(ranged["count"].as_u64().unwrap() >= 1);
+
+        // 5. Auxiliary prepare -> admit -> inspect -> cancel
+        let aux_ops = Mutex::new(BTreeMap::new());
+        let (s1, prep) = handle_auxiliary_dispatch(
+            &store,
+            &suite,
+            &aux_ops,
+            "host-1",
+            "prepare",
+            &json!({"expected_host_id": "host-1"}),
+        );
+        assert_eq!(s1, 200);
+        assert_eq!(prep["source_host_id"], "host-1");
+        let (s2, adm) = handle_auxiliary_dispatch(
+            &store,
+            &suite,
+            &aux_ops,
+            "host-1",
+            "admit",
+            &json!({"expected_host_id": "host-1", "operation_id": "op-1"}),
+        );
+        assert_eq!(s2, 200);
+        assert_eq!(adm["receipt"]["operation"]["state"], "admitted");
+        let (s3, insp) = handle_auxiliary_dispatch(
+            &store,
+            &suite,
+            &aux_ops,
+            "host-1",
+            "inspect",
+            &json!({"expected_host_id": "host-1", "operation_id": "op-1"}),
+        );
+        assert_eq!(s3, 200);
+        assert_eq!(insp["operation_id"], "op-1");
+        let (s4, canc) = handle_auxiliary_dispatch(
+            &store,
+            &suite,
+            &aux_ops,
+            "host-1",
+            "cancel",
+            &json!({"expected_host_id": "host-1", "operation_id": "op-1"}),
+        );
+        assert_eq!(s4, 200);
+        assert_eq!(canc["receipt"]["operation"]["state"], "cancelled");
+
+        // 6. Real PKCE OAuth state management (Kimi & Source-Login)
+        let flows = Mutex::new(BTreeMap::new());
+        let (ks, kconn) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/kimi-login/connect",
+            "",
+            &json!({"account_id": "kimi-1", "origin": "http://127.0.0.1:58627", "server_bearer": "secret-tok"}),
+        );
+        assert_eq!(ks, 200);
+        assert_eq!(kconn["state"], "connected");
+        let (os, owners) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/kimi-login/owners",
+            "",
+            &json!({}),
+        );
+        assert_eq!(os, 200);
+        assert_eq!(owners.as_array().unwrap().len(), 1);
+
+        let (ss, started) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/source-login/start",
+            "",
+            &json!({"request_id": "req-pkce-1", "account_id": "codex-1", "display_name": "Codex"}),
+        );
+        assert_eq!(ss, 200);
+        assert_eq!(started["state"], "pending");
+        assert_eq!(started["pkce_method"], "S256");
+        assert!(started["authorization_url"]
+            .as_str()
+            .unwrap()
+            .contains("code_challenge="));
     }
 }

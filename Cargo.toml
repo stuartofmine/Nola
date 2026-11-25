@@ -31,6 +31,13 @@ nola-engine = { path = "crates/nola-engine" }
 nola-modules = { path = "crates/nola-modules" }
 
 aes-gcm = "0.10"
+arborium = { version = "=2.18.2", default-features = false, features = [
+    "lang-bash", "lang-c", "lang-c-sharp", "lang-cpp", "lang-css",
+    "lang-dart", "lang-dockerfile", "lang-go", "lang-graphql", "lang-hcl",
+    "lang-html", "lang-java", "lang-json", "lang-lua", "lang-markdown",
+    "lang-objc", "lang-php", "lang-proto", "lang-ruby", "lang-scss",
+    "lang-sql", "lang-svelte", "lang-toml", "lang-vue", "lang-xml", "lang-yaml",
+] }
 base64 = "0.21"
 calamine = "0.36"
 chrono = { version = "0.4", features = ["serde"] }
@@ -42,8 +49,10 @@ ignore = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 libc = "0.2"
 lopdf = { version = "0.42", default-features = false, features = ["wasm_js"] }
+quick-xml = "0.41"
 regex = "1.10"
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
+ring = "0.17"
 rquickjs = "0.14"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rustfft = "6.4"
@@ -56,9 +65,17 @@ symphonia = { version = "0.5", default-features = false, features = ["aac", "fla
 tempfile = "3"
 thiserror = "1.0"
 tiny_http = "0.12"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-swift = "0.7.3"
+tree-sitter-typescript = "0.23.2"
 url = "2.5"
 uuid = { version = "1.8", features = ["v4", "serde"] }
 vt100 = "0.15"
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_IO"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [patch.crates-io]
 tiny_http = { path = "vendor/tiny_http" }

@@ -91,12 +91,12 @@ preview_end_byte_offset。续读必须使用真实原文字节偏移，而非字
 基于 Terminal-Bench 4.0.0 真实轨迹审计（LAN `qwen3.8-flash-next-iq3_s` 三题基线），对上下文与运行时尾注投影完成以下收敛：
 
 1. **权限、目录与首轮工具面精简**：
-   - `current-permission-state`（[model_planner.rs](../../../../core/nola-agent-engine/src/agent/runtime/model_planner.rs)）将大量 `product_default` 放行条目折叠为紧凑摘要，仅展开显式覆盖、Ask/Deny 与非默认规则（实测约 `3,726 B → 478 B`）。
+   - `current-permission-state`（[model_planner.rs](../../../../crates/nola-engine/src/planning.rs)）将大量 `product_default` 放行条目折叠为紧凑摘要，仅展开显式覆盖、Ask/Deny 与非默认规则（实测约 `3,726 B → 478 B`）。
    - 精简 `skill-catalog` 与 `task_scope_update` 声明体积（`skill-catalog` 约 `7,783 B → 3,353 B`）；非图形 CLI/Host 表面在首轮将 `render_ui` 置为 `Deferred`（保留 `tool_search` 按需发现，且 `apply_initial_tool_tier` 保持其延迟层级）。
 2. **消除对话中途 `role: "system"` 注入与调研误停**：
    - 非阻塞的 `AwaitingAssessment` 与 `Diagnosing` 运行时提示折叠进 `engineering-state`（`role: "user"`），常规执行轮次不再向消息流中段插入 `role: "system"` 消息，保持模型前缀与 KV cache 稳定。
-   - `DEFAULT_INVESTIGATION_CHECKPOINT`（[turn.rs](../../../../core/nola-agent-engine/src/agent/turn.rs)）从 `12` 提升至 `28`，并移除会诱导多文件复杂任务过早收尾的 `"synthesize the answer now"` 措辞。
+   - `DEFAULT_INVESTIGATION_CHECKPOINT`（[turn.rs](../../../../crates/nola-engine/src/loop_runner.rs)）从 `12` 提升至 `28`，并移除会诱导多文件复杂任务过早收尾的 `"synthesize the answer now"` 措辞。
 3. **证据尾注有界化**：
-   - `ObservedEvidenceReference`（[requirements.rs](../../../../core/nola-agent-engine/src/agent/runtime/requirements.rs)）精简摘要字段、移除重复的 `details_call_id`、省略空的 `historical_evidence` 与 `"fields_truncated": false`；仅保留最近 `6` 条纯 `ProcessExit` 成功回执（`MODEL_RECENT_PROCESS_EXIT_SUCCESSES = 6`），同时完整保留全部失败、`Postcondition` 检查以及 assessment/review 依赖。
+   - `ObservedEvidenceReference`（[requirements.rs](../../../../crates/nola-engine/src/loop_runner.rs)）精简摘要字段、移除重复的 `details_call_id`、省略空的 `historical_evidence` 与 `"fields_truncated": false`；仅保留最近 `6` 条纯 `ProcessExit` 成功回执（`MODEL_RECENT_PROCESS_EXIT_SUCCESSES = 6`），同时完整保留全部失败、`Postcondition` 检查以及 assessment/review 依赖。
 
 实测对比（同模型三题 `v2/v5 → v7` 轨迹）：首轮请求体 `req1` 从 `121.2 KB` / `96.8 KB` 降至 `80.4–81.1 KB`，尾部状态注入从 `21.9 KB` 降至 `7.9–9.9 KB`，对话中段 `role: "system"` 计数、`read_file` 双重 JSON 预览与 `read-before-edit` 摩擦报错均归零。该数据属于该三题 LAN 模型审计样本，不替代全量跨模型或全任务集回归。

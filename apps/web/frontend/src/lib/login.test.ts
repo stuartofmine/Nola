@@ -11,10 +11,17 @@ test('login destinations remain on the host and exclude normalized authenticatio
     assert.equal(safeLoginNext('/x/../models'), '/models');
 });
 
-test('host tokens are validated without accepting empty or overlong values', () => {
+test('host tokens enforce minimum entropy for loopback and non-loopback hosts without accepting empty or overlong values', () => {
     assert.equal(validHostToken(''), false);
     assert.equal(validHostToken('   '), false);
-    assert.equal(validHostToken('x'), true);
+    assert.equal(validHostToken('x'), false);
+    assert.equal(validHostToken('1234567'), false);
+    assert.equal(validHostToken('12345678', { hostname: '127.0.0.1' }), true);
+    assert.equal(validHostToken('12345678', { hostname: 'localhost' }), true);
+    assert.equal(validHostToken('12345678', { hostname: 'nola.example.com' }), false);
+    assert.equal(validHostToken('123456789012345', { hostname: 'nola.example.com' }), false);
+    assert.equal(validHostToken('1234567890123456', { hostname: 'nola.example.com' }), true);
+    assert.equal(validHostToken('bad token with spaces', { hostname: 'localhost' }), false);
     assert.equal(validHostToken('x'.repeat(32)), true);
     assert.equal(validHostToken(`  ${'x'.repeat(256)}  `), true);
     assert.equal(validHostToken('x'.repeat(257)), false);

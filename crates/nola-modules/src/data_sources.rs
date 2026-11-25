@@ -3,16 +3,17 @@
 
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nola_store::Store;
+use ignore::WalkBuilder;
+use nola_store::{DocChunkRecord, Store};
 use nola_tools::web::resolve_and_validate_public_url;
-use nola_tools::{ToolContext, ToolHandler, ToolRegistry};
+use nola_tools::{extract_document_text_from_bytes, ToolContext, ToolHandler, ToolRegistry};
 use nola_types::{
-    new_id, now_ms, CapabilityDomain, DataSourceRecord, ToolExecutionResult, ToolSchema, ToolSpec,
-    ToolTier,
+    new_id, now_ms, sha256_hex, CapabilityDomain, DataSourceRecord, ToolExecutionResult,
+    ToolSchema, ToolSpec, ToolTier,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,6 +26,18 @@ pub const KIND_DATA_SOURCE_USAGE: &str = "data_source_usage";
 const MAX_HTTP_PROBE_BYTES: u64 = 64 * 1024;
 const MAX_LOCAL_PREVIEW_BYTES: usize = 4 * 1024;
 const MAX_DIR_ENTRIES_SCAN: usize = 200;
+const MAX_INDEX_FILES: usize = 2_000;
+const MAX_INDEX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const DEFAULT_CHUNK_CHARS: usize = 1_200;
+const DEFAULT_CHUNK_OVERLAP_CHARS: usize = 200;
+const SKIP_INDEX_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    "__pycache__",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataSourceUsageRecord {
@@ -308,10 +321,298 @@ pub fn list_data_source_usage(store: &Store) -> Vec<Value> {
         .collect()
 }
 
+/// Split extracted text into overlapping UTF-8-safe chunks (~1,200 chars, ~200-char overlap).
+pub fn split_text_into_chunks(
+    text: &str,
+    chunk_chars: usize,
+    overlap_chars: usize,
+) -> Vec<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let size = chunk_chars.max(100);
+    let overlap = overlap_chars.min(size / 2);
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= size {
+        return vec![trimmed.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    while start < chars.len() {
+        let mut end = (start + size).min(chars.len());
+        if end < chars.len() {
+            let search_floor = start + (size * 2 / 3);
+            if let Some(rel_nl) = chars[search_floor..end].iter().rposition(|&c| c == '\n') {
+                end = search_floor + rel_nl + 1;
+            } else if let Some(rel_sp) = chars[search_floor..end]
+                .iter()
+                .rposition(|&c| c.is_whitespace())
+            {
+                end = search_floor + rel_sp + 1;
+            }
+        }
+        let slice: String = chars[start..end].iter().collect();
+        let cleaned = slice.trim();
+        if !cleaned.is_empty() {
+            chunks.push(cleaned.to_string());
+        }
+        if end >= chars.len() {
+            break;
+        }
+        let next_start = end.saturating_sub(overlap);
+        start = if next_start <= start { end } else { next_start };
+    }
+    chunks
+}
+
+fn should_skip_index_path(rel_path: &Path) -> bool {
+    rel_path.components().any(|c| {
+        matches!(c, Component::Normal(name) if name
+            .to_str()
+            .is_some_and(|s| SKIP_INDEX_DIRS.contains(&s)))
+    })
+}
+
+fn collect_source_files(kind: &str, location: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    match kind {
+        "localfile" | "local_file" | "file" => {
+            if !location.is_file() {
+                return Err(format!(
+                    "data source file does not exist or is not a file: {}",
+                    location.display()
+                ));
+            }
+            let name = location
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("document")
+                .to_string();
+            Ok(vec![(name, location.to_path_buf())])
+        }
+        "localfolder" | "local_folder" | "folder" | "dir" | "directory" => {
+            if !location.is_dir() {
+                return Err(format!(
+                    "data source folder does not exist or is not a directory: {}",
+                    location.display()
+                ));
+            }
+            let mut out = Vec::new();
+            let mut builder = WalkBuilder::new(location);
+            builder
+                .hidden(false)
+                .git_ignore(true)
+                .git_global(false)
+                .git_exclude(true)
+                .follow_links(false);
+            for entry in builder.build().flatten() {
+                if out.len() >= MAX_INDEX_FILES {
+                    break;
+                }
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let rel = path.strip_prefix(location).unwrap_or(path);
+                if should_skip_index_path(rel) {
+                    continue;
+                }
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                out.push((rel_str, path.to_path_buf()));
+            }
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(out)
+        }
+        other => Err(format!(
+            "data source kind '{other}' does not support local RAG indexing"
+        )),
+    }
+}
+
+/// Index a configured `localFile` or `localFolder` DataSource into SQLite FTS5 `doc_chunks`.
+/// Extracts UTF-8, PDF, DOCX, and XLSX via `nola_tools::extract_document_text_from_bytes`,
+/// splits into overlapping ~1,200-char chunks, and replaces chunks atomically in `Store`.
+pub fn index_data_source(store: &Store, source_id: &str) -> Result<usize, String> {
+    let mut ds = store
+        .get_module_record::<DataSourceRecord>(KIND_DATA_SOURCE, source_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("data source '{source_id}' not found"))?;
+    let kind_norm = ds.kind.trim().to_ascii_lowercase();
+    let location = Path::new(ds.location.trim());
+    let files = collect_source_files(&kind_norm, location)?;
+
+    let ts = now_ms();
+    let mut chunks = Vec::new();
+    let mut indexed_files = 0usize;
+
+    for (rel_path, abs_path) in files {
+        let Ok(meta) = fs::metadata(&abs_path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_INDEX_FILE_BYTES {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&abs_path) else {
+            continue;
+        };
+        let file_name = abs_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&rel_path);
+        let Some(text) = extract_document_text_from_bytes(file_name, "", &bytes) else {
+            continue;
+        };
+        let parts = split_text_into_chunks(&text, DEFAULT_CHUNK_CHARS, DEFAULT_CHUNK_OVERLAP_CHARS);
+        if parts.is_empty() {
+            continue;
+        }
+        indexed_files += 1;
+        for (idx, content) in parts.into_iter().enumerate() {
+            let chunk_sha = sha256_hex(content.as_bytes());
+            chunks.push(DocChunkRecord {
+                id: format!("{source_id}:{rel_path}:{idx}"),
+                source_id: source_id.to_string(),
+                path: rel_path.clone(),
+                chunk_index: idx as i64,
+                content,
+                sha256: chunk_sha,
+                updated_at_ms: ts,
+            });
+        }
+    }
+
+    let chunk_count = store
+        .replace_source_chunks(source_id, &chunks)
+        .map_err(|e| e.to_string())?;
+
+    if !ds.metadata.is_object() {
+        ds.metadata = json!({});
+    }
+    if let Some(obj) = ds.metadata.as_object_mut() {
+        obj.insert("indexed_files".into(), json!(indexed_files));
+        obj.insert("indexed_chunks".into(), json!(chunk_count));
+        obj.insert("indexed_at_ms".into(), json!(ts));
+    }
+    ds.updated_at_ms = ts;
+    let _ = store.put_module_record(KIND_DATA_SOURCE, &ds.id, &ds);
+    Ok(chunk_count)
+}
+
 pub fn register_tools(suite: &Arc<ModulesSuite>, registry: &mut ToolRegistry) {
     registry.register(Arc::new(DataSourceManageTool {
         suite: Arc::clone(suite),
     }));
+    registry.register(Arc::new(DocumentSearchTool {
+        suite: Arc::clone(suite),
+    }));
+}
+
+/// Full-text RAG search over indexed DataSource document chunks (`doc_chunks_fts`).
+pub struct DocumentSearchTool {
+    suite: Arc<ModulesSuite>,
+}
+
+impl DocumentSearchTool {
+    pub fn new(suite: Arc<ModulesSuite>) -> Self {
+        Self { suite }
+    }
+}
+
+impl ToolHandler for DocumentSearchTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "document_search".into(),
+                description: "Search indexed DataSource document chunks (UTF-8, PDF, DOCX, XLSX) using SQLite FTS5 BM25 ranking.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query" },
+                        "source_ids": { "type": "array", "items": { "type": "string" }, "description": "Optional list of DataSource IDs to filter" },
+                        "source_id": { "type": "string", "description": "Optional single DataSource ID shorthand" },
+                        "limit": { "type": "integer", "description": "Maximum ranked chunks to return (default 10, max 50)" }
+                    },
+                    "required": ["query"]
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::System,
+            read_only: true,
+        }
+    }
+
+    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if query.is_empty() {
+            return ToolExecutionResult::err_structured(
+                "missing_param",
+                "missing non-empty 'query'",
+                None,
+            );
+        }
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10)
+            .clamp(1, 50) as usize;
+        let mut source_ids: Vec<String> = args
+            .get("source_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::trim))
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(single) = args
+            .get("source_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if !source_ids.iter().any(|s| s == single) {
+                source_ids.push(single.to_string());
+            }
+        }
+        let filter_slice = (!source_ids.is_empty()).then_some(source_ids.as_slice());
+        match self.suite.store.search_doc_chunks(filter_slice, query, limit) {
+            Ok(hits) => {
+                let count = hits.len();
+                let results: Vec<Value> = hits
+                    .into_iter()
+                    .map(|h| {
+                        let snippet: String = h.content.chars().take(400).collect();
+                        json!({
+                            "id": h.id,
+                            "source_id": h.source_id,
+                            "path": h.path,
+                            "chunk_index": h.chunk_index,
+                            "score": h.score,
+                            "snippet": snippet,
+                            "content": h.content,
+                            "sha256": h.sha256,
+                            "updated_at_ms": h.updated_at_ms
+                        })
+                    })
+                    .collect();
+                ToolExecutionResult::ok_structured(
+                    json!({
+                        "query": query,
+                        "count": count,
+                        "hits": results
+                    }),
+                    format!("Found {count} matching document chunk(s) for '{query}'"),
+                )
+            }
+            Err(e) => ToolExecutionResult::err_structured("ds_search_error", e.to_string(), None),
+        }
+    }
 }
 
 struct DataSourceManageTool {
@@ -323,15 +624,18 @@ impl ToolHandler for DataSourceManageTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "data_source_manage".into(),
-                description: "Register, list, test, record usage, or delete configured DataSources.".into(),
+                description: "Register, list, test, index for RAG, search chunks, record usage, or delete configured DataSources.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "action": { "type": "string", "enum": ["create", "list", "touch", "test", "usage", "delete"] },
+                        "action": { "type": "string", "enum": ["create", "list", "touch", "test", "index", "search", "usage", "delete"] },
                         "id": { "type": "string" },
                         "name": { "type": "string" },
                         "kind": { "type": "string" },
                         "location": { "type": "string" },
+                        "query": { "type": "string" },
+                        "limit": { "type": "integer" },
+                        "source_ids": { "type": "array", "items": { "type": "string" } },
                         "conversation_id": { "type": "string" },
                         "summary": { "type": "string" },
                         "metadata": { "type": "object" }
@@ -345,7 +649,7 @@ impl ToolHandler for DataSourceManageTool {
         }
     }
 
-    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
             "create" => {
                 let rec = DataSourceRecord {
@@ -391,6 +695,27 @@ impl ToolHandler for DataSourceManageTool {
                 }
                 Err(e) => ToolExecutionResult::err_structured("ds_error", e.to_string(), None),
             },
+            "index" => {
+                let Some(id) = args.get("id").and_then(|v| v.as_str()) else {
+                    return ToolExecutionResult::err_structured("missing_param", "missing 'id'", None);
+                };
+                match index_data_source(&self.suite.store, id) {
+                    Ok(chunk_count) => ToolExecutionResult::ok_structured(
+                        json!({"id": id, "indexed": true, "chunk_count": chunk_count}),
+                        format!("Indexed data source '{id}' ({chunk_count} chunk(s))"),
+                    ),
+                    Err(e) => ToolExecutionResult::err_structured("ds_index_error", e, None),
+                }
+            }
+            "search" => {
+                let mut search_args = args.clone();
+                if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
+                    if let Some(obj) = search_args.as_object_mut() {
+                        obj.entry("source_id").or_insert_with(|| json!(id));
+                    }
+                }
+                DocumentSearchTool::new(Arc::clone(&self.suite)).execute(ctx, search_args)
+            }
             "test" => {
                 let record = if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
                     match self.suite.get_record::<Value>(KIND_DATA_SOURCE, id) {
@@ -453,6 +778,7 @@ impl ToolHandler for DataSourceManageTool {
                 let Some(id) = args.get("id").and_then(|v| v.as_str()) else {
                     return ToolExecutionResult::err_structured("missing_param", "missing 'id'", None);
                 };
+                let _ = self.suite.store.delete_source_chunks(id);
                 match self.suite.delete_record(KIND_DATA_SOURCE, id) {
                     Ok(deleted) => ToolExecutionResult::ok_structured(
                         json!({"id": id, "deleted": deleted}),
@@ -514,5 +840,95 @@ mod tests {
         let list = list_data_source_usage(&store);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["source_id"], "ds-1");
+    }
+
+    #[test]
+    fn data_source_rag_indexing_chunking_and_document_search_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let docs = dir.path().join("docs");
+        fs::create_dir_all(docs.join("nested")).unwrap();
+        fs::create_dir_all(docs.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(docs.join(".git")).unwrap();
+
+        let long_doc = format!(
+            "{} QuantumFluxCalibrationProtocol {}",
+            "alpha ".repeat(260),
+            "omega ".repeat(260)
+        );
+        fs::write(docs.join("guide.md"), &long_doc).unwrap();
+        fs::write(
+            docs.join("nested/runbook.txt"),
+            "Runbook: rotate TLS certificates every 90 days.",
+        )
+        .unwrap();
+        fs::write(
+            docs.join("node_modules/pkg/ignored.txt"),
+            "ShouldNeverBeIndexedSecretToken",
+        )
+        .unwrap();
+        fs::write(
+            docs.join(".git/ignored.txt"),
+            "ShouldNeverBeIndexedGitToken",
+        )
+        .unwrap();
+
+        let store = Store::open_in_memory().unwrap();
+        let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+        let mut reg = ToolRegistry::default();
+        register_tools(&suite, &mut reg);
+        let ctx = ToolContext::new(dir.path());
+
+        let created = reg.execute(
+            "data_source_manage",
+            &ctx,
+            json!({
+                "action": "create",
+                "id": "ds-docs",
+                "name": "Engineering Docs",
+                "kind": "localFolder",
+                "location": docs.display().to_string()
+            }),
+        );
+        assert!(!created.is_error);
+
+        let indexed = reg.execute(
+            "data_source_manage",
+            &ctx,
+            json!({"action": "index", "id": "ds-docs"}),
+        );
+        assert!(!indexed.is_error);
+        let chunk_count = indexed.payload.to_model_value()["chunk_count"]
+            .as_u64()
+            .unwrap();
+        assert!(chunk_count >= 3, "expected overlapping chunks, got {chunk_count}");
+
+        // Search via document_search tool
+        let hit = reg.execute(
+            "document_search",
+            &ctx,
+            json!({"query": "QuantumFluxCalibrationProtocol", "source_ids": ["ds-docs"], "limit": 5}),
+        );
+        assert!(!hit.is_error);
+        let hits = hit.payload.to_model_value()["hits"].as_array().unwrap().clone();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["source_id"], "ds-docs");
+        assert_eq!(hits[0]["path"], "guide.md");
+
+        // Search via data_source_manage(action: "search")
+        let hit2 = reg.execute(
+            "data_source_manage",
+            &ctx,
+            json!({"action": "search", "id": "ds-docs", "query": "TLS certificates"}),
+        );
+        assert!(!hit2.is_error);
+        assert_eq!(hit2.payload.to_model_value()["count"], 1);
+
+        // Ignored dirs were never indexed
+        let ignored = reg.execute(
+            "document_search",
+            &ctx,
+            json!({"query": "ShouldNeverBeIndexedSecretToken"}),
+        );
+        assert_eq!(ignored.payload.to_model_value()["count"], 0);
     }
 }

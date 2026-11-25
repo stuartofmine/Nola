@@ -72,6 +72,45 @@ pub fn load_session_plan(store: &Store, session_id: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// Enable or disable Plan Mode for a specific session (`kv["plan_mode:{session_id}"]`).
+pub fn set_plan_mode(store: &Store, session_id: &str, enabled: bool) -> Result<(), nola_store::StoreError> {
+    let key = format!("plan_mode:{session_id}");
+    store.set_kv(&key, &Value::Bool(enabled))
+}
+
+/// Returns true when Plan Mode is currently active for `session_id`.
+pub fn is_plan_mode(store: &Store, session_id: &str) -> bool {
+    let key = format!("plan_mode:{session_id}");
+    match store.get_kv(&key).ok().flatten() {
+        Some(Value::Bool(b)) => b,
+        Some(Value::String(s)) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        ),
+        Some(Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
+        _ => false,
+    }
+}
+
+/// Approve the latest proposed plan for `session_id` and automatically exit Plan Mode.
+pub fn approve_agent_plan(store: &Store, session_id: &str) -> Result<Value, String> {
+    let key = format!("plan:{session_id}");
+    let mut plan = store
+        .get_kv(&key)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no proposed plan found for session '{session_id}'"))?;
+    let obj = plan
+        .as_object_mut()
+        .ok_or_else(|| format!("invalid plan payload for session '{session_id}'"))?;
+    let ts = now_ms();
+    obj.insert("status".into(), Value::String("approved".into()));
+    obj.insert("approved_at_ms".into(), json!(ts));
+    obj.insert("updated_at_ms".into(), json!(ts));
+    store.set_kv(&key, &plan).map_err(|e| e.to_string())?;
+    set_plan_mode(store, session_id, false).map_err(|e| e.to_string())?;
+    Ok(plan)
+}
+
 struct UpdateTodosTool {
     store: Store,
     state: Arc<PlanningState>,
@@ -160,9 +199,10 @@ impl ToolHandler for ProposePlanTool {
                     "type": "object",
                     "properties": {
                         "title": { "type": "string" },
-                        "markdown": { "type": "string" }
+                        "content": { "type": "string", "description": "Plan body in Markdown" },
+                        "markdown": { "type": "string", "description": "Alias for content" }
                     },
-                    "required": ["title", "markdown"]
+                    "required": ["title"]
                 }),
             },
             tier: ToolTier::Deferred,
@@ -173,17 +213,35 @@ impl ToolHandler for ProposePlanTool {
 
     fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("Plan");
-        let md = args.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
-        *self.state.latest_plan.lock().unwrap() = Some(md.to_string());
+        let content = args
+            .get("content")
+            .or_else(|| args.get("markdown"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        *self.state.latest_plan.lock().unwrap() = Some(content.to_string());
+        let key = format!("plan:{}", ctx.session_id);
+        let prev_rev = self
+            .store
+            .get_kv(&key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.get("revision").and_then(|r| r.as_u64()));
+        let revision = prev_rev.unwrap_or(0) + 1;
         let val = json!({
             "session_id": ctx.session_id,
+            "revision": revision,
+            "previous_revision": prev_rev,
             "title": title,
-            "markdown": md,
+            "content": content,
+            "markdown": content,
+            "status": "proposed",
             "updated_at_ms": now_ms(),
         });
-        let key = format!("plan:{}", ctx.session_id);
         let _ = self.store.set_kv(&key, &val);
-        ToolExecutionResult::ok_structured(val, format!("Proposed plan: {title}"))
+        ToolExecutionResult::ok_structured(
+            val,
+            format!("Proposed plan rev {revision}: {title}"),
+        )
     }
 }
 

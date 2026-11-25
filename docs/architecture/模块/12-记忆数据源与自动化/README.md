@@ -30,9 +30,9 @@ Memory、DataSource、Automation 为不同业务对象；不能用通用 JSON �
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [memory.rs](../../../../core/nola-application/src/memory.rs) | 语义记忆命令及当前 recall 查询结构 |
-| [data_source.rs](../../../../core/nola-application/src/data_source.rs) | 数据源记录、快照与读取用例 |
-| [automation_execution.rs](../../../../core/nola-application/src/automation_execution.rs) | 发生实例、定义 revision 与实际执行绑定 |
+| [memory.rs](../../../../crates/nola-modules/src/memory.rs) | 语义记忆命令及当前 recall 查询结构 |
+| [data_source.rs](../../../../crates/nola-modules/src/data_sources.rs) | 数据源记录、快照与读取用例 |
+| [automation_execution.rs](../../../../crates/nola-modules/src/automations_messaging.rs) | 发生实例、定义 revision 与实际执行绑定 |
 
 AutomationDefinition 已有 typed execution_spec（agent/user_task）；MemoryRecord.owner、RecallQuery.binding 与 Store owner 过滤/去重已接线，移动端 profile 搜索复用 Recall。原生 workspace/turn 选择界面与真实并发模型验收不由这些接口自动推定。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

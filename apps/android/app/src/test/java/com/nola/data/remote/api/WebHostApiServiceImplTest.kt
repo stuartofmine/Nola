@@ -1,13 +1,35 @@
 package com.nola.data.remote.api
 
 import com.nola.core.AndroidAgentPermissionMode
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Test
+import com.nola.data.remote.dto.VerifiedHostTransport
+import com.nola.data.remote.mobile_crypto.EncryptedEnvelope
+import com.nola.data.remote.mobile_crypto.MobileCrypto
+import com.nola.data.remote.sse.SseClient
+import com.nola.data.remote.sse.SseEvent
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class WebHostApiServiceImplTest {
     @Test fun expertHistoryQueriesBindHostAndEpochAndRejectMutationCommands() = kotlinx.coroutines.runBlocking {
@@ -310,5 +332,270 @@ class WebHostApiServiceImplTest {
         assertTrue("preview" in GENERATIVE_UI_OPERATIONS)
         assertEquals(2 * 1024 * 1024, generativeUiMaxResponseBytes("preview"))
         assertEquals(16 * 1024 * 1024, generativeUiMaxResponseBytes("surfaces"))
+    }
+
+    @Test
+    fun v2StreamMessageAttachesMobileAuthAndEncryptsRequestAndSseFramesOverLanHttp() = runBlocking {
+        val token = "lan-shared-secret-token"
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val capturedRequestLine = java.util.concurrent.atomic.AtomicReference("")
+        val capturedHeaders = java.util.concurrent.atomic.AtomicReference<Map<String, String>>(emptyMap())
+        val capturedBody = java.util.concurrent.atomic.AtomicReference("")
+        val executor = Executors.newSingleThreadExecutor()
+        val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+
+        executor.submit {
+            server.accept().use { socket ->
+                val input = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                capturedRequestLine.set(input.readLine().orEmpty())
+                val headers = mutableMapOf<String, String>()
+                while (true) {
+                    val line = input.readLine() ?: break
+                    if (line.isEmpty()) break
+                    val sep = line.indexOf(':')
+                    if (sep > 0) {
+                        headers[line.substring(0, sep).trim().lowercase()] = line.substring(sep + 1).trim()
+                    }
+                }
+                capturedHeaders.set(headers)
+                val bodyLength = headers["content-length"]?.toIntOrNull() ?: 0
+                val chars = CharArray(bodyLength)
+                var offset = 0
+                while (offset < bodyLength) {
+                    val read = input.read(chars, offset, bodyLength - offset)
+                    if (read < 0) break
+                    offset += read
+                }
+                capturedBody.set(String(chars, 0, offset))
+
+                val deltaEnvelope = MobileCrypto.encryptJsonObject(
+                    buildJsonObject {
+                        put("type", "text_delta")
+                        put("delta", "hello encrypted")
+                    },
+                    token,
+                ).copy(type = "encrypted")
+                val deviceToolEnvelope = MobileCrypto.encryptJsonObject(
+                    buildJsonObject {
+                        put("type", "device_tool_request")
+                        put("request_id", "dt-1")
+                        put("nonce", "nonce-1")
+                        put("host_id", "host-1")
+                        put("client_id", "client-1")
+                        put("session_id", "conv-42")
+                        put("tool_name", "location_current")
+                        put("capability", "location")
+                        put("arguments", buildJsonObject { put("precision", "coarse") })
+                        put("expires_at", 9_999_999_999L)
+                        put("protocol_version", 1)
+                    },
+                    token,
+                ).copy(type = "encrypted")
+
+                val frames = listOf(
+                    "data: ${json.encodeToString(deltaEnvelope)}\n\n",
+                    "data: ${json.encodeToString(deviceToolEnvelope)}\n\n",
+                    "data: [DONE]\n\n",
+                )
+                val payloadBytes = frames.joinToString("").toByteArray(Charsets.UTF_8)
+                val output = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+                output.write(
+                    "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: text/event-stream\r\n" +
+                        "Connection: close\r\n" +
+                        "Content-Length: ${payloadBytes.size}\r\n\r\n"
+                )
+                output.write(String(payloadBytes, Charsets.UTF_8))
+                output.flush()
+            }
+        }
+
+        val client = HttpClient(CIO)
+        try {
+            val service = WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
+            val events = service.v2StreamMessage(
+                hostBaseUrl = "http://127.0.0.1:${server.localPort}",
+                token = token,
+                conversationId = "conv-42",
+                content = "secret prompt",
+                deviceBridge = buildJsonObject { put("protocol_version", 1) },
+            ).toList()
+
+            assertTrue(capturedRequestLine.get().startsWith("POST /api/mobile/chat/conversations/conv-42/messages "))
+            val headers = capturedHeaders.get()
+            assertEquals("aes-gcm-v1", headers["x-nola-mobile-crypto"])
+            assertFalse("LAN stream must not send plaintext Bearer header", headers.containsKey("authorization"))
+            assertNotNull(headers["x-nola-mobile-auth"])
+            assertNotNull(headers["x-nola-mobile-timestamp"])
+            assertNotNull(headers["x-nola-mobile-nonce"])
+            assertEquals(64, headers["x-nola-mobile-body-sha256"]?.length)
+
+            val rawWireBody = capturedBody.get()
+            assertFalse("Request body must be encrypted on LAN HTTP", rawWireBody.contains("secret prompt"))
+            val decodedRequest = MobileCrypto.decryptJsonObject(
+                json.decodeFromString<EncryptedEnvelope>(rawWireBody),
+                token,
+            )
+            assertEquals(JsonPrimitive("secret prompt"), decodedRequest["content"])
+            assertEquals(JsonPrimitive(1), (decodedRequest["device_bridge"] as? JsonObject)?.get("protocol_version"))
+
+            assertEquals(2, events.size)
+            assertEquals(SseEvent.V2TextDelta("hello encrypted"), events[0])
+            val deviceReq = events[1] as SseEvent.DeviceToolRequest
+            assertEquals("dt-1", deviceReq.id)
+            assertEquals("conv-42", deviceReq.sessionId)
+            assertEquals("location_current", deviceReq.toolName)
+            assertEquals("coarse", deviceReq.args["precision"])
+        } finally {
+            client.close()
+            server.close()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun remoteHostEndpointsRouteToExpectedPathsWithMobileAuthAndCrypto() = runBlocking {
+        val token = "lan-endpoint-token"
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val recordedRequests = CopyOnWriteArrayList<Pair<String, Map<String, String>>>()
+        val executor = Executors.newSingleThreadExecutor()
+        val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+
+        executor.submit {
+            repeat(7) {
+                server.accept().use { socket ->
+                    val input = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                    val requestLine = input.readLine().orEmpty()
+                    val headers = mutableMapOf<String, String>()
+                    while (true) {
+                        val line = input.readLine() ?: break
+                        if (line.isEmpty()) break
+                        val sep = line.indexOf(':')
+                        if (sep > 0) {
+                            headers[line.substring(0, sep).trim().lowercase()] = line.substring(sep + 1).trim()
+                        }
+                    }
+                    val bodyLength = headers["content-length"]?.toIntOrNull() ?: 0
+                    val chars = CharArray(bodyLength)
+                    var offset = 0
+                    while (offset < bodyLength) {
+                        val read = input.read(chars, offset, bodyLength - offset)
+                        if (read < 0) break
+                        offset += read
+                    }
+                    recordedRequests.add(requestLine to headers)
+
+                    val output = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+                    if (requestLine.contains("/tasks/events")) {
+                        val checkpointEnvelope = MobileCrypto.encryptJsonObject(
+                            buildJsonObject {
+                                put("type", "task_stream_checkpoint")
+                                put("conversationId", "conv-9")
+                                put("cursor", 12)
+                            },
+                            token,
+                        ).copy(type = "encrypted")
+                        val sseBody = "data: ${json.encodeToString(checkpointEnvelope)}\n\ndata: [DONE]\n\n"
+                        val sseBytes = sseBody.toByteArray(Charsets.UTF_8)
+                        output.write(
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: text/event-stream\r\n" +
+                                "Connection: close\r\n" +
+                                "Content-Length: ${sseBytes.size}\r\n\r\n"
+                        )
+                        output.write(sseBody)
+                    } else {
+                        val replyObj = if (requestLine.contains("/agent/settings")) {
+                            buildJsonObject {
+                                put("host_id", "host-9")
+                                put("max_iterations", 16)
+                            }
+                        } else {
+                            buildJsonObject {
+                                put("ok", true)
+                                put("source_host_id", "host-9")
+                            }
+                        }
+                        val encryptedReply = json.encodeToString(
+                            MobileCrypto.encryptJsonObject(replyObj, token).copy(type = "encrypted")
+                        )
+                        val replyBytes = encryptedReply.toByteArray(Charsets.UTF_8)
+                        output.write(
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: application/json\r\n" +
+                                "Connection: close\r\n" +
+                                "Content-Length: ${replyBytes.size}\r\n\r\n"
+                        )
+                        output.write(encryptedReply)
+                    }
+                    output.flush()
+                }
+            }
+        }
+
+        val client = HttpClient(CIO)
+        try {
+            val baseUrl = "http://127.0.0.1:${server.localPort}"
+            val service = WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
+
+            service.submitAgentDeviceToolResult(
+                hostBaseUrl = baseUrl,
+                token = token,
+                payload = mapOf("session_id" to "conv-9", "request_id" to "dt-9", "output" to "ok"),
+            )
+            service.goalControl(
+                hostBaseUrl = baseUrl,
+                token = token,
+                request = buildJsonObject { put("conversation_id", "conv-9"); put("action", "start") },
+            )
+            service.auxiliaryCommand(
+                hostBaseUrl = baseUrl,
+                token = token,
+                action = "invoke",
+                request = buildJsonObject { put("room_id", "room-1") },
+            )
+            service.conversationProgress(
+                hostBaseUrl = baseUrl,
+                token = token,
+                request = buildJsonObject { put("conversation_id", "conv-9") },
+            )
+            service.observeRemoteConversation(
+                hostBaseUrl = baseUrl,
+                token = token,
+                request = buildJsonObject { put("conversation_id", "conv-9") },
+            )
+            val taskEvents = service.streamAgentTaskEvents(
+                hostBaseUrl = baseUrl,
+                token = token,
+                conversationId = "conv-9",
+                afterCursor = 7L,
+            ).toList()
+            val settings = service.getAgentSettings(
+                hostBaseUrl = baseUrl,
+                token = token,
+            )
+
+            assertEquals(7, recordedRequests.size)
+            assertTrue(recordedRequests[0].first.startsWith("POST /api/mobile/chat/conversations/conv-9/device-tool "))
+            assertTrue(recordedRequests[1].first.startsWith("POST /api/mobile/chat/conversations/conv-9/goal "))
+            assertTrue(recordedRequests[2].first.startsWith("POST /api/mobile/auxiliary/invoke "))
+            assertTrue(recordedRequests[3].first.startsWith("GET /api/mobile/chat/conversations/conv-9/progress "))
+            assertTrue(recordedRequests[4].first.startsWith("GET /api/mobile/chat/conversations/conv-9/observe "))
+            assertTrue(recordedRequests[5].first.startsWith("GET /api/mobile/chat/conversations/conv-9/tasks/events?afterCursor=7 "))
+            assertTrue(recordedRequests[6].first.startsWith("GET /api/mobile/agent/settings "))
+
+            for ((line, headers) in recordedRequests) {
+                assertEquals("Missing aes-gcm-v1 on $line", "aes-gcm-v1", headers["x-nola-mobile-crypto"])
+                assertNotNull("Missing HMAC proof on $line", headers["x-nola-mobile-auth"])
+                assertFalse("Plaintext Bearer token must not be sent on $line", headers.containsKey("authorization"))
+            }
+
+            assertEquals(listOf(SseEvent.TaskStreamCheckpoint("conv-9", 12L)), taskEvents)
+            assertEquals(VerifiedHostTransport.DirectWithoutTailcat, settings.verifiedTransport)
+        } finally {
+            client.close()
+            server.close()
+            executor.shutdownNow()
+        }
     }
 }

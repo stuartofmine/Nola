@@ -281,6 +281,72 @@ class LongMemEvalModeTests(unittest.TestCase):
             "unknown",
         )
 
+    def test_v2_flat_ndjson_events_parse_assistant_text_tools_and_provider_evidence(self) -> None:
+        events = [
+            {"type": "session_started", "session_id": "sess-v2", "model": "anthropic/claude-sonnet-4"},
+            {
+                "type": "tool_started",
+                "call_id": "call-1",
+                "name": "memory_save",
+                "arguments": {"title": "Drink", "content": "Prefers green tea"},
+            },
+            {
+                "type": "tool_finished",
+                "call_id": "call-1",
+                "name": "memory_save",
+                "is_error": False,
+                "summary": "memory_saved: mem-v2-1\nartifact_uri: nola://memory/mem-v2-1",
+                "effects": [],
+                "full_output_ref": "/tmp/out.txt",
+            },
+            {"type": "text_delta", "delta": "Saved "},
+            {"type": "text_delta", "delta": "preference."},
+            {
+                "type": "turn_completed",
+                "session_id": "sess-v2",
+                "steps": 2,
+                "usage": {"input_tokens": 120, "output_tokens": 15},
+                "final_text": "Saved preference.",
+            },
+        ]
+        stdout = "".join(json.dumps(event) + "\n" for event in events)
+        self.assertEqual(runner.assistant_text(stdout), "Saved preference.")
+        evidence = runner.tool_trace_evidence(stdout)
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["tool_name"], "memory_save")
+        self.assertEqual(evidence[0]["status"], "succeeded")
+        self.assertEqual(evidence[0]["arguments"]["title"], "Drink")
+        self.assertEqual(evidence[0]["full_output_ref"], "/tmp/out.txt")
+        metrics = runner.memory_save_metrics([{"tool_evidence": evidence}])
+        self.assertEqual(metrics, {"attempted": 1, "succeeded": 1, "distinct_persisted": 1})
+        responses = runner.provider_response_evidence(stdout)
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0]["configured_model"], "anthropic/claude-sonnet-4")
+        self.assertEqual(responses[0]["response_model"], "anthropic/claude-sonnet-4")
+        self.assertEqual(responses[0]["attempt"], 2)
+        self.assertEqual(responses[0]["run_id"], "sess-v2")
+
+        # Partial stream without turn_completed falls back to text_delta
+        partial = json.dumps({"type": "text_delta", "delta": "Half "}) + "\n" + json.dumps({"type": "text_delta", "delta": "answer"}) + "\n"
+        self.assertEqual(runner.assistant_text(partial), "Half answer")
+
+        # Explicit model_response / usage events are captured directly
+        explicit_stdout = (
+            json.dumps({
+                "type": "model_response",
+                "configured_model": "alias-a",
+                "response_model": "concrete-b",
+                "response_id": "resp-99",
+                "attempt": 1,
+                "session_id": "sess-v2",
+            })
+            + "\n"
+        )
+        explicit = runner.provider_response_evidence(explicit_stdout)
+        self.assertEqual(explicit[0]["configured_model"], "alias-a")
+        self.assertEqual(explicit[0]["response_model"], "concrete-b")
+        self.assertEqual(explicit[0]["response_id"], "resp-99")
+
     def test_memory_save_metrics_separate_attempts_successes_and_distinct_records(self) -> None:
         turns = [
             {

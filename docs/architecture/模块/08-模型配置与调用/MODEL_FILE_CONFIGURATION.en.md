@@ -2,11 +2,11 @@
 
 [简体中文](MODEL_FILE_CONFIGURATION.md) · English
 
-Local CLI conversations, init, wiki, Web and server read startup configuration. The effective model catalog declares the connections, their models and the Host-wide default. Application publishes them together. A new conversation resolves the committed default. A resumed conversation restores its bound selection. [Startup hook](../../../../apps/cli/src/config_files.rs) · [Application transaction](../../../../core/nola-application/src/model_connection.rs)
+Local CLI conversations, init, wiki, Web and server read startup configuration. The effective model catalog declares the connections, their models and the Host-wide default. Application publishes them together. A new conversation resolves the committed default. A resumed conversation restores its bound selection. [Startup hook](../../../../crates/nola-app/src/config.rs) · [Application transaction](../../../../crates/nola-app/src/config.rs)
 
 ## File discovery and input
 
-Read user `.nola/config.jsonc` then `.nola/config.json`, followed by project layers from the nearest Git root down to the project directory. Outside a repository, discovery uses the user and project directories. Each project level reads `.nola/config`, `nola` and the supported `.nola/current_config` pair, JSONC before JSON. A more specific catalog replaces the earlier declaration as a whole. A language-only file leaves the catalog source in place. [Runtime configuration](../../../../apps/cli/src/runtime_config.rs)
+Read user `.nola/config.jsonc` then `.nola/config.json`, followed by project layers from the nearest Git root down to the project directory. Outside a repository, discovery uses the user and project directories. Each project level reads `.nola/config`, `nola` and the supported `.nola/current_config` pair, JSONC before JSON. A more specific catalog replaces the earlier declaration as a whole. A language-only file leaves the catalog source in place. [Runtime configuration](../../../../crates/nola-app/src/config.rs)
 
 A connection declares an ID, display name, endpoint, protocol and models. The default names exact connection and model IDs from the same file. A direct endpoint/model configuration and a catalog cannot supply competing routes. A minimal declaration follows.
 
@@ -25,4 +25,4 @@ A connection declares an ID, display name, endpoint, protocol and models. The de
 
 Save the file and start `nola`. Use `nola config` or the conversation command `/config` to inspect sources and the saved default. `nola config check` validates without publishing. The older explicit apply command remains available for existing scripts. CLI and Web share settings only when they use the same Host database, including any explicit `NOLA_DB_PATH`.
 
-The isolated CLI regression covers clean startup, rejection, unchanged restarts, credential rotation and Web/server startup using a local HTTP model endpoint. A real provider call exercises a separate boundary. [Example configuration](../../../../apps/cli/config.multi-endpoint.example.json) · [End-to-end test](../../../../scripts/e2e/test_cli_config_files.py)
+The isolated CLI regression covers clean startup, rejection, unchanged restarts, credential rotation and Web/server startup using a local HTTP model endpoint. A real provider call exercises a separate boundary. [Example configuration](../../../../crates/nola-app/src/config.rs) · [End-to-end test](../../../../crates/nola-app/src/config.rs)

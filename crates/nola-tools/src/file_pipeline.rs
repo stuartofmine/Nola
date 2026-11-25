@@ -1,19 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Unified `FileMutationPipeline` + `FileAccessState` + all file tools:
+//! Unified `FileMutationPipeline` + `FileAccessState` + `FileLockRegistry` + core file tools:
 //! `read_file`, `write_file`, `edit_file`, `apply_patch`, `delete_file`.
 //!
 //! Compile-time invariants:
 //! - Every mutation computes `before` and `after` `ContentVersion::Sha256` and returns an
 //!   exhaustive `VersionTransition` (`Created`, `Modified`, `Deleted`, `Unchanged`).
 //! - `path_within_workspace` canonicalizes nearest existing ancestor to block symlink escapes.
+//! - Per-path `FileLockRegistry` prevents parallel tool calls from racing on the same path.
+//! - Continuity guards enforce read/write awareness and prevent stale/blind overwrites & edits.
 //! - `edit_file` supports tolerant indentation matching + optional `expected_replacements`.
-//! - `apply_patch` defaults `dry_run = false` and applies unified diffs in pure Rust (zero `git` dep!).
+//! - `apply_patch` defaults `dry_run = false`, checks hunk old-line coverage, and applies unified
+//!   diffs in pure Rust (zero `git` dep!).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use nola_types::{
+    sha256_hex, CapabilityDomain, ContentVersion, ResourceEffect, ResourceOperation,
+    ToolExecutionResult, ToolSchema, ToolSpec, ToolTier, VersionTransition,
+};
+use serde_json::{json, Value};
+
+use crate::binary_docs::try_read_binary_document;
+use crate::{ToolContext, ToolHandler};
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 const MAX_READ_TEXT_BYTES: u64 = 16 * 1024 * 1024;
@@ -34,31 +46,196 @@ pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8192).any(|&b| b == 0)
 }
 
-use nola_types::{
-    sha256_hex, CapabilityDomain, ContentVersion, ResourceEffect, ResourceOperation,
-    ToolExecutionResult, ToolSchema, ToolSpec, ToolTier, VersionTransition,
-};
-use serde_json::{json, Value};
+/// Per-path mutex registry preventing parallel tool calls from racing on the same file.
+#[derive(Default)]
+pub struct FileLockRegistry {
+    locks: Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>>,
+}
 
-use crate::binary_docs::try_read_binary_document;
-use crate::{ToolContext, ToolHandler};
+impl FileLockRegistry {
+    pub fn lock_for(&self, path: &Path) -> Arc<Mutex<()>> {
+        let key = canonicalize_nearest_ancestor(path);
+        let mut map = self.locks.lock().unwrap();
+        Arc::clone(map.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))))
+    }
+}
 
-/// Tracks SHA-256 digests of files observed via `read_file` or written by tools.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileCoverageError {
+    Unread,
+    ModifiedExternally {
+        last_seen_sha256: String,
+        current_sha256: String,
+    },
+    RangeNotRead {
+        start_line: usize,
+        end_line: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct FileAccessRecord {
+    sha256: String,
+    full_coverage: bool,
+    /// Merged, sorted inclusive 1-based line ranges read for `sha256`.
+    line_ranges: Vec<(usize, usize)>,
+}
+
+/// Tracks SHA-256 digests and read line-range coverage of files observed via `read_file`
+/// or authored by tools within the session.
 #[derive(Default)]
 pub struct FileAccessState {
-    digests: Mutex<BTreeMap<PathBuf, String>>,
+    records: Mutex<BTreeMap<PathBuf, FileAccessRecord>>,
 }
 
 impl FileAccessState {
+    fn key(path: &Path) -> PathBuf {
+        canonicalize_nearest_ancestor(path)
+    }
+
+    /// Record full observation/authorship of `path` at `sha256` (empty string marks deleted).
     pub fn record(&self, path: &Path, sha256: String) {
-        if let Ok(mut g) = self.digests.lock() {
-            g.insert(path.to_path_buf(), sha256);
+        self.record_full_access(path, sha256);
+    }
+
+    /// Record `Full` coverage for `path` at `sha256` so subsequent `edit_file` / `apply_patch`
+    /// calls succeed immediately without requiring a redundant re-read.
+    pub fn record_full_access(&self, path: &Path, sha256: String) {
+        let key = Self::key(path);
+        if let Ok(mut g) = self.records.lock() {
+            if sha256.is_empty() {
+                g.insert(
+                    key,
+                    FileAccessRecord {
+                        sha256: String::new(),
+                        full_coverage: false,
+                        line_ranges: Vec::new(),
+                    },
+                );
+            } else {
+                g.insert(
+                    key,
+                    FileAccessRecord {
+                        sha256,
+                        full_coverage: true,
+                        line_ranges: Vec::new(),
+                    },
+                );
+            }
+        }
+    }
+
+    /// Record a 1-based inclusive line range `[start_line, end_line]` read for `path` at `sha256`.
+    /// When `is_full` is true (e.g. read from line 1 through EOF without truncation), upgrades to `Full`.
+    pub fn record_line_range(
+        &self,
+        path: &Path,
+        sha256: String,
+        start_line: usize,
+        end_line: usize,
+        is_full: bool,
+    ) {
+        if sha256.is_empty() {
+            return;
+        }
+        let key = Self::key(path);
+        if let Ok(mut g) = self.records.lock() {
+            let entry = g.entry(key).or_insert_with(|| FileAccessRecord {
+                sha256: sha256.clone(),
+                full_coverage: false,
+                line_ranges: Vec::new(),
+            });
+            if entry.sha256 != sha256 {
+                entry.sha256 = sha256;
+                entry.full_coverage = is_full;
+                entry.line_ranges.clear();
+            } else {
+                entry.full_coverage |= is_full;
+            }
+            if !entry.full_coverage && start_line > 0 && end_line >= start_line {
+                entry.line_ranges.push((start_line, end_line));
+                merge_line_ranges(&mut entry.line_ranges);
+            }
         }
     }
 
     pub fn last_seen(&self, path: &Path) -> Option<String> {
-        self.digests.lock().ok().and_then(|g| g.get(path).cloned())
+        let key = Self::key(path);
+        self.records
+            .lock()
+            .ok()
+            .and_then(|g| g.get(&key).map(|r| r.sha256.clone()))
     }
+
+    /// Verify that `path` was previously observed/authored and has not drifted externally on disk.
+    pub fn verify_observed(&self, path: &Path, current_sha: &str) -> Result<(), FileCoverageError> {
+        let key = Self::key(path);
+        let guard = self.records.lock().unwrap();
+        let Some(rec) = guard.get(&key).filter(|r| !r.sha256.is_empty()) else {
+            return Err(FileCoverageError::Unread);
+        };
+        if rec.sha256 != current_sha {
+            return Err(FileCoverageError::ModifiedExternally {
+                last_seen_sha256: rec.sha256.clone(),
+                current_sha256: current_sha.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Verify that `path` was observed at `current_sha` AND either has `Full` coverage or its
+    /// recorded read line ranges completely cover `[start_line, end_line]`.
+    pub fn covers_line_range(
+        &self,
+        path: &Path,
+        current_sha: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<(), FileCoverageError> {
+        let key = Self::key(path);
+        let guard = self.records.lock().unwrap();
+        let Some(rec) = guard.get(&key).filter(|r| !r.sha256.is_empty()) else {
+            return Err(FileCoverageError::Unread);
+        };
+        if rec.sha256 != current_sha {
+            return Err(FileCoverageError::ModifiedExternally {
+                last_seen_sha256: rec.sha256.clone(),
+                current_sha256: current_sha.to_string(),
+            });
+        }
+        if rec.full_coverage || start_line == 0 || end_line < start_line {
+            return Ok(());
+        }
+        if rec
+            .line_ranges
+            .iter()
+            .any(|&(s, e)| s <= start_line && e >= end_line)
+        {
+            return Ok(());
+        }
+        Err(FileCoverageError::RangeNotRead {
+            start_line,
+            end_line,
+        })
+    }
+}
+
+fn merge_line_ranges(ranges: &mut Vec<(usize, usize)>) {
+    if ranges.len() <= 1 {
+        return;
+    }
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (s, e) in ranges.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            if s <= last.1.saturating_add(1) {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        merged.push((s, e));
+    }
+    *ranges = merged;
 }
 
 /// Resolve `raw_path` relative to `workspace_root` cleanly.
@@ -145,7 +322,7 @@ impl FileMutationPipeline {
         let after = ContentVersion::Sha256(after_sha.clone());
         // Preserve mtime if file already exists with identical content!
         if before.as_ref() == Some(&after) {
-            ctx.file_state.record(path, after_sha);
+            ctx.file_state.record_full_access(path, after_sha);
             return Ok(ResourceEffect {
                 uri: path.display().to_string(),
                 operation: op_hint,
@@ -170,7 +347,14 @@ impl FileMutationPipeline {
             let _ = fs::remove_file(&tmp);
             format!("failed to commit file {}: {e}", path.display())
         })?;
-        ctx.file_state.record(path, after_sha);
+        // Verify written disk digest matches authored bytes before granting Full coverage.
+        let verified_sha = fs::read(path)
+            .ok()
+            .map(|b| sha256_hex(&b))
+            .unwrap_or_else(|| after_sha.clone());
+        if verified_sha == after_sha {
+            ctx.file_state.record_full_access(path, after_sha);
+        }
 
         let (operation, transition) = match before {
             None => (ResourceOperation::Create, VersionTransition::Created { after }),
@@ -221,7 +405,7 @@ impl ToolHandler for ReadFileTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "read_file".into(),
-                description: "Read a UTF-8 text file by 1-based line range (start_line/end_line) or UTF-8 safe byte range (start_byte/max_bytes), or inspect spreadsheets (.xlsx/.xls/.ods), PDFs (.pdf), audio, and images.".into(),
+                description: "Read a UTF-8 text file by 1-based line range (start_line/end_line) or UTF-8 safe byte range (start_byte/max_bytes), or inspect DOCX (.docx), spreadsheets (.xlsx/.xls/.ods), PDFs (.pdf), audio, and images.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -301,7 +485,6 @@ impl ToolHandler for ReadFileTool {
                 Some(json!({"path": path.display().to_string(), "bytes": bytes.len(), "sha256": digest})),
             );
         }
-        ctx.file_state.record(&path, digest.clone());
 
         let text = String::from_utf8_lossy(&bytes);
 
@@ -315,6 +498,11 @@ impl ToolHandler for ReadFileTool {
             let total_bytes = text.len();
             let (slice, actual_start, next_start) =
                 crate::output_store::utf8_byte_slice(&text, req_start, max_bytes);
+            let is_full = actual_start == 0 && next_start >= total_bytes;
+            let start_ln = byte_offset_to_line(&text, actual_start);
+            let end_ln = byte_offset_to_line(&text, next_start.saturating_sub(1).max(actual_start));
+            ctx.file_state
+                .record_line_range(&path, digest.clone(), start_ln, end_ln, is_full);
             return ToolExecutionResult::ok_structured(
                 json!({
                     "path": path.display().to_string(),
@@ -380,6 +568,15 @@ impl ToolHandler for ReadFileTool {
         let truncated =
             byte_capped || (total_lines > 0 && start <= total_lines && actual_end < total_lines);
 
+        let is_full = total_lines == 0 || (!truncated && start <= 1);
+        ctx.file_state.record_line_range(
+            &path,
+            digest.clone(),
+            clamped_start,
+            actual_end.max(clamped_start),
+            is_full,
+        );
+
         ToolExecutionResult::ok_structured(
             json!({
                 "path": path.display().to_string(),
@@ -410,13 +607,13 @@ impl ToolHandler for WriteFileTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "write_file".into(),
-                description: "Create or overwrite a UTF-8 file atomically (supports optional expected_sha256 concurrency check and dry_run) and return its SHA-256 version transition.".into(),
+                description: "Create or overwrite a UTF-8 file atomically (guards against blind overwrites of unread/externally-modified files; supports expected_sha256 and dry_run) and return its SHA-256 version transition.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": { "type": "string" },
                         "content": { "type": "string" },
-                        "expected_sha256": { "type": "string", "description": "Optional expected SHA-256 hex digest of existing file; fails with existing_file_version_mismatch if it differs" },
+                        "expected_sha256": { "type": "string", "description": "Expected SHA-256 hex digest of existing file when overwriting an unread or externally-modified file" },
                         "dry_run": { "type": "boolean", "description": "Validate and preview transition without writing to disk (default false)" }
                     },
                     "required": ["path", "content"]
@@ -456,7 +653,12 @@ impl ToolHandler for WriteFileTool {
             );
         }
 
+        let path_lock = ctx.file_locks.lock_for(&path);
+        let _guard = path_lock.lock().unwrap();
+
         let existing_sha = fs::read(&path).ok().map(|b| sha256_hex(&b));
+        let new_sha = sha256_hex(content.as_bytes());
+
         if let Some(expected) = expected_sha256 {
             if existing_sha.as_deref() != Some(expected) {
                 return ToolExecutionResult::err_structured(
@@ -474,10 +676,48 @@ impl ToolHandler for WriteFileTool {
                     })),
                 );
             }
+        } else if let Some(ref disk_sha) = existing_sha {
+            // Overwriting an existing file with different content requires either prior observation
+            // of this exact disk version in this run OR an explicit matching `expected_sha256`.
+            if disk_sha != &new_sha {
+                match ctx.file_state.verify_observed(&path, disk_sha) {
+                    Ok(()) => {}
+                    Err(FileCoverageError::Unread) => {
+                        return ToolExecutionResult::err_structured(
+                            "existing_file_version_required",
+                            format!(
+                                "cannot overwrite unread existing file {} without expected_sha256 (current sha256: {disk_sha}); read the file first or pass expected_sha256",
+                                path.display()
+                            ),
+                            Some(json!({
+                                "path": path.display().to_string(),
+                                "actual_sha256": disk_sha
+                            })),
+                        );
+                    }
+                    Err(FileCoverageError::ModifiedExternally {
+                        last_seen_sha256,
+                        current_sha256,
+                    }) => {
+                        return ToolExecutionResult::err_structured(
+                            "file_modified_externally",
+                            format!(
+                                "file {} was modified externally since last read/write (current sha256: {current_sha256}); re-read or pass matching expected_sha256",
+                                path.display()
+                            ),
+                            Some(json!({
+                                "path": path.display().to_string(),
+                                "last_seen_sha256": last_seen_sha256,
+                                "actual_sha256": current_sha256
+                            })),
+                        );
+                    }
+                    Err(FileCoverageError::RangeNotRead { .. }) => {}
+                }
+            }
         }
 
         if dry_run {
-            let new_sha = sha256_hex(content.as_bytes());
             let after = ContentVersion::Sha256(new_sha.clone());
             let transition = match existing_sha {
                 None => VersionTransition::Created { after },
@@ -499,7 +739,10 @@ impl ToolHandler for WriteFileTool {
                     "sha256": new_sha,
                     "transition": transition
                 }),
-                format!("Dry-run write {} ({bytes} bytes, {lines} lines)", path.display()),
+                format!(
+                    "Dry-run write {} ({bytes} bytes, {lines} lines, sha256: {new_sha})",
+                    path.display()
+                ),
             );
         }
 
@@ -512,9 +755,13 @@ impl ToolHandler for WriteFileTool {
                         "path": path.display().to_string(),
                         "bytes": bytes,
                         "lines": lines,
+                        "sha256": new_sha,
                         "transition": effect.transition
                     }),
-                    format!("Wrote {} ({bytes} bytes, {lines} lines)", path.display()),
+                    format!(
+                        "Wrote {} ({bytes} bytes, {lines} lines, sha256: {new_sha})",
+                        path.display()
+                    ),
                 )
                 .with_effects(vec![effect])
             }
@@ -532,7 +779,7 @@ impl ToolHandler for EditFileTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "edit_file".into(),
-                description: "Replace exact text (or whitespace-tolerant block) in an existing file. Optional expected_replacements and replace_all.".into(),
+                description: "Replace exact text (or whitespace-tolerant block) in an existing file after reading it. Optional expected_replacements and replace_all.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -571,6 +818,19 @@ impl ToolHandler for EditFileTool {
             .map(|n| n as usize);
 
         let path = resolve_path(&ctx.workspace_root, raw_path);
+        if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+            && !path_within_workspace(&ctx.workspace_root, &path)
+        {
+            return ToolExecutionResult::err_structured(
+                "write_error",
+                format!("edit target '{}' escapes workspace boundary", path.display()),
+                None,
+            );
+        }
+
+        let path_lock = ctx.file_locks.lock_for(&path);
+        let _guard = path_lock.lock().unwrap();
+
         let original = match fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
@@ -583,10 +843,40 @@ impl ToolHandler for EditFileTool {
         };
 
         let current_sha = sha256_hex(original.as_bytes());
-        let modified_externally = ctx
-            .file_state
-            .last_seen(&path)
-            .is_some_and(|seen| !seen.is_empty() && seen != current_sha);
+        match ctx.file_state.verify_observed(&path, &current_sha) {
+            Ok(()) => {}
+            Err(FileCoverageError::Unread) => {
+                return ToolExecutionResult::err_structured(
+                    "read_required",
+                    format!(
+                        "read_file required before editing {} (current sha256: {current_sha})",
+                        path.display()
+                    ),
+                    Some(json!({
+                        "path": path.display().to_string(),
+                        "actual_sha256": current_sha
+                    })),
+                );
+            }
+            Err(FileCoverageError::ModifiedExternally {
+                last_seen_sha256,
+                current_sha256,
+            }) => {
+                return ToolExecutionResult::err_structured(
+                    "file_modified_externally",
+                    format!(
+                        "file {} was modified externally since last read (current sha256: {current_sha256}); call read_file again before editing",
+                        path.display()
+                    ),
+                    Some(json!({
+                        "path": path.display().to_string(),
+                        "last_seen_sha256": last_seen_sha256,
+                        "actual_sha256": current_sha256
+                    })),
+                );
+            }
+            Err(FileCoverageError::RangeNotRead { .. }) => {}
+        }
 
         let (updated, replaced_count, match_mode, line_hint) =
             match apply_text_edit(&original, old_text, new_text, replace_all, expected) {
@@ -596,19 +886,15 @@ impl ToolHandler for EditFileTool {
 
         match FileMutationPipeline::write_bytes(ctx, &path, updated.as_bytes(), ResourceOperation::Edit) {
             Ok(effect) => {
-                let mut payload = json!({
+                let after_sha = sha256_hex(updated.as_bytes());
+                let payload = json!({
                     "path": path.display().to_string(),
                     "replacements": replaced_count,
                     "match_mode": match_mode,
                     "changed_lines": line_hint,
+                    "sha256": after_sha,
                     "transition": effect.transition
                 });
-                if modified_externally {
-                    payload["note"] = Value::String(
-                        "File changed on disk since last read_file; edit still matched cleanly."
-                            .into(),
-                    );
-                }
                 ToolExecutionResult::ok_structured(
                     payload,
                     format!("Edited {} ({replaced_count} replacement(s), {match_mode})", path.display()),
@@ -749,10 +1035,79 @@ pub(crate) fn apply_text_edit(
     ))
 }
 
-fn byte_offset_to_line(text: &str, byte_offset: usize) -> usize {
-    text[..byte_offset.min(text.len())]
-        .bytes()
-        .filter(|&b| b == b'\n')
+/// Locate a unique byte span `(start_byte, end_byte, replacement_text)` in `original`
+/// without mutating `original`, for non-overlapping multi-edit validation.
+pub(crate) fn find_unique_edit_span(
+    original: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<(usize, usize, String), ToolExecutionResult> {
+    // Tier 1: Exact match
+    let exact: Vec<usize> = original.match_indices(old_text).map(|(i, _)| i).collect();
+    if exact.len() == 1 {
+        let start = exact[0];
+        return Ok((start, start + old_text.len(), new_text.to_string()));
+    }
+    if exact.len() > 1 {
+        let match_lines: Vec<usize> = exact
+            .iter()
+            .take(20)
+            .map(|&off| byte_offset_to_line(original, off))
+            .collect();
+        return Err(ToolExecutionResult::err_structured(
+            "ambiguous_match",
+            format!(
+                "old_text matched {} locations at line(s) {match_lines:?}; provide more context",
+                exact.len()
+            ),
+            Some(json!({"found": exact.len(), "match_lines": match_lines})),
+        ));
+    }
+
+    // Tier 2: CRLF-normalized exact match
+    if original.contains("\r\n") && !old_text.contains("\r\n") {
+        let crlf_old = old_text.replace('\n', "\r\n");
+        let crlf_new = new_text.replace("\r\n", "\n").replace('\n', "\r\n");
+        let crlf: Vec<usize> = original.match_indices(&crlf_old).map(|(i, _)| i).collect();
+        if crlf.len() == 1 {
+            let start = crlf[0];
+            return Ok((start, start + crlf_old.len(), crlf_new));
+        }
+        if crlf.len() > 1 {
+            let match_lines: Vec<usize> = crlf
+                .iter()
+                .take(20)
+                .map(|&off| byte_offset_to_line(original, off))
+                .collect();
+            return Err(ToolExecutionResult::err_structured(
+                "ambiguous_match",
+                format!(
+                    "old_text matched {} locations at line(s) {match_lines:?}; provide more context",
+                    crlf.len()
+                ),
+                Some(json!({"found": crlf.len(), "match_lines": match_lines})),
+            ));
+        }
+    }
+
+    // Tier 3: Unique whitespace-trimmed line block
+    if let Some((start, end, repl)) = tolerant_trimmed_span(original, old_text, new_text) {
+        return Ok((start, end, repl));
+    }
+
+    let hint = find_closest_match_snippet(original, old_text);
+    Err(ToolExecutionResult::err_structured(
+        "not_found",
+        "old_text not found in file (checked exact, CRLF, and whitespace-trimmed line match)",
+        hint,
+    ))
+}
+
+pub(crate) fn byte_offset_to_line(text: &str, byte_offset: usize) -> usize {
+    let bytes = text.as_bytes();
+    bytes[..byte_offset.min(bytes.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
         .count()
         + 1
 }
@@ -762,19 +1117,27 @@ fn leading_ws(s: &str) -> &str {
     &s[..idx]
 }
 
-fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> Option<(String, usize, usize)> {
+fn tolerant_trimmed_span(original: &str, old_text: &str, new_text: &str) -> Option<(usize, usize, String)> {
     let line_ending = if original.contains("\r\n") { "\r\n" } else { "\n" };
-    let orig_lines: Vec<&str> = original.lines().collect();
+    // Collect (line_str_without_ending, byte_start, byte_end_without_ending)
+    let mut orig_spans: Vec<(&str, usize, usize)> = Vec::new();
+    let mut pos = 0usize;
+    for chunk in original.split_inclusive('\n') {
+        let len = chunk.len();
+        let trimmed_eol = chunk.strip_suffix("\r\n").or_else(|| chunk.strip_suffix('\n')).unwrap_or(chunk);
+        orig_spans.push((trimmed_eol, pos, pos + trimmed_eol.len()));
+        pos += len;
+    }
     let needle_lines: Vec<&str> = old_text.lines().collect();
-    if needle_lines.is_empty() || needle_lines.len() > orig_lines.len() {
+    if needle_lines.is_empty() || needle_lines.len() > orig_spans.len() {
         return None;
     }
     let mut hits = Vec::new();
-    for i in 0..=(orig_lines.len() - needle_lines.len()) {
-        if orig_lines[i..i + needle_lines.len()]
+    for i in 0..=(orig_spans.len() - needle_lines.len()) {
+        if orig_spans[i..i + needle_lines.len()]
             .iter()
             .zip(needle_lines.iter())
-            .all(|(a, b)| a.trim() == b.trim())
+            .all(|((a, _, _), b)| a.trim() == b.trim())
         {
             hits.push(i);
         }
@@ -783,11 +1146,10 @@ fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> O
         return None;
     }
     let idx = hits[0];
-    // Preserve indentation shift if model's old_text had uniform leading indent offset
-    let orig_indent = orig_lines[idx..idx + needle_lines.len()]
+    let orig_indent = orig_spans[idx..idx + needle_lines.len()]
         .iter()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| leading_ws(l))
+        .find(|(l, _, _)| !l.trim().is_empty())
+        .map(|(l, _, _)| leading_ws(l))
         .unwrap_or("");
     let needle_indent = needle_lines
         .iter()
@@ -808,20 +1170,20 @@ fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> O
             }
         })
         .collect();
-    let new_len = adjusted_new.len();
-    let mut out_lines: Vec<String> = Vec::new();
-    out_lines.extend(orig_lines[..idx].iter().map(|s| s.to_string()));
-    out_lines.extend(adjusted_new);
-    out_lines.extend(
-        orig_lines[idx + needle_lines.len()..]
-            .iter()
-            .map(|s| s.to_string()),
-    );
-    let mut joined = out_lines.join(line_ending);
-    if original.ends_with('\n') {
-        joined.push_str(line_ending);
-    }
-    Some((joined, idx + 1, idx + new_len.max(1)))
+    let start_byte = orig_spans[idx].1;
+    let end_byte = orig_spans[idx + needle_lines.len() - 1].2;
+    Some((start_byte, end_byte, adjusted_new.join(line_ending)))
+}
+
+fn tolerant_trimmed_replace(original: &str, old_text: &str, new_text: &str) -> Option<(String, usize, usize)> {
+    let (start_byte, end_byte, repl) = tolerant_trimmed_span(original, old_text, new_text)?;
+    let start_line = byte_offset_to_line(original, start_byte);
+    let new_len = repl.lines().count().max(1);
+    let mut out = String::with_capacity(original.len() + repl.len());
+    out.push_str(&original[..start_byte]);
+    out.push_str(&repl);
+    out.push_str(&original[end_byte..]);
+    Some((out, start_line, start_line + new_len.saturating_sub(1)))
 }
 
 fn find_closest_match_snippet(original: &str, old_text: &str) -> Option<Value> {
@@ -892,7 +1254,7 @@ impl ToolHandler for ApplyPatchTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "apply_patch".into(),
-                description: "Apply a unified diff patch in pure Rust (supports multi-file create/modify/delete without requiring git). dry_run defaults to false.".into(),
+                description: "Apply a unified diff patch in pure Rust (supports multi-file create/modify/delete without requiring git; verifies read coverage of every hunk range). dry_run defaults to false.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -925,6 +1287,22 @@ impl ToolHandler for ApplyPatchTool {
             Err(e) => return ToolExecutionResult::err_structured("invalid_patch", e, None),
         };
 
+        // Acquire per-path locks in deterministic sorted order to prevent deadlocks across parallel calls.
+        let mut unique_targets: BTreeSet<PathBuf> = BTreeSet::new();
+        for fp in &file_patches {
+            let is_delete = fp.new_path == "/dev/null";
+            let rel = if is_delete { &fp.old_path } else { &fp.new_path };
+            unique_targets.insert(resolve_path(&ctx.workspace_root, rel));
+        }
+        let lock_arcs: Vec<Arc<Mutex<()>>> = unique_targets
+            .iter()
+            .map(|p| ctx.file_locks.lock_for(p))
+            .collect();
+        let mut _guards = Vec::with_capacity(lock_arcs.len());
+        for arc in &lock_arcs {
+            _guards.push(arc.lock().unwrap());
+        }
+
         let mut planned: Vec<(PathBuf, Option<String>)> = Vec::new();
         for fp in &file_patches {
             let is_delete = fp.new_path == "/dev/null";
@@ -947,10 +1325,16 @@ impl ToolHandler for ApplyPatchTool {
                         None,
                     );
                 }
+                if let Ok(existing_bytes) = fs::read(&target) {
+                    let current_sha = sha256_hex(&existing_bytes);
+                    if let Err(err) = ctx.file_state.verify_observed(&target, &current_sha) {
+                        return coverage_err_to_result(&target, err, &current_sha);
+                    }
+                }
                 planned.push((target, None));
             } else {
                 let original = if target.exists() {
-                    match fs::read_to_string(&target) {
+                    let text = match fs::read_to_string(&target) {
                         Ok(s) => s,
                         Err(e) => {
                             return ToolExecutionResult::err_structured(
@@ -959,7 +1343,33 @@ impl ToolHandler for ApplyPatchTool {
                                 None,
                             )
                         }
+                    };
+                    let current_sha = sha256_hex(text.as_bytes());
+                    if let Err(err) = ctx.file_state.verify_observed(&target, &current_sha) {
+                        return coverage_err_to_result(&target, err, &current_sha);
                     }
+                    // Verify read coverage of every hunk's old-line range
+                    for hunk in &fp.hunks {
+                        let (start_line, end_line) = if hunk.old_count > 0 {
+                            let s = hunk.old_start.max(1);
+                            (s, s.saturating_add(hunk.old_count - 1))
+                        } else if hunk.old_start > 0 {
+                            (hunk.old_start, hunk.old_start)
+                        } else {
+                            (0, 0)
+                        };
+                        if start_line > 0 {
+                            if let Err(err) = ctx.file_state.covers_line_range(
+                                &target,
+                                &current_sha,
+                                start_line,
+                                end_line,
+                            ) {
+                                return coverage_err_to_result(&target, err, &current_sha);
+                            }
+                        }
+                    }
+                    text
                 } else {
                     String::new()
                 };
@@ -1009,6 +1419,57 @@ impl ToolHandler for ApplyPatchTool {
     }
 }
 
+fn coverage_err_to_result(
+    path: &Path,
+    err: FileCoverageError,
+    current_sha: &str,
+) -> ToolExecutionResult {
+    match err {
+        FileCoverageError::Unread => ToolExecutionResult::err_structured(
+            "read_required",
+            format!(
+                "read_file required before patching {} (current sha256: {current_sha})",
+                path.display()
+            ),
+            Some(json!({
+                "path": path.display().to_string(),
+                "actual_sha256": current_sha
+            })),
+        ),
+        FileCoverageError::ModifiedExternally {
+            last_seen_sha256,
+            current_sha256,
+        } => ToolExecutionResult::err_structured(
+            "file_modified_externally",
+            format!(
+                "file {} was modified externally since last read (current sha256: {current_sha256}); re-read with read_file before patching",
+                path.display()
+            ),
+            Some(json!({
+                "path": path.display().to_string(),
+                "last_seen_sha256": last_seen_sha256,
+                "actual_sha256": current_sha256
+            })),
+        ),
+        FileCoverageError::RangeNotRead {
+            start_line,
+            end_line,
+        } => ToolExecutionResult::err_structured(
+            "unread_patch_range",
+            format!(
+                "patch hunk lines {start_line}-{end_line} in {} were not read via read_file; read that range first",
+                path.display()
+            ),
+            Some(json!({
+                "path": path.display().to_string(),
+                "start_line": start_line,
+                "end_line": end_line,
+                "actual_sha256": current_sha
+            })),
+        ),
+    }
+}
+
 struct FilePatch {
     old_path: String,
     new_path: String,
@@ -1017,6 +1478,7 @@ struct FilePatch {
 
 struct Hunk {
     old_start: usize,
+    old_count: usize,
     lines: Vec<(char, String)>,
     new_no_trailing_newline: bool,
 }
@@ -1079,7 +1541,8 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
                 && !lines[i].starts_with("diff --git ")
             {
                 if lines[i].starts_with("@@ ") {
-                    let (old_start, mut old_rem, mut new_rem) = parse_hunk_header(lines[i])?;
+                    let (old_start, old_count, mut new_rem) = parse_hunk_header(lines[i])?;
+                    let mut old_rem = old_count;
                     i += 1;
                     let mut hlines = Vec::new();
                     let mut new_no_trailing_newline = false;
@@ -1129,6 +1592,7 @@ fn parse_unified_diff(patch: &str) -> Result<Vec<FilePatch>, String> {
                     }
                     hunks.push(Hunk {
                         old_start,
+                        old_count,
                         lines: hlines,
                         new_no_trailing_newline,
                     });
@@ -1331,6 +1795,8 @@ impl ToolHandler for DeleteFileTool {
             return ToolExecutionResult::err_structured("missing_param", "missing required 'path'", None);
         };
         let path = resolve_path(&ctx.workspace_root, raw_path);
+        let path_lock = ctx.file_locks.lock_for(&path);
+        let _guard = path_lock.lock().unwrap();
         match FileMutationPipeline::delete_file(ctx, &path) {
             Ok(effect) => ToolExecutionResult::ok_structured(
                 json!({

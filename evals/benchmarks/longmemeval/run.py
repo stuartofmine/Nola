@@ -140,8 +140,76 @@ def ndjson_diagnostics(stdout: str) -> dict[str, Any]:
 
 def provider_response_evidence(stdout: str) -> list[dict[str, Any]]:
     """Read durable provider response identities emitted by the native runtime."""
-    responses = []
+    responses: list[dict[str, Any]] = []
+    session_model: str | None = None
+    session_id: str | None = None
+    turn_completed_fallbacks: list[dict[str, Any]] = []
     for event in ndjson_events(stdout):
+        event_type = event.get("type")
+        if event_type == "session_started":
+            if isinstance(event.get("model"), str) and event["model"].strip():
+                session_model = event["model"].strip()
+            if isinstance(event.get("session_id"), str) and event["session_id"].strip():
+                session_id = event["session_id"].strip()
+            continue
+        if event_type in {"model_response", "usage"}:
+            configured_model = str(
+                event.get("configured_model")
+                or event.get("model")
+                or session_model
+                or "unknown"
+            ).strip()
+            response_model = str(
+                event.get("response_model")
+                or event.get("model")
+                or session_model
+                or "unknown"
+            ).strip()
+            response_id = event.get("response_id")
+            attempt = event.get("attempt") or event.get("step")
+            record: dict[str, Any] = {
+                "configured_model": configured_model or "unknown",
+                "response_model": response_model or "unknown",
+                "response_id": (
+                    response_id.strip()
+                    if isinstance(response_id, str) and response_id.strip()
+                    else None
+                ),
+                "attempt": attempt if isinstance(attempt, int) and attempt > 0 else None,
+                "run_id": event.get("run_id") or event.get("session_id") or session_id,
+                "event_id": event.get("event_id"),
+            }
+            if isinstance(event.get("usage"), dict):
+                record["usage"] = event["usage"]
+            responses.append(record)
+            continue
+        if event_type == "turn_completed":
+            model_name = str(
+                event.get("response_model")
+                or event.get("model")
+                or session_model
+                or "unknown"
+            ).strip()
+            steps = event.get("steps")
+            fallback: dict[str, Any] = {
+                "configured_model": str(
+                    event.get("configured_model") or session_model or model_name or "unknown"
+                ).strip() or "unknown",
+                "response_model": model_name or "unknown",
+                "response_id": (
+                    event["response_id"].strip()
+                    if isinstance(event.get("response_id"), str) and event["response_id"].strip()
+                    else None
+                ),
+                "attempt": steps if isinstance(steps, int) and steps > 0 else None,
+                "run_id": event.get("session_id") or session_id,
+                "event_id": event.get("event_id"),
+            }
+            if isinstance(event.get("usage"), dict):
+                fallback["usage"] = event["usage"]
+            turn_completed_fallbacks.append(fallback)
+            continue
+
         trace = event.get("trace") or {}
         payload = trace.get("payload") or {}
         if (
@@ -176,6 +244,8 @@ def provider_response_evidence(stdout: str) -> list[dict[str, Any]]:
                 "event_id": trace.get("event_id"),
             }
         )
+    if not responses and turn_completed_fallbacks:
+        return turn_completed_fallbacks
     return responses
 
 
@@ -209,6 +279,35 @@ def tool_trace_evidence(stdout: str) -> list[dict[str, Any]]:
     calls: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for event in ndjson_events(stdout):
+        event_type = event.get("type")
+        if event_type in {"tool_started", "tool_finished"}:
+            call_id = str(
+                event.get("call_id")
+                or (f"unpaired-start-{len(order) + 1}" if event_type == "tool_started" else "")
+            )
+            name = event.get("name") or event.get("tool_name")
+            if not call_id or not isinstance(name, str) or not name:
+                continue
+            if call_id not in calls:
+                calls[call_id] = {"call_id": call_id, "tool_name": name}
+                order.append(call_id)
+            record = calls[call_id]
+            if event_type == "tool_started":
+                if isinstance(event.get("arguments"), dict):
+                    record["arguments"] = event["arguments"]
+            else:
+                record["status"] = "failed" if bool(event.get("is_error", False)) else "succeeded"
+                if event.get("summary") is not None:
+                    record["summary"] = str(event["summary"])
+                preview = event.get("output_preview")
+                if preview is None:
+                    preview = event.get("summary")
+                if preview is not None:
+                    record["output_preview"] = str(preview)[:2000]
+                if event.get("full_output_ref") is not None:
+                    record["full_output_ref"] = event["full_output_ref"]
+            continue
+
         trace = event.get("trace") or {}
         kind = trace.get("kind")
         if kind not in {"tool.started", "tool.completed"}:
@@ -659,14 +758,31 @@ def memory_inventory(binary: Path, environment: dict[str, str]) -> dict[str, Any
 
 def assistant_text(stdout: str) -> str:
     parts: dict[str, str] = {}
+    v2_deltas: list[str] = []
+    v2_final: str | None = None
     for event in ndjson_events(stdout):
-        if event.get("type") != "core_part_updated":
+        event_type = event.get("type")
+        if event_type == "text_delta":
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                v2_deltas.append(delta)
+            continue
+        if event_type == "turn_completed":
+            final_text = event.get("final_text")
+            if isinstance(final_text, str) and final_text.strip():
+                v2_final = final_text
+            continue
+        if event_type != "core_part_updated":
             continue
         part = event.get("part") or {}
         if part.get("kind") != "text":
             continue
         part_id = str(event.get("part_id") or part.get("id") or "")
         parts[part_id] = str(part.get("text") or "")
+    if v2_final is not None:
+        return v2_final.strip()
+    if v2_deltas:
+        return "".join(v2_deltas).strip()
     return "".join(parts.values()).strip()
 
 

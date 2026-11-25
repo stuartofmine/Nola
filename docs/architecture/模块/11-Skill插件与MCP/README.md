@@ -23,7 +23,7 @@
 | macOS 原生对话 | Mac 应用的数据库保存 Skill 记录，内置 Agent Host 在新会话启动时加载已启用的包。 |
 | Web、CLI、Windows Tauri | 运行该会话的 Rust Host 负责下载、登记和启用。Windows 的桌面壳启动打包的本地 Web Host。 |
 
-共享包实现位于 [nola-skill-host](../../../../core/nola-skill-host)。搜索为只读操作，安装需要持久写入许可。移动端通过应用自己的编辑接口登记准备好的包，读取引用文件时校验启用状态、资源权限和包边界。下载脚本与执行脚本分别授权。GitHub 限制公共 API 请求时，仓库和目录链接可以通过公开归档解析到具体提交。归档索引下载上限为 64 MiB，选中的 Skill 连同声明的依赖文件上限为 32 MiB、1024 个文件。
+共享包实现位于 [nola-skill-host](../../../../crates/nola-modules)。搜索为只读操作，安装需要持久写入许可。移动端通过应用自己的编辑接口登记准备好的包，读取引用文件时校验启用状态、资源权限和包边界。下载脚本与执行脚本分别授权。GitHub 限制公共 API 请求时，仓库和目录链接可以通过公开归档解析到具体提交。归档索引下载上限为 64 MiB，选中的 Skill 连同声明的依赖文件上限为 32 MiB、1024 个文件。
 
 ## 设计、输入输出与生命周期
 
@@ -45,9 +45,9 @@ Catalog、Activation、Transport 分离；插件适配器只通过版本化能�
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [skill.rs](../../../../core/nola-application/src/skill.rs) | 内置/用户 Skill 的版本化编辑用例 |
-| [mcp.rs](../../../../core/nola-application/src/mcp.rs) | MCP 持久目录与配置命令 |
-| [lib.rs](../../../../core/nola-mcp-host/src/lib.rs) | 跨 CLI/移动的连接、HTTP/stdio 与移动适配模块 |
+| [skill.rs](../../../../crates/nola-modules/src/skills.rs) | 内置/用户 Skill 的版本化编辑用例 |
+| [mcp.rs](../../../../crates/nola-mcp/src/lib.rs) | MCP 持久目录与配置命令 |
+| [lib.rs](../../../../crates/nola-mcp/src/lib.rs) | 跨 CLI/移动的连接、HTTP/stdio 与移动适配模块 |
 
 共享 nola_mcp_host 已存在，且仍依赖 Core facade；移动本机支持范围与桌面 stdio 分开。保存/启用配置不等于连接授权，连接授权不等于每次工具调用授权。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

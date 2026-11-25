@@ -20,6 +20,7 @@ data class SseEventDto(
     val text: String? = null,
     val delta: String? = null,
     val id: String? = null,
+    @SerialName("request_id") val requestId: String? = null,
     val name: String? = null,
     val args: JsonObject? = null,
     val display: String? = null,
@@ -47,6 +48,7 @@ data class SseEventDto(
     val capability: String? = null,
     val arguments: JsonObject? = null,
     val conversationId: String? = null,
+    @SerialName("conversation_id") val conversationIdSnake: String? = null,
     val cursor: Long? = null,
     val taskProjection: JsonElement? = null,
     val revision: Long? = null,
@@ -94,15 +96,17 @@ data class SseEventDto(
                 protocolVersion = protocolVersion
             )
             "device_tool_request" -> com.nola.data.remote.sse.SseEvent.DeviceToolRequest(
-                id = id ?: "",
+                id = id ?: requestId ?: "",
                 nonce = nonce ?: "",
                 hostId = hostId ?: "",
                 clientId = clientId ?: "",
-                sessionId = sessionId ?: "",
+                sessionId = sessionId ?: conversationId ?: conversationIdSnake ?: "",
                 toolName = toolName ?: name ?: "unknown",
                 capability = capability ?: "none",
                 arguments = arguments ?: JsonObject(emptyMap()),
-                args = args?.mapValues { it.value.asPreviewString() } ?: emptyMap(),
+                args = args?.mapValues { it.value.asPreviewString() }
+                    ?: arguments?.mapValues { it.value.asPreviewString() }
+                    ?: emptyMap(),
                 expiresAt = expiresAt ?: 0,
                 protocolVersion = protocolVersion ?: 0
             )

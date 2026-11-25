@@ -30,9 +30,9 @@
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [application_command.rs](../../../../core/nola-application/src/application_command.rs) | 当前 typed 用例与 wire tag 映射 |
-| [lib.rs](../../../../core/nola-application/src/lib.rs) | 泛型 Application runtime 与提交协调 |
-| [runtime_owner.rs](../../../../core/nola-application-bootstrap/src/runtime_owner.rs) | 具体持久 runtime 的独占取得与交还 |
+| [application_command.rs](../../../../crates/nola-app/src/daemon.rs) | 当前 typed 用例与 wire tag 映射 |
+| [lib.rs](../../../../crates/nola-modules/src/lib.rs) | 泛型 Application runtime 与提交协调 |
+| [runtime_owner.rs](../../../../crates/nola-app/src/daemon.rs) | 具体持久 runtime 的独占取得与交还 |
 
 Service 是本地进程接入，embedded 是移动部署；两者复用 Application 用例。bootstrap 负责具体 Store 装配，不是可绕过命令边界的客户端 SDK。查询不应为读取制造业务回执。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

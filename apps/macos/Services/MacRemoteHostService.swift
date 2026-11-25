@@ -1617,6 +1617,34 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         return try await authenticatedRead(payload, path: "chat/conversations", configuration: configuration)
     }
 
+    private func authenticatedGetRead<Result: Decodable & Sendable>(
+        queryItems: [URLQueryItem],
+        path: String,
+        configuration: MacRemoteHostConfiguration,
+        responseByteLimit: Int = 512 * 1024,
+        expertRoomEnvelope: Bool = false
+    ) async throws -> Result {
+        guard let expectedHostID = configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
+        let baseURL = mobileURL(baseURL: configuration.baseURL, path: path)
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        if !queryItems.isEmpty {
+            components?.queryItems = queryItems
+        }
+        var request = URLRequest(url: components?.url ?? baseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        applyAuthentication(to: &request, token: configuration.token)
+        return try await executeAuthenticatedRead(
+            request,
+            configuration: configuration,
+            expectedHostID: expectedHostID,
+            responseByteLimit: responseByteLimit,
+            expertRoomEnvelope: expertRoomEnvelope
+        )
+    }
+
     private func authenticatedRead<Result: Decodable & Sendable>(_ payload: [String: Any], path: String,
         configuration: MacRemoteHostConfiguration, responseByteLimit: Int = 512 * 1024, requestByteLimit: Int = 64 * 1024, expertRoomEnvelope: Bool = false) async throws -> Result {
         guard try JSONSerialization.data(withJSONObject: payload).count <= requestByteLimit else { throw MacRemoteHostError.invalidResponse }
@@ -1629,6 +1657,22 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
+        return try await executeAuthenticatedRead(
+            request,
+            configuration: configuration,
+            expectedHostID: expectedHostID,
+            responseByteLimit: responseByteLimit,
+            expertRoomEnvelope: expertRoomEnvelope
+        )
+    }
+
+    private func executeAuthenticatedRead<Result: Decodable & Sendable>(
+        _ request: URLRequest,
+        configuration: MacRemoteHostConfiguration,
+        expectedHostID: String,
+        responseByteLimit: Int,
+        expertRoomEnvelope: Bool
+    ) async throws -> Result {
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw MacRemoteHostError.invalidResponse }
         var data = Data()
@@ -1800,14 +1844,21 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let configuration = target.configuration
         guard let hostID = configuration.expectedHostID,
               (expectedRunID == nil) == (assistantMessageID == nil) else { throw MacRemoteHostError.invalidResponse }
-        var payload: [String: Any] = ["operation": expectedRunID == nil ? "discover" : "observe",
-            "conversation_id": conversationID, "expected_host_id": hostID, "client_id": target.clientID]
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "operation", value: expectedRunID == nil ? "discover" : "observe"),
+            URLQueryItem(name: "conversation_id", value: conversationID),
+            URLQueryItem(name: "expected_host_id", value: hostID),
+            URLQueryItem(name: "client_id", value: target.clientID),
+        ]
         if let expectedRunID, let assistantMessageID {
-            payload["expected_run_id"] = expectedRunID
-            payload["assistant_message_id"] = assistantMessageID
+            queryItems.append(URLQueryItem(name: "expected_run_id", value: expectedRunID))
+            queryItems.append(URLQueryItem(name: "assistant_message_id", value: assistantMessageID))
         }
-        let observation: MacRemoteRunObservation? = try await authenticatedRead(payload,
-            path: "chat/conversations/\(conversationID)/events", configuration: configuration)
+        let observation: MacRemoteRunObservation? = try await authenticatedGetRead(
+            queryItems: queryItems,
+            path: "chat/conversations/\(conversationID)/observe",
+            configuration: configuration
+        )
         try Task.checkCancellation()
         guard let observation else {
             guard expectedRunID == nil else { throw MacRemoteHostError.invalidResponse }
@@ -2619,10 +2670,15 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         // Core validates this exact nonce/call/resource and the current user decision.
         let url = mobileURL(
             baseURL: configuration.baseURL,
-            path: "agent/settings"
+            path: "chat/conversations/\(permissionRequest.sessionID)/permission"
         )
+        var decisionPayload = decision.payload
+        if case .authorization(let allow, let scope) = decision.resolution {
+            decisionPayload["allow"] = allow
+            decisionPayload["scope"] = scope == .conversation ? "session" : "once"
+        }
         let envelope = try encrypt(
-            decision.payload,
+            decisionPayload,
             token: configuration.token
         )
         let body = try JSONSerialization.data(withJSONObject: envelope)
@@ -2631,6 +2687,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.httpBody = body
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (data, response) = try await NolaTailcatTransport.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2759,26 +2817,21 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     try await self.postTaskPayload(configuration: targetConfiguration, path: path, data: data)
                 }
         }
-        let envelope = try encrypt(
-            [
-                "conversationId": conversationID,
-                "afterCursor": max(0, afterCursor),
-                "timeoutMs": 25_000,
-            ],
-            token: configuration.token
+        let baseEventsURL = mobileURL(
+            baseURL: configuration.baseURL,
+            path: "chat/conversations/\(conversationID)/tasks/events"
         )
-        let body = try JSONSerialization.data(withJSONObject: envelope)
-        var request = URLRequest(
-            url: mobileURL(
-                baseURL: configuration.baseURL,
-                path: "chat/conversations/\(conversationID)/events"
-            )
-        )
-        request.httpMethod = "POST"
-        request.httpBody = body
+        var components = URLComponents(url: baseEventsURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "conversationId", value: conversationID),
+            URLQueryItem(name: "afterCursor", value: String(max(0, afterCursor))),
+            URLQueryItem(name: "timeoutMs", value: "25000"),
+        ]
+        var request = URLRequest(url: components?.url ?? baseEventsURL)
+        request.httpMethod = "GET"
         request.timeoutInterval = 35
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2896,8 +2949,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
 
     func conversationProgress(conversationID: String, target: MacRemoteSubmissionTarget) async throws -> MacRemoteConversationProgress {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
-        let data = try await postTaskPayload(configuration: target.configuration, path: "chat/conversations/\(conversationID)/messages",
-            data: JSONSerialization.data(withJSONObject: ["expected_host_id": host, "conversation_id": conversationID]))
+        let data = try await getTaskPayload(
+            configuration: target.configuration,
+            path: "chat/conversations/\(conversationID)/progress",
+            queryItems: [
+                URLQueryItem(name: "expected_host_id", value: host),
+                URLQueryItem(name: "conversation_id", value: conversationID),
+            ]
+        )
         let value = try JSONDecoder().decode(MacRemoteConversationProgress.self, from: data)
         guard value.source_host_id == host, value.conversation_id == conversationID,
               value.plan.map({ $0.conversationID == conversationID }) ?? true else {
@@ -2909,10 +2968,42 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     func goalControl(_ intent: AppleGoalControlIntent, target: MacRemoteSubmissionTarget) async throws -> AppleGoalControlResponse {
         guard target.configuration.expectedHostID == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         let data = try await postTaskPayload(configuration: target.configuration,
-            path: "goals", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
+            path: "chat/conversations/\(intent.conversation_id)/goal", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
         let response = try JSONDecoder().decode(AppleGoalControlResponse.self, from: data)
         guard response.source_host_id == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         return response
+    }
+
+    private func getTaskPayload(
+        configuration: MacRemoteHostConfiguration,
+        path: String,
+        queryItems: [URLQueryItem],
+        acceptedStatuses: Set<Int>? = nil
+    ) async throws -> Data {
+        let baseURL = mobileURL(baseURL: configuration.baseURL, path: path)
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        if !queryItems.isEmpty {
+            components?.queryItems = queryItems
+        }
+        var request = URLRequest(url: components?.url ?? baseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        applyAuthentication(to: &request, token: configuration.token)
+        let (data, response) = try await NolaTailcatTransport.session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        guard acceptedStatuses?.contains(http.statusCode) ?? (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.http(http.statusCode, String(decoding: data.prefix(1_000), as: UTF8.self))
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        let decoded = root["type"] as? String == "encrypted"
+            ? try decrypt(root, token: configuration.token) : root
+        return try JSONSerialization.data(withJSONObject: decoded)
     }
 
     private func postTaskPayload(configuration: MacRemoteHostConfiguration, path: String, data: Data, acceptedStatuses: Set<Int>? = nil) async throws -> Data {

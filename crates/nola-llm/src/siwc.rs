@@ -6,6 +6,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, ModelProtocol, ModelRouteConfig, ModelStreamDelta, NormalizedModelResponse,
@@ -182,6 +184,16 @@ impl ProviderWireAdapter for SiwcResponsesAdapter {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
+        self.parse_sse_stream_cancellable(route, reader, None, on_delta)
+    }
+
+    fn parse_sse_stream_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
         let mut wrapped_delta = |delta: ModelStreamDelta| {
             let normalized = match delta {
                 ModelStreamDelta::ToolCallStart { call_id, name } => {
@@ -194,8 +206,13 @@ impl ProviderWireAdapter for SiwcResponsesAdapter {
             };
             on_delta(normalized);
         };
-        let mut resp =
-            parse_responses_sse(ModelProtocol::SiwcResponses, route, reader, &mut wrapped_delta)?;
+        let mut resp = parse_responses_sse(
+            ModelProtocol::SiwcResponses,
+            route,
+            reader,
+            cancel,
+            &mut wrapped_delta,
+        )?;
         for tc in &mut resp.tool_calls {
             tc.name = strip_siwc_namespace(&tc.name);
         }

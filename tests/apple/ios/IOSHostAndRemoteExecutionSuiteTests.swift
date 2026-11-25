@@ -899,7 +899,7 @@ final class AppleGoalControlOutboxTests: XCTestCase {
         let control = AppleGoalControl(action: .pause, expectedGoalId: "goal", expectedControlToken: "token")
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:9")!,
             token: "fixture-token", expectedHostId: "host", clientId: "client")) { request in
-            XCTAssertEqual(request.url?.path, "/api/goals")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/conversation/goal")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Nola-Mobile-Crypto"), "aes-gcm-v1")
             let encrypted = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as! [String: Any]
             let body = try WebAgentProvider.decryptMobileJSON(encrypted, token: "fixture-token")

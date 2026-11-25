@@ -34,7 +34,7 @@ const char *nola_v2_version(void);
 
 /* Application store & command execution */
 NolaCoreApplication *nola_core_application_open(const uint8_t *path_utf8, size_t path_len);
-char *nola_core_application_last_open_error(void);
+const char *nola_core_application_last_open_error(void);
 void nola_core_application_free(NolaCoreApplication *app);
 char *nola_core_application_execute(
     NolaCoreApplication *app,

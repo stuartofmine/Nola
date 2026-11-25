@@ -5,9 +5,13 @@
 //! - Passes CDP payload over `stdin` (never leaking secrets in `/proc/cmdline`!) with finite timeout
 //! - Scrubs sensitive env vars (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`)
 //!   before spawning the Python CDP helper subprocess
+//! - Only passes `--no-sandbox` when running as root, inside a container (`/.dockerenv`),
+//!   or when `NOLA_BROWSER_NO_SANDBOX=1`
+//! - Persists active page target ID across calls (`switch_page` by index/URL/target_id)
+//! - Rich CDP actions: `navigate`, `snapshot`, `click`, `type_text`/`type`, `eval`, `scroll`,
+//!   `press_key`, `screenshot`, `tabs`, `switch_page`, `hover`, `drag`, `select_option`,
+//!   `set_checked`, `wait_for`, `accessibility_snapshot`, `console_logs`, `network_events`
 //! - Supports `target="attached"` routing through a shared `NativeBrowserBridge`
-//! - Checks child liveness via `try_wait()`, surfaces JS `exceptionDetails` & `{ok:false}` as errors
-//! - Bounded `NativeBrowserBridge` queue.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -42,6 +46,26 @@ pub(crate) fn is_sensitive_env_key(key: &str) -> bool {
         || upper.starts_with("ANTHROPIC_")
         || upper.starts_with("OPENAI_")
         || upper.starts_with("AWS_")
+}
+
+/// Only pass Chromium `--no-sandbox` when running as root (`geteuid() == 0`),
+/// inside a container (`/.dockerenv`), or when `NOLA_BROWSER_NO_SANDBOX=1`.
+pub(crate) fn should_pass_no_sandbox() -> bool {
+    if let Ok(v) = std::env::var("NOLA_BROWSER_NO_SANDBOX") {
+        if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes") {
+            return true;
+        }
+    }
+    if Path::new("/.dockerenv").exists() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        if unsafe { libc::geteuid() } == 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn scrub_sensitive_env(cmd: &mut Command) {
@@ -143,6 +167,7 @@ struct ManagedBrowserSession {
     child: Option<Child>,
     cdp_port: u16,
     user_data_dir: PathBuf,
+    active_target_id: Option<String>,
 }
 
 impl ManagedBrowserSession {
@@ -196,6 +221,7 @@ impl BrowserManager {
             Some(s) => json!({
                 "running": true,
                 "cdp_endpoint": format!("http://127.0.0.1:{}", s.cdp_port),
+                "active_target_id": s.active_target_id,
                 "native_bridge": self.native_bridge.status()
             }),
             None => json!({
@@ -211,7 +237,8 @@ impl BrowserManager {
             if s.is_alive() {
                 return Ok(json!({
                     "running": true,
-                    "cdp_endpoint": format!("http://127.0.0.1:{}", s.cdp_port)
+                    "cdp_endpoint": format!("http://127.0.0.1:{}", s.cdp_port),
+                    "active_target_id": s.active_target_id
                 }));
             }
             *g = None;
@@ -228,8 +255,10 @@ impl BrowserManager {
             .arg(format!("--user-data-dir={}", profile.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
-            .arg("--disable-gpu")
-            .arg("--no-sandbox");
+            .arg("--disable-gpu");
+        if should_pass_no_sandbox() {
+            cmd.arg("--no-sandbox");
+        }
         if headless {
             cmd.arg("--headless=new");
         }
@@ -276,6 +305,7 @@ impl BrowserManager {
             child: Some(child),
             cdp_port: port,
             user_data_dir: profile,
+            active_target_id: None,
         });
         Ok(json!({
             "running": true,
@@ -302,6 +332,20 @@ impl BrowserManager {
             .ok_or_else(|| "browser is not running; call browser with action='start' first".into())
     }
 
+    fn active_target_id(&self) -> Option<String> {
+        self.session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|s| s.active_target_id.clone())
+    }
+
+    fn set_active_target_id(&self, target_id: Option<String>) {
+        if let Some(s) = self.session.lock().unwrap().as_mut() {
+            s.active_target_id = target_id;
+        }
+    }
+
     fn list_tabs(&self) -> Result<Vec<Value>, String> {
         let port = self.cdp_port()?;
         let client = Client::builder()
@@ -320,22 +364,111 @@ impl BrowserManager {
             .collect())
     }
 
+    fn switch_page(&self, args: &Value) -> Result<Value, String> {
+        let tabs = self.list_tabs()?;
+        if tabs.is_empty() {
+            return Err("no active browser page targets".into());
+        }
+        let target_id_arg = args.get("target_id").and_then(|v| v.as_str());
+        let index_arg = args
+            .get("tab_index")
+            .or_else(|| args.get("index"))
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+        let url_sub = args
+            .get("url_substring")
+            .or_else(|| args.get("url"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let found = if let Some(tid) = target_id_arg {
+            tabs.iter()
+                .enumerate()
+                .find(|(_, t)| t.get("id").and_then(|v| v.as_str()) == Some(tid))
+        } else if let Some(idx) = index_arg {
+            tabs.get(idx).map(|t| (idx, t))
+        } else if let Some(sub) = url_sub {
+            let sub_lc = sub.to_ascii_lowercase();
+            tabs.iter().enumerate().find(|(_, t)| {
+                let u = t.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let title = t.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                u.to_ascii_lowercase().contains(&sub_lc)
+                    || title.to_ascii_lowercase().contains(&sub_lc)
+            })
+        } else {
+            return Err(
+                "switch_page requires 'tab_index' (or 'index'), 'url_substring' (or 'url'), or 'target_id'"
+                    .into(),
+            );
+        };
+
+        let Some((idx, tab)) = found else {
+            return Err(format!(
+                "no matching browser page found among {} open tab(s)",
+                tabs.len()
+            ));
+        };
+        let tid = tab
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "selected tab missing id".to_string())?
+            .to_string();
+        let port = self.cdp_port()?;
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let _ = client
+            .get(format!("http://127.0.0.1:{port}/json/activate/{tid}"))
+            .send();
+        self.set_active_target_id(Some(tid.clone()));
+        Ok(json!({
+            "ok": true,
+            "index": idx,
+            "target_id": tid,
+            "url": tab.get("url").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": tab.get("title").and_then(|v| v.as_str()).unwrap_or("")
+        }))
+    }
+
+    fn resolve_active_ws_url(&self) -> Result<String, String> {
+        let tabs = self.list_tabs()?;
+        if tabs.is_empty() {
+            return Err("no active browser page target".into());
+        }
+        let active_id = self.active_target_id();
+        let chosen = active_id
+            .as_deref()
+            .and_then(|tid| {
+                tabs.iter()
+                    .find(|t| t.get("id").and_then(|v| v.as_str()) == Some(tid))
+            })
+            .or_else(|| tabs.first())
+            .ok_or_else(|| "no active browser page target".to_string())?;
+
+        if let Some(tid) = chosen.get("id").and_then(|v| v.as_str()) {
+            self.set_active_target_id(Some(tid.to_string()));
+        }
+        chosen
+            .get("webSocketDebuggerUrl")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .ok_or_else(|| "selected browser tab missing webSocketDebuggerUrl".to_string())
+    }
+
     fn run_cdp_python_script(
         &self,
         op: &str,
         params: &Value,
         screenshot_out: Option<&Path>,
     ) -> Result<Value, String> {
-        let tabs = self.list_tabs()?;
-        let ws_url = tabs
-            .first()
-            .and_then(|t| t.get("webSocketDebuggerUrl"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "no active browser page target".to_string())?;
+        let ws_url = self.resolve_active_ws_url()?;
 
         // RFC 6455 compliant stdlib-only Python CDP WebSocket client (reads request from stdin!)
         let py = r#"
-import base64, json, os, socket, struct, sys
+import base64, json, os, select, socket, struct, sys, time
 from urllib.parse import urlparse
 
 req = json.loads(sys.stdin.read())
@@ -354,6 +487,7 @@ head, leftover = resp.split(b"\r\n\r\n", 1)
 if b"101 " not in head.split(b"\r\n", 1)[0]:
     raise RuntimeError("ws upgrade rejected: " + head[:200].decode("utf-8", "replace"))
 rx_buf = bytearray(leftover)
+events = []
 
 def ws_send_frame(opcode, data):
     mask = os.urandom(4)
@@ -411,12 +545,38 @@ def cdp(method, **p):
     ws_send({"id": mid, "method": method, "params": p})
     while True:
         msg = ws_recv()
+        if "method" in msg and "id" not in msg:
+            events.append(msg)
+            continue
         if msg.get("id") == mid:
             if "error" in msg: raise RuntimeError(str(msg["error"]))
             res = msg.get("result", {})
             if isinstance(res, dict) and res.get("exceptionDetails"):
                 raise RuntimeError("JS exception: " + str(res["exceptionDetails"]))
             return res
+
+def drain_events(duration_ms):
+    deadline = time.monotonic() + (duration_ms / 1000.0)
+    while time.monotonic() < deadline:
+        rem = max(0.01, deadline - time.monotonic())
+        if len(rx_buf) > 0:
+            ready = [sock]
+        else:
+            ready, _, _ = select.select([sock], [], [], min(0.1, rem))
+        if not ready:
+            continue
+        try:
+            msg = ws_recv()
+            if "method" in msg and "id" not in msg:
+                events.append(msg)
+        except Exception:
+            break
+
+def get_center(selector):
+    sel = json.dumps(selector)
+    js = f"(()=>{{const e=document.querySelector({sel});if(!e)return {{ok:false,error:'selector not found: '+{sel}}};e.scrollIntoView({{block:'center',inline:'center'}});const r=e.getBoundingClientRect();return {{ok:true,x:r.left+r.width/2,y:r.top+r.height/2,tag:e.tagName}};}})()"
+    r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
+    return r.get("result", {}).get("value", {"ok": False, "error": "evaluate failed"})
 
 op = req["op"]
 params = req.get("params", {})
@@ -455,6 +615,163 @@ elif op == "press_key":
     cdp("Input.dispatchKeyEvent", type="keyDown", key=key)
     cdp("Input.dispatchKeyEvent", type="keyUp", key=key)
     out = {"ok": True, "key": key}
+elif op == "hover":
+    sel = params.get("selector", "")
+    c = get_center(sel)
+    if not c.get("ok"):
+        out = c
+    else:
+        cdp("Input.dispatchMouseEvent", type="mouseMoved", x=c["x"], y=c["y"])
+        out = {"ok": True, "selector": sel, "x": c["x"], "y": c["y"], "tag": c.get("tag")}
+elif op == "drag":
+    src_sel = params.get("source_selector") or params.get("selector") or ""
+    dst_sel = params.get("target_selector") or params.get("to_selector") or ""
+    c1 = get_center(src_sel)
+    if not c1.get("ok"):
+        out = c1
+    else:
+        c2 = get_center(dst_sel)
+        if not c2.get("ok"):
+            out = c2
+        else:
+            cdp("Input.dispatchMouseEvent", type="mouseMoved", x=c1["x"], y=c1["y"])
+            cdp("Input.dispatchMouseEvent", type="mousePressed", x=c1["x"], y=c1["y"], button="left", clickCount=1)
+            steps = 5
+            for s in range(1, steps + 1):
+                ix = c1["x"] + (c2["x"] - c1["x"]) * s / steps
+                iy = c1["y"] + (c2["y"] - c1["y"]) * s / steps
+                cdp("Input.dispatchMouseEvent", type="mouseMoved", x=ix, y=iy, buttons=1)
+            cdp("Input.dispatchMouseEvent", type="mouseReleased", x=c2["x"], y=c2["y"], button="left", clickCount=1)
+            out = {"ok": True, "from": [c1["x"], c1["y"]], "to": [c2["x"], c2["y"]]}
+elif op == "select_option":
+    sel = json.dumps(params.get("selector", ""))
+    val = json.dumps(params.get("value"))
+    lbl = json.dumps(params.get("label") or params.get("text"))
+    js = f"""(()=>{{
+        const e = document.querySelector({sel});
+        if (!e || e.tagName.toLowerCase() !== 'select') return {{ok:false, error:'select element not found'}};
+        const targetVal = {val};
+        const targetLbl = {lbl};
+        let matched = null;
+        for (const opt of Array.from(e.options)) {{
+            if ((targetVal !== null && opt.value === targetVal) || (targetLbl !== null && opt.text.trim() === targetLbl)) {{
+                e.value = opt.value;
+                matched = {{value: opt.value, label: opt.text}};
+                break;
+            }}
+        }}
+        if (!matched) return {{ok:false, error:'matching option not found'}};
+        e.dispatchEvent(new Event('input', {{bubbles:true}}));
+        e.dispatchEvent(new Event('change', {{bubbles:true}}));
+        return {{ok:true, selected: matched}};
+    }})()"""
+    r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
+    out = r.get("result", {}).get("value", {})
+elif op == "set_checked":
+    sel = json.dumps(params.get("selector", ""))
+    checked = "true" if bool(params.get("checked", True)) else "false"
+    js = f"""(()=>{{
+        const e = document.querySelector({sel});
+        if (!e) return {{ok:false, error:'checkbox/radio selector not found'}};
+        e.checked = {checked};
+        e.dispatchEvent(new Event('input', {{bubbles:true}}));
+        e.dispatchEvent(new Event('change', {{bubbles:true}}));
+        return {{ok:true, checked: !!e.checked}};
+    }})()"""
+    r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
+    out = r.get("result", {}).get("value", {})
+elif op == "wait_for":
+    sel = params.get("selector")
+    txt = params.get("text")
+    timeout_ms = max(100, min(15000, int(params.get("timeout_ms", 5000))))
+    t0 = time.monotonic()
+    matched = False
+    while (time.monotonic() - t0) * 1000.0 < timeout_ms:
+        js = f"(()=>{{const sel={json.dumps(sel)};const txt={json.dumps(txt)};const el=sel?document.querySelector(sel):true;const hasTxt=txt?((document.body?.innerText||'').includes(txt)):true;return Boolean(el && hasTxt);}})()"
+        r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
+        if r.get("result", {}).get("value") is True:
+            matched = True
+            break
+        time.sleep(0.1)
+    elapsed_ms = int((time.monotonic() - t0) * 1000.0)
+    if matched:
+        out = {"ok": True, "elapsed_ms": elapsed_ms, "selector": sel, "text": txt}
+    else:
+        out = {"ok": False, "error": f"timed out after {elapsed_ms}ms waiting for selector={sel!r} text={txt!r}", "elapsed_ms": elapsed_ms}
+elif op == "accessibility_snapshot":
+    cdp("Accessibility.enable")
+    tree = cdp("Accessibility.getFullAXTree")
+    nodes = tree.get("nodes", [])
+    compact = []
+    for n in nodes:
+        if n.get("ignored"):
+            continue
+        role = (n.get("role") or {}).get("value", "")
+        name = (n.get("name") or {}).get("value", "")
+        val = (n.get("value") or {}).get("value", "")
+        if not role and not name and not val:
+            continue
+        item = {"nodeId": n.get("nodeId"), "role": role}
+        if name: item["name"] = str(name)[:200]
+        if val: item["value"] = str(val)[:200]
+        compact.append(item)
+        if len(compact) >= 200:
+            break
+    out = {"ok": True, "count": len(compact), "total_nodes": len(nodes), "nodes": compact}
+elif op == "console_logs":
+    cdp("Runtime.enable")
+    cdp("Log.enable")
+    dur = max(50, min(5000, int(params.get("duration_ms", 300))))
+    # Also read/install lightweight page-side ring buffer so logs between CDP calls are retained
+    hook_js = """(()=>{
+        if (!window.__nolaConsoleHooked) {
+            window.__nolaConsoleHooked = true;
+            window.__nolaConsoleLogs = window.__nolaConsoleLogs || [];
+            for (const lvl of ['log','info','warn','error']) {
+                const orig = console[lvl].bind(console);
+                console[lvl] = (...args) => {
+                    try {
+                        window.__nolaConsoleLogs.push({level: lvl, text: args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '), ts: Date.now()});
+                        if (window.__nolaConsoleLogs.length > 200) window.__nolaConsoleLogs.shift();
+                    } catch (_) {}
+                    orig(...args);
+                };
+            }
+        }
+        return window.__nolaConsoleLogs || [];
+    })()"""
+    r = cdp("Runtime.evaluate", expression=hook_js, returnByValue=True)
+    buffered = r.get("result", {}).get("value") or []
+    drain_events(dur)
+    live = []
+    for ev in events:
+        m = ev.get("method", "")
+        p = ev.get("params", {})
+        if m == "Runtime.consoleAPICalled":
+            args_txt = " ".join(str(a.get("value", a.get("description", ""))) for a in p.get("args", []))
+            live.append({"source": "cdp_runtime", "level": p.get("type", "log"), "text": args_txt[:500]})
+        elif m == "Log.entryAdded":
+            ent = p.get("entry", {})
+            live.append({"source": "cdp_log", "level": ent.get("level", "info"), "text": str(ent.get("text", ""))[:500], "url": ent.get("url", "")})
+    out = {"ok": True, "buffered_count": len(buffered), "live_count": len(live), "logs": buffered + live}
+elif op == "network_events":
+    cdp("Network.enable")
+    dur = max(50, min(5000, int(params.get("duration_ms", 300))))
+    perf_js = "performance.getEntriesByType('resource').slice(-100).map(e=>({name:e.name,initiatorType:e.initiatorType,duration_ms:Math.round(e.duration),transferSize:e.transferSize||0,responseStatus:e.responseStatus||null}))"
+    r = cdp("Runtime.evaluate", expression=perf_js, returnByValue=True)
+    resources = r.get("result", {}).get("value") or []
+    drain_events(dur)
+    live = []
+    for ev in events:
+        m = ev.get("method", "")
+        p = ev.get("params", {})
+        if m == "Network.requestWillBeSent":
+            rq = p.get("request", {})
+            live.append({"event": "request", "requestId": p.get("requestId"), "method": rq.get("method"), "url": rq.get("url")})
+        elif m == "Network.responseReceived":
+            rs = p.get("response", {})
+            live.append({"event": "response", "requestId": p.get("requestId"), "status": rs.get("status"), "url": rs.get("url"), "mimeType": rs.get("mimeType")})
+    out = {"ok": True, "resource_count": len(resources), "live_count": len(live), "resources": resources, "events": live}
 elif op == "screenshot":
     r = cdp("Page.captureScreenshot", format="png")
     raw = base64.b64decode(r["data"])
@@ -588,13 +905,36 @@ impl ToolHandler for BrowserTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "browser".into(),
-                description: "Automate a managed Chromium CDP browser or attached Chrome extension bridge (action: start|status|navigate|snapshot|click|type_text|type|eval|scroll|press_key|screenshot|tabs|stop; target: managed|attached).".into(),
+                description: "Automate a managed Chromium CDP browser or attached Chrome extension bridge (action: start|status|navigate|snapshot|click|type_text|type|eval|scroll|press_key|hover|drag|select_option|set_checked|wait_for|accessibility_snapshot|console_logs|network_events|screenshot|tabs|switch_page|stop; target: managed|attached).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["start", "status", "navigate", "snapshot", "click", "type_text", "type", "eval", "scroll", "press_key", "screenshot", "tabs", "stop"]
+                            "enum": [
+                                "start",
+                                "status",
+                                "navigate",
+                                "snapshot",
+                                "click",
+                                "type_text",
+                                "type",
+                                "eval",
+                                "scroll",
+                                "press_key",
+                                "hover",
+                                "drag",
+                                "select_option",
+                                "set_checked",
+                                "wait_for",
+                                "accessibility_snapshot",
+                                "console_logs",
+                                "network_events",
+                                "screenshot",
+                                "tabs",
+                                "switch_page",
+                                "stop"
+                            ]
                         },
                         "target": {
                             "type": "string",
@@ -602,13 +942,22 @@ impl ToolHandler for BrowserTool {
                             "description": "Execution target: 'managed' local Chromium CDP (default) or 'attached' native browser extension bridge"
                         },
                         "url": { "type": "string" },
+                        "url_substring": { "type": "string", "description": "URL or title substring for action=switch_page" },
+                        "tab_index": { "type": "integer", "description": "0-based tab index for action=switch_page" },
+                        "target_id": { "type": "string", "description": "Explicit CDP target ID for action=switch_page" },
                         "selector": { "type": "string" },
+                        "source_selector": { "type": "string", "description": "Drag source CSS selector for action=drag" },
+                        "target_selector": { "type": "string", "description": "Drag target CSS selector for action=drag" },
                         "text": { "type": "string" },
+                        "value": { "type": "string", "description": "Option value for action=select_option" },
+                        "label": { "type": "string", "description": "Option label for action=select_option" },
+                        "checked": { "type": "boolean", "description": "Checked state for action=set_checked (default true)" },
                         "expression": { "type": "string", "description": "JavaScript expression for action=eval" },
                         "delta_y": { "type": "integer", "description": "Vertical scroll delta in pixels for action=scroll" },
                         "delta_x": { "type": "integer", "description": "Optional horizontal scroll delta in pixels for action=scroll" },
                         "key": { "type": "string", "description": "Key name for action=press_key (e.g. 'Enter', 'Escape', 'Tab')" },
-                        "timeout_ms": { "type": "integer", "description": "Wait timeout in ms for target=attached (default 15000)" },
+                        "duration_ms": { "type": "integer", "description": "Capture duration in ms for console_logs/network_events (default 300)" },
+                        "timeout_ms": { "type": "integer", "description": "Wait timeout in ms for wait_for or target=attached" },
                         "headless": { "type": "boolean", "description": "Default true" }
                     },
                     "required": ["action"]
@@ -655,6 +1004,15 @@ impl ToolHandler for BrowserTool {
                     | "snapshot"
                     | "scroll"
                     | "press_key"
+                    | "hover"
+                    | "drag"
+                    | "select_option"
+                    | "set_checked"
+                    | "wait_for"
+                    | "accessibility_snapshot"
+                    | "console_logs"
+                    | "network_events"
+                    | "switch_page"
             )
         {
             let timeout_ms = args
@@ -733,15 +1091,34 @@ impl ToolHandler for BrowserTool {
             "tabs" => match ctx.browser.list_tabs() {
                 Ok(tabs) => {
                     let count = tabs.len();
+                    let active = ctx.browser.active_target_id();
                     ToolExecutionResult::ok_structured(
-                        json!({"count": count, "tabs": tabs}),
+                        json!({"count": count, "active_target_id": active, "tabs": tabs}),
                         format!("Listed {count} browser tab(s)"),
                     )
                 }
                 Err(e) => ToolExecutionResult::err_structured("browser_error", e, None),
             },
-            "navigate" | "snapshot" | "click" | "type_text" | "type" | "eval" | "scroll"
-            | "press_key" => {
+            "switch_page" => match ctx.browser.switch_page(&args) {
+                Ok(v) => ToolExecutionResult::ok_structured(v, "Switched active browser page"),
+                Err(e) => ToolExecutionResult::err_structured("browser_switch_error", e, None),
+            },
+            "navigate"
+            | "snapshot"
+            | "click"
+            | "type_text"
+            | "type"
+            | "eval"
+            | "scroll"
+            | "press_key"
+            | "hover"
+            | "drag"
+            | "select_option"
+            | "set_checked"
+            | "wait_for"
+            | "accessibility_snapshot"
+            | "console_logs"
+            | "network_events" => {
                 if action == "press_key"
                     && args
                         .get("key")

@@ -26,22 +26,42 @@ pub mod skills;
 pub mod updater;
 
 pub use automations_messaging::{
-    build_outbound_webhook_payload, parse_inbound_webhook_payload, verify_inbound_webhook_token,
+    build_outbound_webhook_payload, handle_inbound_webhook_turn, hmac_sha256,
+    parse_inbound_webhook_payload, send_channel_message, sign_dingtalk_webhook_url,
+    spawn_messaging_channel_worker, verify_inbound_webhook_token,
 };
 pub use data_sources::{
-    list_data_source_usage, record_data_source_usage, test_data_source_connection,
+    index_data_source, list_data_source_usage, record_data_source_usage, split_text_into_chunks,
+    test_data_source_connection, DocumentSearchTool,
 };
-pub use goal_worker::GoalWorker;
+pub use goal_worker::{retry_backoff_ms, spawn_background_goal_worker, GoalWorker};
+pub use goals_sops::{
+    GoalCompleteTool, GoalRecord as ExtendedGoalRecord, SopRunRecord, SopRunUpdateTool,
+    SopStepProgress,
+};
 pub use local_models_plugins::{
-    list_desktop_plugin_pages, list_harness_plugins, probe_engine_status, probe_hardware,
-    recommend_local_models, LocalModelProcessManager,
+    install_plugin_package, list_desktop_plugin_pages, list_harness_plugins, probe_engine_status,
+    probe_hardware, recommend_local_models, reconcile_enabled_plugins, run_engine_setup,
+    run_engine_setup_with_opt_in, search_hub_models, LocalModelProcessManager,
+    ModelDownloadManager, ModelDownloadPlan, ModelDownloadState, PluginRuntimeSummary,
 };
-pub use memory::MemoryWorker;
-pub use rooms_peers::{built_in_role_templates, parse_expert_mentions, RoomRuntime};
+pub use memory::{
+    load_memory_metadata, save_memory_v2, search_memory_v2, ConversationRecallTool, MemoryKind,
+    MemoryMetadata, MemoryOwner, MemoryProvenance, MemoryRecordV2, MemoryScope,
+    MemorySearchFilter, MemorySensitivity, MemoryWorker,
+};
+pub use rooms_peers::{
+    attach_conversation, built_in_role_templates, deactivate_participant,
+    delegate_remote_expert_peer, join_room, list_active_room_experts, parse_expert_mentions,
+    rejoin_room, RoomRuntime,
+};
 pub use scheduler::{
     automation_stats_summary, cron_matches, spawn_background_scheduler, AutomationScheduler,
 };
-pub use skills::prepare_github_skill_package;
+pub use skills::{
+    extract_manifest_supporting_files, prepare_github_skill_package,
+    validate_skill_relative_file_path, SkillSkipTool,
+};
 pub use updater::{
     check_for_update, current_update_target, download_update_package, is_newer_version,
     verify_artifact_sha256, UpdateCheckResult, UpdateManifest,
@@ -99,7 +119,7 @@ impl ModulesSuite {
         a2ui::register_tools(self, registry);
         skills::register_tools(self, registry);
         memory::register_tools(self, registry);
-        code_memory::register_tools(self, registry);
+        code_memory::register_code_memory_tools(registry, Arc::new(self.store.clone()));
         goals_sops::register_tools(self, registry);
         rooms_peers::register_tools(self, registry);
         data_sources::register_tools(self, registry);
@@ -129,6 +149,20 @@ mod tests {
         let suite = Arc::new(ModulesSuite::new(store, dir.path().to_path_buf(), None));
         let mut reg = ToolRegistry::with_builtin_tools();
         suite.register_tools(&mut reg);
+        for expected_tool in [
+            "conversation_recall",
+            "document_search",
+            "goal_complete",
+            "sop_run_update",
+            "skill_skip",
+            "codebase_index",
+            "codebase_search",
+        ] {
+            assert!(
+                reg.get(expected_tool).is_some(),
+                "expected tool '{expected_tool}' to be registered"
+            );
+        }
         let ctx = ToolContext::new(dir.path());
 
         // 1. Skills

@@ -644,6 +644,7 @@ final class MacWorkspaceModel {
     private var userInputWaitsByConversation: [String: [MacRemoteUserInputRequest]] = [:]
     private var deferredUserInputWaitIDs: Set<String> = []
     @ObservationIgnored private var v2UserInputRequestIDs: Set<String> = []
+    @ObservationIgnored private var v2LocalUserInputRequestIDs: Set<String> = []
     private(set) var v2UISurfacesByConversation: [String: [String]] = [:]
     private(set) var v2SessionIDByConversation: [String: String] = [:]
     private(set) var v2CompactionSummary: String?
@@ -5841,6 +5842,7 @@ final class MacWorkspaceModel {
         guard request.isOpen, !resolvingUserInputWaitIDs.contains(request.id) else { return }
         let conversationID = request.conversationID
         if v2UserInputRequestIDs.contains(request.id) {
+            let usesLocalRuntime = v2LocalUserInputRequestIDs.contains(request.id)
             resolvingUserInputWaitIDs.insert(request.id)
             let answerText: String? = decline ? nil : {
                 let first = answers.first
@@ -5854,12 +5856,21 @@ final class MacWorkspaceModel {
             Task {
                 defer { resolvingUserInputWaitIDs.remove(request.id) }
                 do {
-                    try await remoteHost.v2RespondUserInput(
-                        conversationID: conversationID,
-                        requestID: request.id,
-                        answer: answerText
-                    )
+                    if usesLocalRuntime {
+                        try await localAgentRuntime.respondUserInput(
+                            conversationID: conversationID,
+                            requestID: request.id,
+                            answer: answerText
+                        )
+                    } else {
+                        try await remoteHost.v2RespondUserInput(
+                            conversationID: conversationID,
+                            requestID: request.id,
+                            answer: answerText
+                        )
+                    }
                     v2UserInputRequestIDs.remove(request.id)
+                    v2LocalUserInputRequestIDs.remove(request.id)
                     var waits = userInputWaitsByConversation[conversationID, default: []]
                     waits.removeAll { $0.id == request.id }
                     userInputWaitsByConversation[conversationID] = waits
@@ -5971,7 +5982,9 @@ final class MacWorkspaceModel {
             ? localControlSessionID(conversationID: conversationID, generationID: activeGenerationID)
             : conversationID
         let sessionMatches: Bool
-        if request.sessionID == expectedSessionID {
+        if usesLocalRuntime, request.nonce.hasPrefix("v2-"), request.sessionID == conversationID {
+            sessionMatches = true
+        } else if request.sessionID == expectedSessionID {
             sessionMatches = true
         } else if request.isDelegatedSubagentRequest {
             sessionMatches = usesLocalRuntime
@@ -8133,6 +8146,11 @@ final class MacWorkspaceModel {
                 if let userInputRequest = event.userInputRequest,
                    cancellationRequestedGenerationID != generationID {
                     v2UserInputRequestIDs.insert(requestID)
+                    if permissionUsesLocalRuntime {
+                        v2LocalUserInputRequestIDs.insert(requestID)
+                    } else {
+                        v2LocalUserInputRequestIDs.remove(requestID)
+                    }
                     var waits = userInputWaitsByConversation[conversationID, default: []]
                     waits.removeAll { $0.id == userInputRequest.id }
                     waits.append(userInputRequest)

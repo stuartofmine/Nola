@@ -305,6 +305,16 @@ fn optimized_tools_output_store_multiline_edit_diagnostics_grep_and_tool_search(
         "fn alpha() {\r\n    let x = 1;\r\n}\r\nfn beta() {\r\n    let x = 1;\r\n}\r\n",
     )
     .unwrap();
+    // Must read_file first before edit_file!
+    let unread_edit = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "code.rs", "old_text": "let x = 1;", "new_text": "let x = 2;"}),
+    );
+    assert!(unread_edit.is_error);
+    assert_eq!(unread_edit.payload.to_model_value()["error"], "read_required");
+    assert!(!reg.execute("read_file", &ctx, json!({"path": "code.rs"})).is_error);
+
     let amb = reg.execute(
         "edit_file",
         &ctx,
@@ -755,4 +765,530 @@ fn browser_attached_target_routing_and_env_scrubbing() {
     handle.join().unwrap();
     assert!(!res.is_error, "attached browser call failed: {:?}", res.payload);
     assert_eq!(res.payload.to_model_value()["routed_action"], "snapshot");
+}
+
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_seatbelt_sandbox_isolates_writes_and_network() {
+    assert!(
+        crate::probe_seatbelt_available(),
+        "expected /usr/bin/sandbox-exec to be available on macOS"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let git_hooks = dir.path().join(".git/hooks");
+    std::fs::create_dir_all(&git_hooks).unwrap();
+    std::fs::write(git_hooks.join("pre-commit"), "#!/bin/sh\n").unwrap();
+
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.sandbox_mode = SandboxMode::Required;
+    ctx.permission_profile = nola_types::PermissionProfile::Cautious;
+    ctx.network_allowed = false;
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Writing inside workspace succeeds under Seatbelt
+    let ok = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "echo sandbox_ok > inside.txt && cat inside.txt"}),
+    );
+    assert!(!ok.is_error, "seatbelt write inside workspace failed: {:?}", ok.payload);
+    assert_eq!(ok.payload.to_model_value()["exit_code"], 0);
+    assert!(ok.payload.to_model_value()["stdout"]
+        .as_str()
+        .unwrap()
+        .contains("sandbox_ok"));
+
+    // Writing to protected .git/hooks fails under Seatbelt
+    let hook_blocked = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "echo pwn >> .git/hooks/pre-commit"}),
+    );
+    assert_ne!(
+        hook_blocked.payload.to_model_value()["exit_code"],
+        0,
+        "seatbelt must block writes to .git/hooks"
+    );
+
+    // Writing outside workspace and outside /tmp/TMPDIR (e.g. /var/tmp) is denied
+    let outside_probe = format!("/var/tmp/nola_seatbelt_denied_{}", nola_types::new_id());
+    let out_blocked = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": format!("echo nope > {outside_probe}")}),
+    );
+    assert_ne!(
+        out_blocked.payload.to_model_value()["exit_code"],
+        0,
+        "seatbelt must block writes outside workspace and tmp"
+    );
+    assert!(!std::path::Path::new(&outside_probe).exists());
+
+    // Network denied when network_allowed == false
+    let net_blocked = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "python3 -c 'import socket; s = socket.socket(); s.bind((\"127.0.0.1\", 0))'"}),
+    );
+    assert_ne!(
+        net_blocked.payload.to_model_value()["exit_code"],
+        0,
+        "seatbelt must deny network when network_allowed=false"
+    );
+}
+
+#[test]
+fn file_continuity_guards_multi_edit_overlap_append_outline_and_persistent_checkpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. write_file includes (sha256: <hex>) in summary and grants Full coverage for immediate edit/patch
+    let w1 = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "authored.txt", "content": "line1\nline2\nline3\n"}),
+    );
+    assert!(!w1.is_error);
+    let sha1 = nola_types::sha256_hex(b"line1\nline2\nline3\n");
+    assert!(w1.payload.ui_summary().contains(&format!("sha256: {sha1}")));
+
+    // Immediate edit_file without read_file succeeds because write_file granted Full coverage
+    let e_after_w = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "authored.txt", "old_text": "line2", "new_text": "LINE_TWO"}),
+    );
+    assert!(!e_after_w.is_error, "authored file edit failed: {:?}", e_after_w.payload);
+
+    // 2. Blind overwrite of unread pre-existing file fails with existing_file_version_required
+    std::fs::write(dir.path().join("pre.txt"), "original pre content\n").unwrap();
+    let pre_sha = nola_types::sha256_hex(b"original pre content\n");
+    let blind = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "pre.txt", "content": "clobbered\n"}),
+    );
+    assert!(blind.is_error);
+    assert_eq!(
+        blind.payload.to_model_value()["error"],
+        "existing_file_version_required"
+    );
+    assert_eq!(blind.payload.to_model_value()["actual_sha256"], pre_sha);
+
+    // Passing matching expected_sha256 succeeds
+    let with_sha = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "pre.txt", "content": "updated safely\n", "expected_sha256": pre_sha}),
+    );
+    assert!(!with_sha.is_error);
+
+    // External modification after write causes edit_file AND write_file to fail with file_modified_externally
+    std::fs::write(dir.path().join("pre.txt"), "external change\n").unwrap();
+    let stale_edit = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "pre.txt", "old_text": "external", "new_text": "mine"}),
+    );
+    assert!(stale_edit.is_error);
+    assert_eq!(
+        stale_edit.payload.to_model_value()["error"],
+        "file_modified_externally"
+    );
+    let stale_write = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "pre.txt", "content": "overwrite stale\n"}),
+    );
+    assert!(stale_write.is_error);
+    assert_eq!(
+        stale_write.payload.to_model_value()["error"],
+        "file_modified_externally"
+    );
+
+    // 3. apply_patch checks per-hunk old-line range coverage
+    let numbered_lines: String = (1..=15).map(|i| format!("row_{i}\n")).collect();
+    std::fs::write(dir.path().join("rows.txt"), &numbered_lines).unwrap();
+    // Read only lines 1..=5
+    let r_part = reg.execute(
+        "read_file",
+        &ctx,
+        json!({"path": "rows.txt", "start_line": 1, "end_line": 5}),
+    );
+    assert!(!r_part.is_error);
+    // Patching line 12 MUST fail with unread_patch_range
+    let patch_far = "--- a/rows.txt\n+++ b/rows.txt\n@@ -11,3 +11,3 @@\n row_11\n-row_12\n+ROW_TWELVE\n row_13\n";
+    let p_fail = reg.execute("apply_patch", &ctx, json!({"patch": patch_far}));
+    assert!(p_fail.is_error);
+    assert_eq!(
+        p_fail.payload.to_model_value()["error"],
+        "unread_patch_range"
+    );
+    // Read lines 10..=15 -> now patching line 12 succeeds!
+    assert!(!reg
+        .execute(
+            "read_file",
+            &ctx,
+            json!({"path": "rows.txt", "start_line": 10, "end_line": 15}),
+        )
+        .is_error);
+    let p_ok = reg.execute("apply_patch", &ctx, json!({"patch": patch_far}));
+    assert!(!p_ok.is_error, "expected patch to succeed after reading range: {:?}", p_ok.payload);
+    assert!(std::fs::read_to_string(dir.path().join("rows.txt"))
+        .unwrap()
+        .contains("ROW_TWELVE"));
+
+    // 4. multi_edit_file rejects overlapping edits against original snapshot without mutating
+    let _ = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "multi.txt", "content": "alpha beta gamma\n"}),
+    );
+    let ov = reg.execute(
+        "multi_edit_file",
+        &ctx,
+        json!({
+            "path": "multi.txt",
+            "edits": [
+                {"old_text": "alpha beta", "new_text": "A B"},
+                {"old_text": "beta gamma", "new_text": "B G"}
+            ]
+        }),
+    );
+    assert!(ov.is_error);
+    assert_eq!(ov.payload.to_model_value()["error"], "overlapping_edits");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("multi.txt")).unwrap(),
+        "alpha beta gamma\n"
+    );
+
+    // 5. append_file & file_outline
+    let app = reg.execute(
+        "append_file",
+        &ctx,
+        json!({"path": "notes.md", "content": "# Title\n## Section A\nBody\n"}),
+    );
+    assert!(!app.is_error && app.has_changed_version());
+    let app2 = reg.execute(
+        "append_file",
+        &ctx,
+        json!({"path": "notes.md", "content": "### Sub", "ensure_newline": true}),
+    );
+    assert!(!app2.is_error);
+    let outl = reg.execute("file_outline", &ctx, json!({"path": "notes.md"}));
+    assert!(!outl.is_error);
+    assert_eq!(outl.payload.to_model_value()["count"], 3);
+    assert_eq!(outl.payload.to_model_value()["entries"][0]["kind"], "h1");
+
+    // 6. Persistent CheckpointManager: survives restart, diff, restore preserves unrelated files, undo & redo!
+    std::fs::write(dir.path().join("tracked.txt"), "v1\n").unwrap();
+    let cp1 = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "create", "label": "baseline"}),
+    );
+    assert!(!cp1.is_error);
+    let cp1_id = cp1.payload.to_model_value()["checkpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(dir
+        .path()
+        .join(".nola/checkpoints")
+        .join(&cp1_id)
+        .join("manifest.json")
+        .is_file());
+
+    // Edit tracked.txt AND create an unrelated file outside checkpoint
+    std::fs::write(dir.path().join("tracked.txt"), "v2\n").unwrap();
+    std::fs::write(dir.path().join("unrelated_user_file.txt"), "keep me!\n").unwrap();
+
+    // Simulate process restart with a brand-new ToolContext / CheckpointManager!
+    let restarted_ctx = ToolContext::new(dir.path());
+    let listed = reg.execute("workspace_checkpoint", &restarted_ctx, json!({"action": "list"}));
+    assert!(!listed.is_error);
+    assert_eq!(listed.payload.to_model_value()["count"], 1);
+
+    let diff = reg.execute(
+        "workspace_checkpoint",
+        &restarted_ctx,
+        json!({"action": "diff", "checkpoint_id": cp1_id}),
+    );
+    assert!(!diff.is_error);
+    assert_eq!(
+        diff.payload.to_model_value()["modified"][0]["path"],
+        "tracked.txt"
+    );
+
+    // Restore cp1 -> tracked.txt returns to v1, unrelated_user_file.txt is NOT deleted!
+    let restored = reg.execute(
+        "workspace_checkpoint",
+        &restarted_ctx,
+        json!({"action": "restore", "checkpoint_id": cp1_id}),
+    );
+    assert!(!restored.is_error);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+        "v1\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("unrelated_user_file.txt")).unwrap(),
+        "keep me!\n"
+    );
+
+    // Undo reverts restore back to v2; Redo re-applies v1!
+    let undone = reg.execute("workspace_checkpoint", &restarted_ctx, json!({"action": "undo"}));
+    assert!(!undone.is_error, "undo failed: {:?}", undone.payload);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+        "v2\n"
+    );
+    let redone = reg.execute("workspace_checkpoint", &restarted_ctx, json!({"action": "redo"}));
+    assert!(!redone.is_error, "redo failed: {:?}", redone.payload);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+        "v1\n"
+    );
+}
+
+#[test]
+fn git_worktree_integrate_and_blame_range() {
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run = |cwd: &std::path::Path, args: &[&str]| {
+        let out = Command::new("git").args(args).current_dir(cwd).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run(dir.path(), &["init", "-b", "main"]);
+    run(dir.path(), &["config", "user.name", "Nola Test"]);
+    run(dir.path(), &["config", "user.email", "test@nola.local"]);
+    std::fs::write(dir.path().join("file.txt"), "l1\nl2\nl3\nl4\nl5\n").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["commit", "-m", "initial"]);
+
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Custom blame line range
+    let bl = reg.execute(
+        "git",
+        &ctx,
+        json!({"action": "blame", "target": "file.txt", "start_line": 2, "end_line": 4}),
+    );
+    assert!(!bl.is_error, "blame failed: {:?}", bl.payload);
+    let bl_out = bl.payload.to_model_value()["output"].as_str().unwrap().to_string();
+    assert_eq!(bl_out.lines().count(), 3);
+
+    // Create worktree + commit clean non-conflicting change -> integrate cleanly
+    let wt_rel = "wt_clean";
+    let wt_create = reg.execute(
+        "git",
+        &ctx,
+        json!({"action": "worktree_create", "target": wt_rel, "branch": "feat-clean"}),
+    );
+    assert!(!wt_create.is_error, "wt create failed: {:?}", wt_create.payload);
+    let wt_path = dir.path().join(wt_rel);
+    std::fs::write(wt_path.join("feature.txt"), "new feature\n").unwrap();
+    run(&wt_path, &["add", "feature.txt"]);
+    run(&wt_path, &["commit", "-m", "add feature"]);
+
+    let integ = reg.execute(
+        "git",
+        &ctx,
+        json!({"action": "worktree_integrate", "target": wt_rel, "strategy": "merge"}),
+    );
+    assert!(!integ.is_error, "worktree_integrate failed: {:?}", integ.payload);
+    assert!(dir.path().join("feature.txt").is_file());
+    assert!(integ.has_changed_version());
+
+    // Conflicting worktree integration MUST refuse and cleanly roll back!
+    let wt_conflict_rel = "wt_conflict";
+    assert!(!reg
+        .execute(
+            "git",
+            &ctx,
+            json!({"action": "worktree_create", "target": wt_conflict_rel, "branch": "feat-conflict"}),
+        )
+        .is_error);
+    let wt_c_path = dir.path().join(wt_conflict_rel);
+    std::fs::write(wt_c_path.join("file.txt"), "conflict from worktree\n").unwrap();
+    run(&wt_c_path, &["add", "file.txt"]);
+    run(&wt_c_path, &["commit", "-m", "wt conflict"]);
+
+    // Advance main with conflicting edit on same line
+    std::fs::write(dir.path().join("file.txt"), "conflict from main\n").unwrap();
+    run(dir.path(), &["add", "file.txt"]);
+    run(dir.path(), &["commit", "-m", "main conflict"]);
+
+    let conflict_res = reg.execute(
+        "git",
+        &ctx,
+        json!({"action": "worktree_integrate", "target": wt_conflict_rel, "strategy": "merge"}),
+    );
+    assert!(conflict_res.is_error);
+    let cv = conflict_res.payload.to_model_value();
+    assert_eq!(cv["error"], "integration_conflict");
+    assert_eq!(cv["rolled_back"], json!(true));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+        "conflict from main\n"
+    );
+}
+
+#[test]
+fn binary_docs_magic_byte_sniffing_docx_and_attachment_extraction() {
+    use std::io::Write;
+
+    // Build a real in-memory .docx ZIP with paragraphs + a table
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("word/document.xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Hello &amp; Welcome</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Col A</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Col B</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>"#,
+        )
+        .unwrap();
+        zw.finish().unwrap();
+    }
+    let docx_bytes = buf.into_inner();
+
+    // Magic-byte sniffing recognizes DOCX even with an unrelated filename!
+    let extracted = crate::extract_document_text_from_bytes("mystery.bin", "", &docx_bytes)
+        .expect("expected DOCX extraction via magic bytes");
+    assert!(extracted.contains("Hello & Welcome"), "got: {extracted}");
+    assert!(extracted.contains("Col A | Col B"), "got: {extracted}");
+
+    // read_file reads .docx (and even .bin with DOCX magic bytes!) cleanly
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("report.bin"), &docx_bytes).unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+    let r = reg.execute("read_file", &ctx, json!({"path": "report.bin"}));
+    assert!(!r.is_error, "docx read_file failed: {:?}", r.payload);
+    assert_eq!(r.payload.to_model_value()["format"], "docx");
+    assert!(r.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("Col A | Col B"));
+
+    // UTF-8 text extraction works; PNG magic bytes return None
+    assert_eq!(
+        crate::extract_document_text_from_bytes("note.txt", "text/plain", b"plain text"),
+        Some("plain text".to_string())
+    );
+    assert_eq!(
+        crate::extract_document_text_from_bytes("pic.dat", "", b"\x89PNG\r\n\x1a\n0000"),
+        None
+    );
+}
+
+#[test]
+fn code_mode_tools_proxy_all_tools_cap_and_lsp_browser_extensions() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. code_exec with host dispatcher exposes frozen ALL_TOOLS + tools.<name>(args)
+    let ctx = ToolContext::new(dir.path()).with_code_mode_dispatcher(
+        std::sync::Arc::new(|name, args| {
+            if name == "echo_tool" {
+                Ok(json!({"echoed": args["val"]}))
+            } else {
+                Err(format!("unknown host tool {name}"))
+            }
+        }),
+        vec!["echo_tool".into(), "read_file".into()],
+    );
+
+    let ok = reg.execute(
+        "code_exec",
+        &ctx,
+        json!({
+            "code": "const frozen = Object.isFrozen(ALL_TOOLS); const r = tools.echo_tool({val: 21}); return {frozen, list: ALL_TOOLS, doubled: r.echoed * 2};"
+        }),
+    );
+    assert!(!ok.is_error, "code_exec tools proxy failed: {:?}", ok.payload);
+    let ov = ok.payload.to_model_value();
+    assert_eq!(ov["result"]["frozen"], json!(true));
+    assert_eq!(ov["result"]["doubled"], json!(42));
+    assert_eq!(ov["tool_calls_used"], json!(1));
+
+    // Recursive code_exec call is blocked
+    let rec = reg.execute(
+        "code_exec",
+        &ctx,
+        json!({"code": "return tools.code_exec({code: 'return 1;'});"}),
+    );
+    assert!(rec.is_error);
+
+    // Bounded max tool calls (24) is enforced
+    let spam = reg.execute(
+        "code_exec",
+        &ctx,
+        json!({"code": "for (let i = 0; i < 30; i++) { tools.echo_tool({val: i}); } return true;"}),
+    );
+    assert!(spam.is_error);
+    assert!(spam
+        .payload
+        .to_model_value()["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("24"));
+
+    // 2. LSP list_servers includes Swift (sourcekit-lsp) and Kotlin (kotlin-language-server)
+    let lsp_list = reg.execute("lsp", &ctx, json!({"action": "list_servers"}));
+    assert!(!lsp_list.is_error, "lsp list_servers failed: {:?}", lsp_list.payload);
+    let servers = lsp_list.payload.to_model_value()["servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(servers.iter().any(|s| s["bin"] == "sourcekit-lsp"));
+    assert!(servers.iter().any(|s| s["bin"] == "kotlin-language-server"));
+
+    // collect_post_edit_diagnostics returns None gracefully for unsupported extension
+    assert!(crate::collect_post_edit_diagnostics(&ctx, &dir.path().join("foo.unknown")).is_none());
+
+    // 3. Browser schema includes all extended CDP actions
+    let browser_spec = reg.get("browser").unwrap().spec();
+    let actions = browser_spec.schema.parameters["properties"]["action"]["enum"]
+        .as_array()
+        .unwrap();
+    for expected_action in [
+        "switch_page",
+        "hover",
+        "drag",
+        "select_option",
+        "set_checked",
+        "wait_for",
+        "accessibility_snapshot",
+        "console_logs",
+        "network_events",
+    ] {
+        assert!(
+            actions.iter().any(|v| v == expected_action),
+            "browser schema missing action '{expected_action}'"
+        );
+    }
+    // should_pass_no_sandbox helper compiles and runs cleanly
+    let _ = crate::browser::should_pass_no_sandbox();
 }

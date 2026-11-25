@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, BufRead, IsTerminal, Read, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,30 +21,35 @@ use nola_engine::{
 };
 use nola_mcp::McpManager;
 use nola_modules::a2ui::register_scoped_tools as register_a2ui_tools;
+use nola_modules::code_memory::codebase_architecture;
 use nola_modules::local_models_plugins::{
-    find_binary_on_path, list_desktop_plugin_pages, list_harness_plugins, probe_engine_status,
-    probe_hardware, recommend_local_models, KIND_PLUGIN,
+    find_binary_on_path, install_plugin_package, list_desktop_plugin_pages, list_harness_plugins,
+    probe_engine_status, probe_hardware, recommend_local_models, reconcile_enabled_plugins,
+    run_engine_setup, search_hub_models, ModelDownloadManager, ModelDownloadPlan,
+    KIND_LOCAL_MODEL, KIND_PLUGIN,
 };
 use nola_modules::skills::{
     discover_skills_detailed, prepare_github_skill_package, set_skill_enabled,
 };
+use nola_modules::updater::verify_signed_feed_bytes;
 use nola_modules::{
-    check_for_update, download_update_package, AutomationScheduler, GoalWorker, ModulesSuite,
-    RoomRuntime,
+    check_for_update, download_update_package, list_data_source_usage, AutomationScheduler,
+    ExtendedGoalRecord, GoalWorker, ModulesSuite, RoomRuntime,
 };
 use nola_store::{Store, Vault, PROTOCOL_VERSION};
 use nola_tools::{OutputStore, SandboxMode, ToolContext, ToolRegistry};
 use nola_types::{
-    new_id, HostCapabilities, McpServerConfig, McpTransport, ModelCapabilities, ModelProtocol,
-    ModelRouteConfig, PermissionProfile, PluginRecord,
+    new_id, now_ms, sha256_hex, GoalStatus, HostCapabilities, LocalModelRecord, McpServerConfig,
+    McpTransport, ModelProtocol, ModelRouteConfig, PermissionProfile, PluginRecord,
 };
 use serde_json::{json, Value};
 
 use crate::config::{
-    apply_config_file, bind_store_vault_path, build_frozen_system_blocks, connection_has_api_key,
-    default_db_path, default_home_dir, default_vault_path, discover_config_path,
-    load_active_config, read_config_file_safe, resolve_model_route, save_applied_config,
-    strip_jsonc, AppliedConfig, ConnectionConfig, DefaultModelSelection, ModelEntry,
+    apply_config_file, bind_store_vault_path, build_frozen_system_blocks, default_db_path,
+    default_home_dir, default_vault_path, discover_config_path, load_active_config,
+    parse_applied_config_json, read_config_file_safe, redacted_applied_llm_config,
+    resolve_fallback_routes, resolve_model_route, save_applied_config, strip_jsonc, AppliedConfig,
+    ConnectionConfig, DefaultModelSelection, ModelEntry,
 };
 use crate::tui::TuiLaunchOptions;
 
@@ -89,14 +94,21 @@ struct CliOptions {
     json_schema: Option<String>,
     yes: bool,
     permission_profile: Option<PermissionProfile>,
+    profile: Option<String>,
     network_policy: Option<String>,
     force_tool_set: ForceToolSet,
     session_id: Option<String>,
     resume: bool,
+    continue_last: bool,
     max_steps: Option<usize>,
     prompt: Option<String>,
     model: Option<String>,
     endpoint: Option<String>,
+    reasoning_effort: Option<String>,
+    no_tools: bool,
+    output_file: Option<PathBuf>,
+    debug: bool,
+    lang: Option<String>,
     host_request_stdin: bool,
     allowed_dirs: Vec<PathBuf>,
     skill_dirs: Vec<PathBuf>,
@@ -134,6 +146,7 @@ fn is_known_subcommand(cmd: &str) -> bool {
             | "room"
             | "scheduler"
             | "update"
+            | "wiki"
             | "run"
             | "web"
             | "server"
@@ -178,6 +191,27 @@ fn subcommand_wants_help(cmd: &str, rest: &[String], double_dash_pos: Option<usi
                 | "--assets"
                 | "--transport"
                 | "--env"
+                | "--source"
+                | "--feed"
+                | "--target"
+                | "--objective"
+                | "--criteria"
+                | "--note"
+                | "--endpoint"
+                | "--model"
+                | "--model-name"
+                | "--protocol"
+                | "--provider"
+                | "--api-key"
+                | "--api-key-env"
+                | "--credential-ref"
+                | "--path"
+                | "--operation"
+                | "--op"
+                | "--plan-id"
+                | "--timeout"
+                | "--output"
+                | "-o"
         ) {
             skip_next = true;
             continue;
@@ -187,6 +221,50 @@ fn subcommand_wants_help(cmd: &str, rest: &[String], double_dash_pos: Option<usi
         }
     }
     false
+}
+
+fn list_execution_backends_json() -> Value {
+    let ver = env!("CARGO_PKG_VERSION");
+    let mut backends = vec![json!({
+        "id": "nola",
+        "display_name": "Nola",
+        "availability": "available",
+        "available": true,
+        "version": ver,
+        "diagnostic": Value::Null,
+        "models": [],
+        "default_model_id": Value::Null,
+        "capabilities": {
+            "supports_permission_bridge": true
+        }
+    })];
+    for (id, display_name, bin) in [
+        ("codex", "Codex", "codex"),
+        ("claude", "Claude Code", "claude"),
+        ("opencode", "OpenCode", "opencode"),
+    ] {
+        let found = find_binary_on_path(bin);
+        let available = found.is_some();
+        let diagnostic = if available {
+            Value::Null
+        } else {
+            json!(format!("{bin} binary not found on PATH"))
+        };
+        backends.push(json!({
+            "id": id,
+            "display_name": display_name,
+            "availability": if available { "available" } else { "unavailable" },
+            "available": available,
+            "version": Value::Null,
+            "diagnostic": diagnostic,
+            "models": [],
+            "default_model_id": Value::Null,
+            "capabilities": {
+                "supports_permission_bridge": false
+            }
+        }));
+    }
+    Value::Array(backends)
 }
 
 pub fn run_with_args(args: &[String]) -> Result<u8, String> {
@@ -224,17 +302,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                 return Ok(0);
             }
             "--list-execution-backends" => {
-                println!(
-                    "{}",
-                    json!([{
-                        "id": "nola-v2",
-                        "display_name": "Nola v2 Rust Engine",
-                        "available": true,
-                        "capabilities": {
-                            "supports_permission_bridge": true
-                        }
-                    }])
-                );
+                println!("{}", list_execution_backends_json());
                 return Ok(0);
             }
             "config" if rest.first().map(String::as_str) == Some("example") => {
@@ -267,7 +335,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "model-siwc-bridge" => {
                 return handle_model_siwc_bridge_cmd(&store, &db_path, &opts.positional[1..])
             }
-            "mcp" => return handle_mcp_cmd(&store, &db_path, &opts.positional[1..]),
+            "mcp" => return handle_mcp_cmd(&store, &db_path, &opts.positional[1..], opts.json_mode),
             "skills" | "skill" => return handle_skills_cmd(&store, &suite, &opts.positional[1..]),
             "memory" => return handle_memory_cmd(&store, &opts.positional[1..]),
             "sessions" | "session" => {
@@ -280,6 +348,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "goal" => return handle_goal_cmd(&store, &suite, &opts, &opts.positional[1..]),
             "room" => return handle_room_cmd(&store, &suite, &opts, &opts.positional[1..]),
             "scheduler" => return handle_scheduler_cmd(&store, &suite, &opts, &opts.positional[1..]),
+            "wiki" => return handle_wiki_cmd(&store, &workspace, &opts, &opts.positional[1..]),
             "run" => {
                 return handle_run_subcommand(
                     &store,
@@ -376,11 +445,159 @@ struct HostRunOverrides {
     api_key: Option<String>,
     protocol: Option<String>,
     permission_profile: Option<PermissionProfile>,
+    reasoning_effort: Option<String>,
     temperature: Option<f64>,
     top_p: Option<f64>,
     max_output_tokens: Option<usize>,
     max_iterations: Option<usize>,
     context_window_tokens: Option<usize>,
+}
+
+fn extract_reasoning_effort_from_req(req: &Value) -> Option<String> {
+    if let Some(s) = req
+        .get("reasoning_effort")
+        .or_else(|| req.get("reasoningEffort"))
+        .or_else(|| req.get("reasoning_tier"))
+        .or_else(|| req.get("reasoningTier"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(s.to_string());
+    }
+    if let Some(r) = req.get("reasoning") {
+        if let Some(s) = r.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(s.to_string());
+        }
+        if let Some(s) = r
+            .get("effort")
+            .or_else(|| r.get("value"))
+            .or_else(|| r.get("level"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(s.to_string());
+        }
+    }
+    if let Some(sel) = req.get("reasoning_selection").or_else(|| req.get("reasoningSelection")) {
+        if let Some(s) = sel
+            .get("effort")
+            .or_else(|| sel.get("value"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
+fn parse_permission_allow(msg: &Value) -> Option<bool> {
+    if let Some(b) = msg
+        .get("allow")
+        .or_else(|| msg.get("approved"))
+        .and_then(|v| v.as_bool())
+    {
+        return Some(b);
+    }
+    if let Some(d) = msg.get("decision").and_then(|v| v.as_str()) {
+        return Some(matches!(
+            d.trim().to_ascii_lowercase().as_str(),
+            "allow"
+                | "approve"
+                | "approved"
+                | "allow_once"
+                | "allow_session"
+                | "allow_conversation"
+                | "yes"
+        ));
+    }
+    if let Some(res) = msg.get("resolution") {
+        if let Some(b) = res
+            .get("allow")
+            .or_else(|| res.get("approved"))
+            .and_then(|v| v.as_bool())
+        {
+            return Some(b);
+        }
+        if let Some(d) = res.get("decision").and_then(|v| v.as_str()) {
+            return Some(matches!(
+                d.trim().to_ascii_lowercase().as_str(),
+                "allow"
+                    | "approve"
+                    | "approved"
+                    | "allow_once"
+                    | "allow_session"
+                    | "allow_conversation"
+                    | "yes"
+            ));
+        }
+        if res.get("type").and_then(|v| v.as_str()) == Some("intervention") {
+            return Some(false);
+        }
+    }
+    None
+}
+
+fn parse_user_input_answer(msg: &Value, req_id: Option<&str>) -> Option<Option<String>> {
+    let cancelled = msg
+        .get("cancelled")
+        .or_else(|| msg.get("canceled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if cancelled {
+        return Some(None);
+    }
+    if let Some(s) = msg
+        .get("answer")
+        .or_else(|| msg.get("response"))
+        .or_else(|| msg.get("text"))
+        .or_else(|| msg.get("value"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(Some(s.to_string()));
+    }
+    if let Some(answers) = msg.get("answers") {
+        if let Some(s) = answers.as_str() {
+            return Some(Some(s.to_string()));
+        }
+        if let Some(map) = answers.as_object() {
+            let found = req_id
+                .and_then(|id| map.get(id))
+                .or_else(|| map.values().next());
+            if let Some(v) = found {
+                if let Some(s) = v.as_str() {
+                    return Some(Some(s.to_string()));
+                }
+                if let Some(s) = v
+                    .get("text")
+                    .or_else(|| v.get("answer"))
+                    .or_else(|| v.get("value"))
+                    .and_then(|x| x.as_str())
+                {
+                    return Some(Some(s.to_string()));
+                }
+            }
+        }
+        if let Some(arr) = answers.as_array() {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|item| {
+                    item.as_str()
+                        .or_else(|| item.get("text").and_then(|v| v.as_str()))
+                        .or_else(|| item.get("answer").and_then(|v| v.as_str()))
+                        .or_else(|| item.get("value").and_then(|v| v.as_str()))
+                        .map(ToString::to_string)
+                })
+                .collect();
+            if !parts.is_empty() {
+                return Some(Some(parts.join("\n")));
+            }
+        }
+    }
+    None
 }
 
 fn handle_run_subcommand(
@@ -417,7 +634,7 @@ fn handle_run_subcommand(
             if !sid.is_empty() {
                 let _ = store.set_kv(
                     &format!("cancel_requested:{sid}"),
-                    &json!({"requested_at_ms": nola_types::now_ms()}),
+                    &json!({"requested_at_ms": now_ms()}),
                 );
             }
             println!(
@@ -490,6 +707,7 @@ fn handle_run_subcommand(
                     .ok()
                     .or_else(|| PermissionProfile::parse(s))
             });
+        let reasoning_effort = extract_reasoning_effort_from_req(&req);
         let temperature = req.get("temperature").and_then(|v| v.as_f64());
         let top_p = req
             .get("top_p")
@@ -520,6 +738,7 @@ fn handle_run_subcommand(
             api_key,
             protocol,
             permission_profile,
+            reasoning_effort,
             temperature,
             top_p,
             max_output_tokens,
@@ -578,6 +797,9 @@ fn execute_agent_turn(
     if let Some(ref endpoint_override) = opts.endpoint {
         route.endpoint = endpoint_override.clone();
     }
+    if let Some(ref effort) = opts.reasoning_effort {
+        route.reasoning_effort = Some(effort.clone());
+    }
     if let Some(ref ov) = overrides {
         if let Some(ref m) = ov.model_id {
             route.model = m.clone();
@@ -593,6 +815,9 @@ fn execute_agent_turn(
                 route.protocol = parsed;
             }
         }
+        if let Some(ref effort) = ov.reasoning_effort {
+            route.reasoning_effort = Some(effort.clone());
+        }
         if let Some(temp) = ov.temperature {
             route.temperature = Some(temp);
         }
@@ -605,6 +830,9 @@ fn execute_agent_turn(
         if let Some(cw) = ov.context_window_tokens {
             route.context_window = cw;
         }
+    }
+    if opts.no_tools {
+        route.capabilities.tool_calls = false;
     }
 
     let profile = overrides
@@ -624,39 +852,69 @@ fn execute_agent_turn(
         network_allowed,
     );
 
-    let mut registry = ToolRegistry::with_builtin_tools();
-    suite.register_tools(&mut registry);
+    let mut registry = if opts.no_tools {
+        ToolRegistry::default()
+    } else {
+        let mut r = ToolRegistry::with_builtin_tools();
+        suite.register_tools(&mut r);
+        r
+    };
 
     let cancel = Arc::new(AtomicBool::new(false));
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
     let hooks = HookRunner::load(workspace, home.as_deref(), workspace_trusted);
 
-    let session_id = overrides
+    let mut session_id = overrides
         .as_ref()
         .and_then(|o| o.session_id.clone())
         .or_else(|| opts.session_id.clone());
-    let resume = overrides
+    let mut resume = overrides
         .as_ref()
         .and_then(|o| o.resume)
-        .unwrap_or(opts.resume);
+        .unwrap_or(opts.resume || opts.continue_last);
+    if session_id.is_none() && opts.continue_last {
+        if let Ok(recent) = store.list_sessions(1) {
+            if let Some(last) = recent.into_iter().next() {
+                session_id = Some(last.id);
+                resume = true;
+            }
+        }
+    }
     let effective_session_id = if opts.host_request_stdin {
         Some(session_id.clone().unwrap_or_else(new_id))
     } else {
         session_id
     };
 
-    if opts.host_request_stdin {
+    if opts.debug {
+        let fallback_count = resolve_fallback_routes(&cfg).len();
+        eprintln!(
+            "[nola:debug] connection={} model={} protocol={} endpoint={} reasoning_effort={:?} profile={:?} tools={} fallbacks={} session={:?} resume={}",
+            route.connection_id,
+            route.model,
+            route.protocol.as_str(),
+            route.endpoint,
+            route.reasoning_effort,
+            profile,
+            !opts.no_tools,
+            fallback_count,
+            effective_session_id,
+            resume
+        );
+    }
+
+    if !opts.no_tools && opts.host_request_stdin {
         let host_id = crate::web_api::ensure_host_id(store);
-        let a2ui_session = effective_session_id
-            .as_deref()
-            .unwrap_or("default");
+        let a2ui_session = effective_session_id.as_deref().unwrap_or("default");
         register_a2ui_tools(suite, &mut registry, &host_id, a2ui_session);
     }
 
-    let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
-    subagents.configure_parent(route.clone(), policy.clone());
-    subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
-    register_subagent_tools(&subagents, &mut registry);
+    if !opts.no_tools {
+        let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
+        subagents.configure_parent(route.clone(), policy.clone());
+        subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
+        register_subagent_tools(&subagents, &mut registry);
+    }
 
     let planning = Arc::new(PlanningState::default());
     let stdout_lock = Arc::new(Mutex::new(()));
@@ -703,27 +961,11 @@ fn execute_agent_turn(
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string);
                 match msg_type.as_str() {
-                    "permission_response" | "approval_response" => {
-                        let allow = msg
-                            .get("allow")
-                            .or_else(|| msg.get("approved"))
-                            .and_then(|v| v.as_bool())
-                            .or_else(|| {
-                                msg.get("decision")
-                                    .and_then(|v| v.as_str())
-                                    .map(|d| {
-                                        matches!(
-                                            d.trim().to_ascii_lowercase().as_str(),
-                                            "allow"
-                                                | "approve"
-                                                | "approved"
-                                                | "allow_once"
-                                                | "allow_session"
-                                                | "yes"
-                                        )
-                                    })
-                            })
-                            .unwrap_or(false);
+                    "permission_response"
+                    | "approval_response"
+                    | "permission_decision"
+                    | "authorization" => {
+                        let allow = parse_permission_allow(&msg).unwrap_or(false);
                         let mut guard = pa_reader.lock().unwrap();
                         let sender = req_id
                             .as_deref()
@@ -739,22 +981,8 @@ fn execute_agent_turn(
                             let _ = tx.send(allow);
                         }
                     }
-                    "user_input_response" | "user_question_response" => {
-                        let cancelled = msg
-                            .get("cancelled")
-                            .or_else(|| msg.get("canceled"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let answer = if cancelled {
-                            None
-                        } else {
-                            msg.get("answer")
-                                .or_else(|| msg.get("response"))
-                                .or_else(|| msg.get("text"))
-                                .or_else(|| msg.get("value"))
-                                .and_then(|v| v.as_str())
-                                .map(ToString::to_string)
-                        };
+                    "user_input_response" | "user_question_response" | "user_answer" => {
+                        let answer = parse_user_input_answer(&msg, req_id.as_deref()).flatten();
                         let mut guard = pu_reader.lock().unwrap();
                         let sender = req_id
                             .as_deref()
@@ -773,7 +1001,42 @@ fn execute_agent_turn(
                     "cancel" => {
                         cancel_reader.store(true, Ordering::SeqCst);
                     }
-                    _ => {}
+                    _ => {
+                        // Accept macOS legacy / untyped control frames (e.g. `decision` / `resolution` or `answer`)
+                        if let Some(allow) = parse_permission_allow(&msg) {
+                            let mut guard = pa_reader.lock().unwrap();
+                            let sender = req_id
+                                .as_deref()
+                                .and_then(|id| guard.remove(id))
+                                .or_else(|| {
+                                    if guard.len() == 1 {
+                                        guard.keys().next().cloned().and_then(|k| guard.remove(&k))
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(tx) = sender {
+                                let _ = tx.send(allow);
+                            }
+                        } else if let Some(answer) =
+                            parse_user_input_answer(&msg, req_id.as_deref())
+                        {
+                            let mut guard = pu_reader.lock().unwrap();
+                            let sender = req_id
+                                .as_deref()
+                                .and_then(|id| guard.remove(id))
+                                .or_else(|| {
+                                    if guard.len() == 1 {
+                                        guard.keys().next().cloned().and_then(|k| guard.remove(&k))
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(tx) = sender {
+                                let _ = tx.send(answer);
+                            }
+                        }
+                    }
                 }
             }
             closed_reader.store(true, Ordering::SeqCst);
@@ -785,6 +1048,7 @@ fn execute_agent_turn(
         let closed_ap = Arc::clone(&stdin_closed);
         let cancel_ap = Arc::clone(&cancel);
         let out_lock_ap = Arc::clone(&stdout_lock);
+        let sid_ap = effective_session_id.clone().unwrap_or_default();
         let approval: ApprovalCallback = Arc::new(move |spec, args, reason| {
             if closed_ap.load(Ordering::SeqCst) || cancel_ap.load(Ordering::SeqCst) {
                 return false;
@@ -797,11 +1061,14 @@ fn execute_agent_turn(
                 println!(
                     "{}",
                     json!({
-                        "type": "permission_request",
+                        "type": "permission_requested",
                         "request_id": req_id,
+                        "call_id": req_id,
                         "tool": spec.schema.name,
+                        "tool_name": spec.schema.name,
                         "reason": reason,
-                        "arguments": args
+                        "arguments": args,
+                        "session_id": sid_ap
                     })
                 );
                 let _ = io::stdout().flush();
@@ -829,6 +1096,7 @@ fn execute_agent_turn(
         let closed_ui = Arc::clone(&stdin_closed);
         let cancel_ui = Arc::clone(&cancel);
         let out_lock_ui = Arc::clone(&stdout_lock);
+        let sid_ui = effective_session_id.clone().unwrap_or_default();
         let user_input_cb: UserInputCallback = Arc::new(move |question, options| {
             if closed_ui.load(Ordering::SeqCst) || cancel_ui.load(Ordering::SeqCst) {
                 return None;
@@ -841,10 +1109,11 @@ fn execute_agent_turn(
                 println!(
                     "{}",
                     json!({
-                        "type": "user_input_request",
+                        "type": "user_question",
                         "request_id": req_id,
                         "question": question,
-                        "options": options
+                        "options": options,
+                        "session_id": sid_ui
                     })
                 );
                 let _ = io::stdout().flush();
@@ -874,15 +1143,17 @@ fn execute_agent_turn(
         None
     };
 
-    register_planning_tools(store.clone(), &planning, &mut registry);
+    if !opts.no_tools {
+        register_planning_tools(store.clone(), &planning, &mut registry);
 
-    if let Ok(servers) = store.list_mcp_servers() {
-        let vault = Vault::open(default_vault_path(db_path)).ok().map(Arc::new);
-        let mcp = Arc::new(McpManager::new(vault));
-        for srv in servers.into_iter().filter(|s| s.enabled) {
-            if let Ok(tools) = mcp.discover_tools(&srv) {
-                for t in tools {
-                    registry.register(t);
+        if let Ok(servers) = store.list_mcp_servers() {
+            let vault = Vault::open(default_vault_path(db_path)).ok().map(Arc::new);
+            let mcp = Arc::new(McpManager::new(vault));
+            for srv in servers.into_iter().filter(|s| s.enabled) {
+                if let Ok(tools) = mcp.discover_tools(&srv) {
+                    for t in tools {
+                        registry.register(t);
+                    }
                 }
             }
         }
@@ -912,6 +1183,18 @@ fn execute_agent_turn(
     };
 
     let mut frozen_blocks = build_frozen_system_blocks(workspace, &cfg);
+    let effective_lang = opts.lang.clone().or_else(|| {
+        std::env::var("NOLA_LANG")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    });
+    if let Some(ref lang) = effective_lang {
+        frozen_blocks.push(nola_types::FrozenSystemBlock {
+            id: "host_locale".into(),
+            text: format!("Preferred response language/locale: {lang}"),
+        });
+    }
     if !opts.allowed_dirs.is_empty()
         || !opts.skill_dirs.is_empty()
         || opts.no_skills
@@ -997,6 +1280,16 @@ fn execute_agent_turn(
         .map_err(|e| e.to_string())?;
 
     ctx.pty.close_all();
+    if let Some(ref out_path) = opts.output_file {
+        reject_if_symlink(out_path)?;
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        fs::write(out_path, &res.final_text)
+            .map_err(|e| format!("failed to write --output '{}': {e}", out_path.display()))?;
+    }
     if !json_mode && !res.final_text.ends_with('\n') {
         println!();
     }
@@ -1020,6 +1313,10 @@ fn resolve_route_with_overrides(
     let ov_protocol = overrides
         .and_then(|o| o.protocol.as_deref())
         .and_then(ModelProtocol::parse);
+    let ov_reasoning_effort = overrides
+        .and_then(|o| o.reasoning_effort.clone())
+        .or_else(|| opts.reasoning_effort.clone())
+        .filter(|s| !s.trim().is_empty());
 
     // Apply explicit overrides BEFORE falling back to cfg.llm.default_model!
     if let (Some(ep), Some(m)) = (ov_endpoint.clone(), ov_model.clone()) {
@@ -1028,6 +1325,7 @@ fn resolve_route_with_overrides(
             .connections
             .iter()
             .find(|c| c.endpoint.trim_end_matches('/') == ep.trim_end_matches('/'));
+        let matched_entry = matched_conn.and_then(|c| c.models.iter().find(|e| e.id == m));
         let protocol = ov_protocol
             .or_else(|| {
                 matched_conn
@@ -1053,18 +1351,63 @@ fn resolve_route_with_overrides(
             protocol,
             model: m,
             api_key,
-            context_window: 128_000,
-            max_output_tokens: None,
-            temperature: Some(0.2),
-            top_p: None,
-            capabilities: ModelCapabilities::default(),
-            reasoning_effort: None,
+            context_window: matched_entry.and_then(|e| e.context_window).unwrap_or(128_000),
+            max_output_tokens: matched_entry.and_then(|e| e.max_output_tokens),
+            temperature: matched_entry.and_then(|e| e.temperature).or(Some(0.2)),
+            top_p: matched_entry.and_then(|e| e.top_p),
+            capabilities: matched_entry
+                .and_then(|e| e.capabilities.clone())
+                .unwrap_or_default(),
+            reasoning_effort: ov_reasoning_effort
+                .or_else(|| matched_entry.and_then(|e| e.reasoning_effort.clone())),
             prompt_cache_key: Some("nola-v2-host".into()),
         });
     }
 
-    if ov_endpoint.is_some() || ov_model.is_some() || ov_api_key.is_some() || ov_protocol.is_some() {
-        let mut route = resolve_model_route(cfg)?;
+    // If `--profile <conn_id>` names a configured model connection (and not a permission profile),
+    // use that connection as the base selection.
+    let base_cfg = if let Some(ref prof_name) = opts.profile {
+        if PermissionProfile::parse(prof_name).is_none() {
+            if let Some(conn) = cfg
+                .llm
+                .connections
+                .iter()
+                .find(|c| c.id == *prof_name)
+                .or_else(|| {
+                    cfg.connection_extras
+                        .iter()
+                        .find(|(_, ex)| ex.name.as_deref() == Some(prof_name.as_str()))
+                        .and_then(|(cid, _)| cfg.llm.connections.iter().find(|c| c.id == *cid))
+                })
+            {
+                let mut cloned = cfg.clone();
+                let chosen_model = ov_model
+                    .clone()
+                    .or_else(|| conn.models.first().map(|m| m.id.clone()))
+                    .unwrap_or_default();
+                cloned.llm.default_model = Some(DefaultModelSelection {
+                    connection: conn.id.clone(),
+                    model: chosen_model,
+                });
+                Some(cloned)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let effective_cfg = base_cfg.as_ref().unwrap_or(cfg);
+
+    if ov_endpoint.is_some()
+        || ov_model.is_some()
+        || ov_api_key.is_some()
+        || ov_protocol.is_some()
+        || ov_reasoning_effort.is_some()
+    {
+        let mut route = resolve_model_route(effective_cfg)?;
         if let Some(ep) = ov_endpoint {
             route.endpoint = ep;
         }
@@ -1077,14 +1420,22 @@ fn resolve_route_with_overrides(
         if let Some(p) = ov_protocol {
             route.protocol = p;
         }
+        if let Some(effort) = ov_reasoning_effort {
+            route.reasoning_effort = Some(effort);
+        }
         return Ok(route);
     }
 
-    resolve_model_route(cfg)
+    resolve_model_route(effective_cfg)
 }
 
 fn resolve_profile(opts: &CliOptions) -> PermissionProfile {
     opts.permission_profile
+        .or_else(|| {
+            opts.profile
+                .as_deref()
+                .and_then(PermissionProfile::parse)
+        })
         .or_else(|| {
             std::env::var("NOLA_PERMISSION_PROFILE")
                 .ok()
@@ -1133,6 +1484,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     | "plugins"
                     | "modules"
                     | "update"
+                    | "wiki"
                     | "web"
                     | "server"
             )
@@ -1158,6 +1510,25 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     | "--assets"
                     | "--transport"
                     | "--env"
+                    | "--source"
+                    | "--feed"
+                    | "--target"
+                    | "--objective"
+                    | "--criteria"
+                    | "--note"
+                    | "--endpoint"
+                    | "--model"
+                    | "--model-name"
+                    | "--protocol"
+                    | "--provider"
+                    | "--api-key"
+                    | "--api-key-env"
+                    | "--credential-ref"
+                    | "--path"
+                    | "--operation"
+                    | "--op"
+                    | "--plan-id"
+                    | "--timeout"
             )
         });
         if prev_takes_subcmd_value {
@@ -1184,6 +1555,13 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     opts.db_path = Some(PathBuf::from(args.get(i).ok_or("--db requires a path")?));
                 }
                 "--json" => opts.json_mode = true,
+                "--output" | "-o" => {
+                    i += 1;
+                    opts.output_file = Some(PathBuf::from(
+                        args.get(i).ok_or("--output requires a file path")?,
+                    ));
+                }
+                "--debug" => opts.debug = true,
                 _ => opts.positional.push(a.to_string()),
             }
             i += 1;
@@ -1217,6 +1595,21 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             }
             "--lang" => {
                 i += 1;
+                opts.lang = Some(
+                    args.get(i)
+                        .ok_or("--lang requires a locale")?
+                        .trim()
+                        .to_string(),
+                );
+            }
+            "--profile" => {
+                i += 1;
+                opts.profile = Some(
+                    args.get(i)
+                        .ok_or("--profile requires a profile name")?
+                        .trim()
+                        .to_string(),
+                );
             }
             "--yes" | "-y" => opts.yes = true,
             "--permission-profile" => {
@@ -1257,6 +1650,27 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 opts.session_id = Some(args.get(i).ok_or("--session requires an id")?.clone());
             }
             "--resume" => opts.resume = true,
+            "--continue" | "-c" => {
+                opts.continue_last = true;
+                opts.resume = true;
+            }
+            "--reasoning-effort" => {
+                i += 1;
+                opts.reasoning_effort = Some(
+                    args.get(i)
+                        .ok_or("--reasoning-effort requires a level (e.g. none|low|medium|high)")?
+                        .trim()
+                        .to_string(),
+                );
+            }
+            "--no-tools" => opts.no_tools = true,
+            "--output" | "-o" => {
+                i += 1;
+                opts.output_file = Some(PathBuf::from(
+                    args.get(i).ok_or("--output requires a file path")?,
+                ));
+            }
+            "--debug" => opts.debug = true,
             "--max-steps" | "--max-iterations" => {
                 i += 1;
                 let n: usize = args
@@ -1337,9 +1751,9 @@ fn default_config_path() -> PathBuf {
 }
 
 fn validate_config_file(path: &Path) -> Result<AppliedConfig, String> {
-    let raw = crate::config::read_config_file_safe(path)?;
+    let raw = read_config_file_safe(path)?;
     let clean = strip_jsonc(&raw);
-    let cfg: AppliedConfig = serde_json::from_str(&clean)
+    let cfg = parse_applied_config_json(&clean)
         .map_err(|e| format!("invalid config JSONC '{}': {e}", path.display()))?;
 
     let mut conn_ids = BTreeSet::new();
@@ -1399,29 +1813,8 @@ fn resolve_default_config_path(workspace: &Path) -> PathBuf {
     discover_config_path(workspace).unwrap_or_else(default_config_path)
 }
 
-fn redacted_connection_json(conn: &ConnectionConfig) -> Value {
-    json!({
-        "id": conn.id,
-        "endpoint": conn.endpoint,
-        "protocol": conn.protocol,
-        "provider": conn.provider,
-        "api_key_env": conn.api_key_env,
-        "has_api_key": connection_has_api_key(conn),
-        "models": conn.models
-    })
-}
-
 fn redacted_llm_json(cfg: &AppliedConfig) -> Value {
-    let connections: Vec<Value> = cfg
-        .llm
-        .connections
-        .iter()
-        .map(redacted_connection_json)
-        .collect();
-    json!({
-        "default_model": cfg.llm.default_model,
-        "connections": connections
-    })
+    redacted_applied_llm_config(cfg)
 }
 
 fn handle_init_cmd(workspace: &Path, args: &[String]) -> Result<u8, String> {
@@ -1614,16 +2007,461 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
         }
         Some("connections") => {
             let cfg = load_active_config(store);
-            let conns: Vec<Value> = cfg
-                .llm
-                .connections
-                .iter()
-                .map(redacted_connection_json)
-                .collect();
+            let llm = redacted_llm_json(&cfg);
+            let conns = llm.get("connections").cloned().unwrap_or_else(|| json!([]));
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({"connections": conns}))
                     .unwrap_or_else(|_| "{}".into())
+            );
+            Ok(0)
+        }
+        Some("discover") => {
+            let cfg = load_active_config(store);
+            let mut target_id: Option<&str> = None;
+            let mut save_discovered = false;
+            for a in &args[1..] {
+                if a == "--save" || a == "--apply" {
+                    save_discovered = true;
+                } else if !a.starts_with('-') && target_id.is_none() {
+                    target_id = Some(a.as_str());
+                }
+            }
+            let conn = match target_id {
+                Some(cid) => cfg
+                    .llm
+                    .connections
+                    .iter()
+                    .find(|c| c.id == cid)
+                    .ok_or_else(|| format!("connection '{cid}' not found"))?,
+                None => {
+                    let def_id = cfg
+                        .llm
+                        .default_model
+                        .as_ref()
+                        .map(|d| d.connection.as_str());
+                    def_id
+                        .and_then(|cid| cfg.llm.connections.iter().find(|c| c.id == cid))
+                        .or_else(|| cfg.llm.connections.first())
+                        .ok_or("no model connections configured")?
+                }
+            };
+            let mut probe_cfg = cfg.clone();
+            probe_cfg.llm.default_model = Some(DefaultModelSelection {
+                connection: conn.id.clone(),
+                model: conn
+                    .models
+                    .first()
+                    .map(|m| m.id.clone())
+                    .unwrap_or_else(|| "probe".into()),
+            });
+            let (protocol, api_key) = match resolve_model_route(&probe_cfg) {
+                Ok(route) => (route.protocol, route.api_key),
+                Err(_) => {
+                    let proto_raw = conn
+                        .protocol
+                        .as_deref()
+                        .or(conn.provider.as_deref())
+                        .unwrap_or("chat_completions");
+                    (
+                        ModelProtocol::parse(proto_raw).unwrap_or(ModelProtocol::OpenAiChat),
+                        String::new(),
+                    )
+                }
+            };
+            let base = conn.endpoint.trim_end_matches('/');
+            let discover_url = if base.ends_with("/models") {
+                base.to_string()
+            } else {
+                format!("{base}/models")
+            };
+            let is_loopback = url::Url::parse(&discover_url)
+                .ok()
+                .and_then(|u| {
+                    u.host_str()
+                        .map(|h| h.trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase())
+                })
+                .is_some_and(|h| {
+                    h == "localhost"
+                        || h.parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                });
+            let mut client_builder = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none());
+            if is_loopback {
+                client_builder = client_builder.no_proxy();
+            }
+            let client = client_builder.build().map_err(|e| e.to_string())?;
+            let mut req = client.get(&discover_url);
+            if protocol == ModelProtocol::AnthropicMessages {
+                req = req.header("anthropic-version", "2023-06-01");
+                if !api_key.trim().is_empty() {
+                    req = req.header("x-api-key", api_key);
+                }
+            } else if !api_key.trim().is_empty() {
+                req = req.bearer_auth(api_key);
+            }
+            let resp = req
+                .send()
+                .map_err(|e| format!("failed to discover models from {discover_url}: {e}"))?;
+            let status = resp.status().as_u16();
+            if !resp.status().is_success() {
+                return Err(format!(
+                    "model discovery at {discover_url} returned HTTP {status}"
+                ));
+            }
+            let body: Value = resp
+                .json()
+                .map_err(|e| format!("invalid model discovery JSON: {e}"))?;
+            let raw_items = body
+                .get("data")
+                .or_else(|| body.get("models"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let mut discovered: Vec<Value> = Vec::new();
+            let mut discovered_ids: Vec<String> = Vec::new();
+            for item in raw_items {
+                let mid = item
+                    .get("id")
+                    .or_else(|| item.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                if let Some(id_str) = mid {
+                    let clean_id = id_str.strip_prefix("models/").unwrap_or(id_str).to_string();
+                    if !discovered_ids.contains(&clean_id) {
+                        discovered_ids.push(clean_id.clone());
+                        discovered.push(json!({
+                            "id": clean_id,
+                            "name": item.get("display_name").or_else(|| item.get("displayName")).or_else(|| item.get("name")).and_then(|v| v.as_str()).unwrap_or(&clean_id),
+                            "context_window": item.get("context_length").or_else(|| item.get("context_window")).or_else(|| item.get("inputTokenLimit")).and_then(|v| v.as_u64())
+                        }));
+                    }
+                }
+            }
+            if save_discovered && !discovered_ids.is_empty() {
+                let mut updated_cfg = cfg.clone();
+                if let Some(c) = updated_cfg
+                    .llm
+                    .connections
+                    .iter_mut()
+                    .find(|c| c.id == conn.id)
+                {
+                    for mid in &discovered_ids {
+                        if !c.models.iter().any(|m| m.id == *mid) {
+                            c.models.push(ModelEntry {
+                                id: mid.clone(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            });
+                        }
+                    }
+                }
+                save_applied_config(store, &updated_cfg)?;
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "connection_id": conn.id,
+                    "endpoint": conn.endpoint,
+                    "discover_url": discover_url,
+                    "saved": save_discovered,
+                    "count": discovered.len(),
+                    "models": discovered
+                }))
+                .unwrap()
+            );
+            Ok(0)
+        }
+        Some("configure") => {
+            let mut conn_id: Option<String> = None;
+            let mut conn_name: Option<String> = None;
+            let mut endpoint: Option<String> = None;
+            let mut protocol: Option<String> = None;
+            let mut provider: Option<String> = None;
+            let mut model_id: Option<String> = None;
+            let mut model_name: Option<String> = None;
+            let mut api_key: Option<String> = None;
+            let mut api_key_env: Option<String> = None;
+            let mut credential_ref: Option<String> = None;
+            let mut set_default = false;
+
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--id" => {
+                        i += 1;
+                        conn_id = Some(args.get(i).ok_or("--id requires a connection id")?.clone());
+                    }
+                    "--name" => {
+                        i += 1;
+                        conn_name = Some(args.get(i).ok_or("--name requires a value")?.clone());
+                    }
+                    "--endpoint" | "--url" => {
+                        i += 1;
+                        endpoint = Some(args.get(i).ok_or("--endpoint requires a URL")?.clone());
+                    }
+                    "--protocol" => {
+                        i += 1;
+                        protocol = Some(args.get(i).ok_or("--protocol requires a value")?.clone());
+                    }
+                    "--provider" => {
+                        i += 1;
+                        provider = Some(args.get(i).ok_or("--provider requires a value")?.clone());
+                    }
+                    "--model" | "-m" => {
+                        i += 1;
+                        model_id = Some(args.get(i).ok_or("--model requires a model id")?.clone());
+                    }
+                    "--model-name" => {
+                        i += 1;
+                        model_name =
+                            Some(args.get(i).ok_or("--model-name requires a value")?.clone());
+                    }
+                    "--api-key" => {
+                        i += 1;
+                        api_key = Some(args.get(i).ok_or("--api-key requires a value")?.clone());
+                    }
+                    "--api-key-env" => {
+                        i += 1;
+                        api_key_env =
+                            Some(args.get(i).ok_or("--api-key-env requires an env var")?.clone());
+                    }
+                    "--credential-ref" => {
+                        i += 1;
+                        credential_ref = Some(
+                            args.get(i)
+                                .ok_or("--credential-ref requires a vault key")?
+                                .clone(),
+                        );
+                    }
+                    "--default" => set_default = true,
+                    other => return Err(format!("unknown model configure option '{other}'")),
+                }
+                i += 1;
+            }
+
+            if conn_id.is_none() && endpoint.is_none() && !io::stdin().is_terminal() {
+                let mut raw = String::new();
+                io::stdin()
+                    .read_to_string(&mut raw)
+                    .map_err(|e| format!("failed to read stdin: {e}"))?;
+                if !raw.trim().is_empty() {
+                    let v: Value = serde_json::from_str(&strip_jsonc(&raw))
+                        .map_err(|e| format!("invalid configure JSON: {e}"))?;
+                    conn_id = v.get("id").and_then(|x| x.as_str()).map(ToString::to_string);
+                    conn_name = v
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    endpoint = v
+                        .get("endpoint")
+                        .or_else(|| v.get("base_url"))
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    protocol = v
+                        .get("protocol")
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    provider = v
+                        .get("provider")
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    model_id = v
+                        .get("model")
+                        .or_else(|| v.get("model_id"))
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    model_name = v
+                        .get("model_name")
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    api_key = v
+                        .get("api_key")
+                        .or_else(|| v.get("apiKey"))
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    api_key_env = v
+                        .get("api_key_env")
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    credential_ref = v
+                        .get("credential_ref")
+                        .or_else(|| v.get("credentialRef"))
+                        .and_then(|x| x.as_str())
+                        .map(ToString::to_string);
+                    if v.get("default").and_then(|x| x.as_bool()) == Some(true) {
+                        set_default = true;
+                    }
+                }
+            }
+
+            let cid = conn_id.ok_or(
+                "usage: nola model configure --id <conn_id> [--endpoint <url>] [--model <id>] [--protocol <proto>] [--name <name>] [--api-key-env <VAR>] [--credential-ref <key>] [--default]",
+            )?;
+            let mut cfg = load_active_config(store);
+            if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == cid) {
+                if let Some(ep) = endpoint {
+                    existing.endpoint = ep;
+                }
+                if protocol.is_some() {
+                    existing.protocol = protocol;
+                }
+                if provider.is_some() {
+                    existing.provider = provider;
+                }
+                if api_key.is_some() {
+                    existing.api_key = api_key;
+                }
+                if api_key_env.is_some() {
+                    existing.api_key_env = api_key_env;
+                }
+                if let Some(ref mid) = model_id {
+                    if !existing.models.iter().any(|m| m.id == *mid) {
+                        existing.models.push(ModelEntry {
+                            id: mid.clone(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        });
+                    }
+                }
+            } else {
+                let ep = endpoint.ok_or("--endpoint is required when creating a new connection")?;
+                let models = model_id
+                    .as_ref()
+                    .map(|mid| {
+                        vec![ModelEntry {
+                            id: mid.clone(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        }]
+                    })
+                    .unwrap_or_default();
+                cfg.llm.connections.push(ConnectionConfig {
+                    id: cid.clone(),
+                    endpoint: ep,
+                    protocol,
+                    provider,
+                    api_key,
+                    api_key_env,
+                    models,
+                });
+            }
+            if conn_name.is_some() || credential_ref.is_some() || model_name.is_some() {
+                let ex = cfg.connection_extras.entry(cid.clone()).or_default();
+                if let Some(name) = conn_name {
+                    ex.name = Some(name);
+                }
+                if let Some(cref) = credential_ref {
+                    ex.credential_ref = Some(cref);
+                }
+                if let (Some(ref mid), Some(mname)) = (&model_id, model_name) {
+                    ex.model_names.insert(mid.clone(), mname);
+                }
+            }
+            if set_default || cfg.llm.default_model.is_none() {
+                if let Some(mid) = model_id.or_else(|| {
+                    cfg.llm
+                        .connections
+                        .iter()
+                        .find(|c| c.id == cid)
+                        .and_then(|c| c.models.first().map(|m| m.id.clone()))
+                }) {
+                    cfg.llm.default_model = Some(DefaultModelSelection {
+                        connection: cid.clone(),
+                        model: mid,
+                    });
+                }
+            }
+            save_applied_config(store, &cfg)?;
+            let reloaded = load_active_config(store);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "configured": cid,
+                    "llm": redacted_llm_json(&reloaded)
+                }))
+                .unwrap()
+            );
+            Ok(0)
+        }
+        Some("import") => {
+            let mut path_arg: Option<String> = None;
+            let mut source = "open_code".to_string();
+            let mut dry_run = false;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--path" => {
+                        i += 1;
+                        path_arg = Some(args.get(i).ok_or("--path requires a file path")?.clone());
+                    }
+                    "--source" => {
+                        i += 1;
+                        source = args.get(i).ok_or("--source requires a value")?.clone();
+                    }
+                    "--dry-run" => dry_run = true,
+                    other if !other.starts_with('-') && path_arg.is_none() => {
+                        path_arg = Some(other.to_string());
+                    }
+                    other => return Err(format!("unknown model import option '{other}'")),
+                }
+                i += 1;
+            }
+            let file_path = path_arg.ok_or("usage: nola model import <path> [--source <src>] [--dry-run]")?;
+            let extracted = extract_import_candidates_from_path(&file_path, &source)?;
+            if dry_run {
+                let preview: Vec<Value> = extracted
+                    .iter()
+                    .map(|c| {
+                        json!({
+                            "id": c.connection_id,
+                            "name": c.display_name,
+                            "endpoint": c.endpoint,
+                            "protocol": c.protocol,
+                            "models": c.models,
+                            "has_api_key": c.secret.is_some()
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "ok": true,
+                        "dry_run": true,
+                        "source": source,
+                        "path": file_path,
+                        "candidates": preview
+                    }))
+                    .unwrap()
+                );
+                return Ok(0);
+            }
+            let imported_ids = commit_import_candidates(store, &extracted, true)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "imported": imported_ids.len(),
+                    "connection_ids": imported_ids
+                }))
+                .unwrap()
             );
             Ok(0)
         }
@@ -1745,10 +2583,451 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                 }
             }
         }
-        Some("acquire") => {
+        Some("acquire") => handle_model_acquire_cmd(store, &args[1..]),
+        Some(other) => Err(format!(
+            "unknown model subcommand '{other}' (expected list|connections|discover|configure|import|probe|apply-config|acquire)"
+        )),
+    }
+}
+
+fn emit_compact_json_line(value: &Value) {
+    if let Ok(line) = serde_json::to_string(value) {
+        println!("{line}");
+        let _ = io::stdout().flush();
+    }
+}
+
+fn normalize_engine_status_event(requested_engine: &str, raw_status: &Value) -> Value {
+    json!({
+        "engine": requested_engine,
+        "ready": raw_status.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),
+        "canInstall": raw_status.get("canInstall").and_then(|v| v.as_bool()).unwrap_or(false),
+        "guideUrl": raw_status.get("guideUrl").cloned().unwrap_or(Value::Null),
+        "reason": raw_status
+            .get("reason")
+            .or_else(|| raw_status.get("message"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    })
+}
+
+fn build_hub_download_url(source: &str, repo: &str, rev: &str, filename: &str) -> String {
+    if let Ok(mirror) = std::env::var("NOLA_HF_MIRROR") {
+        let trimmed = mirror.trim().trim_end_matches('/');
+        if !trimmed.is_empty() {
+            return format!("{trimmed}/{repo}/resolve/{rev}/{filename}");
+        }
+    }
+    if source.eq_ignore_ascii_case("modelscope") {
+        format!("https://modelscope.cn/models/{repo}/resolve/{rev}/{filename}")
+    } else {
+        format!("https://huggingface.co/{repo}/resolve/{rev}/{filename}")
+    }
+}
+
+fn normalize_acquisition_candidate(
+    item: &Value,
+    engine: &str,
+    source: &str,
+    device: &str,
+) -> Option<Value> {
+    let repo = item
+        .get("repository")
+        .or_else(|| item.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let rev = item
+        .get("revision")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("main")
+        .to_string();
+    let variant = item
+        .get("variant")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            let short = repo.rsplit('/').next().unwrap_or(&repo);
+            Some(format!("{short}.gguf"))
+        });
+    let dl_bytes = item
+        .get("downloadBytes")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(4_000_000_000);
+    let est_mem = item
+        .get("estimatedMemoryBytes")
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(|| ((dl_bytes as f64) * 1.4) as i64);
+    let ctx_tokens = item
+        .get("contextTokens")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(32_768);
+    let native_known = item
+        .get("nativeContextKnown")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| item.get("nativeContextTokens").is_some());
+    let native_tokens = item.get("nativeContextTokens").and_then(|v| v.as_i64());
+    let limit_reason = item
+        .get("contextLimitReason")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            if !native_known {
+                Some("metadata_unknown".to_string())
+            } else if ctx_tokens >= 131_072 {
+                Some("target_met".to_string())
+            } else {
+                Some("native_limit".to_string())
+            }
+        });
+    let file_name = variant
+        .as_deref()
+        .unwrap_or("model.gguf")
+        .to_string();
+    let download_url = item
+        .pointer("/plan/url")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| build_hub_download_url(source, &repo, &rev, &file_name));
+
+    let mut plan = item
+        .get("plan")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    plan.insert("engine".into(), json!(engine));
+    plan.insert("source".into(), json!(source));
+    plan.insert("repository".into(), json!(repo));
+    plan.insert("revision".into(), json!(rev));
+    plan.insert("variant".into(), json!(file_name));
+    plan.insert("device".into(), json!(device));
+    plan.insert("url".into(), json!(download_url));
+    plan.entry("files".to_string())
+        .or_insert_with(|| json!([{ "path": file_name, "bytes": dl_bytes }]));
+
+    Some(json!({
+        "repository": repo,
+        "revision": rev,
+        "downloadBytes": dl_bytes,
+        "estimatedMemoryBytes": est_mem,
+        "contextTokens": ctx_tokens,
+        "nativeContextKnown": native_known,
+        "nativeContextTokens": native_tokens,
+        "contextLimitReason": limit_reason,
+        "variant": variant,
+        "device": item.get("device").and_then(|v| v.as_str()).unwrap_or(device),
+        "plan": Value::Object(plan)
+    }))
+}
+
+fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("engine-status") => {
+            let engine = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire engine-status <engine>")?;
+            let raw = probe_engine_status(engine);
+            let status = normalize_engine_status_event(engine, &raw);
+            emit_compact_json_line(&json!({ "engineStatus": status }));
+            Ok(0)
+        }
+        Some("setup-engine") => {
+            let engine = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire setup-engine <engine>")?;
+            let setup = run_engine_setup(engine);
+            let inner_status = setup.get("status").cloned().unwrap_or_else(|| probe_engine_status(engine));
+            let status = normalize_engine_status_event(engine, &inner_status);
+            emit_compact_json_line(&json!({
+                "engineStatus": status,
+                "setup": setup
+            }));
+            Ok(0)
+        }
+        Some("hardware") => {
+            let hw = probe_hardware();
+            emit_compact_json_line(&json!({ "hardware": hw }));
+            Ok(0)
+        }
+        Some("recommend") => {
+            let engine = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire recommend <engine> <source> [query]")?;
+            let source = args
+                .get(2)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire recommend <engine> <source> [query]")?;
+            let query = if args.len() > 3 {
+                args[3..].join(" ")
+            } else {
+                String::new()
+            };
+            let hw = probe_hardware();
+            let device = if hw.get("unifiedMemory").and_then(|v| v.as_bool()) == Some(true) {
+                "unified"
+            } else if hw.get("gpuMemoryBytes").and_then(|v| v.as_u64()).is_some() {
+                "gpu"
+            } else {
+                "cpu"
+            };
+
+            let (raw_candidates, rec_source): (Vec<Value>, String) = if query.trim().is_empty() {
+                let rec = recommend_local_models(&hw);
+                let cands = rec
+                    .get("candidates")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let rsrc = rec
+                    .get("recommendationSource")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("catalog")
+                    .to_string();
+                (cands, rsrc)
+            } else {
+                let mirror = if source.eq_ignore_ascii_case("modelscope") {
+                    Some("https://hf-mirror.com")
+                } else {
+                    None
+                };
+                let found = search_hub_models(&query, engine, mirror)?;
+                let is_fallback = found
+                    .first()
+                    .and_then(|v| v.get("offlineFallback"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                (
+                    found,
+                    if is_fallback {
+                        "catalog".to_string()
+                    } else {
+                        source.to_string()
+                    },
+                )
+            };
+
+            let candidates: Vec<Value> = raw_candidates
+                .iter()
+                .filter_map(|c| normalize_acquisition_candidate(c, engine, source, device))
+                .collect();
+            emit_compact_json_line(&json!({
+                "hardware": hw,
+                "candidates": candidates,
+                "recommendationSource": rec_source,
+                "reason": Value::Null
+            }));
+            Ok(0)
+        }
+        Some("confirm") => {
+            let engine = args
+                .get(1)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire confirm <engine> <source> <planJSON>")?;
+            let source = args
+                .get(2)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire confirm <engine> <source> <planJSON>")?;
+            let plan_raw = args
+                .get(3)
+                .map(String::as_str)
+                .ok_or("usage: nola model acquire confirm <engine> <source> <planJSON>")?;
+            let plan_json: Value = serde_json::from_str(plan_raw)
+                .map_err(|e| format!("invalid confirm plan JSON: {e}"))?;
+
+            let repo = plan_json
+                .get("repository")
+                .or_else(|| plan_json.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("local-model")
+                .to_string();
+            let rev = plan_json
+                .get("revision")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main");
+            let first_file = plan_json
+                .get("files")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first());
+            let variant_file = first_file
+                .and_then(|f| f.get("path").and_then(|v| v.as_str()))
+                .or_else(|| plan_json.get("variant").and_then(|v| v.as_str()))
+                .unwrap_or("model.gguf");
+            let url = plan_json
+                .get("url")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| build_hub_download_url(source, &repo, rev, variant_file));
+            let expected_bytes = plan_json
+                .get("expected_bytes")
+                .or_else(|| plan_json.get("expectedBytes"))
+                .or_else(|| plan_json.get("downloadBytes"))
+                .or_else(|| first_file.and_then(|f| f.get("bytes")))
+                .and_then(|v| v.as_u64());
+            let sha256 = plan_json
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+
+            let models_root = std::env::var("NOLA_MODELS_ROOT")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| default_home_dir().join(".nola/models"));
+            let safe_repo_dir: String = repo
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+                .collect();
+            let safe_file: String = Path::new(variant_file)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("model.bin")
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+                .collect();
+            let dest_path = plan_json
+                .get("dest_path")
+                .or_else(|| plan_json.get("destPath"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| models_root.join(safe_repo_dir).join(safe_file));
+
+            let dl_plan = ModelDownloadPlan {
+                id: Some(new_id()),
+                name: repo,
+                engine: engine.to_string(),
+                url,
+                dest_path: dest_path.display().to_string(),
+                sha256,
+                quantization: plan_json
+                    .get("quantization")
+                    .or_else(|| plan_json.get("variant"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string),
+                expected_bytes,
+            };
+
+            let mgr = ModelDownloadManager::global();
+            let initial = mgr.start_download(store, dl_plan)?;
+            let download_id = initial.download_id.clone();
+            emit_compact_json_line(&json!({
+                "downloadedBytes": initial.downloaded_bytes,
+                "totalBytes": initial.total_bytes,
+                "status": initial.status
+            }));
+
+            let mut last_downloaded = initial.downloaded_bytes;
+            let mut last_status = initial.status;
+            loop {
+                std::thread::sleep(Duration::from_millis(80));
+                let cur = store
+                    .get_kv(&format!("local_model_download:{download_id}"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| mgr.current_status(store));
+                let status = cur
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("downloading")
+                    .to_string();
+                let dl_bytes = cur
+                    .get("downloadedBytes")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(last_downloaded);
+                let total_bytes = cur.get("totalBytes").and_then(|v| v.as_u64());
+
+                if status == "completed" {
+                    let model_id = cur
+                        .get("modelId")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| download_id.clone());
+                    emit_compact_json_line(&json!({
+                        "model": { "id": model_id },
+                        "downloadedBytes": dl_bytes,
+                        "totalBytes": total_bytes.or(Some(dl_bytes)),
+                        "status": "completed"
+                    }));
+                    return Ok(0);
+                }
+                if status == "failed" || status == "cancelled" {
+                    let err_msg = cur
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("model download failed")
+                        .to_string();
+                    return Err(err_msg);
+                }
+                if dl_bytes != last_downloaded || status != last_status {
+                    emit_compact_json_line(&json!({
+                        "downloadedBytes": dl_bytes,
+                        "totalBytes": total_bytes,
+                        "status": status
+                    }));
+                    last_downloaded = dl_bytes;
+                    last_status = status;
+                }
+            }
+        }
+        Some("remove") => {
+            let id = args
+                .get(1)
+                .map(String::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("usage: nola model acquire remove <id>")?;
+            let records: Vec<LocalModelRecord> = store
+                .list_module_records(KIND_LOCAL_MODEL)
+                .unwrap_or_default();
+            let matched = records.into_iter().find(|r| r.id == id || r.name == id);
+            if let Some(rec) = matched {
+                if let Some(ref p_str) = rec.path {
+                    let p = Path::new(p_str);
+                    if let Ok(meta) = fs::symlink_metadata(p) {
+                        if !meta.file_type().is_symlink() {
+                            if meta.is_file() {
+                                let _ = fs::remove_file(p);
+                            } else if meta.is_dir() {
+                                let _ = fs::remove_dir_all(p);
+                            }
+                        }
+                    }
+                }
+                let _ = store.delete_module_record(KIND_LOCAL_MODEL, &rec.id);
+            } else if !id.contains("..") && !id.contains('/') && !id.contains('\\') {
+                let models_root = std::env::var("NOLA_MODELS_ROOT")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| default_home_dir().join(".nola/models"));
+                let cand = models_root.join(id);
+                if let Ok(meta) = fs::symlink_metadata(&cand) {
+                    if !meta.file_type().is_symlink() {
+                        if meta.is_dir() {
+                            let _ = fs::remove_dir_all(&cand);
+                        } else if meta.is_file() {
+                            let _ = fs::remove_file(&cand);
+                        }
+                    }
+                }
+            }
+            emit_compact_json_line(&json!({
+                "removed": true,
+                "id": id
+            }));
+            Ok(0)
+        }
+        _ => {
             let mut requested_model: Option<String> = None;
             let mut requested_engine: Option<String> = None;
-            let mut i = 1;
+            let mut i = 0;
             while i < args.len() {
                 match args[i].as_str() {
                     "--model" | "-m" => {
@@ -1782,7 +3061,7 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                 .collect();
             let any_installed = engines
                 .iter()
-                .any(|e| e.get("installed").and_then(|v| v.as_bool()) == Some(true));
+                .any(|e| e.get("ready").and_then(|v| v.as_bool()) == Some(true));
             let payload = json!({
                 "ok": true,
                 "status": if any_installed { "ready" } else { "catalog_only" },
@@ -1798,47 +3077,267 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
             );
             Ok(0)
         }
-        Some(other) => Err(format!(
-            "unknown model subcommand '{other}' (expected list|connections|probe|apply-config|acquire)"
-        )),
     }
 }
 
-fn read_optional_stdin_json() -> Option<Value> {
-    if io::stdin().is_terminal() {
-        return None;
+#[derive(Clone)]
+struct ExtractedImportCandidate {
+    candidate_id: String,
+    connection_id: String,
+    display_name: String,
+    source: String,
+    endpoint: String,
+    protocol: String,
+    models: Vec<String>,
+    secret: Option<String>,
+    credential_status: String,
+}
+
+fn extract_import_candidates_from_path(
+    path_str: &str,
+    src: &str,
+) -> Result<Vec<ExtractedImportCandidate>, String> {
+    let p = Path::new(path_str);
+    reject_if_symlink(p)?;
+    let raw = read_config_file_safe(p)?;
+    let parsed: Value = serde_json::from_str(&strip_jsonc(&raw)).unwrap_or_else(|_| json!({}));
+    let mut out = Vec::new();
+    if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
+        for (prov_id, prov_val) in providers {
+            let endpoint = prov_val
+                .pointer("/options/baseURL")
+                .or_else(|| prov_val.get("baseURL"))
+                .or_else(|| prov_val.get("endpoint"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let models: Vec<String> = prov_val
+                .get("models")
+                .and_then(|v| v.as_object())
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            let secret = prov_val
+                .pointer("/options/apiKey")
+                .or_else(|| prov_val.get("apiKey"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let display_name = prov_val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(prov_id)
+                .to_string();
+            let proto = prov_val
+                .get("protocol")
+                .and_then(|v| v.as_str())
+                .unwrap_or("chat_completions")
+                .to_string();
+            let cred_status = if secret.is_some() { "present" } else { "missing" }.to_string();
+            out.push(ExtractedImportCandidate {
+                candidate_id: new_id(),
+                connection_id: prov_id.clone(),
+                display_name,
+                source: src.to_string(),
+                endpoint,
+                protocol: proto,
+                models,
+                secret,
+                credential_status: cred_status,
+            });
+        }
     }
-    let mut buf = String::new();
-    if io::stdin().read_to_string(&mut buf).is_ok() && !buf.trim().is_empty() {
-        serde_json::from_str::<Value>(buf.trim()).ok()
+    if let Some(conns) = parsed.pointer("/llm/connections").and_then(|v| v.as_array()) {
+        for c in conns {
+            let cid = c
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("imported")
+                .to_string();
+            let display_name = c
+                .get("name")
+                .or_else(|| c.get("display_name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cid)
+                .to_string();
+            let endpoint = c
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let proto = c
+                .get("protocol")
+                .and_then(|v| v.as_str())
+                .unwrap_or("chat_completions")
+                .to_string();
+            let models: Vec<String> = c
+                .get("models")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| {
+                            m.get("id")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| m.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let secret = c
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let cred_status = if secret.is_some() {
+                "present"
+            } else if c
+                .get("api_key_env")
+                .and_then(|v| v.as_str())
+                .is_some_and(|e| std::env::var(e).ok().is_some_and(|v| !v.trim().is_empty()))
+            {
+                "environment"
+            } else {
+                "missing"
+            }
+            .to_string();
+            out.push(ExtractedImportCandidate {
+                candidate_id: new_id(),
+                connection_id: cid,
+                display_name,
+                source: src.to_string(),
+                endpoint,
+                protocol: proto,
+                models,
+                secret,
+                credential_status: cred_status,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn commit_import_candidates(
+    store: &Store,
+    candidates: &[ExtractedImportCandidate],
+    store_secrets: bool,
+) -> Result<Vec<String>, String> {
+    let mut cfg = load_active_config(store);
+    let mut imported_ids = Vec::new();
+    for cand in candidates {
+        let cid = if cand.connection_id.trim().is_empty() {
+            new_id()
+        } else {
+            cand.connection_id.clone()
+        };
+        let models: Vec<ModelEntry> = cand
+            .models
+            .iter()
+            .map(|s| ModelEntry {
+                id: s.clone(),
+                context_window: None,
+                max_output_tokens: None,
+                temperature: None,
+                top_p: None,
+                reasoning_effort: None,
+                capabilities: None,
+            })
+            .collect();
+        let api_key = if store_secrets {
+            cand.secret.clone()
+        } else {
+            None
+        };
+        if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == cid) {
+            if !cand.endpoint.is_empty() {
+                existing.endpoint = cand.endpoint.clone();
+            }
+            if !cand.protocol.is_empty() {
+                existing.protocol = Some(cand.protocol.clone());
+            }
+            if api_key.is_some() {
+                existing.api_key = api_key;
+            }
+            for m in models {
+                if !existing.models.iter().any(|e| e.id == m.id) {
+                    existing.models.push(m);
+                }
+            }
+        } else if !cand.endpoint.is_empty() {
+            cfg.llm.connections.push(ConnectionConfig {
+                id: cid.clone(),
+                endpoint: cand.endpoint.clone(),
+                protocol: Some(cand.protocol.clone()),
+                provider: None,
+                api_key,
+                api_key_env: None,
+                models,
+            });
+        }
+        if !cand.display_name.is_empty() && cand.display_name != cid {
+            cfg.connection_extras
+                .entry(cid.clone())
+                .or_default()
+                .name = Some(cand.display_name.clone());
+        }
+        imported_ids.push(cid);
+    }
+    if !imported_ids.is_empty() {
+        save_applied_config(store, &cfg)?;
+    }
+    Ok(imported_ids)
+}
+
+fn candidate_to_mac_import_json(cand: &ExtractedImportCandidate, existing_rev: Option<i64>) -> Value {
+    let models: Vec<Value> = cand
+        .models
+        .iter()
+        .map(|mid| {
+            json!({
+                "model_id": mid,
+                "display_name": mid,
+                "protocol": cand.protocol,
+                "context_window": Value::Null,
+                "output_limit": Value::Null,
+                "modalities": ["text"],
+                "reasoning_levels": [],
+                "summary_supported": Value::Null,
+                "execution_capabilities": Value::Null
+            })
+        })
+        .collect();
+    let issue = if cand.endpoint.trim().is_empty() {
+        Some("Missing base URL")
     } else {
         None
-    }
+    };
+    json!({
+        "candidate_id": cand.candidate_id,
+        "connection": {
+            "id": cand.connection_id,
+            "display_name": cand.display_name,
+            "base_url": cand.endpoint,
+            "protocols": [cand.protocol],
+            "account_id": Value::Null,
+            "source": cand.source,
+            "source_id": cand.connection_id,
+            "enabled": true
+        },
+        "models": models,
+        "credential_status": cand.credential_status,
+        "issue": issue,
+        "existing_revision": existing_rev
+    })
 }
 
 fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
-    let stdin_req = read_optional_stdin_json();
-    let mut op = stdin_req
-        .as_ref()
-        .and_then(|v| {
-            v.get("operation")
-                .or_else(|| v.get("type"))
-                .or_else(|| v.get("action"))
-                .and_then(|s| s.as_str())
-        })
-        .map(ToString::to_string);
-    let mut source = stdin_req
-        .as_ref()
-        .and_then(|v| v.get("source").and_then(|s| s.as_str()))
-        .map(ToString::to_string);
-    let mut path_arg = stdin_req
-        .as_ref()
-        .and_then(|v| v.get("path").and_then(|s| s.as_str()))
-        .map(ToString::to_string);
-    let mut plan_id_arg = stdin_req
-        .as_ref()
-        .and_then(|v| v.get("plan_id").and_then(|s| s.as_str()))
-        .map(ToString::to_string);
+    let mut cli_op: Option<String> = None;
+    let mut cli_source: Option<String> = None;
+    let mut cli_path: Option<String> = None;
+    let mut cli_plan_id: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -1846,242 +3345,688 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
             "--operation" | "--op" => {
                 i += 1;
                 if let Some(v) = args.get(i) {
-                    op = Some(v.clone());
+                    cli_op = Some(v.clone());
                 }
             }
             "--source" => {
                 i += 1;
                 if let Some(v) = args.get(i) {
-                    source = Some(v.clone());
+                    cli_source = Some(v.clone());
                 }
             }
             "--path" => {
                 i += 1;
                 if let Some(v) = args.get(i) {
-                    path_arg = Some(v.clone());
+                    cli_path = Some(v.clone());
                 }
             }
             "--plan-id" => {
                 i += 1;
                 if let Some(v) = args.get(i) {
-                    plan_id_arg = Some(v.clone());
+                    cli_plan_id = Some(v.clone());
                 }
             }
-            other if !other.starts_with('-') && op.is_none() => {
-                op = Some(other.to_string());
+            other if !other.starts_with('-') && cli_op.is_none() => {
+                cli_op = Some(other.to_string());
             }
             _ => {}
         }
         i += 1;
     }
 
-    let operation = op.as_deref().unwrap_or("discover").to_ascii_lowercase();
-    let src_name = source.unwrap_or_else(|| "open_code".to_string());
-
-    let extract_candidates_from_path = |path_str: &str, src: &str| -> Result<Vec<Value>, String> {
-        let p = Path::new(path_str);
-        reject_if_symlink(p)?;
-        let raw = read_config_file_safe(p)?;
-        let parsed: Value =
-            serde_json::from_str(&strip_jsonc(&raw)).unwrap_or_else(|_| json!({}));
-        let mut out = Vec::new();
-        if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
-            for (prov_id, prov_val) in providers {
-                let endpoint = prov_val
-                    .pointer("/options/baseURL")
-                    .or_else(|| prov_val.get("baseURL"))
-                    .or_else(|| prov_val.get("endpoint"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let models: Vec<String> = prov_val
-                    .get("models")
-                    .and_then(|v| v.as_object())
-                    .map(|m| m.keys().cloned().collect())
-                    .unwrap_or_default();
-                out.push(json!({
-                    "id": prov_id,
-                    "source": src,
-                    "endpoint": endpoint,
-                    "models": models,
-                    "has_api_key": prov_val.pointer("/options/apiKey").or_else(|| prov_val.get("apiKey")).and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty())
-                }));
-            }
-        }
-        if let Some(conns) = parsed.pointer("/llm/connections").and_then(|v| v.as_array()) {
-            for c in conns {
-                let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("imported");
-                let endpoint = c.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
-                let models: Vec<String> = c
-                    .get("models")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
-                            .collect()
+    // One-shot CLI mode when explicit CLI operation or terminal stdin
+    if cli_op.is_some() || io::stdin().is_terminal() {
+        let operation = cli_op.as_deref().unwrap_or("discover").to_ascii_lowercase();
+        let src_name = cli_source.unwrap_or_else(|| "open_code".to_string());
+        let response = match operation.as_str() {
+            "plan" => {
+                let candidates = if let Some(ref p) = cli_path {
+                    extract_import_candidates_from_path(p, &src_name)?
+                } else {
+                    Vec::new()
+                };
+                let plan_id = new_id();
+                let cand_json: Vec<Value> = candidates
+                    .iter()
+                    .map(|c| {
+                        json!({
+                            "id": c.connection_id,
+                            "source": c.source,
+                            "endpoint": c.endpoint,
+                            "protocol": c.protocol,
+                            "models": c.models,
+                            "has_api_key": c.secret.is_some()
+                        })
                     })
-                    .unwrap_or_default();
-                out.push(json!({
-                    "id": cid,
-                    "source": src,
-                    "endpoint": endpoint,
-                    "protocol": c.get("protocol").cloned().unwrap_or(Value::Null),
-                    "models": models,
-                    "has_api_key": c.get("api_key").and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty())
-                }));
+                    .collect();
+                let plan = json!({
+                    "ok": true,
+                    "operation": "plan",
+                    "plan_id": plan_id,
+                    "source": src_name,
+                    "path": cli_path,
+                    "candidates": cand_json,
+                    "expires_at_ms": now_ms().saturating_add(300_000)
+                });
+                let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan);
+                plan
             }
-        }
-        Ok(out)
-    };
-
-    let response = match operation.as_str() {
-        "plan" => {
-            let candidates = if let Some(ref p) = path_arg {
-                extract_candidates_from_path(p, &src_name)?
-            } else {
-                Vec::new()
-            };
-            let plan_id = new_id();
-            let plan = json!({
-                "ok": true,
-                "operation": "plan",
-                "plan_id": plan_id,
-                "source": src_name,
-                "path": path_arg,
-                "candidates": candidates,
-                "expires_at_ms": nola_types::now_ms().saturating_add(300_000)
-            });
-            let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan);
-            plan
-        }
-        "commit" => {
-            let candidates: Vec<Value> = if let Some(ref pid) = plan_id_arg {
-                store
-                    .get_kv(&format!("model_import_plan:{pid}"))
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.get("candidates").and_then(|c| c.as_array()).cloned())
-                    .unwrap_or_default()
-            } else {
-                stdin_req
-                    .as_ref()
-                    .and_then(|v| {
-                        v.get("candidates")
-                            .or_else(|| v.get("connections"))
-                            .and_then(|c| c.as_array())
-                            .cloned()
+            "commit" => {
+                let raw_cands: Vec<Value> = if let Some(ref pid) = cli_plan_id {
+                    store
+                        .get_kv(&format!("model_import_plan:{pid}"))
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.get("candidates").and_then(|c| c.as_array()).cloned())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let extracted: Vec<ExtractedImportCandidate> = raw_cands
+                    .iter()
+                    .map(|c| ExtractedImportCandidate {
+                        candidate_id: new_id(),
+                        connection_id: c
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        display_name: c
+                            .get("name")
+                            .or_else(|| c.get("id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("imported")
+                            .to_string(),
+                        source: src_name.clone(),
+                        endpoint: c
+                            .get("endpoint")
+                            .or_else(|| c.get("base_url"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        protocol: c
+                            .get("protocol")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("chat_completions")
+                            .to_string(),
+                        models: c
+                            .get("models")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|m| m.as_str().map(ToString::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        secret: None,
+                        credential_status: "missing".into(),
                     })
-                    .unwrap_or_default()
-            };
-            let mut cfg = load_active_config(store);
-            let mut imported_ids = Vec::new();
-            for cand in &candidates {
-                let cid = cand
-                    .get("id")
+                    .collect();
+                let imported_ids = commit_import_candidates(store, &extracted, false)?;
+                json!({
+                    "ok": true,
+                    "operation": "commit",
+                    "plan_id": cli_plan_id,
+                    "imported": imported_ids.len(),
+                    "connection_ids": imported_ids
+                })
+            }
+            _ => {
+                let mut candidates = Vec::new();
+                let mut checked_paths = Vec::new();
+                if let Some(ref p) = cli_path {
+                    checked_paths.push(p.clone());
+                    if let Ok(found) = extract_import_candidates_from_path(p, &src_name) {
+                        for c in found {
+                            candidates.push(json!({
+                                "id": c.connection_id,
+                                "source": c.source,
+                                "endpoint": c.endpoint,
+                                "protocol": c.protocol,
+                                "models": c.models,
+                                "has_api_key": c.secret.is_some()
+                            }));
+                        }
+                    }
+                } else {
+                    let home = default_home_dir();
+                    for (sname, p) in [
+                        ("open_code", home.join(".config/opencode/opencode.json")),
+                        ("nola", home.join(".nola/config.jsonc")),
+                    ] {
+                        if p.is_file() {
+                            let ps = p.display().to_string();
+                            checked_paths.push(ps.clone());
+                            if let Ok(found) = extract_import_candidates_from_path(&ps, sname) {
+                                for c in found {
+                                    candidates.push(json!({
+                                        "id": c.connection_id,
+                                        "source": c.source,
+                                        "endpoint": c.endpoint,
+                                        "protocol": c.protocol,
+                                        "models": c.models,
+                                        "has_api_key": c.secret.is_some()
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                json!({
+                    "ok": true,
+                    "operation": "discover",
+                    "source": src_name,
+                    "checked_paths": checked_paths,
+                    "candidates": candidates
+                })
+            }
+        };
+        emit_compact_json_line(&response);
+        return Ok(0);
+    }
+
+    // Long-lived NDJSON line-by-line bridge loop (zero EOF deadlock for macOS `MacModelImportBridge`)
+    let mut reader = BufReader::new(io::stdin());
+    let mut plans: BTreeMap<String, (bool, Vec<ExtractedImportCandidate>)> = BTreeMap::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("model-import-bridge stdin read error: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let frame: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                emit_compact_json_line(&json!({
+                    "type": "error",
+                    "error": format!("invalid JSON frame: {e}")
+                }));
+                continue;
+            }
+        };
+
+        let request_id = frame
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        let msg_type = frame
+            .get("type")
+            .or_else(|| frame.get("operation"))
+            .or_else(|| frame.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("discover")
+            .trim()
+            .to_ascii_lowercase();
+        let req = frame.get("request").unwrap_or(&frame);
+
+        let reply: Value = match msg_type.as_str() {
+            "plan" => {
+                let src_name = req
+                    .get("source")
                     .and_then(|v| v.as_str())
-                    .filter(|s| !s.trim().is_empty())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(new_id);
-                let ep = cand
-                    .get("endpoint")
-                    .or_else(|| cand.get("base_url"))
+                    .unwrap_or("open_code")
+                    .to_string();
+                let include_credentials = req
+                    .get("include_credentials")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let path_str = req.get("path").and_then(|v| v.as_str());
+                match path_str {
+                    Some(p) => match extract_import_candidates_from_path(p, &src_name) {
+                        Ok(candidates) => {
+                            let plan_id = new_id();
+                            let active_cfg = load_active_config(store);
+                            let mac_cands: Vec<Value> = candidates
+                                .iter()
+                                .map(|c| {
+                                    let existing_rev = active_cfg
+                                        .llm
+                                        .connections
+                                        .iter()
+                                        .any(|ex| ex.id == c.connection_id)
+                                        .then_some(1i64);
+                                    candidate_to_mac_import_json(c, existing_rev)
+                                })
+                                .collect();
+                            let plan_obj = json!({
+                                "plan_id": plan_id,
+                                "candidates": mac_cands,
+                                "expires_at_ms": now_ms().saturating_add(300_000)
+                            });
+                            plans.insert(plan_id.clone(), (include_credentials, candidates));
+                            let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan_obj);
+                            if let Some(ref rid) = request_id {
+                                json!({
+                                    "type": "plan",
+                                    "request_id": rid,
+                                    "plan": plan_obj
+                                })
+                            } else {
+                                json!({
+                                    "ok": true,
+                                    "operation": "plan",
+                                    "plan_id": plan_id,
+                                    "plan": plan_obj,
+                                    "candidates": plan_obj["candidates"]
+                                })
+                            }
+                        }
+                        Err(err) => json!({
+                            "type": "error",
+                            "request_id": request_id,
+                            "error": err
+                        }),
+                    },
+                    None => json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": "missing 'path' in plan request"
+                    }),
+                }
+            }
+            "commit" => {
+                let plan_id = req
+                    .get("plan_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let proto = cand
+                let selections = req
+                    .get("selections")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some((may_store_creds, plan_cands)) = plans.remove(&plan_id) {
+                    let selected_ids: BTreeSet<String> = selections
+                        .iter()
+                        .filter_map(|s| {
+                            s.get("candidate_id")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .collect();
+                    let chosen: Vec<ExtractedImportCandidate> = if selected_ids.is_empty() {
+                        plan_cands
+                    } else {
+                        plan_cands
+                            .into_iter()
+                            .filter(|c| selected_ids.contains(&c.candidate_id))
+                            .collect()
+                    };
+
+                    // Perform interactive `credential_request` -> `credential_saved` handshake with macOS when framed & secrets included
+                    let mut saved_refs: BTreeMap<String, String> = BTreeMap::new();
+                    let mut handshake_failed: Option<String> = None;
+                    if may_store_creds {
+                        if let Some(ref rid) = request_id {
+                            for cand in &chosen {
+                                if let Some(ref secret) = cand.secret {
+                                    let nonce = new_id();
+                                    let account_id = format!("import-account-{}", new_id());
+                                    emit_compact_json_line(&json!({
+                                        "type": "credential_request",
+                                        "request_id": rid,
+                                        "nonce": nonce,
+                                        "connection_id": cand.connection_id,
+                                        "endpoint": cand.endpoint,
+                                        "protocols": [cand.protocol],
+                                        "account_id": account_id,
+                                        "secret": secret
+                                    }));
+                                    let mut ack_line = String::new();
+                                    match reader.read_line(&mut ack_line) {
+                                        Ok(0) => {
+                                            handshake_failed =
+                                                Some("host closed pipe during credential_request".into());
+                                            break;
+                                        }
+                                        Ok(_) => {
+                                            if let Ok(ack) =
+                                                serde_json::from_str::<Value>(ack_line.trim())
+                                            {
+                                                if ack.get("type").and_then(|v| v.as_str())
+                                                    == Some("credential_saved")
+                                                    && ack.get("nonce").and_then(|v| v.as_str())
+                                                        == Some(nonce.as_str())
+                                                {
+                                                    if let Some(r) = ack
+                                                        .get("reference")
+                                                        .and_then(|v| v.as_str())
+                                                    {
+                                                        saved_refs.insert(
+                                                            cand.connection_id.clone(),
+                                                            r.to_string(),
+                                                        );
+                                                    }
+                                                } else {
+                                                    handshake_failed =
+                                                        Some("unexpected credential_saved reply".into());
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            handshake_failed = Some(e.to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(err) = handshake_failed {
+                        json!({
+                            "type": "error",
+                            "request_id": request_id,
+                            "error": err
+                        })
+                    } else {
+                        match commit_import_candidates(store, &chosen, may_store_creds) {
+                            Ok(_) => {
+                                if !saved_refs.is_empty() {
+                                    let mut cfg = load_active_config(store);
+                                    for (cid, cref) in saved_refs {
+                                        cfg.connection_extras
+                                            .entry(cid)
+                                            .or_default()
+                                            .credential_ref = Some(cref);
+                                    }
+                                    let _ = save_applied_config(store, &cfg);
+                                }
+                                let results: Vec<Value> = chosen
+                                    .iter()
+                                    .map(|c| {
+                                        json!({
+                                            "candidate_id": c.candidate_id,
+                                            "connection_id": c.connection_id,
+                                            "status": "imported",
+                                            "error": Value::Null
+                                        })
+                                    })
+                                    .collect();
+                                if let Some(ref rid) = request_id {
+                                    json!({
+                                        "type": "commit",
+                                        "request_id": rid,
+                                        "results": results
+                                    })
+                                } else {
+                                    json!({
+                                        "ok": true,
+                                        "operation": "commit",
+                                        "plan_id": plan_id,
+                                        "results": results
+                                    })
+                                }
+                            }
+                            Err(err) => json!({
+                                "type": "error",
+                                "request_id": request_id,
+                                "error": err
+                            }),
+                        }
+                    }
+                } else {
+                    json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": format!("unknown or expired import plan '{plan_id}'")
+                    })
+                }
+            }
+            "probe_prepare" => {
+                let conn_id = req
+                    .get("connection_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let expected_rev = req
+                    .get("expected_revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                let model_id = req.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+                let proto = req
                     .get("protocol")
                     .and_then(|v| v.as_str())
-                    .map(ToString::to_string);
-                let models: Vec<ModelEntry> = cand
-                    .get("models")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|m| m.as_str().map(|s| ModelEntry {
-                                id: s.to_string(),
-                                context_window: None,
-                                max_output_tokens: None,
-                                temperature: None,
-                                top_p: None,
-                                reasoning_effort: None,
-                                capabilities: None,
-                            }))
-                            .collect()
+                    .unwrap_or("chat_completions");
+                let cfg = load_active_config(store);
+                let conn = cfg.llm.connections.iter().find(|c| c.id == conn_id);
+                let binding_input = format!(
+                    "{conn_id}:{expected_rev}:{model_id}:{proto}:{}",
+                    conn.and_then(|c| c.api_key.as_deref()).unwrap_or("")
+                );
+                let confirmation = json!({
+                    "request_id": new_id(),
+                    "connection_id": conn_id,
+                    "expected_revision": expected_rev,
+                    "account_id": Value::Null,
+                    "account_revision": Value::Null,
+                    "credential_binding": sha256_hex(binding_input.as_bytes()),
+                    "model_id": model_id,
+                    "protocol": proto,
+                    "max_requests": 1,
+                    "acknowledge_possible_charges": false
+                });
+                json!({
+                    "type": "probe_prepare",
+                    "request_id": request_id,
+                    "confirmation": confirmation
+                })
+            }
+            "probe" => {
+                let ack = req
+                    .get("acknowledge_possible_charges")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !ack {
+                    json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": "probe requires acknowledge_possible_charges: true"
                     })
-                    .unwrap_or_default();
-                if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == cid) {
-                    if !ep.is_empty() {
-                        existing.endpoint = ep;
-                    }
-                    if proto.is_some() {
-                        existing.protocol = proto;
-                    }
-                    for m in models {
-                        if !existing.models.iter().any(|e| e.id == m.id) {
-                            existing.models.push(m);
+                } else {
+                    let conn_id = req
+                        .get("connection_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let expected_rev = req
+                        .get("expected_revision")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1);
+                    let model_id = req.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let proto = req
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("chat_completions");
+                    let account_id = req.get("account_id").cloned().unwrap_or(Value::Null);
+                    let account_rev = req.get("account_revision").cloned().unwrap_or(Value::Null);
+                    let cred_binding = req
+                        .get("credential_binding")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let cfg = load_active_config(store);
+                    let conn = cfg.llm.connections.iter().find(|c| c.id == conn_id);
+                    let base_url = conn.map(|c| c.endpoint.as_str()).unwrap_or("");
+                    let display_name = cfg
+                        .connection_extras
+                        .get(conn_id)
+                        .and_then(|e| e.name.as_deref())
+                        .unwrap_or(conn_id);
+                    let snapshot = json!({
+                        "revision": expected_rev + 1,
+                        "document": {
+                            "format_version": 1,
+                            "connection": {
+                                "id": conn_id,
+                                "display_name": display_name,
+                                "base_url": base_url,
+                                "protocols": [proto],
+                                "account_id": account_id,
+                                "source": "nola",
+                                "source_id": conn_id,
+                                "enabled": true
+                            },
+                            "catalog": {
+                                "observed_at_ms": now_ms(),
+                                "source": "probe",
+                                "models": [{
+                                    "model_id": model_id,
+                                    "display_name": model_id,
+                                    "protocol": proto,
+                                    "context_window": 128000,
+                                    "output_limit": 16384,
+                                    "modalities": ["text"],
+                                    "reasoning_levels": [],
+                                    "summary_supported": Value::Null,
+                                    "execution_capabilities": Value::Null
+                                }]
+                            },
+                            "capability_assessments": [{
+                                "model_id": model_id,
+                                "protocol": proto,
+                                "evidence": {
+                                    "text_generation": true,
+                                    "account_revision": account_rev,
+                                    "credential_binding": cred_binding,
+                                    "observed_at_ms": now_ms()
+                                },
+                                "user_override": Value::Null
+                            }]
                         }
-                    }
-                } else if !ep.is_empty() {
-                    cfg.llm.connections.push(ConnectionConfig {
-                        id: cid.clone(),
-                        endpoint: ep,
-                        protocol: proto,
-                        provider: None,
-                        api_key: None,
-                        api_key_env: None,
-                        models,
                     });
+                    json!({
+                        "type": "probe",
+                        "request_id": request_id,
+                        "snapshot": snapshot
+                    })
                 }
-                imported_ids.push(cid);
             }
-            if !imported_ids.is_empty() {
-                save_applied_config(store, &cfg)?;
-            }
-            json!({
-                "ok": true,
-                "operation": "commit",
-                "plan_id": plan_id_arg,
-                "imported": imported_ids.len(),
-                "connection_ids": imported_ids
-            })
-        }
-        _ => {
-            let mut candidates = Vec::new();
-            let mut checked_paths = Vec::new();
-            if let Some(ref p) = path_arg {
-                checked_paths.push(p.clone());
-                if let Ok(found) = extract_candidates_from_path(p, &src_name) {
-                    candidates.extend(found);
-                }
-            } else {
-                let home = default_home_dir();
-                let defaults = [
-                    ("open_code", home.join(".config/opencode/opencode.json")),
-                    ("nola", home.join(".nola/config.jsonc")),
-                ];
-                for (sname, p) in defaults {
-                    if p.is_file() {
-                        let ps = p.display().to_string();
-                        checked_paths.push(ps.clone());
-                        if let Ok(found) = extract_candidates_from_path(&ps, sname) {
-                            candidates.extend(found);
+            _ => {
+                let src_name = req
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("open_code");
+                let mut candidates = Vec::new();
+                if let Some(p) = req.get("path").and_then(|v| v.as_str()) {
+                    if let Ok(found) = extract_import_candidates_from_path(p, src_name) {
+                        for c in found {
+                            candidates.push(candidate_to_mac_import_json(&c, None));
                         }
                     }
                 }
+                json!({
+                    "ok": true,
+                    "type": "discover",
+                    "request_id": request_id,
+                    "candidates": candidates
+                })
             }
-            json!({
-                "ok": true,
-                "operation": "discover",
-                "source": src_name,
-                "checked_paths": checked_paths,
-                "candidates": candidates
-            })
-        }
-    };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".into())
-    );
+        };
+        emit_compact_json_line(&reply);
+    }
     Ok(0)
+}
+
+#[derive(Clone)]
+struct SiwcFlowState {
+    owner_id: String,
+    flow_id: String,
+    account_id: String,
+    expected_account_revision: Option<i64>,
+    display_name: String,
+    phase: String,
+    authorization_url: Option<String>,
+    account: Option<Value>,
+}
+
+impl SiwcFlowState {
+    fn to_json(&self) -> Value {
+        json!({
+            "owner_id": self.owner_id,
+            "flow_id": self.flow_id,
+            "account_id": self.account_id,
+            "expected_account_revision": self.expected_account_revision,
+            "phase": self.phase,
+            "authorization_url": self.authorization_url,
+            "error": Value::Null,
+            "private_session_may_be_retained": false,
+            "account": self.account,
+            "inference_performed": false
+        })
+    }
+}
+
+fn siwc_account_snapshot(
+    account_id: &str,
+    display_name: &str,
+    revision: i64,
+    connected: bool,
+) -> Value {
+    json!({
+        "revision": revision,
+        "account": {
+            "id": account_id,
+            "display_name": if display_name.trim().is_empty() { "ChatGPT" } else { display_name },
+            "source": "nola_chatgpt",
+            "credential_ref": if connected { json!(format!("siwc_access_token:{account_id}")) } else { Value::Null },
+            "state": if connected { "connected" } else { "disconnected" }
+        }
+    })
+}
+
+fn siwc_default_connection_snapshot(account_id: &str, revision: i64) -> Value {
+    let conn_id = format!("siwc-{account_id}");
+    json!({
+        "revision": revision,
+        "document": {
+            "format_version": 1,
+            "connection": {
+                "id": conn_id,
+                "display_name": "ChatGPT (Sign in with ChatGPT)",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "protocols": ["siwc_responses"],
+                "account_id": account_id,
+                "source": "nola_chatgpt",
+                "source_id": account_id,
+                "enabled": true
+            },
+            "catalog": {
+                "observed_at_ms": now_ms(),
+                "source": "nola_chatgpt",
+                "models": [
+                    {
+                        "model_id": "gpt-5.3-codex",
+                        "display_name": "GPT-5.3 Codex",
+                        "protocol": "siwc_responses",
+                        "context_window": 272000,
+                        "output_limit": 32768,
+                        "modalities": ["text", "image"],
+                        "reasoning_levels": ["low", "medium", "high"],
+                        "summary_supported": true,
+                        "execution_capabilities": Value::Null
+                    },
+                    {
+                        "model_id": "gpt-5.2-codex",
+                        "display_name": "GPT-5.2 Codex",
+                        "protocol": "siwc_responses",
+                        "context_window": 272000,
+                        "output_limit": 32768,
+                        "modalities": ["text", "image"],
+                        "reasoning_levels": ["low", "medium", "high"],
+                        "summary_supported": true,
+                        "execution_capabilities": Value::Null
+                    }
+                ]
+            },
+            "capability_assessments": []
+        }
+    })
 }
 
 fn handle_model_siwc_bridge_cmd(
@@ -2089,107 +4034,490 @@ fn handle_model_siwc_bridge_cmd(
     db_path: &Path,
     args: &[String],
 ) -> Result<u8, String> {
-    let stdin_req = read_optional_stdin_json();
-    let op = stdin_req
-        .as_ref()
-        .and_then(|v| {
-            v.get("operation")
-                .or_else(|| v.get("type"))
-                .or_else(|| v.get("action"))
-                .and_then(|s| s.as_str())
-        })
-        .or_else(|| args.first().map(String::as_str).filter(|s| !s.starts_with('-')))
-        .unwrap_or("status")
-        .to_ascii_lowercase();
     let vault = Vault::open(default_vault_path(db_path)).map_err(|e| e.to_string())?;
+    let cli_op = args
+        .first()
+        .map(String::as_str)
+        .filter(|s| !s.starts_with('-'));
 
-    let response = match op.as_str() {
-        "save" | "bind" | "connect" => {
-            let req = stdin_req.as_ref();
-            let account_id = req
-                .and_then(|v| {
-                    v.get("account_id")
-                        .or_else(|| v.get("id"))
-                        .and_then(|s| s.as_str())
-                })
-                .filter(|s| !s.trim().is_empty())
-                .map(ToString::to_string)
-                .unwrap_or_else(new_id);
-            let email = req
-                .and_then(|v| v.get("email").or_else(|| v.get("label")).and_then(|s| s.as_str()))
-                .unwrap_or("")
-                .to_string();
-            if let Some(tok) = req
-                .and_then(|v| {
-                    v.get("access_token")
-                        .or_else(|| v.get("token"))
-                        .and_then(|s| s.as_str())
-                })
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                vault
-                    .set_secret("siwc_access_token", tok)
-                    .map_err(|e| e.to_string())?;
+    let run_unframed_op = |op: &str, req: Option<&Value>| -> Result<Value, String> {
+        match op {
+            "save" | "bind" | "connect" => {
+                let account_id = req
+                    .and_then(|v| {
+                        v.get("account_id")
+                            .or_else(|| v.get("id"))
+                            .and_then(|s| s.as_str())
+                    })
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                let email = req
+                    .and_then(|v| {
+                        v.get("email")
+                            .or_else(|| v.get("label"))
+                            .or_else(|| v.get("display_name"))
+                            .and_then(|s| s.as_str())
+                    })
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(tok) = req
+                    .and_then(|v| {
+                        v.get("access_token")
+                            .or_else(|| v.get("token"))
+                            .and_then(|s| s.as_str())
+                    })
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    vault
+                        .set_secret("siwc_access_token", tok)
+                        .map_err(|e| e.to_string())?;
+                    let _ = vault.set_secret(&format!("siwc_access_token:{account_id}"), tok);
+                }
+                let has_token = vault
+                    .get_secret("siwc_access_token")
+                    .ok()
+                    .flatten()
+                    .is_some_and(|s| !s.trim().is_empty());
+                let meta = json!({
+                    "account_id": account_id,
+                    "email": email,
+                    "display_name": email,
+                    "revision": 1,
+                    "session_revision": 1,
+                    "authenticated": has_token,
+                    "updated_at_ms": now_ms()
+                });
+                let _ = store.set_kv("siwc_account", &meta);
+                let _ = store.set_kv(&format!("siwc_account:{account_id}"), &meta);
+                Ok(json!({
+                    "ok": true,
+                    "status": if has_token { "connected" } else { "disconnected" },
+                    "authenticated": has_token,
+                    "account": meta
+                }))
             }
-            let has_token = vault
-                .get_secret("siwc_access_token")
-                .ok()
-                .flatten()
-                .is_some_and(|s| !s.trim().is_empty());
-            let meta = json!({
-                "account_id": account_id,
-                "email": email,
-                "authenticated": has_token,
-                "updated_at_ms": nola_types::now_ms()
-            });
-            let _ = store.set_kv("siwc_account", &meta);
-            json!({
-                "ok": true,
-                "status": if has_token { "connected" } else { "disconnected" },
-                "authenticated": has_token,
-                "account": meta
-            })
-        }
-        "forget" | "logout" | "clear" | "disconnect" => {
-            let _ = vault.delete_secret("siwc_access_token");
-            let _ = store.set_kv("siwc_account", &Value::Null);
-            json!({
-                "ok": true,
-                "status": "disconnected",
-                "authenticated": false,
-                "cleared": true
-            })
-        }
-        _ => {
-            let has_token = vault
-                .get_secret("siwc_access_token")
-                .ok()
-                .flatten()
-                .is_some_and(|s| !s.trim().is_empty());
-            let account = store
-                .get_kv("siwc_account")
-                .ok()
-                .flatten()
-                .filter(|v| !v.is_null());
-            let accounts: Vec<Value> = account.iter().cloned().collect();
-            json!({
-                "ok": true,
-                "status": if has_token { "connected" } else { "disconnected" },
-                "authenticated": has_token,
-                "account": account,
-                "accounts": accounts
-            })
+            "forget" | "logout" | "clear" | "disconnect" | "sign_out" => {
+                let _ = vault.delete_secret("siwc_access_token");
+                if let Some(aid) = req
+                    .and_then(|v| v.get("account_id").and_then(|s| s.as_str()))
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    let _ = vault.delete_secret(&format!("siwc_access_token:{aid}"));
+                    let _ = store.set_kv(&format!("siwc_account:{aid}"), &Value::Null);
+                }
+                let _ = store.set_kv("siwc_account", &Value::Null);
+                Ok(json!({
+                    "ok": true,
+                    "status": "disconnected",
+                    "authenticated": false,
+                    "cleared": true
+                }))
+            }
+            _ => {
+                let has_token = vault
+                    .get_secret("siwc_access_token")
+                    .ok()
+                    .flatten()
+                    .is_some_and(|s| !s.trim().is_empty());
+                let account = store
+                    .get_kv("siwc_account")
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null());
+                let accounts: Vec<Value> = account.iter().cloned().collect();
+                Ok(json!({
+                    "ok": true,
+                    "status": if has_token { "connected" } else { "disconnected" },
+                    "authenticated": has_token,
+                    "account": account,
+                    "accounts": accounts
+                }))
+            }
         }
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".into())
-    );
+
+    if let Some(op) = cli_op {
+        let resp = run_unframed_op(&op.to_ascii_lowercase(), None)?;
+        emit_compact_json_line(&resp);
+        return Ok(0);
+    }
+    if io::stdin().is_terminal() {
+        let resp = run_unframed_op("status", None)?;
+        emit_compact_json_line(&resp);
+        return Ok(0);
+    }
+
+    // Long-lived NDJSON line-by-line loop matching `MacSiwcAccountBridge.swift`
+    let owner_id = new_id();
+    let mut current_flow: Option<SiwcFlowState> = None;
+    let mut reader = BufReader::new(io::stdin());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader
+            .read_line(&mut line)
+            .map_err(|e| format!("model-siwc-bridge stdin read error: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let frame: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => {
+                emit_compact_json_line(&json!({
+                    "type": "error",
+                    "error": "native_siwc_invalid_frame"
+                }));
+                continue;
+            }
+        };
+
+        let request_id = frame
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        let raw_type = frame
+            .get("type")
+            .or_else(|| frame.get("operation"))
+            .or_else(|| frame.get("action"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("status")
+            .trim()
+            .to_ascii_lowercase();
+        let req = frame.get("request").unwrap_or(&frame);
+
+        // Unframed single-line CLI JSON request
+        if request_id.is_none()
+            && matches!(
+                raw_type.as_str(),
+                "save" | "bind" | "connect" | "forget" | "logout" | "clear" | "disconnect" | "status"
+            )
+        {
+            match run_unframed_op(&raw_type, Some(req)) {
+                Ok(resp) => emit_compact_json_line(&resp),
+                Err(e) => emit_compact_json_line(&json!({"ok": false, "error": e})),
+            }
+            continue;
+        }
+
+        // Normalize `update` wrapper (`{"type":"update","request":{"action":"status"|"cancel"|"finish",...}}`)
+        let op = if raw_type == "update" {
+            req.get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status")
+                .trim()
+                .to_ascii_lowercase()
+        } else {
+            raw_type
+        };
+
+        let reply: Value = match op.as_str() {
+            "hello" => json!({
+                "type": "hello",
+                "request_id": request_id,
+                "protocol": 1,
+                "owner_id": owner_id
+            }),
+            "start" => {
+                let account_id = req
+                    .get("account_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                let expected_rev = req
+                    .get("expected_account_revision")
+                    .and_then(|v| v.as_i64());
+                let display_name = req
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ChatGPT")
+                    .to_string();
+                let pkce = nola_mcp::McpOAuthManager::generate_pkce().ok();
+                let state = new_id();
+                let challenge = pkce.map(|p| p.challenge).unwrap_or_else(new_id);
+                let auth_url = format!(
+                    "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge={challenge}&code_challenge_method=S256&state={state}"
+                );
+                let flow = SiwcFlowState {
+                    owner_id: owner_id.clone(),
+                    flow_id: new_id(),
+                    account_id,
+                    expected_account_revision: expected_rev,
+                    display_name,
+                    phase: "awaiting_authorization".into(),
+                    authorization_url: Some(auth_url),
+                    account: None,
+                };
+                let flow_val = flow.to_json();
+                current_flow = Some(flow);
+                json!({
+                    "type": "flow",
+                    "request_id": request_id,
+                    "flow": flow_val
+                })
+            }
+            "status" => {
+                if let Some(ref flow) = current_flow {
+                    json!({
+                        "type": "flow",
+                        "request_id": request_id,
+                        "flow": flow.to_json()
+                    })
+                } else {
+                    json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": "native_siwc_private_session_changed"
+                    })
+                }
+            }
+            "cancel" => {
+                if let Some(ref mut flow) = current_flow {
+                    flow.phase = "cancelled".into();
+                    flow.authorization_url = None;
+                    let flow_val = flow.to_json();
+                    json!({
+                        "type": "flow",
+                        "request_id": request_id,
+                        "flow": flow_val
+                    })
+                } else {
+                    json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": "native_siwc_private_session_changed"
+                    })
+                }
+            }
+            "finish" => {
+                if let Some(ref mut flow) = current_flow {
+                    let next_rev = flow.expected_account_revision.unwrap_or(0) + 1;
+                    let acct = siwc_account_snapshot(
+                        &flow.account_id,
+                        &flow.display_name,
+                        next_rev,
+                        true,
+                    );
+                    let meta = json!({
+                        "account_id": flow.account_id,
+                        "display_name": flow.display_name,
+                        "revision": next_rev,
+                        "session_revision": 1,
+                        "authenticated": true,
+                        "updated_at_ms": now_ms()
+                    });
+                    let _ = store.set_kv("siwc_account", &meta);
+                    let _ = store.set_kv(&format!("siwc_account:{}", flow.account_id), &meta);
+                    flow.phase = "committed".into();
+                    flow.authorization_url = None;
+                    flow.account = Some(acct);
+                    let flow_val = flow.to_json();
+                    json!({
+                        "type": "flow",
+                        "request_id": request_id,
+                        "flow": flow_val
+                    })
+                } else {
+                    json!({
+                        "type": "error",
+                        "request_id": request_id,
+                        "error": "native_siwc_private_session_changed"
+                    })
+                }
+            }
+            "account_status" | "models" | "discovermodels" | "refresh" | "sign_out"
+            | "disconnect" => {
+                let account_id = req
+                    .get("account_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("siwc-default")
+                    .to_string();
+                let expected_rev = req
+                    .get("expected_account_revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                let stored_meta = store
+                    .get_kv(&format!("siwc_account:{account_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null())
+                    .or_else(|| {
+                        store
+                            .get_kv("siwc_account")
+                            .ok()
+                            .flatten()
+                            .filter(|v| !v.is_null())
+                    });
+                let stored_rev = stored_meta
+                    .as_ref()
+                    .and_then(|m| m.get("revision").and_then(|v| v.as_i64()))
+                    .unwrap_or(expected_rev)
+                    .max(expected_rev);
+                let mut session_rev = stored_meta
+                    .as_ref()
+                    .and_then(|m| m.get("session_revision").and_then(|v| v.as_i64()))
+                    .unwrap_or(1);
+                let display_name = stored_meta
+                    .as_ref()
+                    .and_then(|m| {
+                        m.get("display_name")
+                            .or_else(|| m.get("email"))
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or("ChatGPT")
+                    .to_string();
+                let has_token = vault
+                    .get_secret(&format!("siwc_access_token:{account_id}"))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|s| !s.trim().is_empty())
+                    || vault
+                        .get_secret("siwc_access_token")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|s| !s.trim().is_empty())
+                    || stored_meta
+                        .as_ref()
+                        .and_then(|m| m.get("authenticated").and_then(|v| v.as_bool()))
+                        .unwrap_or(false);
+
+                match op.as_str() {
+                    "sign_out" | "disconnect" => {
+                        let _ = vault.delete_secret("siwc_access_token");
+                        let _ = vault.delete_secret(&format!("siwc_access_token:{account_id}"));
+                        let next_rev = stored_rev + 1;
+                        let meta = json!({
+                            "account_id": account_id,
+                            "display_name": display_name,
+                            "revision": next_rev,
+                            "session_revision": session_rev + 1,
+                            "authenticated": false,
+                            "updated_at_ms": now_ms()
+                        });
+                        let _ = store.set_kv(&format!("siwc_account:{account_id}"), &meta);
+                        let _ = store.set_kv("siwc_account", &Value::Null);
+                        json!({
+                            "type": "account",
+                            "request_id": request_id,
+                            "result": {
+                                "owner_id": owner_id,
+                                "account_id": account_id,
+                                "account": siwc_account_snapshot(&account_id, &display_name, next_rev, false),
+                                "session": {
+                                    "account_id": account_id,
+                                    "session_revision": session_rev + 1,
+                                    "signed_in": false,
+                                    "plan_usage_authorized": false,
+                                    "reauthorization_required": false,
+                                    "revocation_unconfirmed": false
+                                },
+                                "connection": Value::Null,
+                                "inference_performed": false
+                            }
+                        })
+                    }
+                    "refresh" => {
+                        session_rev += 1;
+                        let meta = json!({
+                            "account_id": account_id,
+                            "display_name": display_name,
+                            "revision": stored_rev,
+                            "session_revision": session_rev,
+                            "authenticated": has_token,
+                            "updated_at_ms": now_ms()
+                        });
+                        let _ = store.set_kv(&format!("siwc_account:{account_id}"), &meta);
+                        json!({
+                            "type": "account",
+                            "request_id": request_id,
+                            "result": {
+                                "owner_id": owner_id,
+                                "account_id": account_id,
+                                "account": siwc_account_snapshot(&account_id, &display_name, stored_rev, has_token),
+                                "session": {
+                                    "account_id": account_id,
+                                    "session_revision": session_rev,
+                                    "signed_in": has_token,
+                                    "plan_usage_authorized": has_token,
+                                    "reauthorization_required": !has_token,
+                                    "revocation_unconfirmed": false
+                                },
+                                "connection": Value::Null,
+                                "inference_performed": false
+                            }
+                        })
+                    }
+                    "models" | "discovermodels" => {
+                        let conn_snap = siwc_default_connection_snapshot(&account_id, stored_rev);
+                        let _ = store.set_kv(&format!("siwc_connection:{account_id}"), &conn_snap);
+                        json!({
+                            "type": "account",
+                            "request_id": request_id,
+                            "result": {
+                                "owner_id": owner_id,
+                                "account_id": account_id,
+                                "account": siwc_account_snapshot(&account_id, &display_name, stored_rev, has_token),
+                                "session": {
+                                    "account_id": account_id,
+                                    "session_revision": session_rev,
+                                    "signed_in": has_token,
+                                    "plan_usage_authorized": has_token,
+                                    "reauthorization_required": !has_token,
+                                    "revocation_unconfirmed": false
+                                },
+                                "connection": conn_snap,
+                                "inference_performed": false
+                            }
+                        })
+                    }
+                    _ => {
+                        // account_status
+                        json!({
+                            "type": "account",
+                            "request_id": request_id,
+                            "result": {
+                                "owner_id": owner_id,
+                                "account_id": account_id,
+                                "account": siwc_account_snapshot(&account_id, &display_name, stored_rev, has_token),
+                                "session": {
+                                    "account_id": account_id,
+                                    "session_revision": session_rev,
+                                    "signed_in": has_token,
+                                    "plan_usage_authorized": has_token,
+                                    "reauthorization_required": !has_token,
+                                    "revocation_unconfirmed": false
+                                },
+                                "connection": Value::Null,
+                                "inference_performed": false
+                            }
+                        })
+                    }
+                }
+            }
+            _ => json!({
+                "type": "error",
+                "request_id": request_id,
+                "error": format!("unsupported_siwc_action:{op}")
+            }),
+        };
+        emit_compact_json_line(&reply);
+    }
     Ok(0)
 }
 
-fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, String> {
+fn handle_mcp_cmd(
+    store: &Store,
+    db_path: &Path,
+    args: &[String],
+    json_mode: bool,
+) -> Result<u8, String> {
     match args.first().map(String::as_str) {
         Some("list") | None => {
             let servers = store.list_mcp_servers().map_err(|e| e.to_string())?;
@@ -2312,22 +4640,101 @@ fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, 
             Ok(0)
         }
         Some("auth") => {
-            let server_id = args.get(1).ok_or("usage: nola mcp auth <server_id>")?;
+            let server_id = args
+                .get(1)
+                .ok_or("usage: nola mcp auth <server_id> [--status] [--timeout <secs>]")?;
+            let mut status_only = false;
+            let mut custom_timeout: Option<Duration> = None;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--status" => status_only = true,
+                    "--timeout" => {
+                        i += 1;
+                        let secs: u64 = args
+                            .get(i)
+                            .ok_or("--timeout requires seconds")?
+                            .parse()
+                            .map_err(|_| "--timeout must be an integer number of seconds")?;
+                        custom_timeout = Some(Duration::from_secs(secs.max(1)));
+                    }
+                    other => return Err(format!("unknown mcp auth option '{other}'")),
+                }
+                i += 1;
+            }
             let vault =
                 Arc::new(Vault::open(default_vault_path(db_path)).map_err(|e| e.to_string())?);
-            let mgr = McpManager::new(Some(vault));
-            let pkce = nola_mcp::McpOAuthManager::generate_pkce().map_err(|e| e.to_string())?;
-            let has_token = mgr
-                .oauth()
-                .and_then(|o| o.load_tokens(server_id).ok().flatten())
-                .is_some();
+            if status_only {
+                let mgr = McpManager::new(Some(Arc::clone(&vault)));
+                let token_info = mgr.oauth().and_then(|o| o.load_tokens(server_id).ok().flatten());
+                println!(
+                    "{}",
+                    json!({
+                        "server_id": server_id,
+                        "authenticated": token_info.is_some(),
+                        "token_endpoint": token_info.as_ref().map(|t| t.token_endpoint.as_str()),
+                        "expires_at_ms": token_info.and_then(|t| t.expires_at_ms)
+                    })
+                );
+                return Ok(0);
+            }
+            let servers = store.list_mcp_servers().map_err(|e| e.to_string())?;
+            let server = servers
+                .into_iter()
+                .find(|s| s.id == *server_id)
+                .ok_or_else(|| format!("MCP server '{server_id}' not found"))?;
+            let server_url = server
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "MCP server '{server_id}' has no HTTP/SSE URL configured for OAuth"
+                    )
+                })?;
+
+            let on_auth_url = |auth_url: &str| {
+                if json_mode {
+                    emit_compact_json_line(&json!({
+                        "event": "authorization_url",
+                        "server_id": server_id,
+                        "authorization_url": auth_url
+                    }));
+                } else {
+                    eprintln!(
+                        "Open this URL in your browser to authorize MCP server '{server_id}':\n{auth_url}"
+                    );
+                    let _ = io::stderr().flush();
+                }
+            };
+            let tokens = if server.oauth_client_id.is_none()
+                && server.oauth_scopes.is_empty()
+                && custom_timeout.is_none()
+            {
+                nola_mcp::run_interactive_oauth_flow(server_id, server_url, vault, on_auth_url)
+                    .map_err(|e| e.to_string())?
+            } else {
+                nola_mcp::run_interactive_oauth_flow_with_options(
+                    server_id,
+                    server_url,
+                    vault,
+                    server.oauth_client_id.as_deref(),
+                    &server.oauth_scopes,
+                    custom_timeout.unwrap_or(nola_mcp::DEFAULT_OAUTH_CALLBACK_TIMEOUT),
+                    on_auth_url,
+                )
+                .map_err(|e| e.to_string())?
+            };
             println!(
                 "{}",
                 json!({
+                    "ok": true,
                     "server_id": server_id,
-                    "authenticated": has_token,
-                    "pkce_challenge": pkce.challenge,
-                    "pkce_method": pkce.method
+                    "authenticated": true,
+                    "token_endpoint": tokens.token_endpoint,
+                    "client_id": tokens.client_id,
+                    "expires_at_ms": tokens.expires_at_ms
                 })
             );
             Ok(0)
@@ -2603,30 +5010,150 @@ fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
         }
         Some("desktop-manage") => {
             let sub_args = &args[1..];
-            match sub_args.first().map(String::as_str) {
-                Some("enable") | Some("disable") | Some("remove") | Some("install") => {
-                    handle_plugin_cmd(store, suite, sub_args)
+            let is_action = |s: &str| {
+                matches!(
+                    s,
+                    "list" | "install" | "add" | "enable" | "disable" | "remove" | "uninstall"
+                        | "reconcile" | "update"
+                )
+            };
+            let is_runtime_form = sub_args
+                .first()
+                .map(|s| !is_action(s.as_str()))
+                .unwrap_or(false)
+                && sub_args.len() >= 3;
+
+            let (runtime, profile, action, source): (String, String, String, Option<String>) =
+                if is_runtime_form {
+                    (
+                        sub_args[0].clone(),
+                        sub_args[1].clone(),
+                        sub_args[2].to_ascii_lowercase(),
+                        sub_args.get(3).cloned(),
+                    )
+                } else {
+                    let act = sub_args
+                        .first()
+                        .map(|s| s.to_ascii_lowercase())
+                        .unwrap_or_else(|| "list".to_string());
+                    (
+                        "dsh".to_string(),
+                        "web".to_string(),
+                        act,
+                        sub_args.get(1).cloned(),
+                    )
+                };
+
+            let find_matching_plugin = |target: &str| -> Option<PluginRecord> {
+                let target_trimmed = target.trim();
+                suite
+                    .list_records::<PluginRecord>(KIND_PLUGIN)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|r| {
+                        r.id == target_trimmed
+                            || r.name == target_trimmed
+                            || format!("{}@{}", r.name, r.version) == target_trimmed
+                    })
+            };
+
+            match action.as_str() {
+                "install" | "add" => {
+                    let src = source.as_deref().ok_or(
+                        "usage: nola plugin desktop-manage [<runtime> <profile>] install <source>",
+                    )?;
+                    if !is_runtime_form && sub_args.len() > 2 {
+                        return handle_plugin_cmd(store, suite, sub_args);
+                    }
+                    let _rec = install_plugin_package(
+                        store,
+                        &suite.workspace_root,
+                        &runtime,
+                        &profile,
+                        src,
+                    )?;
                 }
-                Some("list") | None => {
-                    let installed: Vec<PluginRecord> =
-                        suite.list_records(KIND_PLUGIN).unwrap_or_default();
-                    let catalog = list_harness_plugins(Some(store), &suite.workspace_root);
-                    let pages = list_desktop_plugin_pages(&suite.workspace_root);
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&json!({
-                            "installed": installed,
-                            "plugins": catalog.get("plugins").cloned().unwrap_or_else(|| json!([])),
-                            "pages": pages
-                        }))
-                        .unwrap()
-                    );
-                    Ok(0)
+                "enable" | "disable" => {
+                    let target = source.as_deref().ok_or(
+                        "usage: nola plugin desktop-manage [<runtime> <profile>] enable|disable <id>",
+                    )?;
+                    let mut rec = find_matching_plugin(target)
+                        .ok_or_else(|| format!("plugin '{target}' not found"))?;
+                    rec.enabled = action == "enable";
+                    suite
+                        .upsert_record(KIND_PLUGIN, &rec.id, &rec)
+                        .map_err(|e| e.to_string())?;
                 }
-                Some(other) => Err(format!(
-                    "unknown desktop-manage action '{other}' (expected list|install|enable|disable|remove)"
-                )),
+                "remove" | "uninstall" => {
+                    let target = source.as_deref().ok_or(
+                        "usage: nola plugin desktop-manage [<runtime> <profile>] remove <id>",
+                    )?;
+                    if let Some(rec) = find_matching_plugin(target) {
+                        let _ = suite.delete_record(KIND_PLUGIN, &rec.id);
+                        let staged_dir = suite.workspace_root.join(".nola/plugins").join(&rec.id);
+                        if staged_dir.is_dir() && !fs::symlink_metadata(&staged_dir).is_ok_and(|m| m.file_type().is_symlink()) {
+                            let _ = fs::remove_dir_all(&staged_dir);
+                        }
+                    } else {
+                        let _ = suite.delete_record(KIND_PLUGIN, target);
+                    }
+                }
+                "list" | "reconcile" | "update" => {}
+                other => {
+                    return Err(format!(
+                        "unknown desktop-manage action '{other}' (expected list|install|enable|disable|remove|reconcile|update)"
+                    ));
+                }
             }
+
+            let reconciled = reconcile_enabled_plugins(store, &suite.workspace_root);
+            let catalog = list_harness_plugins(Some(store), &suite.workspace_root);
+            let pages = list_desktop_plugin_pages(&suite.workspace_root);
+            let installed: Vec<PluginRecord> = suite.list_records(KIND_PLUGIN).unwrap_or_default();
+
+            let matched_profile = catalog
+                .get("profiles")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter().find(|p| {
+                        p.get("runtime").and_then(|r| r.as_str()) == Some(runtime.as_str())
+                            && p.get("profile").and_then(|pr| pr.as_str()) == Some(profile.as_str())
+                    })
+                });
+            let packages: Vec<String> = matched_profile
+                .and_then(|p| p.get("packages").and_then(|v| v.as_array()))
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|pkg| {
+                            pkg.get("source")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let available = matched_profile
+                .and_then(|p| p.get("available").and_then(|v| v.as_bool()))
+                .unwrap_or(false)
+                || !packages.is_empty();
+
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "runtime": runtime,
+                    "profile": profile,
+                    "action": action,
+                    "available": available,
+                    "packages": packages,
+                    "installed": installed,
+                    "plugins": catalog.get("plugins").cloned().unwrap_or_else(|| json!([])),
+                    "pages": pages,
+                    "reconciled": reconciled
+                }))
+                .unwrap()
+            );
+            Ok(0)
         }
         Some("pi") | Some("dsh") => {
             let runtime = args[0].as_str();
@@ -2760,6 +5287,78 @@ fn handle_sessions_cmd(store: &Store, args: &[String], json_mode: bool) -> Resul
             }
             Ok(0)
         }
+        Some("show") => {
+            let id = args.get(1).ok_or("usage: nola sessions show <id>")?;
+            let session = store
+                .get_session(id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("session '{id}' not found"))?;
+            let events = store
+                .read_event_range(id, 0, 5000)
+                .map_err(|e| e.to_string())?;
+            let (messages, _) = crate::web_api::reconstruct_v2_messages(store, id);
+            let usage = crate::web_api::session_usage_json(store, id);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "session": session,
+                    "message_count": messages.len(),
+                    "event_count": events.len(),
+                    "messages": messages,
+                    "events": events,
+                    "usage": usage
+                }))
+                .unwrap()
+            );
+            Ok(0)
+        }
+        Some("part") => {
+            let id = args.get(1).ok_or("usage: nola sessions part <id> <seq>")?;
+            let seq_raw = args.get(2).ok_or("usage: nola sessions part <id> <seq>")?;
+            let seq: i64 = seq_raw
+                .parse()
+                .map_err(|_| format!("invalid event sequence '{seq_raw}' (expected integer)"))?;
+            let events = store
+                .read_event_range(id, seq, 1)
+                .map_err(|e| e.to_string())?;
+            let part = events
+                .into_iter()
+                .find(|ev| ev.seq == seq)
+                .ok_or_else(|| format!("session '{id}' has no event at seq {seq}"))?;
+            println!("{}", serde_json::to_string_pretty(&part).unwrap());
+            Ok(0)
+        }
+        Some("sources") => {
+            let id = args.get(1).ok_or("usage: nola sessions sources <id>")?;
+            let _session = store
+                .get_session(id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("session '{id}' not found"))?;
+            let knowledge = crate::web_api::load_conversation_knowledge(store, id);
+            let usage = list_data_source_usage(store);
+            let events = store.read_event_range(id, 0, 2000).unwrap_or_default();
+            let referenced_tools: BTreeSet<String> = events
+                .iter()
+                .filter_map(|ev| {
+                    ev.payload
+                        .get("name")
+                        .or_else(|| ev.payload.get("tool_name"))
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "session_id": id,
+                    "knowledge": knowledge,
+                    "data_source_usage": usage,
+                    "referenced_tools": referenced_tools
+                }))
+                .unwrap()
+            );
+            Ok(0)
+        }
         Some("delete") => {
             let id = args.get(1).ok_or("usage: nola sessions delete <id>")?;
             store.delete_session(id).map_err(|e| e.to_string())?;
@@ -2774,7 +5373,9 @@ fn handle_sessions_cmd(store: &Store, args: &[String], json_mode: bool) -> Resul
             println!("{}", json!({"backup": dest}));
             Ok(0)
         }
-        Some(other) => Err(format!("unknown sessions subcommand '{other}'")),
+        Some(other) => Err(format!(
+            "unknown sessions subcommand '{other}' (expected list|show|part|sources|delete|backup)"
+        )),
     }
 }
 
@@ -2800,6 +5401,129 @@ fn handle_goal_cmd(
     args: &[String],
 ) -> Result<u8, String> {
     match args.first().map(String::as_str) {
+        Some("create") => {
+            let mut id: Option<String> = None;
+            let mut title_parts: Vec<String> = Vec::new();
+            let mut objective: Option<String> = None;
+            let mut criteria: Vec<String> = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--id" => {
+                        i += 1;
+                        id = Some(args.get(i).ok_or("--id requires a value")?.clone());
+                    }
+                    "--objective" => {
+                        i += 1;
+                        objective = Some(args.get(i).ok_or("--objective requires text")?.clone());
+                    }
+                    "--criteria" => {
+                        i += 1;
+                        criteria.push(args.get(i).ok_or("--criteria requires text")?.clone());
+                    }
+                    other if other.starts_with('-') => {
+                        return Err(format!("unknown goal create option '{other}'"));
+                    }
+                    other => title_parts.push(other.to_string()),
+                }
+                i += 1;
+            }
+            let title = title_parts.join(" ").trim().to_string();
+            if title.is_empty() {
+                return Err(
+                    "usage: nola goal create <title> [--objective <text>] [--id <id>] [--criteria <text>]"
+                        .into(),
+                );
+            }
+            let ts = now_ms();
+            let rec = ExtendedGoalRecord {
+                id: id.unwrap_or_else(new_id),
+                title: title.clone(),
+                objective: objective.unwrap_or(title),
+                workspace_root: suite.workspace_root.display().to_string(),
+                status: GoalStatus::Pending,
+                progress_notes: Vec::new(),
+                created_at_ms: ts,
+                updated_at_ms: ts,
+                lease_until_ms: None,
+                retry_count: 0,
+                next_retry_at_ms: None,
+                needs_user_question: None,
+                acceptance_criteria: criteria,
+                accepted: false,
+            };
+            suite
+                .upsert_record("goal", &rec.id, &rec)
+                .map_err(|e| e.to_string())?;
+            println!("{}", serde_json::to_string_pretty(&rec).unwrap());
+            Ok(0)
+        }
+        Some("pause") => {
+            let goal_id = args.get(1).ok_or("usage: nola goal pause <goal_id> [--note <text>]")?;
+            let mut note: Option<String> = None;
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--note" {
+                    i += 1;
+                    note = Some(args.get(i).ok_or("--note requires text")?.clone());
+                }
+                i += 1;
+            }
+            let mut rec = suite
+                .get_record::<ExtendedGoalRecord>("goal", goal_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
+            rec.status = GoalStatus::Paused;
+            rec.lease_until_ms = None;
+            if let Some(n) = note {
+                rec.progress_notes.push(format!("[paused] {n}"));
+            }
+            rec.updated_at_ms = now_ms();
+            suite
+                .upsert_record("goal", &rec.id, &rec)
+                .map_err(|e| e.to_string())?;
+            println!("{}", serde_json::to_string_pretty(&rec).unwrap());
+            Ok(0)
+        }
+        Some("cancel") => {
+            let goal_id = args.get(1).ok_or("usage: nola goal cancel <goal_id> [--note <text>]")?;
+            let mut note: Option<String> = None;
+            let mut i = 2;
+            while i < args.len() {
+                if args[i] == "--note" {
+                    i += 1;
+                    note = Some(args.get(i).ok_or("--note requires text")?.clone());
+                }
+                i += 1;
+            }
+            let mut rec = suite
+                .get_record::<ExtendedGoalRecord>("goal", goal_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
+            rec.status = GoalStatus::Failed;
+            rec.lease_until_ms = None;
+            rec.next_retry_at_ms = None;
+            rec.needs_user_question = None;
+            rec.progress_notes.push(match note {
+                Some(n) => format!("[cancelled] {n}"),
+                None => "[cancelled] Cancelled by user".to_string(),
+            });
+            rec.updated_at_ms = now_ms();
+            suite
+                .upsert_record("goal", &rec.id, &rec)
+                .map_err(|e| e.to_string())?;
+            println!("{}", serde_json::to_string_pretty(&rec).unwrap());
+            Ok(0)
+        }
+        Some("status") => {
+            let goal_id = args.get(1).ok_or("usage: nola goal status <goal_id>")?;
+            let rec = suite
+                .get_record::<ExtendedGoalRecord>("goal", goal_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
+            println!("{}", serde_json::to_string_pretty(&rec).unwrap());
+            Ok(0)
+        }
         Some("run") => {
             let goal_id = args.get(1).ok_or("usage: nola goal run <goal_id>")?;
             let cfg = load_active_config(store);
@@ -2834,7 +5558,9 @@ fn handle_goal_cmd(
             Ok(0)
         }
         Some("list") | None => handle_modules_cmd(suite, &["goal".to_string()]),
-        Some(other) => Err(format!("unknown goal subcommand '{other}'")),
+        Some(other) => Err(format!(
+            "unknown goal subcommand '{other}' (expected list|create|status|run|pause|cancel)"
+        )),
     }
 }
 
@@ -2959,6 +5685,73 @@ fn handle_update_cmd(args: &[String]) -> Result<u8, String> {
             println!("{}", serde_json::to_string_pretty(&res).unwrap());
             Ok(0)
         }
+        Some("verify-feed") => {
+            let mut source_path: Option<PathBuf> = None;
+            let mut feed_path: Option<PathBuf> = None;
+            let mut target_filter: Option<String> = None;
+            let mut positional: Vec<String> = Vec::new();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--source" => {
+                        i += 1;
+                        source_path = Some(PathBuf::from(
+                            args.get(i).ok_or("--source requires a file path")?,
+                        ));
+                    }
+                    "--feed" => {
+                        i += 1;
+                        feed_path = Some(PathBuf::from(
+                            args.get(i).ok_or("--feed requires a file path")?,
+                        ));
+                    }
+                    "--target" => {
+                        i += 1;
+                        target_filter =
+                            Some(args.get(i).ok_or("--target requires a target name")?.clone());
+                    }
+                    other if other.starts_with('-') => {
+                        return Err(format!("unknown update verify-feed option '{other}'"));
+                    }
+                    other => positional.push(other.to_string()),
+                }
+                i += 1;
+            }
+            let src = source_path
+                .or_else(|| positional.first().map(PathBuf::from))
+                .ok_or(
+                    "usage: nola update verify-feed --source <update-source.json> --feed <feed.json> [--target <target>]",
+                )?;
+            let feed = feed_path
+                .or_else(|| positional.get(1).map(PathBuf::from))
+                .ok_or(
+                    "usage: nola update verify-feed --source <update-source.json> --feed <feed.json> [--target <target>]",
+                )?;
+            if target_filter.is_none() {
+                target_filter = positional.get(2).cloned();
+            }
+            let source_bytes = fs::read(&src)
+                .map_err(|e| format!("failed to read source '{}': {e}", src.display()))?;
+            let feed_bytes = fs::read(&feed)
+                .map_err(|e| format!("failed to read feed '{}': {e}", feed.display()))?;
+            let verified = verify_signed_feed_bytes(&source_bytes, &feed_bytes)?;
+            if let Some(ref target) = target_filter {
+                let found = verified
+                    .get("targets")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|arr| {
+                        arr.iter()
+                            .any(|t| t.get("target").and_then(|s| s.as_str()) == Some(target.as_str()))
+                    });
+                if !found {
+                    return Err(format!(
+                        "signed feed verified, but does not contain target '{target}'"
+                    ));
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&verified).unwrap());
+            Ok(0)
+        }
         Some("download") => {
             let url = args
                 .get(1)
@@ -2971,7 +5764,11 @@ fn handle_update_cmd(args: &[String]) -> Result<u8, String> {
             while i < args.len() {
                 if args[i] == "--sha256" {
                     i += 1;
-                    sha256 = Some(args.get(i).ok_or("--sha256 requires a 64-char hex digest")?.clone());
+                    sha256 = Some(
+                        args.get(i)
+                            .ok_or("--sha256 requires a 64-char hex digest")?
+                            .clone(),
+                    );
                 } else {
                     return Err(format!("unknown update download option '{}'", args[i]));
                 }
@@ -2982,9 +5779,85 @@ fn handle_update_cmd(args: &[String]) -> Result<u8, String> {
             Ok(0)
         }
         Some(other) => Err(format!(
-            "unknown update subcommand '{other}' (expected check|download)"
+            "unknown update subcommand '{other}' (expected check|verify-feed|download)"
         )),
     }
+}
+
+fn handle_wiki_cmd(
+    store: &Store,
+    default_workspace: &Path,
+    opts: &CliOptions,
+    args: &[String],
+) -> Result<u8, String> {
+    let target_ws = args
+        .first()
+        .filter(|s| !s.starts_with('-'))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_workspace.to_path_buf());
+    let arch = codebase_architecture(store, &target_ws, 50)?;
+    let rendered = if opts.json_mode {
+        serde_json::to_string_pretty(&arch).unwrap_or_else(|_| "{}".into())
+    } else {
+        let mut md = String::new();
+        md.push_str(&format!(
+            "# Codebase Architecture Wiki\n\n- **Workspace**: `{}`\n- **Indexed Files**: {}\n- **Symbols**: {}\n- **Edges**: {}\n\n## Modules\n\n| Module | Files | Symbols | Languages |\n| --- | ---: | ---: | --- |\n",
+            arch["workspace_root"].as_str().unwrap_or(""),
+            arch["total_files"].as_u64().unwrap_or(0),
+            arch["total_symbols"].as_u64().unwrap_or(0),
+            arch["total_edges"].as_u64().unwrap_or(0),
+        ));
+        if let Some(mods) = arch.get("modules").and_then(|v| v.as_array()) {
+            for m in mods {
+                let langs = m
+                    .get("languages")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                md.push_str(&format!(
+                    "| `{}` | {} | {} | {} |\n",
+                    m["module"].as_str().unwrap_or("."),
+                    m["file_count"].as_u64().unwrap_or(0),
+                    m["symbol_count"].as_u64().unwrap_or(0),
+                    langs
+                ));
+            }
+        }
+        if let Some(deps) = arch
+            .get("cross_file_dependencies")
+            .and_then(|v| v.as_array())
+        {
+            if !deps.is_empty() {
+                md.push_str("\n## Cross-File Dependencies\n\n");
+                for dep in deps.iter().take(25) {
+                    md.push_str(&format!(
+                        "- `{}` -> `{}` ({} refs)\n",
+                        dep["from_file"].as_str().unwrap_or(""),
+                        dep["to_file"].as_str().unwrap_or(""),
+                        dep["reference_count"].as_u64().unwrap_or(0),
+                    ));
+                }
+            }
+        }
+        md
+    };
+    if let Some(ref out_path) = opts.output_file {
+        reject_if_symlink(out_path)?;
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        fs::write(out_path, &rendered)
+            .map_err(|e| format!("failed to write wiki output '{}': {e}", out_path.display()))?;
+    }
+    println!("{rendered}");
+    Ok(0)
 }
 
 fn print_help() {
@@ -2992,19 +5865,20 @@ fn print_help() {
         "Nola v2 (Lean 8-Crate Full-Capability Architecture)\n\n\
          Usage:\n  \
            nola [options] [prompt]\n  \
-           nola run [--json] [--host-request-stdin] [--session <id>] [--project <dir>] [-m <model>] [--endpoint <url>] [--allow-dir <dir>] [--no-skills] [--github-skill <id>]\n  \
+           nola run [--json] [--host-request-stdin] [--session <id>] [--continue] [--project <dir>] [-m <model>] [--endpoint <url>] [--reasoning-effort <lvl>] [--profile <name>] [--no-tools] [--output <file>] [--lang <locale>] [--debug] [--allow-dir <dir>] [--no-skills] [--github-skill <id>]\n  \
            nola init [--force]\n  \
            nola config [check [path] | apply [path] [--dry-run] | example | edit [path]]\n  \
-           nola model [list | connections | probe [connection_id] | apply-config [path]]\n  \
-           nola mcp [list | add <id> --transport <stdio|http|sse> ... | remove <id> | auth <id>]\n  \
+           nola model [list | connections | discover [conn] [--save] | configure ... | import <path> | probe [conn] | apply-config [path] | acquire <engine-status|setup-engine|hardware|recommend|confirm|remove>]\n  \
+           nola mcp [list | add <id> --transport <stdio|http|sse> ... | remove <id> | auth <id> [--status]]\n  \
            nola skills [list | find <query> | install <owner/repo|url> | enable <name> | disable <name>]\n  \
            nola memory [list | create | revise <id> | delete <id>]\n  \
-           nola plugin [list | install <spec> | enable <id> | disable <id> | remove <id> | desktop-pages [id] | desktop-library | desktop-manage | pi | dsh]\n  \
-           nola sessions [list | delete <id> | backup <dest>]\n  \
-           nola goal [list | run <goal_id>]\n  \
+           nola plugin [list | install <spec> | enable <id> | disable <id> | remove <id> | desktop-pages [id] | desktop-library | desktop-manage [<rt> <prof>] <action> [src] | pi | dsh]\n  \
+           nola sessions [list | show <id> | part <id> <seq> | sources <id> | delete <id> | backup <dest>]\n  \
+           nola goal [list | create <title> | status <id> | run <id> | pause <id> | cancel <id>]\n  \
            nola room [list | send <room_id> <message> [--to <participant_id>]]\n  \
            nola scheduler [list | tick]\n  \
-           nola update [check [manifest_url] | download <url> <dest_dir> [--sha256 <hex>]]\n  \
+           nola update [check [manifest_url] | verify-feed --source <path> --feed <path> | download <url> <dest_dir> --sha256 <hex>]\n  \
+           nola wiki [workspace] [--json] [--output <file>]\n  \
            nola modules <kind|skills>\n  \
            nola version [--json]\n  \
            nola web [--host 127.0.0.1] [--port 5001] [--web-root <dir>] [--json]\n  \
@@ -3018,7 +5892,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_route_with_overrides_prioritizes_explicit_overrides_over_default_model() {
+    fn resolve_route_with_overrides_prioritizes_explicit_overrides_and_reasoning_effort() {
         let mut cfg = AppliedConfig::default();
         cfg.llm.connections.push(ConnectionConfig {
             id: "default-conn".into(),
@@ -3051,6 +5925,7 @@ mod tests {
             api_key: Some("sk-override".into()),
             protocol: Some("openai_chat".into()),
             permission_profile: None,
+            reasoning_effort: Some("high".into()),
             temperature: None,
             top_p: None,
             max_output_tokens: None,
@@ -3062,6 +5937,7 @@ mod tests {
         assert_eq!(route.endpoint, "http://127.0.0.1:8080/v1");
         assert_eq!(route.api_key, "sk-override");
         assert_eq!(route.protocol, ModelProtocol::OpenAiChat);
+        assert_eq!(route.reasoning_effort.as_deref(), Some("high"));
 
         // Partial override still applies on top of default model
         let partial = HostRunOverrides {
@@ -3072,6 +5948,7 @@ mod tests {
             api_key: None,
             protocol: Some("gemini".into()),
             permission_profile: None,
+            reasoning_effort: Some("medium".into()),
             temperature: None,
             top_p: None,
             max_output_tokens: None,
@@ -3082,10 +5959,250 @@ mod tests {
         assert_eq!(route2.model, "gpt-5");
         assert_eq!(route2.endpoint, "https://api.openai.com/v1");
         assert_eq!(route2.protocol, ModelProtocol::Gemini);
+        assert_eq!(route2.reasoning_effort.as_deref(), Some("medium"));
 
         // Without overrides, falls back to cfg.llm.default_model
         let route3 = resolve_route_with_overrides(&cfg, &opts, None).unwrap();
         assert_eq!(route3.model, "gpt-4.1");
         assert_eq!(route3.endpoint, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn execution_backends_includes_nola_and_external_entries() {
+        let val = list_execution_backends_json();
+        let arr = val.as_array().unwrap();
+        assert_eq!(arr[0]["id"], "nola");
+        assert_eq!(arr[0]["availability"], "available");
+        assert_eq!(arr[0]["capabilities"]["supports_permission_bridge"], true);
+        let ids: Vec<&str> = arr.iter().filter_map(|b| b["id"].as_str()).collect();
+        assert!(ids.contains(&"codex"));
+        assert!(ids.contains(&"claude"));
+        assert!(ids.contains(&"opencode"));
+    }
+
+    #[test]
+    fn parse_args_supports_extended_cli_flags() {
+        let args: Vec<String> = [
+            "--profile",
+            "allow_all",
+            "--continue",
+            "--reasoning-effort",
+            "high",
+            "--no-tools",
+            "--output",
+            "/tmp/out.txt",
+            "--debug",
+            "--lang",
+            "zh-CN",
+            "hello",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let opts = parse_args(&args).unwrap();
+        assert_eq!(opts.profile.as_deref(), Some("allow_all"));
+        assert!(opts.continue_last);
+        assert!(opts.resume);
+        assert_eq!(opts.reasoning_effort.as_deref(), Some("high"));
+        assert!(opts.no_tools);
+        assert_eq!(opts.output_file, Some(PathBuf::from("/tmp/out.txt")));
+        assert!(opts.debug);
+        assert_eq!(opts.lang.as_deref(), Some("zh-CN"));
+        assert_eq!(resolve_profile(&opts), PermissionProfile::AllowAll);
+    }
+
+    #[test]
+    fn host_stdin_parsers_handle_v2_and_macos_legacy_shapes() {
+        assert_eq!(
+            parse_permission_allow(&json!({
+                "request_id": "r1",
+                "resolution": { "type": "authorization", "decision": "allow_conversation" }
+            })),
+            Some(true)
+        );
+        assert_eq!(
+            parse_permission_allow(&json!({ "decision": "deny" })),
+            Some(false)
+        );
+        assert_eq!(
+            parse_user_input_answer(&json!({ "answer": "yes please" }), Some("q1")),
+            Some(Some("yes please".to_string()))
+        );
+        assert_eq!(
+            parse_user_input_answer(&json!({ "cancelled": true }), Some("q1")),
+            Some(None)
+        );
+        assert_eq!(
+            extract_reasoning_effort_from_req(&json!({ "reasoning": { "effort": "high" } })),
+            Some("high".to_string())
+        );
+        assert_eq!(
+            extract_reasoning_effort_from_req(&json!({ "reasoning_selection": { "kind": "effort", "value": "low" } })),
+            Some("low".to_string())
+        );
+    }
+
+    #[test]
+    fn desktop_manage_supports_macos_runtime_profile_action_order_and_shorthand() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+
+        let plugin_src = dir.path().join("demo-plugin");
+        fs::create_dir_all(&plugin_src).unwrap();
+        fs::write(
+            plugin_src.join("nola-plugin.json"),
+            r#"{"id":"demo-plugin","name":"Demo Plugin","version":"1.0.0","runtime":"dsh","profile":"web"}"#,
+        )
+        .unwrap();
+
+        // macOS 4-arg order: desktop-manage <runtime> <profile> <action> <source>
+        let rc = handle_plugin_cmd(
+            &store,
+            &suite,
+            &[
+                "desktop-manage".into(),
+                "dsh".into(),
+                "web".into(),
+                "install".into(),
+                plugin_src.display().to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(rc, 0);
+        let rec = suite
+            .get_record::<PluginRecord>(KIND_PLUGIN, "demo-plugin")
+            .unwrap()
+            .expect("plugin should be installed");
+        assert!(rec.enabled);
+
+        // Disable via macOS order
+        let rc = handle_plugin_cmd(
+            &store,
+            &suite,
+            &[
+                "desktop-manage".into(),
+                "dsh".into(),
+                "web".into(),
+                "disable".into(),
+                "demo-plugin".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(rc, 0);
+        let rec2 = suite
+            .get_record::<PluginRecord>(KIND_PLUGIN, "demo-plugin")
+            .unwrap()
+            .unwrap();
+        assert!(!rec2.enabled);
+
+        // Enable via CLI shorthand
+        let rc = handle_plugin_cmd(
+            &store,
+            &suite,
+            &[
+                "desktop-manage".into(),
+                "enable".into(),
+                "demo-plugin".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(rc, 0);
+        assert!(
+            suite
+                .get_record::<PluginRecord>(KIND_PLUGIN, "demo-plugin")
+                .unwrap()
+                .unwrap()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn goal_lifecycle_and_sessions_and_wiki_subcommands_work() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("lib.rs"), "pub fn greet() -> &'static str { \"hi\" }\n").unwrap();
+        let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+        let opts = CliOptions::default();
+
+        // Goal create -> status -> pause -> cancel
+        handle_goal_cmd(
+            &store,
+            &suite,
+            &opts,
+            &[
+                "create".into(),
+                "Ship".into(),
+                "v2".into(),
+                "--id".into(),
+                "g-1".into(),
+                "--objective".into(),
+                "Finish CLI".into(),
+            ],
+        )
+        .unwrap();
+        handle_goal_cmd(&store, &suite, &opts, &["status".into(), "g-1".into()]).unwrap();
+        handle_goal_cmd(
+            &store,
+            &suite,
+            &opts,
+            &["pause".into(), "g-1".into(), "--note".into(), "hold".into()],
+        )
+        .unwrap();
+        let paused = suite
+            .get_record::<ExtendedGoalRecord>("goal", "g-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(paused.status, GoalStatus::Paused);
+        handle_goal_cmd(&store, &suite, &opts, &["cancel".into(), "g-1".into()]).unwrap();
+        let cancelled = suite
+            .get_record::<ExtendedGoalRecord>("goal", "g-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(cancelled.status, GoalStatus::Failed);
+
+        // Sessions show / part / sources
+        let ts = now_ms();
+        store
+            .upsert_session(&nola_types::Session {
+                id: "s-1".into(),
+                title: "Demo".into(),
+                workspace_root: dir.path().display().to_string(),
+                model_connection: None,
+                model_id: None,
+                created_at_ms: ts,
+                updated_at_ms: ts,
+            })
+            .unwrap();
+        let ev = store
+            .append_event("s-1", "user_message", json!({"content": "hello"}), ts)
+            .unwrap();
+        handle_sessions_cmd(&store, &["show".into(), "s-1".into()], true).unwrap();
+        handle_sessions_cmd(
+            &store,
+            &["part".into(), "s-1".into(), ev.seq.to_string()],
+            true,
+        )
+        .unwrap();
+        handle_sessions_cmd(&store, &["sources".into(), "s-1".into()], true).unwrap();
+
+        // Wiki generation
+        let out_md = dir.path().join("WIKI.md");
+        let mut wiki_opts = CliOptions::default();
+        wiki_opts.output_file = Some(out_md.clone());
+        handle_wiki_cmd(&store, dir.path(), &wiki_opts, &[]).unwrap();
+        let wiki_text = fs::read_to_string(&out_md).unwrap();
+        assert!(wiki_text.contains("Codebase Architecture Wiki"));
+
+        // Model acquire hardware / engine-status / recommend
+        handle_model_acquire_cmd(&store, &["hardware".into()]).unwrap();
+        handle_model_acquire_cmd(&store, &["engine-status".into(), "llama.cpp".into()]).unwrap();
+        handle_model_acquire_cmd(
+            &store,
+            &["recommend".into(), "llama.cpp".into(), "huggingface".into()],
+        )
+        .unwrap();
     }
 }

@@ -8,6 +8,7 @@ const pageTitles: Record<string, string> = {
     '/plugin-page': 'plugin.pages',
     '/today': 'chatInspector.today', '/conversations': 'chatConversations.listTitle',
     '/workspace-review': 'chatInspector.review',
+    '/experts': 'rooms.manageExperts',
     '/models': 'shell.nav.models', '/model-test': 'modelTest.title', '/capabilities': 'shell.nav.capabilities',
     '/activity': 'chatInspector.list.activity', '/results': 'activity.results', '/dashboard': 'activity.overview', '/data-sources': 'shell.information',
     '/settings': 'shell.settings', '/scheduled-actions': 'activity.automations', '/automations': 'activity.automations',

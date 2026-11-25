@@ -166,6 +166,7 @@ fn gate4_multi_turn_kv_prefix_byte_equality_across_all_4_protocols() {
                     workspace_trusted: true,
                     network_allowed: true,
                     rules: vec![],
+                    plan_mode: false,
                 },
                 hooks: HookRunner::default(),
                 approval: None,
@@ -260,10 +261,11 @@ fn gate5_security_trust_hooks_modify_input_recheck_and_resume_policy() {
             tool_pattern: "bash".into(),
             resource_pattern: Some("*rm -rf*".into()),
         }],
+        plan_mode: false,
     };
-    let mw = crate::ToolExecutionMiddleware {
-        policy: policy.clone(),
-        hooks: HookRunner::from_configs(
+    let mw = crate::ToolExecutionMiddleware::new(
+        policy.clone(),
+        HookRunner::from_configs(
             dir.path().to_path_buf(),
             vec![CommandHookConfig {
                 event: nola_types::HookEvent::PreToolUse,
@@ -273,8 +275,8 @@ fn gate5_security_trust_hooks_modify_input_recheck_and_resume_policy() {
                 fail_closed: true,
             }],
         ),
-        approval: None,
-    };
+        None,
+    );
     let reg = ToolRegistry::with_builtin_tools();
     let ctx = ToolContext::new(dir.path());
     let out = mw.execute(
@@ -337,6 +339,7 @@ fn subagents_planning_interactive_gating_and_output_spill_work_end_to_end() {
             workspace_trusted: true,
             network_allowed: true,
             rules: vec![],
+            plan_mode: false,
         },
     );
     crate::register_subagent_tools(&subagents, &mut reg);
@@ -450,6 +453,7 @@ fn audit_regressions_loop_guard_and_multi_path_workspace_escape() {
             tool_pattern: "*".into(),
             resource_pattern: None,
         }],
+        plan_mode: false,
     };
     let reg = ToolRegistry::with_builtin_tools();
     let patch_spec = reg.get("apply_patch").unwrap().spec();
@@ -476,6 +480,7 @@ fn audit_regressions_loop_guard_and_multi_path_workspace_escape() {
         workspace_trusted: false,
         network_allowed: true,
         rules: vec![],
+        plan_mode: false,
     };
     let git_spec = reg.get("git").unwrap().spec();
     assert_eq!(
@@ -748,6 +753,7 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
                     workspace_trusted: true,
                     network_allowed: true,
                     rules: vec![],
+                    plan_mode: false,
                 },
                 hooks: HookRunner::default(),
                 approval: None,
@@ -821,6 +827,7 @@ fn empty_reasoning_turn_continues_and_stale_tool_media_is_evicted() {
                     workspace_trusted: true,
                     network_allowed: true,
                     rules: vec![],
+                    plan_mode: false,
                 },
                 hooks: HookRunner::default(),
                 approval: None,
@@ -881,6 +888,7 @@ fn policy_sensitive_path_read_elevation_external_send_and_malformed_settings() {
         workspace_trusted: true,
         network_allowed: true,
         rules: vec![],
+        plan_mode: false,
     };
 
     // Sensitive paths MUST elevate read_file from Allow -> Ask under Cautious
@@ -926,6 +934,7 @@ fn policy_sensitive_path_read_elevation_external_send_and_malformed_settings() {
         workspace_trusted: true,
         network_allowed: true,
         rules: vec![],
+        plan_mode: false,
     };
     assert_eq!(
         allow_all
@@ -1302,6 +1311,7 @@ fn mixed_skill_load_batch_is_rejected_and_scoped_memory_and_media_work() {
                     workspace_trusted: true,
                     network_allowed: true,
                     rules: vec![],
+                    plan_mode: false,
                 },
                 hooks: HookRunner::default(),
                 approval: None,
@@ -1414,6 +1424,7 @@ fn subagent_safe_stop_and_durable_snapshot_persistence() {
             workspace_trusted: true,
             network_allowed: true,
             rules: vec![],
+            plan_mode: false,
         },
     );
     let ctx = ToolContext::new(dir.path());
@@ -1452,4 +1463,973 @@ fn subagent_safe_stop_and_durable_snapshot_persistence() {
         .list()
         .iter()
         .any(|t| t.task_id == spawned.task_id));
+}
+
+#[test]
+fn loop_guard_canonical_sort_investigation_stall_and_hard_circuit_breaker() {
+    // 1. Canonical parallel sorting: permuting [A, B] vs [B, A] MUST NOT evade loop detection!
+    let mut guard = LoopGuard::default();
+    let ok = nola_types::ToolExecutionResult::ok_text("ok");
+    let ab = vec![
+        ("read_file".into(), json!({"path": "a.rs", "start_line": 1}), ok.clone()),
+        ("read_file".into(), json!({"path": "b.rs", "start_line": 1}), ok.clone()),
+    ];
+    let ba = vec![
+        ("read_file".into(), json!({"path": "b.rs", "start_line": 1}), ok.clone()),
+        ("read_file".into(), json!({"path": "a.rs", "start_line": 1}), ok.clone()),
+    ];
+    assert_eq!(guard.observe_batch_verdict(&ab), crate::LoopGuardVerdict::Continue);
+    assert_eq!(guard.observe_batch_verdict(&ba), crate::LoopGuardVerdict::Continue);
+    assert!(matches!(
+        guard.observe_batch_verdict(&ab),
+        crate::LoopGuardVerdict::Remind(r) if r.tag == "loop_guard"
+    ));
+    for _ in 0..2 {
+        assert!(matches!(
+            guard.observe_batch_verdict(&ba),
+            crate::LoopGuardVerdict::Remind(_)
+        ));
+    }
+    assert!(matches!(
+        guard.observe_batch_verdict(&ab),
+        crate::LoopGuardVerdict::TerminateNoProgress(msg) if msg.contains("circuit breaker")
+    ));
+
+    // 2. InvestigationIdentity: drifting line-range scans & alternating A->B->A->B caught!
+    let mut inv_guard = LoopGuard::default();
+    let id_a = crate::investigation_identity("read_file", &json!({"path": "./src/lib.rs", "start_line": 1, "end_line": 50})).unwrap();
+    let id_a2 = crate::investigation_identity("read_file", &json!({"path": "src/lib.rs", "start_line": 51, "end_line": 100})).unwrap();
+    assert_eq!(id_a, id_a2);
+
+    // Seed A and B
+    let mk = |path: &str, start: u64| {
+        vec![("read_file".into(), json!({"path": path, "start_line": start}), ok.clone())]
+    };
+    assert_eq!(inv_guard.observe_batch_verdict(&mk("a.rs", 1)), crate::LoopGuardVerdict::Continue);
+    assert_eq!(inv_guard.observe_batch_verdict(&mk("b.rs", 1)), crate::LoopGuardVerdict::Continue);
+    // Alternating A -> B -> A -> B -> A -> B with drifting line ranges
+    assert_eq!(inv_guard.observe_batch_verdict(&mk("a.rs", 50)), crate::LoopGuardVerdict::Continue);
+    assert_eq!(inv_guard.observe_batch_verdict(&mk("b.rs", 50)), crate::LoopGuardVerdict::Continue);
+    assert!(matches!(
+        inv_guard.observe_batch_verdict(&mk("a.rs", 100)),
+        crate::LoopGuardVerdict::Remind(r) if r.tag == "investigation_stall"
+    ));
+    assert!(matches!(
+        inv_guard.observe_batch_verdict(&mk("b.rs", 100)),
+        crate::LoopGuardVerdict::Remind(r) if r.tag == "investigation_stall"
+    ));
+    assert!(matches!(
+        inv_guard.observe_batch_verdict(&mk("a.rs", 150)),
+        crate::LoopGuardVerdict::Remind(r) if r.tag == "investigation_stall"
+    ));
+    assert!(matches!(
+        inv_guard.observe_batch_verdict(&mk("b.rs", 150)),
+        crate::LoopGuardVerdict::TerminateNoProgress(msg) if msg.contains("investigation")
+    ));
+
+    // 3. Hard circuit breaker terminates AgentEngine::run cleanly even when max_steps == 0!
+    struct InfiniteLoopCaller;
+    impl ModelCaller for InfiniteLoopCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            Ok(NormalizedModelResponse {
+                response_id: Some("loop".into()),
+                response_model: Some("mock".into()),
+                content: String::new(),
+                reasoning: None,
+                tool_calls: vec![ModelToolCall {
+                    call_id: "c_loop".into(),
+                    name: "read_file".into(),
+                    arguments: json!({"path": "a.txt"}),
+                }],
+                stop_reason: ModelStopReason::ToolCalls,
+                usage: TokenUsage::default(),
+                continuation: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        Arc::new(InfiniteLoopCaller),
+    );
+    let ctx = ToolContext::new(dir.path());
+    let res = engine
+        .run(
+            &ctx,
+            "Read a.txt forever",
+            AgentRunConfig {
+                session_id: Some("sess_cb".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![FrozenSystemBlock {
+                    id: "sys".into(),
+                    text: "System".into(),
+                }],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false,
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 0, // unlimited steps!
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(res.steps, 6, "circuit breaker must stop after 6 identical batches");
+    assert!(!res.cancelled);
+    assert!(
+        res.final_text.contains("No-progress circuit breaker triggered"),
+        "expected structured no-progress summary, got: {}",
+        res.final_text
+    );
+}
+
+#[test]
+fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
+    // 1. ModelCaller::call_cancellable exits cleanly on LlmError::Cancelled
+    struct CancelAwareCaller {
+        seen_cancel_flag: Mutex<bool>,
+    }
+    impl ModelCaller for CancelAwareCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            unreachable!("call_cancellable should be invoked")
+        }
+        fn call_cancellable(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            call_params: &nola_llm::CallParams,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            *self.seen_cancel_flag.lock().unwrap() =
+                call_params.cancel.is_some() && call_params.on_stream_reset.is_some();
+            Err(LlmError::Cancelled)
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello_from_file").unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let cancel_caller = Arc::new(CancelAwareCaller {
+        seen_cancel_flag: Mutex::new(false),
+    });
+    let engine = AgentEngine::new(
+        store.clone(),
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        cancel_caller.clone(),
+    );
+    let ctx = ToolContext::new(dir.path());
+    let cancel_res = engine
+        .run(
+            &ctx,
+            "Cancel mid-flight",
+            AgentRunConfig {
+                session_id: Some("sess_cancel".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy::default(),
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 4,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert!(cancel_res.cancelled);
+    assert!(*cancel_caller.seen_cancel_flag.lock().unwrap());
+
+    // 2. QuickJS `code_exec` host tool proxy runs through `ToolExecutionMiddleware` (Plan Mode + Policy enforced!)
+    let session_id = "sess_plan_and_code";
+    crate::set_plan_mode(&store, session_id, true).unwrap();
+    assert!(crate::is_plan_mode(&store, session_id));
+
+    let planning = Arc::new(crate::PlanningState::default());
+    let mut reg = ToolRegistry::with_builtin_tools();
+    crate::register_planning_tools(store.clone(), &planning, &mut reg);
+
+    let code_caller = Arc::new(ScriptedCaller::new(vec![
+        // Step 1: code_exec reads note.txt (allowed in Plan Mode) AND tries write_file (MUST be blocked by Plan Mode!)
+        NormalizedModelResponse {
+            response_id: Some("c1".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "js_1".into(),
+                name: "code_exec".into(),
+                arguments: json!({
+                    "code": r#"
+                        const r = tools.read_file({ path: "note.txt" });
+                        let blocked = null;
+                        try {
+                            tools.write_file({ path: "blocked.txt", content: "nope" });
+                        } catch (e) {
+                            blocked = String(e.message || e);
+                        }
+                        return { hasTools: ALL_TOOLS.includes("read_file"), content: r.content, blocked };
+                    "#
+                }),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        // Step 2: propose_agent_plan (allowed in Plan Mode!)
+        NormalizedModelResponse {
+            response_id: Some("c2".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "plan_1".into(),
+                name: "propose_agent_plan".into(),
+                arguments: json!({
+                    "title": "Safe Migration Plan",
+                    "content": "1. Edit note.txt\n2. Verify"
+                }),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        // Step 3: done
+        NormalizedModelResponse {
+            response_id: Some("c3".into()),
+            response_model: Some("mock".into()),
+            content: "Plan proposed.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+
+    let engine2 = AgentEngine::new(store.clone(), Arc::new(reg), code_caller.clone());
+    let run_res = engine2
+        .run(
+            &ctx,
+            "Inspect and propose plan",
+            AgentRunConfig {
+                session_id: Some(session_id.into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false, // KV plan_mode overrides!
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 6,
+                force_tool_set: ForceToolSet::All,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(run_res.final_text, "Plan proposed.");
+    assert!(!dir.path().join("blocked.txt").exists(), "Plan Mode must block write_file inside code_exec");
+
+    // Verify JS returned read_file content and caught plan_mode_blocked error
+    let captured = code_caller.captured.lock().unwrap();
+    let js_tool_msg = captured[1]
+        .history
+        .iter()
+        .find_map(|m| match m {
+            HistoryMessage::Tool { tool_name, payload, .. } if tool_name == "code_exec" => {
+                Some(payload.to_model_value())
+            }
+            _ => None,
+        })
+        .expect("expected code_exec tool result");
+    assert_eq!(js_tool_msg["result"]["hasTools"], true);
+    assert!(js_tool_msg["result"]["content"].as_str().unwrap().contains("hello_from_file"));
+    assert!(js_tool_msg["result"]["blocked"].as_str().unwrap().contains("plan_mode_blocked"));
+
+    // Verify versioned plan JSON & approve_agent_plan
+    let plan = crate::load_session_plan(&store, session_id);
+    assert_eq!(plan["revision"], 1);
+    assert!(plan["previous_revision"].is_null());
+    assert_eq!(plan["status"], "proposed");
+    assert_eq!(plan["content"], "1. Edit note.txt\n2. Verify");
+
+    let approved = crate::approve_agent_plan(&store, session_id).unwrap();
+    assert_eq!(approved["status"], "approved");
+    assert!(!crate::is_plan_mode(&store, session_id));
+
+    // 3. Durable permission grants persist on approval and reload on next run without re-asking!
+    let approval_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let approval_calls_cb = Arc::clone(&approval_calls);
+    let mw = crate::ToolExecutionMiddleware::new(
+        EffectivePolicy::default(), // Cautious
+        HookRunner::default(),
+        Some(Arc::new(move |_spec, _args, _reason| {
+            approval_calls_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
+        })),
+    )
+    .with_persistence(store.clone(), "sess_grant_test");
+    let reg_std = ToolRegistry::with_builtin_tools();
+    let out1 = mw.execute(
+        &reg_std,
+        &ctx,
+        "write_file",
+        json!({"path": "approved.txt", "content": "v1"}),
+    );
+    assert!(!out1.result.is_error);
+    assert_eq!(approval_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Reload grants into a fresh EffectivePolicy with NO approval callback -> must be Allowed!
+    let mut reloaded_policy = EffectivePolicy::default();
+    reloaded_policy.apply_durable_grants(&store, "sess_grant_test", &ctx.workspace_root);
+    let mw2 = crate::ToolExecutionMiddleware::new(reloaded_policy, HookRunner::default(), None);
+    let out2 = mw2.execute(
+        &reg_std,
+        &ctx,
+        "write_file",
+        json!({"path": "approved.txt", "content": "v2"}),
+    );
+    assert!(!out2.result.is_error, "durable permission grant must auto-allow on reload");
+}
+
+#[test]
+fn compaction_reasoning_none_lineage_and_loop_breaker() {
+    // 1. Compaction summary request sets reasoning_effort="none", thinking_budget=Some(0), max_output_tokens=2048
+    struct InspectCompactionCaller {
+        captured_route: Mutex<Option<ModelRouteConfig>>,
+        captured_req: Mutex<Option<StructuredModelRequest>>,
+        captured_params: Mutex<Option<nola_llm::CallParams>>,
+    }
+    impl ModelCaller for InspectCompactionCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            unreachable!()
+        }
+        fn call_cancellable(
+            &self,
+            route: &ModelRouteConfig,
+            req: &StructuredModelRequest,
+            call_params: &nola_llm::CallParams,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            if req
+                .frozen_system_prefix
+                .iter()
+                .any(|b| b.id == "compaction_summarizer")
+            {
+                *self.captured_route.lock().unwrap() = Some(route.clone());
+                *self.captured_req.lock().unwrap() = Some(req.clone());
+                *self.captured_params.lock().unwrap() = Some(call_params.clone());
+                return Ok(NormalizedModelResponse {
+                    response_id: Some("sum".into()),
+                    response_model: Some("mock".into()),
+                    content: "Concise summary".into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                });
+            }
+            Ok(NormalizedModelResponse {
+                response_id: Some("main".into()),
+                response_model: Some("mock".into()),
+                content: "Done.".into(),
+                reasoning: None,
+                tool_calls: vec![],
+                stop_reason: ModelStopReason::Stop,
+                usage: TokenUsage::default(),
+                continuation: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let mut history = Vec::new();
+    for i in 0..10 {
+        history.push(HistoryMessage::User {
+            content: format!("Step {i}: {}", "data ".repeat(400)),
+            media: vec![],
+        });
+        history.push(HistoryMessage::Assistant {
+            content: format!("Ack {i}: {}", "resp ".repeat(400)),
+            reasoning: Some("thought ".repeat(200)),
+            tool_calls: vec![],
+            continuation: None,
+        });
+    }
+    let mut hist_clone = history.clone();
+    let report = compact_history(
+        &mut hist_clone,
+        ContextBudget::for_window(8_192, false),
+        0,
+        None,
+    );
+    let lineage = report.lineage.expect("expected CompactionSummaryMetadata lineage");
+    assert_eq!(lineage.start_index, 0);
+    assert!(lineage.message_count >= 2);
+    assert_eq!(lineage.end_index, lineage.message_count);
+    assert_eq!(lineage.source_sha256.len(), 64);
+
+    // Trigger LLM summarizer through AgentEngine::run with a reasoning route
+    let mut reasoning_route = mock_route(ModelProtocol::OpenAiChat);
+    reasoning_route.context_window = 8_192;
+    reasoning_route.capabilities.reasoning = true;
+    reasoning_route.reasoning_effort = Some("high".into());
+    store
+        .set_kv(
+            "session_state:sess_comp_route",
+            &json!({
+                "history": history,
+                "policy": EffectivePolicy::default(),
+                "activated_tools": []
+            }),
+        )
+        .unwrap();
+    let caller = Arc::new(InspectCompactionCaller {
+        captured_route: Mutex::new(None),
+        captured_req: Mutex::new(None),
+        captured_params: Mutex::new(None),
+    });
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller.clone(),
+    );
+    let ctx = ToolContext::new(dir.path());
+    let _ = engine
+        .run(
+            &ctx,
+            "Continue",
+            AgentRunConfig {
+                session_id: Some("sess_comp_route".into()),
+                resume: true,
+                route: reasoning_route,
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy::default(),
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 2,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    let sum_route = caller.captured_route.lock().unwrap().clone().expect("summarizer called");
+    let sum_req = caller.captured_req.lock().unwrap().clone().unwrap();
+    let sum_params = caller.captured_params.lock().unwrap().clone().unwrap();
+    assert_eq!(sum_route.reasoning_effort.as_deref(), Some("none"));
+    assert!(!sum_route.capabilities.reasoning);
+    assert_eq!(sum_req.max_output_tokens, 2_048);
+    assert_eq!(sum_params.generation.thinking_budget, Some(0));
+
+    // 2. CompactionLoopBreaker blocks after 3 low-yield (<15%) compactions and resets on >=15% savings
+    let mut breaker = crate::CompactionLoopBreaker::default();
+    assert!(!breaker.record_attempt(1_000, 950)); // 5% -> streak 1
+    assert!(!breaker.record_attempt(1_000, 900)); // 10% -> streak 2
+    assert!(!breaker.record_attempt(1_000, 800)); // 20% -> reset to 0!
+    assert_eq!(breaker.consecutive_compactions, 0);
+    assert!(!breaker.record_attempt(1_000, 950)); // 1
+    assert!(!breaker.record_attempt(1_000, 900)); // 2
+    assert!(breaker.record_attempt(1_000, 860));  // 3 -> blocked!
+    assert!(breaker.is_blocked());
+}
+
+#[test]
+fn subagents_parallel_wait_worktree_watchdog_reconcile_inbox_and_tool_factory() {
+    let dir = tempfile::tempdir().unwrap();
+    // Initialize a real git repo in temp dir so we can test git worktree isolation!
+    let run_git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    run_git(&["init"]);
+    run_git(&["config", "user.email", "test@example.com"]);
+    run_git(&["config", "user.name", "Test"]);
+    std::fs::write(dir.path().join("README.md"), "init\n").unwrap();
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+
+    // Custom tool injected via `with_tool_factory`
+    struct CustomEchoTool;
+    impl nola_tools::ToolHandler for CustomEchoTool {
+        fn spec(&self) -> nola_types::ToolSpec {
+            nola_types::ToolSpec {
+                schema: nola_types::ToolSchema {
+                    name: "custom_echo".into(),
+                    description: "Echo custom value".into(),
+                    parameters: json!({"type": "object", "properties": {"msg": {"type": "string"}}}),
+                },
+                tier: nola_types::ToolTier::Core,
+                domain: nola_types::CapabilityDomain::System,
+                read_only: true,
+            }
+        }
+        fn execute(&self, _ctx: &ToolContext, args: serde_json::Value) -> nola_types::ToolExecutionResult {
+            let msg = args.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+            nola_types::ToolExecutionResult::ok_text(format!("ECHO:{msg}"))
+        }
+    }
+
+    let store = Store::open_in_memory().unwrap();
+    let parent_inbox = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    // Seed an orphaned "running" task to verify `reconcile_orphaned_tasks()`
+    store
+        .put_module_record(
+            "durable_task",
+            "task_orphan1",
+            &crate::SubagentTaskSnapshot {
+                task_id: "task_orphan1".into(),
+                role: "CrashedWorker".into(),
+                session_id: "sub_orphan1".into(),
+                status: crate::TaskStatus::Running,
+                cancelling: false,
+                output: String::new(),
+                error: None,
+                steps: 1,
+                started_at_ms: 1_000,
+                ended_at_ms: None,
+                worktree_path: None,
+                branch: None,
+            },
+        )
+        .unwrap();
+
+    let caller = Arc::new(ScriptedCaller::new(vec![
+        // Task 1: invokes inherited `custom_echo` tool inside its worktree, then finishes
+        NormalizedModelResponse {
+            response_id: Some("w1".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "e1".into(),
+                name: "custom_echo".into(),
+                arguments: json!({"msg": "inherited"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("w2".into()),
+            response_model: Some("mock".into()),
+            content: "Task 1 done.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        // Task 2: finishes immediately
+        NormalizedModelResponse {
+            response_id: Some("w3".into()),
+            response_model: Some("mock".into()),
+            content: "Task 2 done.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+
+    let mgr = Arc::new(
+        crate::SubagentManager::new(store.clone(), caller.clone())
+            .with_parent_inbox(Arc::clone(&parent_inbox))
+            .with_tool_factory(Arc::new(|_ws| {
+                let mut r = ToolRegistry::with_builtin_tools();
+                r.register(Arc::new(CustomEchoTool));
+                r
+            })),
+    );
+    assert_eq!(mgr.reconcile_orphaned_tasks(), 1);
+    assert_eq!(
+        mgr.read("task_orphan1").unwrap().status,
+        crate::TaskStatus::Interrupted
+    );
+
+    mgr.configure_parent(
+        mock_route(ModelProtocol::OpenAiChat),
+        EffectivePolicy {
+            profile: PermissionProfile::AllowAll,
+            workspace_trusted: true,
+            network_allowed: true,
+            rules: vec![],
+            plan_mode: false,
+        },
+    );
+
+    let mut reg = ToolRegistry::with_builtin_tools();
+    crate::register_subagent_tools(&mgr, &mut reg);
+    let ctx = ToolContext::new(dir.path());
+
+    // Spawn 2 background tasks, task 1 with isolated git worktree!
+    let s1 = reg.execute(
+        "spawn_agent",
+        &ctx,
+        json!({"role": "Worker1", "prompt": "Echo", "background": true, "worktree": true}),
+    );
+    assert!(!s1.is_error, "spawn_agent worktree failed: {:?}", s1.payload);
+    let s1_val = s1.payload.to_model_value();
+    let tid1 = s1_val["task_id"].as_str().unwrap().to_string();
+    let wt_path = s1_val["worktree_path"].as_str().expect("expected worktree_path");
+    let wt_branch = s1_val["branch"].as_str().expect("expected branch");
+    assert!(wt_branch.starts_with("nola-task-"));
+    assert!(std::path::Path::new(wt_path).exists());
+
+    let s2 = reg.execute(
+        "spawn_agent",
+        &ctx,
+        json!({"role": "Worker2", "prompt": "Quick", "background": true}),
+    );
+    assert!(!s2.is_error);
+    let tid2 = s2.payload.to_model_value()["task_id"].as_str().unwrap().to_string();
+
+    // Parallel wait with task_ids + wait_mode="all" via Condvar!
+    let waited = reg.execute(
+        "task_control",
+        &ctx,
+        json!({"action": "wait", "task_ids": [tid1, tid2], "wait_mode": "all", "wait_ms": 5000}),
+    );
+    assert!(!waited.is_error, "parallel wait failed: {:?}", waited.payload);
+    let wv = waited.payload.to_model_value();
+    assert_eq!(wv["completed_count"], 2);
+    assert_eq!(wv["total"], 2);
+
+    // Reactive parent inbox received completion notifications for both background tasks!
+    let inbox_msgs = parent_inbox.lock().unwrap();
+    assert_eq!(inbox_msgs.len(), 2);
+    assert!(inbox_msgs.iter().any(|m| m.contains(&tid1)));
+    assert!(inbox_msgs.iter().any(|m| m.contains(&tid2)));
+
+    // Stopping unmodified worktree cleans it up!
+    let _ = mgr.stop(&tid1).unwrap();
+    assert!(!std::path::Path::new(wt_path).exists());
+}
+
+#[test]
+fn full_json_schema_validation_and_verification_closure_tracking() {
+    // 1. Recursive JSON schema validation (`type`, `required`, `properties`, `enum`, `additionalProperties`, `items`)
+    let schema = json!({
+        "type": "object",
+        "required": ["status", "items"],
+        "additionalProperties": false,
+        "properties": {
+            "status": { "type": "string", "enum": ["ok", "warn"] },
+            "count": { "type": "integer" },
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": { "type": "string" }
+                    },
+                    "additionalProperties": false
+                }
+            }
+        }
+    });
+    assert!(crate::validate_json_output(
+        r#"{"status":"ok","count":3,"items":[{"name":"a"},{"name":"b"}]}"#,
+        &schema
+    )
+    .is_ok());
+    // Reject bad enum
+    assert!(crate::validate_json_output(
+        r#"{"status":"bad","items":[]}"#,
+        &schema
+    )
+    .is_err());
+    // Reject additionalProperties
+    assert!(crate::validate_json_output(
+        r#"{"status":"ok","items":[],"extra":1}"#,
+        &schema
+    )
+    .is_err());
+    // Reject bad array item
+    assert!(crate::validate_json_output(
+        r#"{"status":"ok","items":[{"name":123}]}"#,
+        &schema
+    )
+    .is_err());
+    // Reject non-integer for integer field
+    assert!(crate::validate_json_output(
+        r#"{"status":"ok","count":1.5,"items":[]}"#,
+        &schema
+    )
+    .is_err());
+
+    // 2. Verification closure tracks modified ResourceEffect versions and subsequent checks
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.sandbox_mode = SandboxMode::Disabled;
+    let store = Store::open_in_memory().unwrap();
+    let caller = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("v1".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "w1".into(),
+                name: "write_file".into(),
+                arguments: json!({"path": "out.txt", "content": "hello"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("v2".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "b1".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "test -f out.txt"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("v3".into()),
+            response_model: Some("mock".into()),
+            content: "Verified.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let engine = AgentEngine::new(
+        store.clone(),
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller,
+    );
+    let res = engine
+        .run(
+            &ctx,
+            "Write and verify out.txt",
+            AgentRunConfig {
+                session_id: Some("sess_verify".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false,
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 5,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    let summary = res.verification.expect("expected verification summary");
+    assert_eq!(summary.modified_files.len(), 1);
+    assert!(summary.modified_files[0].verified_after_edit);
+    assert!(summary.all_modified_verified);
+    assert_eq!(summary.verification_checks.len(), 1);
+    assert!(summary.verification_checks[0].passed);
+    assert!(store.get_kv("turn_verification:sess_verify").unwrap().is_some());
+}
+
+#[test]
+fn subagent_watchdog_timeout_wait_any_and_modified_worktree_preserved() {
+    struct CancellableSlowCaller;
+    impl ModelCaller for CancellableSlowCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            unreachable!()
+        }
+        fn call_cancellable(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            call_params: &nola_llm::CallParams,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if call_params
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    return Err(LlmError::Cancelled);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(NormalizedModelResponse {
+                response_id: Some("late".into()),
+                response_model: Some("mock".into()),
+                content: "Too late".into(),
+                reasoning: None,
+                tool_calls: vec![],
+                stop_reason: ModelStopReason::Stop,
+                usage: TokenUsage::default(),
+                continuation: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+    run_git(&["init"]);
+    run_git(&["config", "user.email", "test@example.com"]);
+    run_git(&["config", "user.name", "Test"]);
+    std::fs::write(dir.path().join("base.txt"), "base\n").unwrap();
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "init"]);
+
+    let store = Store::open_in_memory().unwrap();
+    let mgr = Arc::new(crate::SubagentManager::new(
+        store,
+        Arc::new(CancellableSlowCaller),
+    ));
+    mgr.configure_parent(
+        mock_route(ModelProtocol::OpenAiChat),
+        EffectivePolicy {
+            profile: PermissionProfile::AllowAll,
+            workspace_trusted: true,
+            network_allowed: true,
+            rules: vec![],
+            plan_mode: false,
+        },
+    );
+    let ctx = ToolContext::new(dir.path());
+    let snap = mgr
+        .spawn_with_full_options(
+            &ctx,
+            "WatchdogTest".into(),
+            String::new(),
+            "Run slow".into(),
+            true,
+            4,
+            crate::SubagentSpawnOptions {
+                worktree: true,
+                timeout_secs: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let wt_path = snap.worktree_path.clone().expect("expected worktree");
+    // Modify a file inside the worktree so explicit `stop` MUST preserve it for integration!
+    std::fs::write(std::path::Path::new(&wt_path).join("work.txt"), "changes\n").unwrap();
+
+    // Wait via wait_many(WaitMode::Any) — watchdog fires at ~1s and cancels the task!
+    let done = mgr
+        .wait_many(&[snap.task_id.clone()], crate::WaitMode::Any, 4_000)
+        .unwrap();
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].status, crate::TaskStatus::Failed);
+    assert!(done[0]
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("watchdog timeout"));
+
+    // Explicit stop preserves modified worktree
+    let _ = mgr.stop(&snap.task_id).unwrap();
+    assert!(
+        std::path::Path::new(&wt_path).exists(),
+        "modified worktree must be preserved on stop"
+    );
 }

@@ -19,7 +19,7 @@ Swift `IOSApplicationRuntime`、Kotlin `AndroidApplicationRuntime` 使用 Applic
 
 共享 MCP 的移动 HTTP Host adapter 也在最终 bindings 中，但其具体执行仍须经过 Core/Application 准入与 Host/config/session 围栏。没有移动 stdio 进程能力就不能借桌面配置假装可用。
 
-源码：[bindings](../../../../core/nola-mobile-bindings/src/lib.rs)、[原生制品](../../../../core/nola-mobile-bindings/Cargo.toml)、[Apple 打包](../../../../core/scripts/build_xcframework.sh)、[Android 打包](../../../../core/scripts/build_android.sh)。
+源码：[bindings](../../../../crates/nola-app/src/ffi.rs)、[原生制品](../../../../crates/nola-app/Cargo.toml)、[Apple 打包](../../../../scripts/build_apple_core.sh)、[Android 打包](../../../../scripts/build_android_core.sh)。
 
 ## 对象分工
 

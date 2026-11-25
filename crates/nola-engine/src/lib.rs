@@ -20,17 +20,31 @@ pub mod subagents;
 mod tests;
 
 pub use catalog::{ForceToolSet, ToolCatalog};
-pub use compaction::{compact_history, compact_history_force, CompactionReport};
+pub use compaction::{
+    compact_history, compact_history_force, CompactionLoopBreaker, CompactionReport,
+    CompactionSummaryMetadata,
+};
 pub use hooks::HookRunner;
-pub use loop_guard::{semantic_observation_arguments, LoopGuard};
+pub use loop_guard::{
+    investigation_identity, semantic_observation_arguments, InvestigationIdentity, LoopGuard,
+    LoopGuardVerdict,
+};
 pub use loop_runner::{
-    compact_session_now, load_session_usage, workspace_memory_namespace, AgentEngine, AgentError,
-    AgentEvent, AgentRunConfig, AgentRunResult, HttpModelCaller, ModelCaller,
+    compact_session_now, load_session_usage, validate_json_output, workspace_memory_namespace,
+    AgentEngine, AgentError, AgentEvent, AgentRunConfig, AgentRunResult, HttpModelCaller,
+    LlmClientModelCaller, ModelCaller, ModifiedFileRecord, VerificationCheckRecord,
+    VerificationSummary,
 };
 pub use middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
 pub use planning::{
-    load_session_plan, load_session_todos, register_planning_tools, PlanningState, TodoItem,
-    UserInputCallback,
+    approve_agent_plan, is_plan_mode, load_session_plan, load_session_todos,
+    register_planning_tools, set_plan_mode, PlanningState, TodoItem, UserInputCallback,
 };
-pub use policy::{is_external_send, is_sensitive_path, EffectivePolicy};
-pub use subagents::{register_subagent_tools, SubagentManager, SubagentTaskSnapshot, TaskStatus};
+pub use policy::{
+    is_external_send, is_sensitive_path, load_active_permission_grants, persist_permission_grant,
+    DurablePermissionGrant, EffectivePolicy,
+};
+pub use subagents::{
+    register_subagent_tools, SubagentManager, SubagentSpawnOptions, SubagentTaskSnapshot,
+    SubagentToolFactory, TaskStatus, WaitMode,
+};

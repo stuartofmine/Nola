@@ -13,6 +13,7 @@ const pages = {
     '/scheduled-actions': () => import('../pages/Automations.svelte'),
     '/automations': () => import('../pages/Automations.svelte'),
     '/workspace-review': () => import('../pages/WorkspaceReview.svelte'),
+    '/experts': () => import('../pages/Experts.svelte'),
     '/today': () => import('../pages/Today.svelte'),
     '/conversations': () => import('../pages/Conversations.svelte'),
     '/chat': () => import('../pages/Chat.svelte'),

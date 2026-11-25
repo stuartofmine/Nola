@@ -66,7 +66,7 @@ That transaction advances together:
 
 External executors retain their opaque session IDs. Their adapters correlate model deltas, tool observations, completion, failure and cancellation with the admitted Host effect. Application owns the resulting parts. The current Application command enum has no FinishRemoteConversationTurn or CommitExternalExecutionProjection variant. The projection commit name in the decision above describes the transaction responsibility. Consult the current command and paired routes for wire names.
 
-[Application commands](../../../../core/nola-application/src/application_command.rs) · [Paired routes](../../../../apps/cli/src/web_parts/routes.rs)
+[Application commands](../../../../crates/nola-app/src/daemon.rs) · [Paired routes](../../../../crates/nola-app/src/web_server.rs)
 
 ## Visual acceptance
 

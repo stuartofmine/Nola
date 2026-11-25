@@ -9,9 +9,23 @@ export function safeLoginNext(value: string | null): string {
     } catch { return '/dashboard'; }
 }
 
-export function validHostToken(value: string): boolean {
-    const length = value.trim().length;
-    return length >= 1 && length <= 256;
+export function isLoopbackHostname(hostname?: string): boolean {
+    const resolved = (hostname ?? (typeof globalThis !== 'undefined' && 'location' in globalThis ? globalThis.location?.hostname : '') ?? '')
+        .trim()
+        .toLowerCase();
+    if (!resolved) return true;
+    if (resolved === 'localhost' || resolved === '127.0.0.1' || resolved === '::1' || resolved === '[::1]') return true;
+    if (resolved.endsWith('.localhost')) return true;
+    if (/^127\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)\.(?:25[0-5]|2[0-4]\d|1?\d?\d)$/.test(resolved)) return true;
+    return false;
+}
+
+export function validHostToken(value: string, options?: { hostname?: string }): boolean {
+    const trimmed = value.trim();
+    const length = trimmed.length;
+    if (length > 256 || /[\s\u0000-\u001f\u007f]/.test(trimmed)) return false;
+    const minLength = isLoopbackHostname(options?.hostname) ? 8 : 16;
+    return length >= minLength;
 }
 
 export function loginLanguage(languages: readonly string[]): 'zh' | 'en' {

@@ -28,9 +28,9 @@ Identity、Resource、Command、Receipt 为不可变值对象；协议 DTO 不�
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [lib.rs](../../../../core/nola-domain/src/lib.rs) | 领域身份、值与不变量 |
-| [lib.rs](../../../../core/nola-protocol/src/lib.rs) | Service 信封、四类持久命令回执和投影协议 |
-| [lib.rs](../../../../core/nola-host-protocol/src/lib.rs) | Host 请求/响应与传输类型族 |
+| [lib.rs](../../../../crates/nola-types/src/lib.rs) | 领域身份、值与不变量 |
+| [lib.rs](../../../../crates/nola-types/src/lib.rs) | Service 信封、四类持久命令回执和投影协议 |
+| [lib.rs](../../../../crates/nola-types/src/lib.rs) | Host 请求/响应与传输类型族 |
 
 当前 Service wire 的错误字段与目标错误语义仍有差距；不能把逻辑 DTO 表当成已存在的字段。Service、C ABI、Store schema/epoch、Core cursor 与配对协议分别版本化。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

@@ -183,7 +183,7 @@ nonisolated enum NolaTailcatTransport {
 
     static func register(baseURL: URL, token: String, hostID: String?, certificatePin: String? = nil) {
         guard available, MobileHostTransportPolicy.allows(baseURL), certificatePin?.isEmpty != false,
-              ["", "/", "/api", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
+              ["", "/", "/api", "/api/", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
               let origin = origin(baseURL),
               let hostID, !hostID.isEmpty, !token.isEmpty else { return }
         _ = lifecycle
@@ -209,7 +209,7 @@ nonisolated enum NolaTailcatTransport {
         guard (!requireNativeAvailability || available),
               MobileHostTransportPolicy.allows(baseURL),
               certificatePin?.isEmpty != false,
-              ["", "/", "/api", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
+              ["", "/", "/api", "/api/", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
               let origin = origin(baseURL),
               !hostID.isEmpty, !token.isEmpty else { return }
         _ = lifecycle
@@ -253,7 +253,8 @@ nonisolated enum NolaTailcatTransport {
     // Select a route using the request's frozen credential. This is not the
     // permission authority: the Host still validates proof, body and ownership.
     static func matches(_ request: URLRequest, configuration: Configuration) -> Bool {
-        guard let url = request.url, url.path.hasPrefix("/api/mobile/"),
+        guard let url = request.url,
+              url.path.hasPrefix("/api/mobile/") || url.path.hasPrefix("/api/"),
               let timestamp = request.value(forHTTPHeaderField: "X-Nola-Mobile-Timestamp"),
               let nonce = request.value(forHTTPHeaderField: "X-Nola-Mobile-Nonce"),
               let digest = request.value(forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256"),

@@ -70,5 +70,6 @@ internal fun ChatUiState.newConversationPresentation(defaultPermission: AndroidA
     v2UiSurfaces = emptyList(),
     v2SessionId = null,
     v2CompactionSummary = null,
+    v2WorkspaceReview = null,
     error = null,
 )

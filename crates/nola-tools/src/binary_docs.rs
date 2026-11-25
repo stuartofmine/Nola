@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Native binary document readers for `read_file`:
+//! Native binary document readers for `read_file` and attachment parsing:
+//! - Magic-byte format sniffing (PDF, ZIP-based DOCX vs XLSX, PNG/JPEG/GIF/WEBP, WAV/MP3/FLAC/OGG/MP4)
+//! - Word documents (`.docx`) via `zip` + `quick-xml` (`word/document.xml` paragraphs & tables)
 //! - Spreadsheets (`.xlsx`, `.xls`, `.ods`) via `calamine`
-//! - PDFs (`.pdf`) via `lopdf` text extraction + optional page-render (`pdftoppm`/`mutool`/`gs`)
-//! - Audio (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`) via `symphonia` + `rustfft` spectral analysis
+//! - PDFs (`.pdf`) via `lopdf` text extraction + optional page-render (`pdftoppm`)
+//! - Audio (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`) via `symphonia` + `rustfft` spectral analysis
 //! - Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) -> validated `MediaAttachment`
+//! - `extract_document_text_from_bytes` for in-memory attachment parsing (UTF-8, PDF, DOCX, XLSX)
 
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::Path;
 use std::process::Command;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use calamine::{open_workbook_auto, Reader};
+use calamine::{open_workbook_auto, open_workbook_auto_from_rs, Reader};
 use nola_types::{sha256_hex, MediaAttachment, ToolExecutionResult};
+use quick_xml::events::Event;
+use quick_xml::Reader as XmlReader;
 use rustfft::{num_complex::Complex, FftPlanner};
 use serde_json::{json, Value};
 use symphonia::core::audio::SampleBuffer;
@@ -22,7 +28,163 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-/// Dispatch binary file extensions to rich native extractors; returns `None` for normal UTF-8 text.
+const MAX_SNIFF_READ_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_DOCX_TEXT_CHARS: usize = 200_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BinaryFormat {
+    Pdf,
+    Docx,
+    Spreadsheet,
+    Audio(&'static str),
+    Image(&'static str),
+}
+
+fn sniff_zip_kind(bytes: &[u8]) -> Option<BinaryFormat> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+    let mut has_word = false;
+    let mut has_xl = false;
+    let mut is_ods = false;
+    for i in 0..archive.len().min(256) {
+        if let Ok(entry) = archive.by_index(i) {
+            let name = entry.name();
+            if name == "word/document.xml" {
+                has_word = true;
+                break;
+            }
+            if name == "xl/workbook.xml" {
+                has_xl = true;
+                break;
+            }
+            if name == "mimetype" {
+                let mut mt = String::new();
+                let mut limited = entry.take(256);
+                if limited.read_to_string(&mut mt).is_ok()
+                    && mt.contains("opendocument.spreadsheet")
+                {
+                    is_ods = true;
+                }
+            }
+        }
+    }
+    if has_word {
+        Some(BinaryFormat::Docx)
+    } else if has_xl || is_ods {
+        Some(BinaryFormat::Spreadsheet)
+    } else {
+        None
+    }
+}
+
+/// Sniff binary format from magic bytes first, then fall back to file extension / MIME type.
+pub(crate) fn sniff_binary_format(
+    bytes: &[u8],
+    ext_hint: Option<&str>,
+    mime_hint: Option<&str>,
+) -> Option<BinaryFormat> {
+    // 1. Magic bytes
+    if bytes.starts_with(b"%PDF-") {
+        return Some(BinaryFormat::Pdf);
+    }
+    if bytes.len() >= 4
+        && (bytes.starts_with(b"PK\x03\x04")
+            || bytes.starts_with(b"PK\x05\x06")
+            || bytes.starts_with(b"PK\x07\x08"))
+    {
+        if let Some(kind) = sniff_zip_kind(bytes) {
+            return Some(kind);
+        }
+    }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some(BinaryFormat::Image("image/png"));
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return Some(BinaryFormat::Image("image/jpeg"));
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some(BinaryFormat::Image("image/gif"));
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some(BinaryFormat::Image("image/webp"));
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return Some(BinaryFormat::Audio("wav"));
+    }
+    if bytes.starts_with(b"fLaC") {
+        return Some(BinaryFormat::Audio("flac"));
+    }
+    if bytes.starts_with(b"OggS") {
+        return Some(BinaryFormat::Audio("ogg"));
+    }
+    if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 4
+            && bytes[0] == 0xFF
+            && (bytes[1] & 0xE0) == 0xE0
+            && (bytes[1] & 0x06) != 0x00
+            && (bytes[2] & 0xF0) != 0xF0)
+    {
+        return Some(BinaryFormat::Audio("mp3"));
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return Some(BinaryFormat::Audio("m4a"));
+    }
+
+    // 2. Fallback to extension hint
+    if let Some(ext) = ext_hint.map(|s| s.to_ascii_lowercase()) {
+        match ext.as_str() {
+            "pdf" => return Some(BinaryFormat::Pdf),
+            "docx" => return Some(BinaryFormat::Docx),
+            "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" => return Some(BinaryFormat::Spreadsheet),
+            "wav" => return Some(BinaryFormat::Audio("wav")),
+            "mp3" => return Some(BinaryFormat::Audio("mp3")),
+            "flac" => return Some(BinaryFormat::Audio("flac")),
+            "ogg" => return Some(BinaryFormat::Audio("ogg")),
+            "m4a" | "mp4" => return Some(BinaryFormat::Audio("m4a")),
+            "aac" => return Some(BinaryFormat::Audio("aac")),
+            "png" => return Some(BinaryFormat::Image("image/png")),
+            "jpg" | "jpeg" => return Some(BinaryFormat::Image("image/jpeg")),
+            "gif" => return Some(BinaryFormat::Image("image/gif")),
+            "webp" => return Some(BinaryFormat::Image("image/webp")),
+            _ => {}
+        }
+    }
+
+    // 3. Fallback to MIME hint
+    if let Some(mime) = mime_hint.map(|s| s.to_ascii_lowercase()) {
+        if mime == "application/pdf" {
+            return Some(BinaryFormat::Pdf);
+        }
+        if mime.contains("wordprocessingml.document") || mime == "application/docx" {
+            return Some(BinaryFormat::Docx);
+        }
+        if mime.contains("spreadsheetml.sheet")
+            || mime.contains("opendocument.spreadsheet")
+            || mime == "application/vnd.ms-excel"
+        {
+            return Some(BinaryFormat::Spreadsheet);
+        }
+        if mime == "image/png" {
+            return Some(BinaryFormat::Image("image/png"));
+        }
+        if mime == "image/jpeg" || mime == "image/jpg" {
+            return Some(BinaryFormat::Image("image/jpeg"));
+        }
+        if mime == "image/gif" {
+            return Some(BinaryFormat::Image("image/gif"));
+        }
+        if mime == "image/webp" {
+            return Some(BinaryFormat::Image("image/webp"));
+        }
+        if mime.starts_with("audio/") {
+            return Some(BinaryFormat::Audio("wav"));
+        }
+    }
+
+    None
+}
+
+/// Dispatch binary files (via magic-byte sniffing first, then extension) to rich native extractors;
+/// returns `None` for normal UTF-8 text.
 pub fn try_read_binary_document(
     path: &Path,
     page: Option<usize>,
@@ -31,14 +193,289 @@ pub fn try_read_binary_document(
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())?;
+        .map(|s| s.to_ascii_lowercase());
 
-    match ext.as_str() {
-        "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" => Some(read_spreadsheet(path, max_rows)),
-        "pdf" => Some(read_pdf(path, page)),
-        "wav" | "mp3" | "flac" | "ogg" | "m4a" | "aac" => Some(read_audio(path)),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(read_image(path, &ext)),
-        _ => None,
+    // Read file header (or full bytes if ZIP-based and reasonably sized) for magic-byte sniffing.
+    let mut header = [0u8; 16];
+    let header_len = fs::File::open(path)
+        .ok()
+        .and_then(|mut f| f.read(&mut header).ok())
+        .unwrap_or(0);
+    let sniff_slice: Vec<u8> = if header_len >= 4
+        && (header[..4] == *b"PK\x03\x04"
+            || header[..4] == *b"PK\x05\x06"
+            || header[..4] == *b"PK\x07\x08")
+        && fs::metadata(path)
+            .map(|m| m.len() <= MAX_SNIFF_READ_BYTES)
+            .unwrap_or(false)
+    {
+        fs::read(path).unwrap_or_else(|_| header[..header_len].to_vec())
+    } else {
+        header[..header_len].to_vec()
+    };
+
+    let fmt = sniff_binary_format(&sniff_slice, ext.as_deref(), None)?;
+    match fmt {
+        BinaryFormat::Spreadsheet => Some(read_spreadsheet(path, max_rows)),
+        BinaryFormat::Docx => Some(read_docx(path)),
+        BinaryFormat::Pdf => Some(read_pdf(path, page)),
+        BinaryFormat::Audio(audio_ext) => Some(read_audio(path, audio_ext)),
+        BinaryFormat::Image(mime) => Some(read_image(path, mime)),
+    }
+}
+
+/// Extract plain text from in-memory bytes for attachment parsing (`web_server.rs /api/attachments/parse`).
+/// Supports UTF-8 text, PDF (`lopdf`), DOCX (`zip` + `quick-xml`), and XLSX/XLS/ODS (`calamine`).
+pub fn extract_document_text_from_bytes(name: &str, mime: &str, bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    let mime_opt = (!mime.trim().is_empty()).then_some(mime);
+
+    match sniff_binary_format(bytes, ext.as_deref(), mime_opt) {
+        Some(BinaryFormat::Pdf) => extract_pdf_text_from_bytes(bytes).ok(),
+        Some(BinaryFormat::Docx) => extract_docx_text_from_bytes(bytes).ok(),
+        Some(BinaryFormat::Spreadsheet) => extract_spreadsheet_text_from_bytes(bytes, 500).ok(),
+        Some(BinaryFormat::Image(_)) | Some(BinaryFormat::Audio(_)) => None,
+        None => {
+            if bytes.iter().take(8192).any(|&b| b == 0) {
+                return None;
+            }
+            std::str::from_utf8(bytes).ok().map(ToString::to_string)
+        }
+    }
+}
+
+/// Extract paragraphs and tables from a `.docx` archive (`word/document.xml`).
+pub fn extract_docx_text_from_bytes(bytes: &[u8]) -> Result<String, String> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| format!("failed to open docx zip archive: {e}"))?;
+    let mut doc_entry = archive
+        .by_name("word/document.xml")
+        .map_err(|e| format!("docx missing word/document.xml: {e}"))?;
+    let mut xml = String::new();
+    doc_entry
+        .read_to_string(&mut xml)
+        .map_err(|e| format!("failed to read word/document.xml: {e}"))?;
+
+    let mut reader = XmlReader::from_str(&xml);
+    reader.config_mut().trim_text(false);
+
+    let mut out = String::new();
+    let mut in_table = false;
+    let mut in_cell = false;
+    let mut current_row_cells: Vec<String> = Vec::new();
+    let mut current_cell_buf = String::new();
+    let mut current_para_buf = String::new();
+    let mut in_text = false;
+
+    let push_capped = |dst: &mut String, s: &str| {
+        if dst.len() < MAX_DOCX_TEXT_CHARS {
+            let rem = MAX_DOCX_TEXT_CHARS - dst.len();
+            if s.len() <= rem {
+                dst.push_str(s);
+            } else {
+                let mut end = rem;
+                while end > 0 && !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                dst.push_str(&s[..end]);
+            }
+        }
+    };
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    b"tbl" => {
+                        in_table = true;
+                    }
+                    b"tr" => {
+                        current_row_cells.clear();
+                    }
+                    b"tc" => {
+                        in_cell = true;
+                        current_cell_buf.clear();
+                    }
+                    b"p" => {
+                        current_para_buf.clear();
+                    }
+                    b"t" => {
+                        in_text = true;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    b"tab" => current_para_buf.push('\t'),
+                    b"br" | b"cr" => current_para_buf.push('\n'),
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_text {
+                    if let Ok(decoded) = e.decode() {
+                        let unescaped = quick_xml::escape::unescape(&decoded)
+                            .map(|c| c.into_owned())
+                            .unwrap_or_else(|_| decoded.into_owned());
+                        current_para_buf.push_str(&unescaped);
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                if in_text {
+                    if let Ok(name) = e.decode() {
+                        match name.as_ref() {
+                            "amp" => current_para_buf.push('&'),
+                            "lt" => current_para_buf.push('<'),
+                            "gt" => current_para_buf.push('>'),
+                            "quot" => current_para_buf.push('"'),
+                            "apos" => current_para_buf.push('\''),
+                            other => {
+                                if let Ok(Some(ch)) = e.resolve_char_ref() {
+                                    current_para_buf.push(ch);
+                                } else {
+                                    current_para_buf.push('&');
+                                    current_para_buf.push_str(other);
+                                    current_para_buf.push(';');
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    b"t" => {
+                        in_text = false;
+                    }
+                    b"p" => {
+                        let trimmed = current_para_buf.trim_end();
+                        if in_cell {
+                            if !trimmed.is_empty() {
+                                if !current_cell_buf.is_empty() {
+                                    current_cell_buf.push(' ');
+                                }
+                                current_cell_buf.push_str(trimmed);
+                            }
+                        } else if !trimmed.is_empty() {
+                            if !out.is_empty() {
+                                push_capped(&mut out, "\n");
+                            }
+                            push_capped(&mut out, trimmed);
+                        }
+                        current_para_buf.clear();
+                    }
+                    b"tc" => {
+                        current_row_cells.push(current_cell_buf.trim().to_string());
+                        current_cell_buf.clear();
+                        in_cell = false;
+                    }
+                    b"tr" => {
+                        if !current_row_cells.is_empty()
+                            && current_row_cells.iter().any(|c| !c.is_empty())
+                        {
+                            if !out.is_empty() {
+                                push_capped(&mut out, "\n");
+                            }
+                            push_capped(&mut out, &current_row_cells.join(" | "));
+                        }
+                        current_row_cells.clear();
+                    }
+                    b"tbl" => {
+                        in_table = false;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("failed to parse word/document.xml: {e}")),
+            _ => {}
+        }
+    }
+    let _ = in_table;
+    Ok(out)
+}
+
+fn extract_pdf_text_from_bytes(bytes: &[u8]) -> Result<String, String> {
+    let doc = lopdf::Document::load_mem(bytes).map_err(|e| format!("failed to parse PDF: {e}"))?;
+    let total_pages = doc.get_pages().len();
+    let max_pages = total_pages.min(50) as u32;
+    let mut parts = Vec::new();
+    for pn in 1..=max_pages {
+        if let Ok(text) = doc.extract_text(&[pn]) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+    }
+    Ok(parts.join("\n\n"))
+}
+
+fn extract_spreadsheet_text_from_bytes(bytes: &[u8], max_rows: usize) -> Result<String, String> {
+    let mut wb = open_workbook_auto_from_rs(Cursor::new(bytes))
+        .map_err(|e| format!("failed to open spreadsheet: {e}"))?;
+    let names = wb.sheet_names().to_vec();
+    let mut out = String::new();
+    let row_cap = max_rows.clamp(1, 500);
+    for name in &names {
+        if let Ok(range) = wb.worksheet_range(name) {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!("# Sheet: {name}\n"));
+            for row in range.rows().take(row_cap) {
+                let cells: Vec<String> = row.iter().map(|c| c.to_string()).collect();
+                out.push_str(&cells.join("\t"));
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out.trim_end().to_string())
+}
+
+fn read_docx(path: &Path) -> ToolExecutionResult {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            return ToolExecutionResult::err_structured(
+                "docx_read_error",
+                format!("cannot read docx file: {e}"),
+                None,
+            )
+        }
+    };
+    let digest = sha256_hex(&bytes);
+    match extract_docx_text_from_bytes(&bytes) {
+        Ok(text) => {
+            let lines = text.lines().count();
+            ToolExecutionResult::ok_structured(
+                json!({
+                    "path": path.display().to_string(),
+                    "format": "docx",
+                    "sha256": digest,
+                    "lines": lines,
+                    "chars": text.chars().count(),
+                    "content": text
+                }),
+                format!(
+                    "Read DOCX {} ({lines} lines, {} chars)",
+                    path.display(),
+                    text.chars().count()
+                ),
+            )
+        }
+        Err(e) => ToolExecutionResult::err_structured("docx_parse_error", e, None),
     }
 }
 
@@ -161,7 +598,7 @@ fn try_render_pdf_page_png(path: &Path, page: usize) -> Option<MediaAttachment> 
     })
 }
 
-fn read_audio(path: &Path) -> ToolExecutionResult {
+fn read_audio(path: &Path, sniffed_ext: &str) -> ToolExecutionResult {
     let file = match fs::File::open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -176,6 +613,8 @@ fn read_audio(path: &Path) -> ToolExecutionResult {
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
+    } else if !sniffed_ext.is_empty() {
+        hint.with_extension(sniffed_ext);
     }
     let probed = match symphonia::default::get_probe().format(
         &hint,
@@ -294,7 +733,7 @@ fn read_audio(path: &Path) -> ToolExecutionResult {
     )
 }
 
-fn read_image(path: &Path, ext: &str) -> ToolExecutionResult {
+fn read_image(path: &Path, mime: &str) -> ToolExecutionResult {
     if let Ok(meta) = fs::metadata(path) {
         if meta.len() > 20 * 1024 * 1024 {
             return ToolExecutionResult::err_structured(
@@ -317,12 +756,6 @@ fn read_image(path: &Path, ext: &str) -> ToolExecutionResult {
     let dims: Value = match image::load_from_memory(&bytes) {
         Ok(img) => json!({"width": img.width(), "height": img.height()}),
         Err(_) => Value::Null,
-    };
-    let mime = match ext {
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => "image/png",
     };
     let filename = path
         .file_name()

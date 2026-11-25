@@ -1490,4 +1490,14 @@
     <string name="chat_v2_context_compacted_range">コンテキストを圧縮しました（%1$s → %2$s トークン）</string>
     <string name="chat_v2_context_compacted_after">コンテキストを圧縮しました（%1$s トークン）</string>
     <string name="chat_v2_context_compaction_failed">コンテキストの圧縮に失敗しました</string>
+    <string name="chat_v2_branch_conversation">会話を分岐</string>
+    <string name="chat_v2_branch_failed">会話を分岐できませんでした</string>
+    <string name="chat_v2_workspace_review">ワークスペース差分レビュー</string>
+    <string name="chat_v2_workspace_review_empty">ワークスペースの変更は検出されませんでした</string>
+    <string name="chat_v2_workspace_review_host_required">ワークスペースの変更を確認するには Web Agent Host に接続してください</string>
+    <string name="chat_v2_workspace_review_staged">ステージ済みの差分</string>
+    <string name="chat_v2_workspace_review_unstaged">未ステージの差分</string>
+    <string name="chat_v2_workspace_review_files">ワークスペースファイル</string>
+    <string name="chat_v2_workspace_review_truncated">プレビューのため出力を省略しました</string>
+    <string name="chat_v2_edit_resend_failed">メッセージを編集して再送信できませんでした</string>
 </resources>

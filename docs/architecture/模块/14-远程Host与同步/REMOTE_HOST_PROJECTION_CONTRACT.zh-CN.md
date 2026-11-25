@@ -15,4 +15,4 @@
 
 外部编码执行器保留自己的不透明会话 ID，经 Host 协议提交观察。Application 接受效果并形成规范消息。客户端只从投影恢复对话，不根据当前窗口、显示文本或 ID 拼接推导消息归属。
 
-验证时同时检查源状态、断线后的回执和重新打开的界面。将截图或录屏与同一份已提交投影进行比较，检查文字重复、遗漏、闪烁和滚动位移。[Application 命令](../../../../core/nola-application/src/application_command.rs) · [配对入口](../../../../apps/cli/src/web_parts/routes.rs)
+验证时同时检查源状态、断线后的回执和重新打开的界面。将截图或录屏与同一份已提交投影进行比较，检查文字重复、遗漏、闪烁和滚动位移。[Application 命令](../../../../crates/nola-app/src/daemon.rs) · [配对入口](../../../../crates/nola-app/src/web_server.rs)

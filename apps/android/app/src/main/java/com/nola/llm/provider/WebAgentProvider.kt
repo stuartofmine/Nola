@@ -523,7 +523,7 @@ class WebAgentProvider @Inject constructor(
         )
     }
 
-    private fun deviceBridgeAdvertisement(
+    internal fun deviceBridgeAdvertisement(
         config: Config,
         sessionId: String?,
         allowedCapabilities: Set<String>,
@@ -571,6 +571,7 @@ class WebAgentProvider @Inject constructor(
         reasoningEffort: String? = null,
         permissionProfile: String? = null,
         selectedExperts: JsonArray? = null,
+        deviceBridge: JsonObject? = null,
     ): Flow<SseEvent> {
         val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
         return webHostApi.v2StreamMessage(
@@ -584,6 +585,7 @@ class WebAgentProvider @Inject constructor(
             reasoningEffort = reasoningEffort,
             permissionProfile = permissionProfile,
             selectedExperts = selectedExperts,
+            deviceBridge = deviceBridge,
         )
     }
 
@@ -614,6 +616,41 @@ class WebAgentProvider @Inject constructor(
     suspend fun v2CompactConversation(conversationId: String, configuration: Config? = config): JsonObject {
         val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
         return webHostApi.v2CompactConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2BranchConversation(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2BranchConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2TruncateConversation(
+        conversationId: String,
+        fromSeq: Long,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2TruncateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            fromSeq = fromSeq,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2WorkspaceReview(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2WorkspaceReview(
             hostBaseUrl = cfg.hostBaseUrl,
             token = cfg.token,
             conversationId = conversationId,

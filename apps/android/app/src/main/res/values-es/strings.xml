@@ -1488,4 +1488,14 @@
     <string name="chat_v2_context_compacted_range">Contexto compactado (%1$s → %2$s tokens)</string>
     <string name="chat_v2_context_compacted_after">Contexto compactado (%1$s tokens)</string>
     <string name="chat_v2_context_compaction_failed">Error al compactar el contexto</string>
+    <string name="chat_v2_branch_conversation">Bifurcar conversación</string>
+    <string name="chat_v2_branch_failed">No se pudo bifurcar la conversación</string>
+    <string name="chat_v2_workspace_review">Revisión del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_empty">No se detectaron cambios en el espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_host_required">Conéctate a un Web Agent Host para revisar los cambios del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_staged">Cambios preparados</string>
+    <string name="chat_v2_workspace_review_unstaged">Cambios sin preparar</string>
+    <string name="chat_v2_workspace_review_files">Archivos del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_truncated">Salida truncada para vista previa</string>
+    <string name="chat_v2_edit_resend_failed">No se pudo truncar y reenviar el mensaje</string>
 </resources>

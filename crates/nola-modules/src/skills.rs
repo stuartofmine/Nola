@@ -5,19 +5,22 @@
 
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use nola_store::Store;
-use nola_tools::{ToolContext, ToolHandler, ToolRegistry};
+use nola_store::{Store, DEFAULT_MAX_EVENTS_PER_SCOPE};
+use nola_tools::{path_within_workspace, ToolContext, ToolHandler, ToolRegistry};
 use nola_types::{
-    CapabilityDomain, SkillDescriptor, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier,
+    new_id, now_ms, CapabilityDomain, SkillDescriptor, ToolExecutionResult, ToolSchema, ToolSpec,
+    ToolTier,
 };
 use serde_json::{json, Value};
 
 use crate::ModulesSuite;
 
 const MAX_SKILL_DOWNLOAD_BYTES: u64 = 256 * 1024;
+const MAX_SUPPORTING_SKILL_FILES: usize = 16;
+pub const KIND_SKILL_SKIP: &str = "skill_skip";
 
 pub fn skill_disabled_kv_key(name: &str) -> String {
     format!("skill_disabled:{}", name.trim().to_ascii_lowercase())
@@ -360,8 +363,66 @@ fn parse_skill_md(path: &Path, raw: &str) -> Option<SkillDescriptor> {
     })
 }
 
+pub fn validate_skill_relative_file_path(rel: &str) -> Result<PathBuf, String> {
+    let normalized = rel.trim().replace('\\', "/");
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.contains('?')
+        || normalized.contains('#')
+    {
+        return Err(format!("invalid supporting skill file path '{rel}'"));
+    }
+    let mut clean = PathBuf::new();
+    for seg in normalized.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." || !is_valid_github_segment(seg) {
+            return Err(format!(
+                "unsafe path segment '{seg}' in supporting skill file '{rel}'"
+            ));
+        }
+        clean.push(seg);
+    }
+    if clean.as_os_str().is_empty()
+        || clean
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err(format!("invalid relative skill file path '{rel}'"));
+    }
+    Ok(clean)
+}
+
+/// Extract and safely validate optional `files` list from `NOLA_MANIFEST.json`
+/// (enforcing path traversal checks and the 16-file limit).
+pub fn extract_manifest_supporting_files(manifest: &Value) -> Result<Vec<String>, String> {
+    let Some(arr) = manifest.get("files").and_then(|v| v.as_array()) else {
+        return Ok(Vec::new());
+    };
+    if arr.len() > MAX_SUPPORTING_SKILL_FILES {
+        return Err(format!(
+            "NOLA_MANIFEST.json declares {} supporting files (max {MAX_SUPPORTING_SKILL_FILES})",
+            arr.len()
+        ));
+    }
+    let mut out = Vec::new();
+    for entry in arr {
+        let Some(raw) = entry.as_str() else {
+            return Err("NOLA_MANIFEST.json 'files' entries must be strings".into());
+        };
+        let validated = validate_skill_relative_file_path(raw)?;
+        let canonical = validated.to_string_lossy().replace('\\', "/");
+        if canonical != "SKILL.md" && canonical != "NOLA_MANIFEST.json" && !out.contains(&canonical)
+        {
+            out.push(canonical);
+        }
+    }
+    Ok(out)
+}
+
 pub fn register_tools(suite: &Arc<ModulesSuite>, registry: &mut ToolRegistry) {
     registry.register(Arc::new(SkillLoadTool {
+        suite: Arc::clone(suite),
+    }));
+    registry.register(Arc::new(SkillSkipTool {
         suite: Arc::clone(suite),
     }));
     registry.register(Arc::new(GithubSkillTool {
@@ -519,8 +580,102 @@ impl ToolHandler for GithubSkillTool {
                         if let Err(e) = fs::write(&dest, &buf) {
                             return ToolExecutionResult::err_structured("write_error", e.to_string(), None);
                         }
+
+                        // Optionally fetch NOLA_MANIFEST.json and download declared supporting files
+                        // safely (path traversal check + 256 KiB per file + max 16 files).
+                        let base_rel = Path::new(skill_path)
+                            .parent()
+                            .map(|p| p.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_default();
+                        let manifest_rel = if base_rel.is_empty() {
+                            "NOLA_MANIFEST.json".to_string()
+                        } else {
+                            format!("{base_rel}/NOLA_MANIFEST.json")
+                        };
+                        let manifest_url = format!(
+                            "https://raw.githubusercontent.com/{}/{}/HEAD/{manifest_rel}",
+                            parts[0], parts[1]
+                        );
+                        let mut installed_files: Vec<String> = Vec::new();
+                        let mut manifest_loaded = false;
+                        if let Ok(m_resp) = client.get(&manifest_url).send() {
+                            if m_resp.status().is_success() {
+                                let mut m_buf = Vec::new();
+                                if m_resp
+                                    .take(MAX_SKILL_DOWNLOAD_BYTES + 1)
+                                    .read_to_end(&mut m_buf)
+                                    .is_ok()
+                                    && (m_buf.len() as u64) <= MAX_SKILL_DOWNLOAD_BYTES
+                                {
+                                    if let Ok(manifest_val) = serde_json::from_slice::<Value>(&m_buf)
+                                    {
+                                        let _ = fs::write(dest_dir.join("NOLA_MANIFEST.json"), &m_buf);
+                                        manifest_loaded = true;
+                                        match extract_manifest_supporting_files(&manifest_val) {
+                                            Ok(rel_files) => {
+                                                for rel in rel_files {
+                                                    let Ok(clean_rel) =
+                                                        validate_skill_relative_file_path(&rel)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let target = dest_dir.join(&clean_rel);
+                                                    if !path_within_workspace(&dest_dir, &target) {
+                                                        continue;
+                                                    }
+                                                    let file_url = if base_rel.is_empty() {
+                                                        format!(
+                                                            "https://raw.githubusercontent.com/{}/{}/HEAD/{rel}",
+                                                            parts[0], parts[1]
+                                                        )
+                                                    } else {
+                                                        format!(
+                                                            "https://raw.githubusercontent.com/{}/{}/HEAD/{base_rel}/{rel}",
+                                                            parts[0], parts[1]
+                                                        )
+                                                    };
+                                                    if let Ok(f_resp) = client.get(&file_url).send() {
+                                                        if f_resp.status().is_success() {
+                                                            let mut f_buf = Vec::new();
+                                                            if f_resp
+                                                                .take(MAX_SKILL_DOWNLOAD_BYTES + 1)
+                                                                .read_to_end(&mut f_buf)
+                                                                .is_ok()
+                                                                && (f_buf.len() as u64)
+                                                                    <= MAX_SKILL_DOWNLOAD_BYTES
+                                                            {
+                                                                if let Some(parent) = target.parent() {
+                                                                    let _ = fs::create_dir_all(parent);
+                                                                }
+                                                                if fs::write(&target, &f_buf).is_ok() {
+                                                                    installed_files.push(rel);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                return ToolExecutionResult::err_structured(
+                                                    "invalid_manifest_files",
+                                                    err,
+                                                    None,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         ToolExecutionResult::ok_structured(
-                            json!({"installed": true, "name": safe_name, "path": dest.display().to_string(), "base_directory": dest_dir.display().to_string()}),
+                            json!({
+                                "installed": true,
+                                "name": safe_name,
+                                "path": dest.display().to_string(),
+                                "base_directory": dest_dir.display().to_string(),
+                                "manifest_loaded": manifest_loaded,
+                                "supporting_files": installed_files
+                            }),
                             format!("Installed skill '{safe_name}' from {repo}"),
                         )
                     }
@@ -615,6 +770,85 @@ impl ToolHandler for SkillLoadTool {
     }
 }
 
+/// Explicitly record why an advertised skill was skipped for the current task (`skill_skip`).
+pub struct SkillSkipTool {
+    suite: Arc<ModulesSuite>,
+}
+
+impl SkillSkipTool {
+    pub fn new(suite: Arc<ModulesSuite>) -> Self {
+        Self { suite }
+    }
+}
+
+impl ToolHandler for SkillSkipTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "skill_skip".into(),
+                description: "Explicitly record why an advertised skill was skipped for the current task.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Advertised skill name being skipped" },
+                        "reason": { "type": "string", "description": "Concise rationale for skipping the skill" },
+                        "session_id": { "type": "string", "description": "Optional session ID (defaults to current session)" }
+                    },
+                    "required": ["name", "reason"]
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::System,
+            read_only: false,
+        }
+    }
+
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        let Some(name) = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return ToolExecutionResult::err_structured("missing_param", "missing 'name'", None);
+        };
+        let Some(reason) = args
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return ToolExecutionResult::err_structured("missing_param", "missing 'reason'", None);
+        };
+        let session_id = args
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(ctx.session_id.as_str());
+        let ts = now_ms();
+        let skip_id = new_id();
+        let entry = json!({
+            "id": skip_id,
+            "name": name,
+            "reason": reason,
+            "session_id": session_id,
+            "skipped_at_ms": ts
+        });
+        let _ = self.suite.upsert_record(KIND_SKILL_SKIP, &skip_id, &entry);
+        let _ = self.suite.store.append_event(
+            session_id,
+            "skill_skipped",
+            entry.clone(),
+            DEFAULT_MAX_EVENTS_PER_SCOPE,
+        );
+        ToolExecutionResult::ok_structured(
+            entry,
+            format!("Recorded skip for skill '{name}': {reason}"),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +892,47 @@ mod tests {
             pkg["raw_url"],
             "https://raw.githubusercontent.com/acme/nola-skills/main/skills/audit/SKILL.md"
         );
+    }
+
+    #[test]
+    fn manifest_supporting_files_validate_traversal_limits_and_skill_skip_records_event() {
+        // Valid supporting files list
+        let ok = extract_manifest_supporting_files(&json!({
+            "files": ["scripts/check.sh", "references/checklist.md"]
+        }))
+        .unwrap();
+        assert_eq!(ok, vec!["scripts/check.sh", "references/checklist.md"]);
+
+        // Reject traversal & absolute paths
+        assert!(extract_manifest_supporting_files(&json!({
+            "files": ["../escape.sh"]
+        }))
+        .is_err());
+        assert!(extract_manifest_supporting_files(&json!({
+            "files": ["/etc/passwd"]
+        }))
+        .is_err());
+
+        // Reject > 16 files
+        let too_many: Vec<String> = (0..17).map(|i| format!("file_{i}.txt")).collect();
+        assert!(extract_manifest_supporting_files(&json!({ "files": too_many })).is_err());
+
+        // SkillSkipTool persists skip event and module record
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+        let mut reg = ToolRegistry::default();
+        register_tools(&suite, &mut reg);
+        let ctx = ToolContext::new(dir.path()).with_session_id("sess-skip-1");
+        let res = reg.execute(
+            "skill_skip",
+            &ctx,
+            json!({"name": "tdd", "reason": "Pure documentation edit with no code changes"}),
+        );
+        assert!(!res.is_error);
+        let evs = store.read_event_range("sess-skip-1", 1, 10).unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].kind, "skill_skipped");
+        assert_eq!(evs[0].payload["name"], "tdd");
     }
 }

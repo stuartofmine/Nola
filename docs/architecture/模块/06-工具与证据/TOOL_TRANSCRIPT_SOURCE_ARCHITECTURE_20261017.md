@@ -28,7 +28,7 @@
 
 ## 当前实现入口
 
-[Application source](../../../../core/nola-application/src/tool_source.rs)、[Store Port](../../../../core/nola-store-port/src/tool_source.rs)、[Store validator/installer](../../../../core/nola-store/src/tool_source.rs)、[archive admission](../../../../core/nola-application/src/archive_restore.rs)。
+[Application source](../../../../crates/nola-tools/src/lib.rs)、[Store Port](../../../../crates/nola-store/src/db.rs)、[Store validator/installer](../../../../crates/nola-store/src/db.rs)、[archive admission](../../../../crates/nola-store/src/db.rs)。
 
 验收分别覆盖原文冷读、跨 owner/摘要拒绝、分支、归档安装回滚、CLI/Mac 导出 UI、replica 与真实模型恢复；不能彼此替代。
 

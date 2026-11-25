@@ -4,9 +4,10 @@
 
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -108,19 +109,51 @@ fn read_capped(mut reader: impl Read) -> Vec<u8> {
     buf
 }
 
-fn execute_single_hook(
-    hook: &CommandHookConfig,
-    workspace_root: &Path,
-    input_json: &Value,
-) -> HookDecision {
+#[cfg(unix)]
+fn build_hook_command(command: &str, workspace_root: &Path) -> Command {
     let mut cmd = Command::new("/bin/bash");
     cmd.arg("-lc")
-        .arg(&hook.command)
+        .arg(command)
         .current_dir(workspace_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    cmd
+}
+
+#[cfg(windows)]
+fn build_hook_command(command: &str, workspace_root: &Path) -> Command {
+    let mut cmd = Command::new("cmd.exe");
+    cmd.arg("/C")
+        .arg(command)
+        .current_dir(workspace_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
+}
+
+#[cfg(unix)]
+fn terminate_hook_child(child: &mut Child) {
+    let pgid = child.id() as libc::pid_t;
+    unsafe {
+        let _ = libc::kill(-pgid, libc::SIGKILL);
+    }
+    let _ = child.kill();
+}
+
+#[cfg(windows)]
+fn terminate_hook_child(child: &mut Child) {
+    let _ = child.kill();
+}
+
+fn execute_single_hook(
+    hook: &CommandHookConfig,
+    workspace_root: &Path,
+    input_json: &Value,
+) -> HookDecision {
+    let mut cmd = build_hook_command(&hook.command, workspace_root);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -134,7 +167,6 @@ fn execute_single_hook(
             };
         }
     };
-    let pgid = child.id() as libc::pid_t;
 
     // Write stdin and drain stdout/stderr concurrently to avoid pipe deadlocks on large I/O!
     let stdin_handle = child.stdin.take().map(|mut stdin| {
@@ -153,10 +185,7 @@ fn execute_single_hook(
             Ok(Some(st)) => break Some(st),
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    unsafe {
-                        let _ = libc::kill(-pgid, libc::SIGKILL);
-                    }
-                    let _ = child.kill();
+                    terminate_hook_child(&mut child);
                     let _ = child.wait();
                     if let Some(h) = stdin_handle {
                         let _ = h.join();

@@ -76,30 +76,40 @@ for abi in "${ABIS[@]}"; do
   esac
 
   if command -v cargo-ndk >/dev/null 2>&1; then
-    (cd "$ROOT" && cargo ndk -t "$abi" -p "$MIN_API" -- build --locked --profile "$PROFILE" -p nola-app --lib)
+    (cd "$ROOT" && nola_cargo ndk -t "$abi" -p "$MIN_API" -- build --locked --profile "$PROFILE" -p nola-app --lib)
   else
     [[ -x "$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang" ]] || {
       echo "error: Android NDK clang not found at $TOOLCHAIN_BIN/${CLANG_PREFIX}-clang (set ANDROID_NDK_HOME or ANDROID_HOME)" >&2
       exit 1
     }
-    env \
-      "CC_${CC_KEY}=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang" \
-      "CXX_${CC_KEY}=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang++" \
-      "AR_${CC_KEY}=$TOOLCHAIN_BIN/llvm-ar" \
-      "RANLIB_${CC_KEY}=$TOOLCHAIN_BIN/llvm-ranlib" \
-      "CARGO_TARGET_${ENV_KEY}_LINKER=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang" \
-      "CARGO_TARGET_${ENV_KEY}_AR=$TOOLCHAIN_BIN/llvm-ar" \
-      "$NOLA_RUST_CARGO_COMMAND" build \
+    CC_VAR="CC_${CC_KEY}"
+    CXX_VAR="CXX_${CC_KEY}"
+    AR_VAR="AR_${CC_KEY}"
+    RANLIB_VAR="RANLIB_${CC_KEY}"
+    LINKER_VAR="CARGO_TARGET_${ENV_KEY}_LINKER"
+    TARGET_AR_VAR="CARGO_TARGET_${ENV_KEY}_AR"
+    (
+      export "$CC_VAR=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang"
+      export "$CXX_VAR=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang++"
+      export "$AR_VAR=$TOOLCHAIN_BIN/llvm-ar"
+      export "$RANLIB_VAR=$TOOLCHAIN_BIN/llvm-ranlib"
+      export "$LINKER_VAR=$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang"
+      export "$TARGET_AR_VAR=$TOOLCHAIN_BIN/llvm-ar"
+      nola_cargo build \
         --locked \
         --manifest-path "$ROOT/Cargo.toml" \
         --profile "$PROFILE" \
         --target "$TRIPLE" \
         -p nola-app \
         --lib
+    )
   fi
 
   SRC_LIB="$CARGO_TARGET_DIR/$TRIPLE/$OUTPUT_PROFILE/libnola_app.a"
   [[ -f "$SRC_LIB" ]] || { echo "error: expected Rust staticlib at $SRC_LIB" >&2; exit 2; }
   mkdir -p "$OUTPUT_DIR/$abi"
-  cp -f "$SRC_LIB" "$OUTPUT_DIR/$abi/libnola_core.a"
+  DST_LIB="$OUTPUT_DIR/$abi/libnola_core.a"
+  if [[ ! -f "$DST_LIB" ]] || ! cmp -s "$SRC_LIB" "$DST_LIB"; then
+    cp -f "$SRC_LIB" "$DST_LIB"
+  fi
 done

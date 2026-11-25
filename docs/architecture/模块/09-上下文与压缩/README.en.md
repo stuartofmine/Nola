@@ -14,9 +14,9 @@ Compute reduction as 1 − estimated full input after / estimated full input bef
 
 ## Implementation
 
-- [nola-application/src/context.rs](../../../../core/nola-application/src/context.rs)
-- [agent/runtime/compaction_driver.rs](../../../../core/nola-agent-engine/src/agent/runtime/compaction_driver.rs)
-- [src/llm_parts/request_snapshot.rs](../../../../apps/cli/src/llm_parts/request_snapshot.rs)
+- [nola-application/src/context.rs](../../../../crates/nola-engine/src/compaction.rs)
+- [agent/runtime/compaction_driver.rs](../../../../crates/nola-engine/src/compaction.rs)
+- [src/llm_parts/request_snapshot.rs](../../../../crates/nola-llm/src/client.rs)
 
 ## Detailed references
 

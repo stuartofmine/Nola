@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Unified 5-protocol LLM wire adapters (`OpenAiChat`, `OpenAiResponses`,
-//! `AnthropicMessages`, `SiwcResponses`, `Gemini`), SSE decoding, privacy redaction,
-//! and blocking HTTP client with retries and optional audit capture.
+//! `AnthropicMessages`, `SiwcResponses`, `Gemini`), bounded SSE decoding with
+//! `ReasoningProgressGuard`, full wire privacy redaction, and blocking HTTP
+//! client with retries, multi-endpoint fallbacks, and interruptible cancellation.
 
 pub mod adapter;
 pub mod anthropic;
@@ -17,9 +18,13 @@ pub mod sse;
 mod tests;
 
 pub use adapter::{
-    adapter_for, finalize_response, format_tail_reminders, BuiltHttpRequest, LlmError,
+    adapter_for, audio_format_for_mime, finalize_response, format_tail_reminders,
+    is_supported_audio_mime, normalized_wire_reasoning_effort, BuiltHttpRequest, LlmError,
     ProtocolMediaLimits, ProviderWireAdapter,
 };
-pub use client::{is_loopback_url, LlmClient};
-pub use privacy::{is_local_or_lan_endpoint, PrivacyRedactor};
-pub use sse::{SseEvent, SseReader};
+pub use client::{is_loopback_url, CallParams, LlmClient};
+pub use privacy::{is_local_or_lan_endpoint, should_redact_pii, PrivacyRedactor, RedactionOptions};
+pub use sse::{
+    should_stop_repetitive_output, ReasoningProgressGuard, SseEvent, SseReader, MAX_SSE_LINE_BYTES,
+    REPETITIVE_REASONING_CODE,
+};

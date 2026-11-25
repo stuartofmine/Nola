@@ -81,6 +81,8 @@ impl Vault {
                     Ok(mut f) => {
                         f.write_all(&key)?;
                         f.sync_all()?;
+                        drop(f);
+                        protect_private_path(&key_path)?;
                         key
                     }
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -211,7 +213,32 @@ impl Vault {
     }
 }
 
-fn acquire_blocking_flock(lock_path: &Path) -> Result<File, StoreError> {
+struct FileLockGuard {
+    _file: File,
+}
+
+#[cfg(windows)]
+impl Drop for FileLockGuard {
+    fn drop(&mut self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+        use windows_sys::Win32::System::IO::OVERLAPPED;
+
+        unsafe {
+            let mut overlapped: OVERLAPPED = std::mem::zeroed();
+            let _ = UnlockFileEx(
+                self._file.as_raw_handle() as HANDLE,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut overlapped,
+            );
+        }
+    }
+}
+
+fn acquire_blocking_flock(lock_path: &Path) -> Result<FileLockGuard, StoreError> {
     let f = OpenOptions::new()
         .create(true)
         .read(true)
@@ -231,11 +258,165 @@ fn acquire_blocking_flock(lock_path: &Path) -> Result<File, StoreError> {
             }
         }
     }
-    Ok(f)
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+        use windows_sys::Win32::System::IO::OVERLAPPED;
+
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let ok = unsafe {
+            LockFileEx(
+                f.as_raw_handle() as HANDLE,
+                LOCKFILE_EXCLUSIVE_LOCK,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut overlapped,
+            )
+        };
+        if ok == 0 {
+            return Err(StoreError::Io(std::io::Error::last_os_error()));
+        }
+    }
+    Ok(FileLockGuard { _file: f })
 }
 
-/// Write `bytes` to a unique temp file with owner-only `0600` permissions BEFORE atomic rename,
-/// cleaning up the temp file on any error.
+/// Tighten filesystem permissions on `path` so only the current OS user can access it.
+///
+/// - On Unix: sets mode `0o600`.
+/// - On Windows: replaces the DACL with a protected DACL granting `FILE_ALL_ACCESS`
+///   exclusively to the current process token user SID, stripping inherited ACEs.
+pub fn protect_private_path(path: &Path) -> Result<(), StoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE};
+        use windows_sys::Win32::Security::Authorization::{
+            SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W, NO_MULTIPLE_TRUSTEE,
+            SET_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
+        };
+        use windows_sys::Win32::Security::{
+            GetTokenInformation, TokenUser, ACL, DACL_SECURITY_INFORMATION, NO_INHERITANCE,
+            PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER,
+        };
+        use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        let mut token: HANDLE = 0;
+        let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+        if opened == 0 || token == 0 {
+            return Err(StoreError::Io(std::io::Error::last_os_error()));
+        }
+
+        let res: Result<(), StoreError> = (|| {
+            let mut needed: u32 = 0;
+            unsafe {
+                let _ = GetTokenInformation(
+                    token,
+                    TokenUser,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut needed,
+                );
+            }
+            if needed == 0 {
+                return Err(StoreError::Io(std::io::Error::last_os_error()));
+            }
+            let word_size = std::mem::size_of::<usize>();
+            let words = (needed as usize).div_ceil(word_size);
+            let mut buf = vec![0usize; words];
+            let buf_bytes = (buf.len() * word_size) as u32;
+            let got = unsafe {
+                GetTokenInformation(
+                    token,
+                    TokenUser,
+                    buf.as_mut_ptr() as *mut c_void,
+                    buf_bytes,
+                    &mut needed,
+                )
+            };
+            if got == 0 {
+                return Err(StoreError::Io(std::io::Error::last_os_error()));
+            }
+            let token_user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+            let user_sid = token_user.User.Sid;
+            if user_sid.is_null() {
+                return Err(StoreError::Other(
+                    "failed to resolve current Windows user SID for private ACL".into(),
+                ));
+            }
+
+            let ea = EXPLICIT_ACCESS_W {
+                grfAccessPermissions: FILE_ALL_ACCESS,
+                grfAccessMode: SET_ACCESS,
+                grfInheritance: NO_INHERITANCE,
+                Trustee: TRUSTEE_W {
+                    pMultipleTrustee: std::ptr::null_mut(),
+                    MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
+                    TrusteeForm: TRUSTEE_IS_SID,
+                    TrusteeType: TRUSTEE_IS_USER,
+                    ptstrName: user_sid as *mut u16,
+                },
+            };
+
+            let mut new_dacl: *mut ACL = std::ptr::null_mut();
+            let acl_rc = unsafe { SetEntriesInAclW(1, &ea, std::ptr::null(), &mut new_dacl) };
+            if acl_rc != ERROR_SUCCESS || new_dacl.is_null() {
+                return Err(StoreError::Io(std::io::Error::from_raw_os_error(
+                    acl_rc as i32,
+                )));
+            }
+
+            let wide_path: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let sec_rc = unsafe {
+                SetNamedSecurityInfoW(
+                    wide_path.as_ptr(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    new_dacl,
+                    std::ptr::null(),
+                )
+            };
+            unsafe {
+                let _ = LocalFree(new_dacl as _);
+            }
+            if sec_rc != ERROR_SUCCESS {
+                return Err(StoreError::Io(std::io::Error::from_raw_os_error(
+                    sec_rc as i32,
+                )));
+            }
+            Ok(())
+        })();
+
+        unsafe {
+            let _ = CloseHandle(token);
+        }
+        res
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// Write `bytes` to a unique temp file with owner-only `0600` (or Windows current-user DACL)
+/// permissions BEFORE atomic rename, cleaning up the temp file on any error.
 pub fn atomic_write_restricted(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let mut suffix = [0u8; 8];
     getrandom::getrandom(&mut suffix)
@@ -257,9 +438,17 @@ pub fn atomic_write_restricted(path: &Path, bytes: &[u8]) -> Result<(), StoreErr
         let _ = fs::remove_file(&tmp_path);
         return Err(StoreError::Io(e));
     }
+    if let Err(e) = protect_private_path(&tmp_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(e);
+    }
     if let Err(e) = fs::rename(&tmp_path, path) {
         let _ = fs::remove_file(&tmp_path);
         return Err(StoreError::Io(e));
+    }
+    #[cfg(windows)]
+    {
+        let _ = protect_private_path(path);
     }
     Ok(())
 }

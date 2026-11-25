@@ -937,7 +937,7 @@ nonisolated enum MacAgentHostExecutableLocator {
                 return url
             }
         }
-        if let bundled = bundle.url(forAuxiliaryExecutable: "nola"),
+        if let bundled = bundle.url(forAuxiliaryExecutable: "nola-runtime"),
            fileManager.isExecutableFile(atPath: bundled.path) {
             return bundled
         }
@@ -1028,6 +1028,11 @@ protocol MacLocalAgentRuntime: Actor {
         scope: MacPermissionGrantScope
     ) throws
     func providePermissionInstruction(conversationID: String, request: MacRemotePermissionRequest, instruction: String) throws
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws
     func activePermissionRequest(
         conversationID: String,
         requestID: String
@@ -1058,6 +1063,14 @@ extension MacLocalAgentRuntime {
     }
     func providePermissionInstruction(conversationID: String, request: MacRemotePermissionRequest, instruction: String) throws {
         throw MacPermissionInstructionError.unsupported
+    }
+
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws {
+        throw MacLocalAgentRuntimeError.protocolViolation("Local runtime does not support user input responses.")
     }
 
 
@@ -1467,12 +1480,45 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     ) -> MacRemotePermissionRequest? {
         guard let process = processes[conversationID], process.isRunning,
               controlInputs[conversationID] != nil,
-              toolPlans[conversationID] != nil,
-              let request = pendingPermissionRequests[conversationID]?[requestID],
+              let request = pendingPermissionRequests[conversationID]?[requestID] else {
+            return nil
+        }
+        if request.nonce.hasPrefix("v2-") {
+            return request.sessionID == conversationID ? request : nil
+        }
+        guard toolPlans[conversationID] != nil,
               isAdmittedPermissionSession(request, conversationID: conversationID) else {
             return nil
         }
         return request
+    }
+
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws {
+        guard let process = processes[conversationID], process.isRunning,
+              let input = controlInputs[conversationID] else {
+            throw NSError(
+                domain: "NolaMac.AgentHost.UserInput",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        String(localized: "The agent input channel is no longer active.")
+                ]
+            )
+        }
+        var payload: [String: Any] = [
+            "type": "user_input_response",
+            "request_id": requestID,
+        ]
+        if let answer {
+            payload["answer"] = answer
+        } else {
+            payload["cancelled"] = true
+        }
+        try writeControlFrame(payload, to: input)
     }
 
     func resolvePermission(
@@ -1489,6 +1535,62 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     }
 
     private func sendPermissionDecision(conversationID: String, request: MacRemotePermissionRequest, decision: MacRemotePermissionDecision) throws {
+        if request.nonce.hasPrefix("v2-") {
+            guard request.sessionID == conversationID else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The permission request belongs to a different conversation.")
+                    ]
+                )
+            }
+            guard let pendingRequest = pendingPermissionRequests[conversationID]?[request.id],
+                  pendingRequest == request else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The permission request is no longer pending.")
+                    ]
+                )
+            }
+            guard let process = processes[conversationID], process.isRunning,
+                  let input = controlInputs[conversationID] else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The agent permission input channel is no longer active.")
+                    ]
+                )
+            }
+            var v2Payload: [String: Any] = [
+                "type": "permission_response",
+                "request_id": request.id,
+            ]
+            switch decision.resolution {
+            case .authorization(let allow, let scope):
+                v2Payload["allow"] = allow
+                v2Payload["decision"] = allow
+                    ? (scope == .conversation ? "allow_session" : "allow_once")
+                    : "deny"
+                v2Payload["scope"] = scope == .conversation ? "session" : "once"
+            case .provideInstruction(let instruction):
+                v2Payload["allow"] = false
+                v2Payload["decision"] = "deny"
+                v2Payload["instruction"] = instruction
+            }
+            try writeControlFrame(v2Payload, to: input)
+            pendingPermissionRequests[conversationID]?.removeValue(forKey: request.id)
+            if pendingPermissionRequests[conversationID]?.isEmpty == true {
+                pendingPermissionRequests.removeValue(forKey: conversationID)
+            }
+            return
+        }
         guard isAdmittedPermissionSession(request, conversationID: conversationID) else {
             throw NSError(
                 domain: "NolaMac.AgentHost.Permission",

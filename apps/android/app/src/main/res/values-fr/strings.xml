@@ -1488,4 +1488,14 @@
     <string name="chat_v2_context_compacted_range">Contexte compacté (%1$s → %2$s jetons)</string>
     <string name="chat_v2_context_compacted_after">Contexte compacté (%1$s jetons)</string>
     <string name="chat_v2_context_compaction_failed">Échec du compactage du contexte</string>
+    <string name="chat_v2_branch_conversation">Dupliquer la conversation</string>
+    <string name="chat_v2_branch_failed">Impossible de dupliquer la conversation</string>
+    <string name="chat_v2_workspace_review">Revue de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_empty">Aucune modification détectée dans l’espace de travail</string>
+    <string name="chat_v2_workspace_review_host_required">Connectez-vous à un Web Agent Host pour examiner les modifications de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_staged">Modifications indexées</string>
+    <string name="chat_v2_workspace_review_unstaged">Modifications non indexées</string>
+    <string name="chat_v2_workspace_review_files">Fichiers de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_truncated">Sortie tronquée pour l’aperçu</string>
+    <string name="chat_v2_edit_resend_failed">Impossible de tronquer et renvoyer le message</string>
 </resources>

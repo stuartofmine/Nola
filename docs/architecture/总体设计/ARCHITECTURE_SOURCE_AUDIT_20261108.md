@@ -23,7 +23,7 @@
 | iOS / Android | `nola_mobile_bindings` 的 embedded Application，复用 bootstrap 和 Store 用例 | bindings 产出 staticlib/cdylib/rlib；平台绑定管理句柄、Host 与生命周期 | 不是每个 ViewModel 一份业务 Core；移动 OS 不保证后台常驻 |
 | 连接的执行 Host | 准入绑定的源 Host、Run 与 authority | paired mobile/Web 传输及当前 owner/cursor 恢复 | 本地 replica 不获得执行权或源 OS 授权 |
 
-[Core/facade](../../../core/Cargo.toml) 只产出 rlib；[mobile bindings](../../../core/nola-mobile-bindings/Cargo.toml) 才是最终原生库。bindings 显式 force-link Core 辅助 ABI；打包脚本可将归档重命名为 `libnola_core.a`，文件名不能倒推 crate 所有权。
+[Core/facade](../../../Cargo.toml) 只产出 rlib；[mobile bindings](../../../crates/nola-app/Cargo.toml) 才是最终原生库。bindings 显式 force-link Core 辅助 ABI；打包脚本可将归档重命名为 `libnola_core.a`，文件名不能倒推 crate 所有权。
 
 ## 15 个模块的核对结果
 
@@ -51,12 +51,12 @@
 
 | 差距 | 源码依据 | 当前结论与约束 |
 | --- | --- | --- |
-| 记忆 owner 接线与验收范围 | [MemoryRecallQuery](../../../core/nola-application/src/memory.rs)、[Domain owner](../../../core/nola-domain/src/memory_owner.rs)、[Store](../../../core/nola-store/src/memory_store.rs) | 已新增必填 record.owner/binding、SQL 排名与 LIMIT 前 owner 过滤、owner 去重及不可变身份；Host 使用显式上下文，移动 profile 搜索走 Recall。原生 workspace/turn 选择 UI 和真实并发 provider 验收仍需独立验证，见记忆合同 |
-| 历史 provider 恢复清理 | [bootstrap](../../../core/nola-application-bootstrap/src/lib.rs)、[Mac Service supervisor](../../../apps/macos/Services/MacApplicationServiceClient.swift) | 已删除旧 schema provider 解码/转换、恢复标记、Service 参数与 Mac 普通启动扫描归档。显式归档只保留原文件，新库不导入旧配置；默认不匹配拒绝且保留原库 |
-| 错误模型不完全收敛 | [ProtocolFailure](../../../core/nola-protocol/src/lib.rs)、Application/Store Port | wire 只有 code/message/recoverable/details?，部分内部端口仍 String；目标错误语义不能冒充已经类型化，更不能按 recoverable 布尔值盲目重试副作用 |
-| 纯分层与实际声明存在耦合 | [Application Goal 协调](../../../core/nola-application/src/goal_coordinator.rs)、[Application manifest](../../../core/nola-application/Cargo.toml)、[MCP manifest](../../../core/nola-mcp-host/Cargo.toml) | 如需进一步收敛，必须按实际用例调整类型所有权、调用者与门禁；文档不能隐去真实边或靠改包名宣称完成 |
-| 统一对话目标未等于底层对象删除 | [Room submission](../../../core/nola-application/src/agent_room/submission.rs)、[Room 用例](../../../core/nola-application/src/agent_room.rs) | 当前仍有 Room 身份、显式成员与主控选择路径；它们不是因文档目标存在就已删除的旧入口，也不授权增加新兼容分支 |
-| 自动化全平台能力不能统一推定 | [execution spec](../../../core/nola-domain/src/automation_execution.rs)、[occurrence query](../../../core/nola-application/src/automation_occurrence.rs)、各 Host scheduler | Agent/UserTask、发生时间计算、领取执行与 OS 唤醒是不同层；不能从 occurrence 查询通过推导所有平台持续调度或所有 source/script 流程一致 |
+| 记忆 owner 接线与验收范围 | [MemoryRecallQuery](../../../crates/nola-modules/src/memory.rs)、[Domain owner](../../../crates/nola-modules/src/memory.rs)、[Store](../../../crates/nola-store/src/db.rs) | 已新增必填 record.owner/binding、SQL 排名与 LIMIT 前 owner 过滤、owner 去重及不可变身份；Host 使用显式上下文，移动 profile 搜索走 Recall。原生 workspace/turn 选择 UI 和真实并发 provider 验收仍需独立验证，见记忆合同 |
+| 历史 provider 恢复清理 | [bootstrap](../../../crates/nola-app/src/lib.rs)、[Mac Service supervisor](../../../apps/macos/Services/MacApplicationServiceClient.swift) | 已删除旧 schema provider 解码/转换、恢复标记、Service 参数与 Mac 普通启动扫描归档。显式归档只保留原文件，新库不导入旧配置；默认不匹配拒绝且保留原库 |
+| 错误模型不完全收敛 | [ProtocolFailure](../../../crates/nola-types/src/lib.rs)、Application/Store Port | wire 只有 code/message/recoverable/details?，部分内部端口仍 String；目标错误语义不能冒充已经类型化，更不能按 recoverable 布尔值盲目重试副作用 |
+| 纯分层与实际声明存在耦合 | [Application Goal 协调](../../../crates/nola-modules/src/goal_worker.rs)、[Application manifest](../../../crates/nola-modules/Cargo.toml)、[MCP manifest](../../../crates/nola-mcp/Cargo.toml) | 如需进一步收敛，必须按实际用例调整类型所有权、调用者与门禁；文档不能隐去真实边或靠改包名宣称完成 |
+| 统一对话目标未等于底层对象删除 | [Room submission](../../../crates/nola-modules/src/rooms_peers.rs)、[Room 用例](../../../crates/nola-modules/src/rooms_peers.rs) | 当前仍有 Room 身份、显式成员与主控选择路径；它们不是因文档目标存在就已删除的旧入口，也不授权增加新兼容分支 |
+| 自动化全平台能力不能统一推定 | [execution spec](../../../crates/nola-types/src/modules.rs)、[occurrence query](../../../crates/nola-modules/src/scheduler.rs)、各 Host scheduler | Agent/UserTask、发生时间计算、领取执行与 OS 唤醒是不同层；不能从 occurrence 查询通过推导所有平台持续调度或所有 source/script 流程一致 |
 
 差距是对当前代码的记录，不是允许执行数据转换、放宽权限或自动重跑的授权，未完成行不构成已修复代码的声明。现行工作入口继续记录在当前任务（本地工作记录，不随仓库分发）。
 

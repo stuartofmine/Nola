@@ -1487,4 +1487,14 @@
     <string name="chat_v2_context_compacted_range">上下文已压缩（%1$s → %2$s tokens）</string>
     <string name="chat_v2_context_compacted_after">上下文已压缩（%1$s tokens）</string>
     <string name="chat_v2_context_compaction_failed">上下文压缩失败</string>
+    <string name="chat_v2_branch_conversation">分支对话</string>
+    <string name="chat_v2_branch_failed">无法分支对话</string>
+    <string name="chat_v2_workspace_review">工作区变更审阅</string>
+    <string name="chat_v2_workspace_review_empty">未检测到工作区变更</string>
+    <string name="chat_v2_workspace_review_host_required">连接 Web Agent Host 后可查看工作区变更</string>
+    <string name="chat_v2_workspace_review_staged">已暂存差异</string>
+    <string name="chat_v2_workspace_review_unstaged">未暂存差异</string>
+    <string name="chat_v2_workspace_review_files">工作区文件</string>
+    <string name="chat_v2_workspace_review_truncated">预览内容已截断</string>
+    <string name="chat_v2_edit_resend_failed">无法截断并重新发送消息</string>
 </resources>

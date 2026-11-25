@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Unified Nola v2 Tool Runtime:
 //! - Single `FileMutationPipeline` guaranteeing `VersionTransition` on all file mutations
-//! - Single `ShellExecutionPipeline` with capability-probed `bwrap` sandbox & `output_artifacts`
+//! - Single `ShellExecutionPipeline` with capability-probed OS sandbox (`bwrap` / macOS Seatbelt) & `output_artifacts`
 //! - Interactive VT100 `PtyManager` (`pty_exec`)
 //! - Content-addressed `OutputStore` (`tool_output`) preventing huge outputs from blowing context
-//! - Real JSON-RPC 2.0 `LspPool` (`lsp`) + multi-language `repo_map` + `workspace_checkpoint`
-//! - Full binary document readers (spreadsheets, PDFs, audio FFT, images)
+//! - Real JSON-RPC 2.0 `LspPool` (`lsp`) + multi-language `repo_map` + `file_outline` + persistent `workspace_checkpoint`
+//! - Full binary document readers (DOCX, spreadsheets, PDFs, audio FFT, images) with magic-byte sniffing
 //! - DNS-pinned SSRF-safe `web_fetch` + keyless/API `web_search`
 //! - Managed Chromium CDP `BrowserManager` (`browser`) + `NativeBrowserBridge`
 //! - Native Desktop Automation (`computer` + `computer_helper.py`)
-//! - Bounded QuickJS sandbox (`code_exec`)
+//! - Bounded QuickJS sandbox (`code_exec`) with optional host `tools` proxy dispatch
 
 pub mod binary_docs;
 pub mod browser;
@@ -39,16 +39,21 @@ use nola_types::{
 };
 use serde_json::{json, Value};
 
+pub use binary_docs::extract_document_text_from_bytes;
 pub use browser::{BrowserManager, NativeBrowserBridge};
 pub use code_tools::CheckpointManager;
 pub use file_pipeline::{
-    canonicalize_nearest_ancestor, path_within_workspace, FileAccessState, FileMutationPipeline,
+    canonicalize_nearest_ancestor, path_within_workspace, FileAccessState, FileLockRegistry,
+    FileMutationPipeline,
 };
-pub use lsp::LspPool;
+pub use lsp::{collect_post_edit_diagnostics, LspPool};
 pub use output_store::{OutputStore, DEFAULT_SPILL_THRESHOLD_BYTES};
 pub use pty::PtyManager;
-pub use sandbox::{probe_bwrap_available, SandboxMode};
+pub use sandbox::{probe_bwrap_available, probe_seatbelt_available, SandboxMode};
 pub use shell_pipeline::{validation_snapshot, ShellExecutionPipeline};
+
+/// Optional host tool dispatch callback used by `code_exec` (`tools.<name>(args)`).
+pub type CodeModeDispatcher = Arc<dyn Fn(&str, Value) -> Result<Value, String> + Send + Sync>;
 
 /// Shared execution context passed to every `ToolHandler`.
 #[derive(Clone)]
@@ -56,6 +61,7 @@ pub struct ToolContext {
     pub workspace_root: PathBuf,
     pub session_id: String,
     pub file_state: Arc<FileAccessState>,
+    pub file_locks: Arc<FileLockRegistry>,
     pub shell: Arc<ShellExecutionPipeline>,
     pub pty: Arc<PtyManager>,
     pub output_store: Arc<OutputStore>,
@@ -66,6 +72,8 @@ pub struct ToolContext {
     pub interactive_user_input: bool,
     pub permission_profile: PermissionProfile,
     pub sandbox_mode: SandboxMode,
+    pub code_mode_dispatcher: Option<CodeModeDispatcher>,
+    pub available_tool_names: Vec<String>,
 }
 
 impl ToolContext {
@@ -76,6 +84,7 @@ impl ToolContext {
             workspace_root: root,
             session_id: "default".to_string(),
             file_state: Arc::new(FileAccessState::default()),
+            file_locks: Arc::new(FileLockRegistry::default()),
             shell: Arc::new(ShellExecutionPipeline::default()),
             pty: Arc::new(PtyManager::default()),
             output_store: Arc::new(OutputStore::default()),
@@ -86,11 +95,23 @@ impl ToolContext {
             interactive_user_input: false,
             permission_profile: PermissionProfile::Cautious,
             sandbox_mode: SandboxMode::Auto,
+            code_mode_dispatcher: None,
+            available_tool_names: Vec::new(),
         }
     }
 
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = session_id.into();
+        self
+    }
+
+    pub fn with_code_mode_dispatcher(
+        mut self,
+        dispatcher: CodeModeDispatcher,
+        available_tool_names: Vec<String>,
+    ) -> Self {
+        self.code_mode_dispatcher = Some(dispatcher);
+        self.available_tool_names = available_tool_names;
         self
     }
 }
@@ -131,6 +152,8 @@ impl ToolRegistry {
         reg.register(Arc::new(output_store::ToolOutputTool));
         reg.register(Arc::new(code_tools::MultiEditFileTool));
         reg.register(Arc::new(code_tools::MoveFileTool));
+        reg.register(Arc::new(code_tools::AppendFileTool));
+        reg.register(Arc::new(code_tools::FileOutlineTool));
         reg.register(Arc::new(code_tools::ReadManyFilesTool));
         reg.register(Arc::new(code_tools::NotebookTool));
         reg.register(Arc::new(code_tools::RepoMapTool));

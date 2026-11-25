@@ -3,7 +3,12 @@
 //! Verifies all 4 protocols (`OpenAiChat`, `OpenAiResponses`, `AnthropicMessages`,
 //! `SiwcResponses`) against every invariant that broke in v1.
 
-use std::io::Cursor;
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use nola_types::{
     FrozenSystemBlock, GenerationParams, HistoryMessage, MediaAttachment, ModelCapabilities,
@@ -12,7 +17,11 @@ use nola_types::{
 };
 use serde_json::json;
 
-use crate::{adapter_for, is_local_or_lan_endpoint, is_loopback_url, LlmClient, PrivacyRedactor};
+use crate::{
+    adapter_for, is_local_or_lan_endpoint, is_loopback_url, normalized_wire_reasoning_effort,
+    should_redact_pii, CallParams, LlmClient, LlmError, PrivacyRedactor, ReasoningProgressGuard,
+    SseReader, MAX_SSE_LINE_BYTES,
+};
 
 const ALL_PROTOCOLS: [ModelProtocol; 5] = [
     ModelProtocol::OpenAiChat,
@@ -432,6 +441,7 @@ fn openai_responses_chat_siwc_gemini_and_loopback_proxy_contracts() {
         top_k: Some(32),
         repetition_penalty: Some(1.05),
         thinking_budget: None,
+        anthropic_cache_ttl_1h: false,
     };
 
     // OpenAI Responses: reasoning.summary ONLY when supports_reasoning_summary && effort != "none"
@@ -763,4 +773,626 @@ fn forensic_batch1_wire_adapter_fixes() {
         .as_str()
         .unwrap()
         .starts_with("data:image/jpeg;base64,"));
+}
+
+#[test]
+fn deliverable1_full_wire_privacy_redaction_and_lan_endpoint_detection() {
+    // 1. Local / LAN / CGNAT / ULA / mDNS / container bridge detection
+    for local in [
+        "http://localhost:11434/v1",
+        "https://LOCALHOST/v1/chat/completions",
+        "http://api.localhost:8080/v1",
+        "http://127.0.0.1:8080/v1",
+        "http://[::1]:8000/v1",
+        "::1",
+        "::",
+        "http://0.0.0.0:11434",
+        "http://user:pass@127.0.0.1:8080/v1",
+        "http://192.168.5.2:18081/v1",
+        "http://10.0.0.5:8000/v1",
+        "http://172.16.1.10:11434/v1",
+        "http://169.254.1.5:8080/v1",
+        "http://100.64.0.1:8080/v1",
+        "http://100.127.255.254:8080/v1",
+        "http://mac-studio.local:8080/v1",
+        "http://host.docker.internal:8080/v1",
+        "http://gateway.docker.internal:8080/v1",
+        "http://host.containers.internal:8080/v1",
+        "http://[fd00::1]:8080/v1",
+        "http://[fc00::1]:8080/v1",
+        "http://[fe80::1]:8080/v1",
+    ] {
+        assert!(is_local_or_lan_endpoint(local), "expected local/LAN: {local}");
+    }
+    for remote in [
+        "",
+        "https://api.openai.com/v1",
+        "https://api.anthropic.com/v1",
+        "http://8.8.8.8:8080/v1",
+        "http://172.32.0.1:8080/v1",
+        "http://100.63.255.254:8080/v1",
+        "http://100.128.0.1:8080/v1",
+        "http://localhost.evil.com/v1",
+        "http://127.0.0.1.evil.com/v1",
+    ] {
+        assert!(!is_local_or_lan_endpoint(remote), "expected remote: {remote}");
+    }
+
+    // 2. NOLA_REDACT_PII override & defaults
+    let prev_env = std::env::var("NOLA_REDACT_PII").ok();
+    std::env::remove_var("NOLA_REDACT_PII");
+    assert!(!should_redact_pii("http://192.168.1.5:8080/v1"));
+    assert!(should_redact_pii("https://api.openai.com/v1"));
+    std::env::set_var("NOLA_REDACT_PII", "1");
+    assert!(should_redact_pii("http://127.0.0.1:8080/v1"));
+    std::env::set_var("NOLA_REDACT_PII", "0");
+    assert!(!should_redact_pii("https://api.openai.com/v1"));
+    match prev_env {
+        Some(v) => std::env::set_var("NOLA_REDACT_PII", v),
+        None => std::env::remove_var("NOLA_REDACT_PII"),
+    }
+
+    // 3. Credential redaction is ALWAYS active even on LAN/local while PII is preserved on LAN
+    let redactor = PrivacyRedactor;
+    let aws_prod = concat!("AKIA", "IOSFODNN7EXAMPLE");
+    let aws_temp = concat!("ASIA", "1234567890ABCDEF");
+    let google_key = concat!("AIza", "SyA12345678901234567890123456789012");
+    let slack_key = concat!("xoxb-", "123456789012-abcdef");
+    let gh_pat = concat!("github_pat_", "1234567890abcdef123456");
+
+    let mut lan_val = json!({
+        "note": format!(
+            "email alice@example.com phone 13800138000 id 11010519990101123X \
+             {aws_prod} {aws_temp} {google_key} {slack_key} {gh_pat} \
+             https://u:p@git.example.com/r.git Bearer my-secret-bearer-token \
+             Authorization: Basic dXNlcjpwYXNz live-route-secret-999"
+        ),
+        "private": "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
+        "nested": {
+            "accessToken": "opaque-secret",
+            "Cookie": "sid=123",
+            "embedded": r#"{"password":"hidden","email":"alice@example.com"}"#
+        }
+    });
+    let lan_hits = redactor.redact_json_value_for_endpoint(
+        &mut lan_val,
+        "http://192.168.1.50:8080/v1",
+        &["live-route-secret-999"],
+    );
+    assert!(lan_hits >= 10, "expected >=10 credential redactions, got {lan_hits}");
+    let lan_note = lan_val["note"].as_str().unwrap();
+    // PII preserved on LAN
+    assert!(lan_note.contains("alice@example.com"), "{lan_note}");
+    assert!(lan_note.contains("13800138000"), "{lan_note}");
+    assert!(lan_note.contains("11010519990101123X"), "{lan_note}");
+    // All credentials scrubbed even on LAN
+    for secret in [
+        aws_prod,
+        aws_temp,
+        google_key,
+        slack_key,
+        gh_pat,
+        "u:p@",
+        "my-secret-bearer-token",
+        "dXNlcjpwYXNz",
+        "live-route-secret-999",
+        "opaque-secret",
+        "sid=123",
+        "hidden",
+        "BEGIN RSA PRIVATE KEY",
+    ] {
+        assert!(!lan_val.to_string().contains(secret), "secret leaked on LAN: {secret}");
+    }
+    // Idempotency
+    let second_hits = redactor.redact_json_value_for_endpoint(
+        &mut lan_val,
+        "http://192.168.1.50:8080/v1",
+        &["live-route-secret-999"],
+    );
+    assert_eq!(second_hits, 0);
+
+    // 4. Cloud endpoint redacts BOTH PII and credentials
+    let mut cloud_val = json!({
+        "text": "contact alice@example.com phone 13800138000 id 11010519990101123X",
+        "phone_num": 13800138000u64,
+        "a@example.com": 1,
+        "b@example.com": 2
+    });
+    let cloud_hits =
+        redactor.redact_json_value_for_endpoint(&mut cloud_val, "https://api.openai.com/v1", &[]);
+    assert!(cloud_hits >= 6);
+    assert_eq!(
+        cloud_val["text"],
+        "contact [EMAIL] phone [PHONE] id [ID]"
+    );
+    assert_eq!(cloud_val["phone_num"], "[PHONE]");
+    assert_eq!(cloud_val["[EMAIL]"], 1);
+    assert_eq!(cloud_val["[EMAIL] 2"], 2);
+
+    // 5. Round-2 single-line LABELED_SECRET preserves non-secret schema/algorithm/env placeholders
+    let yaml_and_shell = concat!(
+        "card_token: sha256\n",
+        "session_token: mask_secret\n",
+        "pw_hash: bcrypt\n",
+        "password: argon2\n",
+        "passwd: pbkdf2\n",
+        "api_key: hmac\n",
+        "refresh_token: none\n",
+        "access_token: false\n",
+        "client_secret: true\n",
+        "token: null\n",
+        "api_key: os.environ[\"API_KEY\"]\n",
+        "echo \"TOKEN=$DISPATCH_EVENT_API_TOKEN\"\n",
+        "echo \"LEN=${#DISPATCH_EVENT_API_TOKEN}\"\n",
+        "echo \"TPL={{API_TOKEN}}\"\n",
+        "TOKEN=\n/usr/bin/python3\n",
+        "real_token=abc123456789\n",
+        "client_secret='my live secret'\n",
+    );
+    let mut req = sample_request(false);
+    req.history.push(HistoryMessage::Tool {
+        call_id: "t1".into(),
+        tool_name: "read_file".into(),
+        payload: ToolModelPayload::text(yaml_and_shell),
+        is_error: false,
+        media: vec![],
+    });
+    let sanitized = PrivacyRedactor::sanitize_request("http://127.0.0.1:8080/v1", &req);
+    let HistoryMessage::Tool {
+        payload: ToolModelPayload::Text(content),
+        ..
+    } = sanitized.history.last().unwrap()
+    else {
+        panic!("expected text tool payload");
+    };
+    for preserved in [
+        "card_token: sha256",
+        "session_token: mask_secret",
+        "password: argon2",
+        "passwd: pbkdf2",
+        "api_key: hmac",
+        "refresh_token: none",
+        "access_token: false",
+        "client_secret: true",
+        "token: null",
+        "api_key: os.environ[\"API_KEY\"]",
+        "TOKEN=$DISPATCH_EVENT_API_TOKEN",
+        "LEN=${#DISPATCH_EVENT_API_TOKEN}",
+        "TPL={{API_TOKEN}}",
+        "TOKEN=\n/usr/bin/python3\n",
+    ] {
+        assert!(content.contains(preserved), "expected preserved `{preserved}` in:\n{content}");
+    }
+    assert!(content.contains("real_token=[CREDENTIAL]"), "{content}");
+    assert!(content.contains("client_secret='[CREDENTIAL]'"), "{content}");
+    assert!(!content.contains("abc123456789"));
+    assert!(!content.contains("my live secret"));
+}
+
+#[test]
+fn deliverable2_automatic_never_leaks_and_deepseek_thinking_control() {
+    assert_eq!(normalized_wire_reasoning_effort(None), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("")), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("   ")), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("auto")), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("Automatic")), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("DEFAULT")), None);
+    assert_eq!(normalized_wire_reasoning_effort(Some("none")), Some("none"));
+    assert_eq!(normalized_wire_reasoning_effort(Some("high")), Some("high"));
+
+    // None of the 5 protocols may ever leak automatic/auto/default onto the wire
+    for raw_effort in ["automatic", "AUTO", "default", ""] {
+        for proto in ALL_PROTOCOLS {
+            let mut route = sample_route(proto);
+            route.reasoning_effort = Some(raw_effort.into());
+            let built = adapter_for(proto)
+                .build_request(&route, &sample_request(false), false)
+                .unwrap();
+            assert!(built.body.get("reasoning_effort").is_none(), "{proto:?} leaked");
+            assert!(built.body.get("reasoning").is_none(), "{proto:?} leaked");
+            assert!(built.body.get("thinking").is_none(), "{proto:?} leaked");
+            assert!(built.body.get("output_config").is_none(), "{proto:?} leaked");
+            if let Some(gen_cfg) = built.body.get("generationConfig") {
+                assert!(gen_cfg.get("thinkingConfig").is_none(), "{proto:?} leaked");
+            }
+        }
+    }
+
+    // Standard OpenAI Chat: explicit "none" sends reasoning_effort="none"
+    let chat = adapter_for(ModelProtocol::OpenAiChat);
+    let mut chat_route = sample_route(ModelProtocol::OpenAiChat);
+    chat_route.reasoning_effort = Some("none".into());
+    let chat_none = chat
+        .build_request(&chat_route, &sample_request(false), false)
+        .unwrap();
+    assert_eq!(chat_none.body["reasoning_effort"], "none");
+    assert!(chat_none.body.get("thinking").is_none());
+
+    // DeepSeek Chat: "none" -> thinking={"type":"disabled"}, "high" -> thinking={"type":"enabled"}, "automatic" -> omitted
+    let mut ds_route = sample_route(ModelProtocol::OpenAiChat);
+    ds_route.endpoint = "https://api.deepseek.com/v1".into();
+    ds_route.model = "deepseek-r1".into();
+    ds_route.reasoning_effort = Some("automatic".into());
+    let ds_auto = chat
+        .build_request(&ds_route, &sample_request(false), false)
+        .unwrap();
+    assert!(ds_auto.body.get("thinking").is_none());
+    assert!(ds_auto.body.get("reasoning_effort").is_none());
+
+    ds_route.reasoning_effort = Some("none".into());
+    let ds_none = chat
+        .build_request(&ds_route, &sample_request(false), false)
+        .unwrap();
+    assert_eq!(ds_none.body["thinking"], json!({"type": "disabled"}));
+    assert!(ds_none.body.get("reasoning_effort").is_none());
+
+    ds_route.reasoning_effort = Some("high".into());
+    let ds_high = chat
+        .build_request(&ds_route, &sample_request(false), false)
+        .unwrap();
+    assert_eq!(ds_high.body["thinking"], json!({"type": "enabled"}));
+}
+
+#[test]
+fn deliverable3_reasoning_progress_guard_and_bounded_sse_reader() {
+    assert_eq!(MAX_SSE_LINE_BYTES, 16 * 1024 * 1024);
+
+    // ReasoningProgressGuard stops repeated reasoning loops across arbitrary chunk sizes
+    for size in [1, 7, 128, 4096] {
+        let mut guard = ReasoningProgressGuard::new();
+        let repeated = "Need maybe call web_fetch. ".repeat(180);
+        let tripped = repeated.as_bytes().chunks(size).any(|chunk| {
+            let s = String::from_utf8(chunk.to_vec()).unwrap();
+            matches!(
+                guard.observe_delta(&ModelStreamDelta::Reasoning(s)),
+                Err(LlmError::RepetitiveReasoning)
+            )
+        });
+        assert!(tripped, "expected guard to trip for chunk size {size}");
+    }
+
+    // Accepts long distinct reasoning and ignores intentional repetition in final answer text
+    let mut guard = ReasoningProgressGuard::new();
+    for i in 0..500 {
+        guard
+            .observe_delta(&ModelStreamDelta::Reasoning(format!(
+                "Inspecting candidate {i}, keeping independent evidence. "
+            )))
+            .unwrap();
+    }
+    guard
+        .observe_delta(&ModelStreamDelta::Text("Repeated answer. ".repeat(500)))
+        .unwrap();
+
+    // Bounded SSE rejects lines exceeding max_line_bytes without unbounded allocation
+    let huge_line = format!("data: {}\n\n", "x".repeat(200));
+    let mut cursor = Cursor::new(huge_line.as_bytes());
+    let mut reader = SseReader::new(&mut cursor).with_max_line_bytes(64);
+    let err = reader.next_event().unwrap_err();
+    assert!(matches!(err, LlmError::Wire(msg) if msg.contains("exceeded maximum")));
+
+    // Cancellation stops SseReader between events
+    let two_events = "data: {\"a\":1}\n\ndata: {\"a\":2}\n\n";
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut cursor2 = Cursor::new(two_events.as_bytes());
+    let mut reader2 = SseReader::new(&mut cursor2).with_cancel(Some(cancel.clone()));
+    let first = reader2.next_event().unwrap().unwrap();
+    assert_eq!(first.data, "{\"a\":1}");
+    cancel.store(true, Ordering::Relaxed);
+    let err2 = reader2.next_event().unwrap_err();
+    assert!(matches!(err2, LlmError::Cancelled));
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) {
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut content_len = 0usize;
+    loop {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).unwrap_or(0);
+        if n == 0 || line == "\r\n" || line == "\n" {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("content-length:") {
+            content_len = rest.trim().parse().unwrap_or(0);
+        }
+    }
+    if content_len > 0 {
+        let mut body = vec![0u8; content_len];
+        let _ = reader.read_exact(&mut body);
+    }
+}
+
+fn spawn_mock_server(responses: Vec<String>) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_bg = hits.clone();
+    let handle = thread::spawn(move || {
+        for resp in responses {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            read_http_request(&mut stream);
+            hits_bg.fetch_add(1, Ordering::SeqCst);
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}"), hits, handle)
+}
+
+#[test]
+fn deliverable3_and_4_repetitive_reasoning_resample_fallbacks_siwc_and_cancellation() {
+    // 1. Transactional 1-shot REPETITIVE_REASONING resample when tools are present & no TextDelta emitted
+    let mut repetitive_sse = String::new();
+    for _ in 0..180 {
+        repetitive_sse.push_str(
+            "data: {\"id\":\"r1\",\"model\":\"m\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need maybe call web_fetch. \"}}]}\n\n",
+        );
+    }
+    repetitive_sse.push_str("data: [DONE]\n\n");
+    let clean_sse = concat!(
+        "data: {\"id\":\"r2\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"Recovered cleanly!\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let resp1 = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        repetitive_sse.len(),
+        repetitive_sse
+    );
+    let resp2 = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        clean_sse.len(),
+        clean_sse
+    );
+    let (ep, hits, handle) = spawn_mock_server(vec![resp1, resp2]);
+    let mut route = sample_route(ModelProtocol::OpenAiChat);
+    route.endpoint = ep;
+    let client = LlmClient::new(15).unwrap();
+    let resets = Arc::new(AtomicUsize::new(0));
+    let resets_cb = resets.clone();
+    let call_params = CallParams::default().with_stream_reset(move || {
+        resets_cb.fetch_add(1, Ordering::SeqCst);
+    });
+    let out = client
+        .complete_with_call_params(&route, &sample_request(false), &call_params, true, &mut |_| {})
+        .unwrap();
+    handle.join().unwrap();
+    assert_eq!(out.content, "Recovered cleanly!");
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    assert_eq!(resets.load(Ordering::SeqCst), 1);
+
+    // 1b. No resample when visible TextDelta was already emitted OR when tools are empty
+    let mut text_then_rep = String::from(
+        "data: {\"id\":\"r3\",\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"visible\"}}]}\n\n",
+    );
+    text_then_rep.push_str(&repetitive_sse);
+    let resp_text_rep = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        text_then_rep.len(),
+        text_then_rep
+    );
+    let (ep_nr, hits_nr, h_nr) = spawn_mock_server(vec![resp_text_rep]);
+    let mut route_nr = sample_route(ModelProtocol::OpenAiChat);
+    route_nr.endpoint = ep_nr;
+    let err_nr = client
+        .complete_with_call_params(&route_nr, &sample_request(false), &CallParams::default(), true, &mut |_| {})
+        .unwrap_err();
+    h_nr.join().unwrap();
+    assert!(matches!(err_nr, LlmError::RepetitiveReasoning));
+    assert_eq!(hits_nr.load(Ordering::SeqCst), 1);
+
+    // 2. Ordered multi-endpoint fallback routing (primary 503 -> fallback1 429 -> fallback2 200)
+    let err_503 = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbusy".to_string();
+    let err_429 = "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 4\r\nConnection: close\r\n\r\nrate".to_string();
+    let ok_json = json!({
+        "id": "chat_fb",
+        "model": "fb-model",
+        "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "from fallback 2"}}]
+    })
+    .to_string();
+    let ok_200 = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        ok_json.len(),
+        ok_json
+    );
+    let (ep_p, hits_p, hp) = spawn_mock_server(vec![err_503.clone()]);
+    let (ep_f1, hits_f1, hf1) = spawn_mock_server(vec![err_429]);
+    let (ep_f2, hits_f2, hf2) = spawn_mock_server(vec![ok_200]);
+
+    let mut primary = sample_route(ModelProtocol::OpenAiChat);
+    primary.endpoint = ep_p;
+    let mut fb1 = sample_route(ModelProtocol::OpenAiChat);
+    fb1.endpoint = ep_f1;
+    let mut fb2 = sample_route(ModelProtocol::OpenAiChat);
+    fb2.endpoint = ep_f2;
+
+    let fast_client = LlmClient::new(15).unwrap().with_max_retries(0);
+    let fb_resp = fast_client
+        .complete_with_call_params(
+            &primary,
+            &sample_request(false),
+            &CallParams::default().with_fallbacks(vec![fb1, fb2.clone()]),
+            false,
+            &mut |_| {},
+        )
+        .unwrap();
+    hp.join().unwrap();
+    hf1.join().unwrap();
+    hf2.join().unwrap();
+    assert_eq!(fb_resp.content, "from fallback 2");
+    assert_eq!(hits_p.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_f1.load(Ordering::SeqCst), 1);
+    assert_eq!(hits_f2.load(Ordering::SeqCst), 1);
+
+    // 3. SIWC no-fallback invariant: SiwcResponses primary NEVER falls back
+    let (ep_siwc, hits_siwc, h_siwc) = spawn_mock_server(vec![err_503]);
+    let mut siwc_route = sample_route(ModelProtocol::SiwcResponses);
+    siwc_route.endpoint = ep_siwc;
+    let siwc_err = fast_client
+        .complete_with_call_params(
+            &siwc_route,
+            &sample_request(false),
+            &CallParams::default().with_fallbacks(vec![fb2]),
+            true,
+            &mut |_| {},
+        )
+        .unwrap_err();
+    h_siwc.join().unwrap();
+    assert!(matches!(siwc_err, LlmError::Status { status: 503, .. }));
+    assert_eq!(hits_siwc.load(Ordering::SeqCst), 1);
+
+    // 4. Interruptible cancellation during Retry-After backoff (< 500ms instead of 30s!)
+    let err_retry_after = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30\r\nContent-Length: 4\r\nConnection: close\r\n\r\nwait".to_string();
+    let (ep_cancel, _hits_c, h_cancel) = spawn_mock_server(vec![err_retry_after]);
+    let mut cancel_route = sample_route(ModelProtocol::OpenAiChat);
+    cancel_route.endpoint = ep_cancel;
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel_bg = cancel_flag.clone();
+    let trigger = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(80));
+        cancel_bg.store(true, Ordering::Relaxed);
+    });
+    let started = Instant::now();
+    let cancel_err = LlmClient::new(15)
+        .unwrap()
+        .with_max_retries(2)
+        .complete_cancellable(
+            &cancel_route,
+            &sample_request(false),
+            &GenerationParams::default(),
+            Some(cancel_flag),
+            false,
+            &mut |_| {},
+        )
+        .unwrap_err();
+    trigger.join().unwrap();
+    h_cancel.join().unwrap();
+    assert!(matches!(cancel_err, LlmError::Cancelled));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "expected fast interruptible cancel, took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn deliverable5_anthropic_ttl_1h_and_audio_media_support() {
+    // 1. Anthropic ttl: "1h" cache control when configured via GenerationParams
+    let anth = adapter_for(ModelProtocol::AnthropicMessages);
+    let anth_route = sample_route(ModelProtocol::AnthropicMessages);
+    let params_1h = GenerationParams {
+        anthropic_cache_ttl_1h: true,
+        ..Default::default()
+    };
+    let built_1h = anth
+        .build_request_with_params(&anth_route, &sample_request(false), &params_1h, false)
+        .unwrap();
+    assert_eq!(
+        built_1h.body["system"][0]["cache_control"],
+        json!({"type": "ephemeral", "ttl": "1h"})
+    );
+    assert_eq!(
+        built_1h.body["tools"].as_array().unwrap().last().unwrap()["cache_control"],
+        json!({"type": "ephemeral", "ttl": "1h"})
+    );
+    let last_user_blocks = built_1h.body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|m| m["role"] == "user")
+        .unwrap()["content"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        last_user_blocks.last().unwrap()["cache_control"],
+        json!({"type": "ephemeral", "ttl": "1h"})
+    );
+
+    // Default (false) omits ttl
+    let built_default = anth
+        .build_request(&anth_route, &sample_request(false), false)
+        .unwrap();
+    assert_eq!(
+        built_default.body["system"][0]["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+
+    // 2. Audio media support across all 5 protocols
+    let audio_cases = [
+        ("audio/wav", "wav"),
+        ("audio/mp3", "mp3"),
+        ("audio/mpeg", "mp3"),
+        ("audio/ogg", "ogg"),
+        ("audio/flac", "flac"),
+        ("audio/m4a", "m4a"),
+        ("audio/aac", "aac"),
+    ];
+    let chat = adapter_for(ModelProtocol::OpenAiChat);
+    let gem = adapter_for(ModelProtocol::Gemini);
+    let chat_route = sample_route(ModelProtocol::OpenAiChat);
+    let gem_route = sample_route(ModelProtocol::Gemini);
+
+    for (mime, expected_fmt) in audio_cases {
+        let mut req = sample_request(false);
+        req.history.push(HistoryMessage::User {
+            content: "transcribe".into(),
+            media: vec![MediaAttachment {
+                mime_type: mime.into(),
+                filename: format!("clip.{expected_fmt}"),
+                bytes_base64: "UklGRg==".into(),
+                sha256: "00".into(),
+                raw_bytes_len: 4,
+            }],
+        });
+
+        // OpenAI Chat encodes as input_audio {data, format}
+        let chat_built = chat.build_request(&chat_route, &req, false).unwrap();
+        let last_msg = chat_built.body["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(
+            last_msg["content"][1],
+            json!({
+                "type": "input_audio",
+                "input_audio": { "data": "UklGRg==", "format": expected_fmt }
+            })
+        );
+
+        // Gemini encodes as inlineData {mimeType, data}
+        let gem_built = gem.build_request(&gem_route, &req, false).unwrap();
+        let last_content = gem_built.body["contents"].as_array().unwrap().last().unwrap();
+        assert_eq!(
+            last_content["parts"].as_array().unwrap().last().unwrap(),
+            &json!({
+                "inlineData": { "mimeType": mime, "data": "UklGRg==" }
+            })
+        );
+    }
+
+    // Adapters without audio support reject gracefully with LlmError::Media
+    let mut audio_req = sample_request(false);
+    audio_req.history.push(HistoryMessage::User {
+        content: "listen".into(),
+        media: vec![MediaAttachment {
+            mime_type: "audio/wav".into(),
+            filename: "clip.wav".into(),
+            bytes_base64: "UklGRg==".into(),
+            sha256: "00".into(),
+            raw_bytes_len: 4,
+        }],
+    });
+    for unsupported_proto in [
+        ModelProtocol::AnthropicMessages,
+        ModelProtocol::OpenAiResponses,
+        ModelProtocol::SiwcResponses,
+    ] {
+        let route = sample_route(unsupported_proto);
+        let err = adapter_for(unsupported_proto)
+            .build_request(&route, &audio_req, false)
+            .unwrap_err();
+        assert!(
+            matches!(err, LlmError::Media(_)),
+            "expected Media error for {unsupported_proto:?}, got {err:?}"
+        );
+    }
 }

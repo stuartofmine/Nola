@@ -10,7 +10,7 @@ Source checked: 2026-11-08. The Store leaf, Application producer and source/repl
 
 ## Current persistence and reads
 
-- Current schema is composed by [schema_store.rs](../../../../core/nola-store/src/schema_store.rs) from per-feature DDL, including journal, publication, range, snapshot-lifecycle and remote journal structures. Do not initialize from a copied historical schema or an ALTER chain.
+- Current schema is composed by [schema_store.rs](../../../../crates/nola-store/src/db.rs) from per-feature DDL, including journal, publication, range, snapshot-lifecycle and remote journal structures. Do not initialize from a copied historical schema or an ALTER chain.
 - Journal sequence/cursor, immutable read snapshot, source publication membership and canonical text/stream body references have different purposes. Readers must use a bounded upper watermark and the exact source/owner; a text hash alone is not authority.
 - Part metadata changes do not require replacing cumulative body text. Content reads use canonical field readers and byte/range indexes, preserving complete Unicode boundaries and reference checks.
 - Publication acceptance and its business transition share the owning transaction. CAS/deduplication do not authorize redispatching an external effect, and receiver staging is not an execution checkpoint.

@@ -12,10 +12,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use globset::Glob;
+use nola_store::{Store, StoreError};
 use nola_tools::{canonicalize_nearest_ancestor, path_within_workspace};
 use nola_types::{
-    CapabilityDomain, PermissionAction, PermissionDecision, PermissionProfile, PermissionRule,
-    RuleScope, ToolSpec,
+    now_ms, sha256_hex, CapabilityDomain, PermissionAction, PermissionDecision, PermissionProfile,
+    PermissionRule, RuleScope, ToolSpec,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,6 +124,108 @@ pub fn is_external_send(spec: &ToolSpec, args: &Value) -> bool {
     false
 }
 
+/// Durable session/workspace permission grant persisted in `Store` under `"permission_grant"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DurablePermissionGrant {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub workspace_root: String,
+    pub rule: PermissionRule,
+    pub created_at_ms: i64,
+    #[serde(default = "default_true")]
+    pub active: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl DurablePermissionGrant {
+    pub fn for_approval(
+        session_id: Option<String>,
+        workspace_root: &Path,
+        tool_name: &str,
+        resource_pattern: Option<String>,
+    ) -> Self {
+        let canonical_ws = std::fs::canonicalize(workspace_root)
+            .unwrap_or_else(|_| workspace_root.to_path_buf())
+            .display()
+            .to_string();
+        let scope_key = session_id.as_deref().unwrap_or("workspace");
+        let res_key = resource_pattern.as_deref().unwrap_or("*");
+        let raw_id = format!("{scope_key}|{canonical_ws}|{tool_name}|{res_key}");
+        let id = format!("grant_{}", &sha256_hex(raw_id.as_bytes())[..16]);
+        Self {
+            id,
+            session_id,
+            workspace_root: canonical_ws,
+            rule: PermissionRule {
+                scope: RuleScope::User,
+                action: PermissionAction::Allow,
+                tool_pattern: tool_name.to_string(),
+                resource_pattern,
+            },
+            created_at_ms: now_ms(),
+            active: true,
+        }
+    }
+}
+
+/// Persist a durable permission grant in `Store` (`module_records` kind `"permission_grant"`).
+pub fn persist_permission_grant(
+    store: &Store,
+    grant: &DurablePermissionGrant,
+) -> Result<(), StoreError> {
+    store.put_module_record("permission_grant", &grant.id, grant)
+}
+
+/// Load all active durable permission grants applicable to `(session_id, workspace_root)`.
+pub fn load_active_permission_grants(
+    store: &Store,
+    session_id: &str,
+    workspace_root: &Path,
+) -> Vec<DurablePermissionGrant> {
+    let canonical_ws = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| workspace_root.to_path_buf())
+        .display()
+        .to_string();
+    store
+        .list_module_records::<DurablePermissionGrant>("permission_grant")
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|g| {
+            g.active
+                && g.workspace_root == canonical_ws
+                && (g.session_id.is_none() || g.session_id.as_deref() == Some(session_id))
+        })
+        .collect()
+}
+
+/// Extract a deterministic exact resource pattern for persisting a user approval grant.
+pub fn primary_resource_pattern(tool_name: &str, args: &Value, workspace_root: &Path) -> Option<String> {
+    let resources = extract_resources(tool_name, args, workspace_root);
+    if resources.len() == 1 && resources[0] != tool_name {
+        Some(escape_glob_literal(&resources[0]))
+    } else {
+        None
+    }
+}
+
+fn escape_glob_literal(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '*' | '?' | '[' | ']' | '{' | '}') {
+            out.push('[');
+            out.push(ch);
+            out.push(']');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Authoritative merged permission policy for a session (serializable for `--resume`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectivePolicy {
@@ -130,6 +233,8 @@ pub struct EffectivePolicy {
     pub workspace_trusted: bool,
     pub network_allowed: bool,
     pub rules: Vec<PermissionRule>,
+    #[serde(default)]
+    pub plan_mode: bool,
 }
 
 impl Default for EffectivePolicy {
@@ -139,6 +244,7 @@ impl Default for EffectivePolicy {
             workspace_trusted: false,
             network_allowed: true,
             rules: Vec::new(),
+            plan_mode: false,
         }
     }
 }
@@ -239,6 +345,7 @@ impl EffectivePolicy {
                 workspace_trusted,
                 network_allowed,
                 rules,
+                plan_mode: false,
             },
             warnings,
         )
@@ -246,6 +353,20 @@ impl EffectivePolicy {
 
     pub fn add_rule(&mut self, rule: PermissionRule) {
         self.rules.push(rule);
+    }
+
+    pub fn with_plan_mode(mut self, enabled: bool) -> Self {
+        self.plan_mode = enabled;
+        self
+    }
+
+    /// Reload active durable session/workspace permission grants from `Store` into this policy.
+    pub fn apply_durable_grants(&mut self, store: &Store, session_id: &str, workspace_root: &Path) {
+        for grant in load_active_permission_grants(store, session_id, workspace_root) {
+            if !self.rules.contains(&grant.rule) {
+                self.rules.push(grant.rule);
+            }
+        }
     }
 
     /// Evaluate whether a tool call is Allowed, Ask, or Denied.
@@ -277,6 +398,33 @@ impl EffectivePolicy {
                 args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
                 "worktree_create" | "worktree_remove"
             );
+        let is_plan_mode_allowed = spec.read_only
+            || is_git_read_only
+            || matches!(
+                tool_name,
+                "propose_agent_plan"
+                    | "update_agent_todos"
+                    | "request_user_input"
+                    | "render_ui_surface"
+                    | "delete_ui_surface"
+            )
+            || (tool_name == "task_control"
+                && matches!(
+                    args.get("action").and_then(|v| v.as_str()).unwrap_or("list"),
+                    "list" | "read" | "wait"
+                ));
+
+        // Plan Mode gate: blocks all mutating/write/exec tools until the plan is approved
+        // or Plan Mode is disabled (`approve_agent_plan` / `set_plan_mode(false)`).
+        if self.plan_mode && (!is_plan_mode_allowed || is_external_send(spec, args)) {
+            return PermissionDecision {
+                action: PermissionAction::Deny,
+                reason: format!(
+                    "Plan Mode is active: mutating/execution tool '{tool_name}' is blocked until the plan is approved (approve_agent_plan) or Plan Mode is disabled"
+                ),
+                domain,
+            };
+        }
         let resources = extract_resources(tool_name, args, workspace_root);
         let file_paths = extract_file_paths(tool_name, args, workspace_root);
         let sensitive_reason = file_paths.iter().find_map(|p| is_sensitive_path(p));

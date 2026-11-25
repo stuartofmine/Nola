@@ -40,9 +40,9 @@ revision 为正数。Core 新建、配置更新和 checkpoint 恢复均校验，
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [model.rs](../../../../core/nola-application/src/model.rs) | 连接、账户、catalog、profile、发现/配置命令 |
-| [model_profile_resolution.rs](../../../../core/nola-application/src/model_profile_resolution.rs) | profile/会话覆盖到有效调用的解析 |
-| [lib.rs](../../../../core/nola-credential-host/src/lib.rs) | 凭据保管与解析的物理 Host 边界 |
+| [model.rs](../../../../crates/nola-llm/src/lib.rs) | 连接、账户、catalog、profile、发现/配置命令 |
+| [model_profile_resolution.rs](../../../../crates/nola-app/src/config.rs) | profile/会话覆盖到有效调用的解析 |
+| [lib.rs](../../../../crates/nola-store/src/vault.rs) | 凭据保管与解析的物理 Host 边界 |
 
 有效调用并非一个已完成统一的抽象 DTO：当前代码有 ResolvedRemoteModelProfile/ResolvedModelRuntime、Host 绑定与 PreparedModelRequest。它们的解析和冻结时点须分开记录。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 
@@ -63,7 +63,7 @@ Nola 在每次推理前调用 Rust Core 的 `nola_model_privacy::redact_model_re
 
 ## 流式推理退化重采样与正文展示保护（2026-11-24）
 
-- 当工具轮次的 `ReasoningProgressGuard` 检测到重复退化思考（`model_repetitive_reasoning`），且本轮尚未向用户输出任何可见 `TextDelta` 时，流式适配层（[streaming.rs](../../../../apps/cli/src/llm_parts/streaming.rs)）触发一次事务性重采样（`LlmEvent::Retrying`，随后 `LlmEvent::SamplingStarted` 清空前次推理与临时缓冲），不再因已流式输出 `ReasoningDelta` 而被误判为不可重试。
+- 当工具轮次的 `ReasoningProgressGuard` 检测到重复退化思考（`model_repetitive_reasoning`），且本轮尚未向用户输出任何可见 `TextDelta` 时，流式适配层（[streaming.rs](../../../../crates/nola-llm/src/sse.rs)）触发一次事务性重采样（`LlmEvent::Retrying`，随后 `LlmEvent::SamplingStarted` 清空前次推理与临时缓冲），不再因已流式输出 `ReasoningDelta` 而被误判为不可重试。
 - `ModelTextPresentationGate::push_text_against_reasoning` 仅剥离真正复述整段思考前缀的重复文本，不会在助手回复正文碰巧与 `<think>` 共享首词时吞掉正文开头词。
 
 ## 相关设计

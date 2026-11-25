@@ -7,99 +7,91 @@
         compactV2Conversation,
         getV2ConversationConfiguration,
         getV2ConversationGoal,
+        getV2ConversationPlan,
         getV2WorkspaceDiff,
+        indexV2DataSource,
         listV2ConversationDataSources,
         listV2WorkspaceCheckpoints,
         patchV2ConversationConfiguration,
         redoV2Workspace,
         saveV2ConversationDataSources,
         saveV2ConversationGoal,
+        stopV2ConversationTask,
+        subscribeV2ConversationTasks,
         undoV2Workspace,
+        updateV2ConversationPlan,
         type V2ConversationGoal,
+        type V2ConversationPlan,
         type V2DataSourceItem,
         type V2Message,
+        type V2SubagentTask,
         type V2TokenUsage,
         type V2WorkspaceCheckpoint,
         type V2WorkspaceDiffSnapshot,
     } from '../lib/v2Chat';
+    import InspectorArtifactsPanel from './InspectorArtifactsPanel.svelte';
+    import InspectorBrowserPdfPanel from './InspectorBrowserPdfPanel.svelte';
+    import InspectorRecallPanel from './InspectorRecallPanel.svelte';
     import PrototypeIcon from './PrototypeIcon.svelte';
+    import WorkspaceWorktreesPanel from './WorkspaceWorktreesPanel.svelte';
 
-    type InspectorTab = 'tasks' | 'diff' | 'context' | 'data-sources' | 'knowledge';
+    type InspectorTab =
+        | 'tasks'
+        | 'artifacts'
+        | 'recall'
+        | 'diff'
+        | 'browser'
+        | 'context'
+        | 'data-sources'
+        | 'knowledge';
 
     let {
         conversationId,
         messages,
         usage,
         streaming = false,
+        width,
+        plan = null,
         onclose,
         onopenPage,
         oncompacted,
+        onplanchange,
     }: {
         conversationId: string | null;
         messages: V2Message[];
         usage: V2TokenUsage;
         streaming?: boolean;
+        width?: number;
+        plan?: V2ConversationPlan | null;
         onclose: () => void;
         onopenPage?: (path: string) => void;
         oncompacted?: (summary: string) => void;
+        onplanchange?: (next: V2ConversationPlan) => void;
     } = $props();
 
     let activeTab = $state<InspectorTab>('tasks');
+    let refreshToken = $state(0);
 
     const inspectorTabs: ReadonlyArray<{ id: InspectorTab; labelKey: string }> = [
         { id: 'tasks', labelKey: 'chatInspector.tabTasks' },
+        { id: 'artifacts', labelKey: 'chatInspector.tabArtifacts' },
+        { id: 'recall', labelKey: 'chatInspector.tabRecall' },
         { id: 'diff', labelKey: 'chatInspector.tabDiff' },
+        { id: 'browser', labelKey: 'chatInspector.tabBrowser' },
         { id: 'context', labelKey: 'chatInspector.tabContext' },
         { id: 'data-sources', labelKey: 'chatInspector.tabDataSources' },
         { id: 'knowledge', labelKey: 'chatInspector.tabKnowledge' },
     ];
 
     const shortTabLabels: Record<InspectorTab, Record<Locale, string>> = {
-        tasks: {
-            'zh-Hans': '任务',
-            en: 'Tasks',
-            de: 'Aufg.',
-            es: 'Tareas',
-            fr: 'Tâches',
-            ja: 'タスク',
-            ru: 'Задачи',
-        },
-        diff: {
-            'zh-Hans': '差异',
-            en: 'Diff',
-            de: 'Diff',
-            es: 'Diff',
-            fr: 'Diff',
-            ja: '差分',
-            ru: 'Diff',
-        },
-        context: {
-            'zh-Hans': '上下文',
-            en: 'Context',
-            de: 'Kontext',
-            es: 'Contexto',
-            fr: 'Contexte',
-            ja: '文脈',
-            ru: 'Контекст',
-        },
-        'data-sources': {
-            'zh-Hans': '数据源',
-            en: 'Sources',
-            de: 'Quellen',
-            es: 'Fuentes',
-            fr: 'Sources',
-            ja: 'ソース',
-            ru: 'Источн.',
-        },
-        knowledge: {
-            'zh-Hans': '知识',
-            en: 'Knowledge',
-            de: 'Wissen',
-            es: 'Saber',
-            fr: 'Savoir',
-            ja: '知識',
-            ru: 'Знания',
-        },
+        tasks: { 'zh-Hans': '任务', en: 'Tasks', de: 'Aufg.', es: 'Tareas', fr: 'Tâches', ja: 'タスク', ru: 'Задачи' },
+        artifacts: { 'zh-Hans': '产物', en: 'Artifacts', de: 'Artef.', es: 'Artef.', fr: 'Livr.', ja: '成果物', ru: 'Артеф.' },
+        recall: { 'zh-Hans': '召回', en: 'Recall', de: 'Suche', es: 'Buscar', fr: 'Rappel', ja: '検索', ru: 'Поиск' },
+        diff: { 'zh-Hans': '差异', en: 'Diff', de: 'Diff', es: 'Diff', fr: 'Diff', ja: '差分', ru: 'Diff' },
+        browser: { 'zh-Hans': '浏览', en: 'Browser', de: 'Browser', es: 'Web/PDF', fr: 'Web/PDF', ja: 'ブラウズ', ru: 'Веб/PDF' },
+        context: { 'zh-Hans': '上下文', en: 'Context', de: 'Kontext', es: 'Contexto', fr: 'Contexte', ja: '文脈', ru: 'Контекст' },
+        'data-sources': { 'zh-Hans': '数据源', en: 'Sources', de: 'Quellen', es: 'Fuentes', fr: 'Sources', ja: 'ソース', ru: 'Источн.' },
+        knowledge: { 'zh-Hans': '知识', en: 'Knowledge', de: 'Wissen', es: 'Saber', fr: 'Savoir', ja: '知識', ru: 'Знания' },
     };
 
     function handleTabKeydown(event: KeyboardEvent & { currentTarget: HTMLButtonElement }, index: number) {
@@ -122,15 +114,23 @@
         target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
 
-    // Tab 1: Tasks & Goal
+    // Tab 1: Plan Mode, Goal & Live Subagent Tasks
+    let localPlan = $state<V2ConversationPlan>({ enabled: false, status: 'idle', steps: [] });
+    let planBusy = $state(false);
+    let planError = $state('');
     let goal = $state<V2ConversationGoal | null>(null);
     let goalTitleDraft = $state('');
     let goalDescDraft = $state('');
     let goalLoading = $state(false);
     let goalSaving = $state(false);
     let goalError = $state('');
+    let subagentTasks = $state<V2SubagentTask[]>([]);
+    let stoppingTaskId = $state<string | null>(null);
+    let taskError = $state('');
 
-    // Tab 2: Diff & Checkpoints
+    const effectivePlan = $derived(plan ?? localPlan);
+
+    // Tab 2: Diff, Checkpoints & Worktrees
     let diffSnapshot = $state<V2WorkspaceDiffSnapshot | null>(null);
     let checkpoints = $state<V2WorkspaceCheckpoint[]>([]);
     let diffLoading = $state(false);
@@ -143,10 +143,12 @@
     let compactNotice = $state('');
     let compactError = $state('');
 
-    // Tab 4: Data Sources
+    // Tab 4: Data Sources + Index Now
     let dataSources = $state<V2DataSourceItem[]>([]);
     let dataSourcesLoading = $state(false);
     let dataSourcesSaving = $state(false);
+    let indexingSourceIds = $state<Record<string, boolean>>({});
+    let dataSourcesNotice = $state('');
     let dataSourcesError = $state('');
 
     // Tab 5: Knowledge (key points and wiki kept strictly separate)
@@ -161,6 +163,7 @@
 
     let disposed = false;
     let tabController: AbortController | null = null;
+    let tasksSseController: AbortController | null = null;
     let actionController: AbortController | null = null;
 
     function isAbortError(cause: unknown): boolean {
@@ -179,15 +182,16 @@
         disposed = true;
         tabController?.abort();
         tabController = null;
+        tasksSseController?.abort();
+        tasksSseController = null;
         actionController?.abort();
         actionController = null;
     });
 
-    const liveTasks = $derived.by(() => {
-        const items: Array<{ id: string; label: string; status: 'running' | 'completed' | 'failed'; detail?: string }> = [];
+    const fallbackToolTasks = $derived.by(() => {
+        const items: V2SubagentTask[] = [];
         for (const msg of messages) {
             for (const tc of msg.toolCalls ?? []) {
-                // Extract structured todos if planning/todo tools were invoked
                 const args = tc.arguments && typeof tc.arguments === 'object' ? (tc.arguments as Record<string, unknown>) : null;
                 const rawTodos = args && Array.isArray(args.todos) ? args.todos : args && Array.isArray(args.tasks) ? args.tasks : null;
                 if (rawTodos && rawTodos.length > 0) {
@@ -196,20 +200,21 @@
                         const title = String(row.content ?? row.title ?? row.subject ?? row.task ?? '').trim();
                         if (!title) continue;
                         const st = String(row.status ?? '').toLowerCase();
-                        const mappedStatus: 'running' | 'completed' | 'failed' =
+                        const mappedStatus: V2SubagentTask['status'] =
                             st === 'completed' || st === 'done'
                                 ? 'completed'
                                 : st === 'failed' || st === 'error'
                                   ? 'failed'
                                   : 'running';
-                        items.push({ id: `${tc.callId}-todo-${i}`, label: title, status: mappedStatus });
+                        items.push({ id: `${tc.callId}-todo-${i}`, title, status: mappedStatus, kind: 'todo' });
                     }
                 } else {
                     items.push({
                         id: tc.callId,
-                        label: tc.name,
+                        title: tc.name,
                         status: tc.status,
                         detail: tc.summary,
+                        kind: 'tool',
                     });
                 }
             }
@@ -217,25 +222,112 @@
         return items.slice(-20).reverse();
     });
 
+    const displayedTasks = $derived(subagentTasks.length > 0 ? subagentTasks : fallbackToolTasks);
+
+    const rootTasks = $derived.by(() => {
+        const ids = new Set(displayedTasks.map(item => item.id));
+        return displayedTasks.filter(item => !item.parentId || !ids.has(item.parentId));
+    });
+
+    function childTasksOf(parentId: string): V2SubagentTask[] {
+        return displayedTasks.filter(item => item.parentId === parentId);
+    }
+
     const userMsgCount = $derived(messages.filter(m => m.role === 'user').length);
     const assistantMsgCount = $derived(messages.filter(m => m.role === 'assistant').length);
     const knowledgeDirty = $derived(keyPointsDraft !== savedKeyPoints || wikiDraft !== savedWiki);
 
-    async function loadGoal(convId: string, signal: AbortSignal) {
+    async function loadGoalAndPlan(convId: string, signal: AbortSignal) {
         goalLoading = true;
         goalError = '';
+        planError = '';
         try {
-            const loaded = await getV2ConversationGoal(convId, signal);
+            const [goalRes, planRes] = await Promise.allSettled([
+                getV2ConversationGoal(convId, signal),
+                getV2ConversationPlan(convId, signal),
+            ]);
             if (disposed || signal.aborted || conversationId !== convId) return;
-            goal = loaded;
-            goalTitleDraft = loaded?.title ?? '';
-            goalDescDraft = loaded?.description ?? '';
-        } catch (cause) {
-            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
-                goalError = errorMessage(cause);
+            if (goalRes.status === 'fulfilled') {
+                goal = goalRes.value;
+                goalTitleDraft = goalRes.value?.title ?? '';
+                goalDescDraft = goalRes.value?.description ?? '';
+            } else if (!isAbortError(goalRes.reason)) {
+                goalError = errorMessage(goalRes.reason);
+            }
+            if (planRes.status === 'fulfilled') {
+                localPlan = planRes.value;
+                onplanchange?.(planRes.value);
             }
         } finally {
             if (!disposed && !signal.aborted && conversationId === convId) goalLoading = false;
+        }
+    }
+
+    function connectTasksEvents(convId: string) {
+        tasksSseController?.abort();
+        tasksSseController = new AbortController();
+        const signal = tasksSseController.signal;
+        taskError = '';
+        void subscribeV2ConversationTasks(
+            convId,
+            {
+                onTasks: items => {
+                    if (!disposed && !signal.aborted && conversationId === convId) {
+                        subagentTasks = items;
+                    }
+                },
+                onTaskUpdate: item => {
+                    if (disposed || signal.aborted || conversationId !== convId) return;
+                    const idx = subagentTasks.findIndex(t => t.id === item.id);
+                    if (idx >= 0) {
+                        subagentTasks = subagentTasks.map((t, i) => (i === idx ? item : t));
+                    } else {
+                        subagentTasks = [item, ...subagentTasks];
+                    }
+                },
+            },
+            signal,
+        ).catch(cause => {
+            if (!disposed && !signal.aborted && !isAbortError(cause)) {
+                // Graceful fallback to transcript-derived tasks without noisy error banners
+            }
+        });
+    }
+
+    async function handleStopTask(task: V2SubagentTask) {
+        if (!conversationId || stoppingTaskId) return;
+        stoppingTaskId = task.id;
+        taskError = '';
+        try {
+            await stopV2ConversationTask(conversationId, task.id);
+            if (!disposed) {
+                subagentTasks = subagentTasks.map(item =>
+                    item.id === task.id ? { ...item, status: 'cancelled' } : item,
+                );
+            }
+        } catch (cause) {
+            if (!disposed) taskError = errorMessage(cause);
+        } finally {
+            if (!disposed) stoppingTaskId = null;
+        }
+    }
+
+    async function handlePlanAction(
+        payload: { enabled?: boolean; action?: 'enable' | 'disable' | 'approve' | 'reject' | 'clear' },
+    ) {
+        if (!conversationId || planBusy) return;
+        const convId = conversationId;
+        planBusy = true;
+        planError = '';
+        try {
+            const updated = await updateV2ConversationPlan(convId, payload);
+            if (disposed || conversationId !== convId) return;
+            localPlan = updated;
+            onplanchange?.(updated);
+        } catch (cause) {
+            if (!disposed && conversationId === convId) planError = errorMessage(cause);
+        } finally {
+            if (!disposed && conversationId === convId) planBusy = false;
         }
     }
 
@@ -250,11 +342,7 @@
         try {
             const saved = await saveV2ConversationGoal(
                 convId,
-                {
-                    title: goalTitleDraft,
-                    description: goalDescDraft,
-                    status: 'active',
-                },
+                { title: goalTitleDraft, description: goalDescDraft, status: 'active' },
                 signal,
             );
             if (disposed || signal.aborted || conversationId !== convId) return;
@@ -361,6 +449,7 @@
     async function loadDataSources(convId: string, signal: AbortSignal) {
         dataSourcesLoading = true;
         dataSourcesError = '';
+        dataSourcesNotice = '';
         try {
             const items = await listV2ConversationDataSources(convId, signal);
             if (disposed || signal.aborted || conversationId !== convId) return;
@@ -402,6 +491,27 @@
             }
         } finally {
             if (!disposed && conversationId === convId) dataSourcesSaving = false;
+        }
+    }
+
+    async function handleIndexDataSource(src: V2DataSourceItem) {
+        if (indexingSourceIds[src.id]) return;
+        indexingSourceIds = { ...indexingSourceIds, [src.id]: true };
+        dataSourcesError = '';
+        dataSourcesNotice = '';
+        try {
+            const res = await indexV2DataSource(src.id);
+            if (disposed) return;
+            const chunksNote = typeof res.indexedChunks === 'number' ? ` (${res.indexedChunks})` : '';
+            dataSourcesNotice = res.message || `${src.name}: ${t($locale, 'chatInspector.indexed')}${chunksNote}`;
+        } catch (cause) {
+            if (!disposed) dataSourcesError = errorMessage(cause);
+        } finally {
+            if (!disposed) {
+                const copy = { ...indexingSourceIds };
+                delete copy[src.id];
+                indexingSourceIds = copy;
+            }
         }
     }
 
@@ -461,11 +571,18 @@
 
     function refreshCurrentTab() {
         if (!conversationId) return;
+        refreshToken++;
         const signal = nextTabSignal();
-        if (activeTab === 'tasks') void loadGoal(conversationId, signal);
-        else if (activeTab === 'diff') void loadDiffAndCheckpoints(conversationId, signal);
-        else if (activeTab === 'data-sources') void loadDataSources(conversationId, signal);
-        else if (activeTab === 'knowledge') void loadKnowledge(conversationId, signal);
+        if (activeTab === 'tasks') {
+            void loadGoalAndPlan(conversationId, signal);
+            connectTasksEvents(conversationId);
+        } else if (activeTab === 'diff') {
+            void loadDiffAndCheckpoints(conversationId, signal);
+        } else if (activeTab === 'data-sources') {
+            void loadDataSources(conversationId, signal);
+        } else if (activeTab === 'knowledge') {
+            void loadKnowledge(conversationId, signal);
+        }
     }
 
     $effect(() => {
@@ -474,9 +591,13 @@
         if (!convId) {
             tabController?.abort();
             tabController = null;
+            tasksSseController?.abort();
+            tasksSseController = null;
             goal = null;
             goalTitleDraft = '';
             goalDescDraft = '';
+            subagentTasks = [];
+            localPlan = { enabled: false, status: 'idle', steps: [] };
             diffSnapshot = null;
             checkpoints = [];
             dataSources = [];
@@ -489,13 +610,21 @@
             return;
         }
         const signal = nextTabSignal();
-        if (tab === 'tasks') void loadGoal(convId, signal);
-        else if (tab === 'diff') void loadDiffAndCheckpoints(convId, signal);
-        else if (tab === 'data-sources') void loadDataSources(convId, signal);
-        else if (tab === 'knowledge') void loadKnowledge(convId, signal);
+        if (tab === 'tasks') {
+            void loadGoalAndPlan(convId, signal);
+            connectTasksEvents(convId);
+        } else {
+            tasksSseController?.abort();
+            tasksSseController = null;
+            if (tab === 'diff') void loadDiffAndCheckpoints(convId, signal);
+            else if (tab === 'data-sources') void loadDataSources(convId, signal);
+            else if (tab === 'knowledge') void loadKnowledge(convId, signal);
+        }
         return () => {
             tabController?.abort();
             tabController = null;
+            tasksSseController?.abort();
+            tasksSseController = null;
         };
     });
 </script>
@@ -512,7 +641,9 @@
 <div class="inspector-scrim" aria-hidden="true" onclick={onclose}></div>
 
 <aside
+    id="conversation-inspector-panel"
     class="inspector-drawer"
+    style:width={width ? `${width}px` : undefined}
     data-testid="conversation-inspector"
     aria-label={t($locale, 'chatPage.details')}
 >
@@ -578,6 +709,80 @@
             <p class="inspector-muted">{t($locale, 'chatInspector.noConversationSelected')}</p>
         {:else if activeTab === 'tasks'}
             <section class="inspector-section">
+                <div class="section-row">
+                    <h3>{t($locale, 'chatInspector.planMode')}</h3>
+                    <button
+                        type="button"
+                        class="compact-btn"
+                        class:primary={effectivePlan.enabled}
+                        disabled={planBusy}
+                        onclick={() =>
+                            void handlePlanAction({
+                                enabled: !effectivePlan.enabled,
+                                action: effectivePlan.enabled ? 'disable' : 'enable',
+                            })}
+                    >
+                        {effectivePlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
+                    </button>
+                </div>
+                {#if effectivePlan.summary || effectivePlan.markdown || effectivePlan.steps.length}
+                    <div class="plan-card" data-status={effectivePlan.status}>
+                        <div class="section-row">
+                            <strong>
+                                {effectivePlan.status === 'awaiting_approval'
+                                    ? t($locale, 'chatInspector.planPendingApproval')
+                                    : effectivePlan.summary || t($locale, 'chatInspector.planMode')}
+                            </strong>
+                            <span class="status-pill">{effectivePlan.status}</span>
+                        </div>
+                        {#if effectivePlan.steps.length}
+                            <ol class="plan-steps">
+                                {#each effectivePlan.steps as step, sIdx (step.id ?? sIdx)}
+                                    <li>
+                                        <span>{step.title}</span>
+                                        {#if step.status}<small class="inspector-muted">({step.status})</small>{/if}
+                                    </li>
+                                {/each}
+                            </ol>
+                        {:else if effectivePlan.markdown}
+                            <pre class="plan-preview">{effectivePlan.markdown.slice(0, 600)}</pre>
+                        {/if}
+                        <div class="inspector-btn-row">
+                            {#if effectivePlan.status === 'awaiting_approval' || effectivePlan.status === 'draft'}
+                                <button
+                                    type="button"
+                                    class="primary compact-btn"
+                                    disabled={planBusy}
+                                    onclick={() => void handlePlanAction({ action: 'approve' })}
+                                >
+                                    {t($locale, 'chatInspector.planApprove')}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="compact-btn danger"
+                                    disabled={planBusy}
+                                    onclick={() => void handlePlanAction({ action: 'reject' })}
+                                >
+                                    {t($locale, 'chatInspector.planReject')}
+                                </button>
+                            {/if}
+                            <button
+                                type="button"
+                                class="compact-btn"
+                                disabled={planBusy}
+                                onclick={() => void handlePlanAction({ action: 'clear', enabled: false })}
+                            >
+                                {t($locale, 'chatInspector.planClear')}
+                            </button>
+                        </div>
+                    </div>
+                {:else if !effectivePlan.enabled}
+                    <p class="inspector-muted">{t($locale, 'chatInspector.noPlan')}</p>
+                {/if}
+                {#if planError}<p class="inspector-error" role="alert">{planError}</p>{/if}
+            </section>
+
+            <section class="inspector-section">
                 <h3>{t($locale, 'chatInspector.goal')}</h3>
                 {#if goalLoading}
                     <p class="inspector-muted">{t($locale, 'rooms.loading')}</p>
@@ -631,27 +836,76 @@
             </section>
 
             <section class="inspector-section">
-                <h3>{t($locale, 'chatInspector.liveTasks')}</h3>
-                {#if liveTasks.length === 0}
+                <h3>{t($locale, 'chatInspector.subagentTasks')}</h3>
+                {#if taskError}<p class="inspector-error" role="alert">{taskError}</p>{/if}
+                {#if rootTasks.length === 0}
                     <p class="inspector-muted">{t($locale, 'chatInspector.noLiveTasks')}</p>
                 {:else}
                     <ul class="task-list">
-                        {#each liveTasks as item (item.id)}
-                            <li class="task-item" data-status={item.status}>
-                                <span class="task-dot" aria-hidden="true">
-                                    {item.status === 'completed' ? '✓' : item.status === 'failed' ? '!' : '•'}
-                                </span>
-                                <div class="task-copy">
-                                    <span class="task-label">{item.label}</span>
-                                    {#if item.detail}
-                                        <small class="inspector-muted">{item.detail.slice(0, 120)}</small>
+                        {#each rootTasks as item (item.id)}
+                            {@const children = childTasksOf(item.id)}
+                            <li class="task-tree-node">
+                                <div class="task-item" data-status={item.status}>
+                                    <span class="task-dot" aria-hidden="true">
+                                        {item.status === 'completed' ? '✓' : item.status === 'failed' ? '!' : item.status === 'cancelled' ? '×' : '•'}
+                                    </span>
+                                    <div class="task-copy">
+                                        <div class="task-title-row">
+                                            <span class="task-label">{item.title}</span>
+                                            {#if item.agent}<span class="status-pill">@{item.agent}</span>{/if}
+                                            <span class="status-pill">{item.status}</span>
+                                        </div>
+                                        {#if item.detail}
+                                            <small class="inspector-muted">{item.detail.slice(0, 140)}</small>
+                                        {/if}
+                                    </div>
+                                    {#if item.status === 'running' || item.status === 'queued' || item.status === 'waiting'}
+                                        <button
+                                            type="button"
+                                            class="task-stop-btn danger"
+                                            disabled={stoppingTaskId === item.id}
+                                            onclick={() => void handleStopTask(item)}
+                                        >
+                                            {t($locale, 'chatInspector.stopTask')}
+                                        </button>
                                     {/if}
                                 </div>
+                                {#if children.length}
+                                    <ul class="task-children">
+                                        {#each children as child (child.id)}
+                                            <li class="task-item" data-status={child.status}>
+                                                <span class="task-dot" aria-hidden="true">
+                                                    {child.status === 'completed' ? '✓' : child.status === 'failed' ? '!' : '•'}
+                                                </span>
+                                                <div class="task-copy">
+                                                    <span class="task-label">{child.title}</span>
+                                                    {#if child.detail}
+                                                        <small class="inspector-muted">{child.detail.slice(0, 100)}</small>
+                                                    {/if}
+                                                </div>
+                                                {#if child.status === 'running' || child.status === 'queued'}
+                                                    <button
+                                                        type="button"
+                                                        class="task-stop-btn danger"
+                                                        disabled={stoppingTaskId === child.id}
+                                                        onclick={() => void handleStopTask(child)}
+                                                    >
+                                                        {t($locale, 'chatInspector.stopTask')}
+                                                    </button>
+                                                {/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
                             </li>
                         {/each}
                     </ul>
                 {/if}
             </section>
+        {:else if activeTab === 'artifacts'}
+            <InspectorArtifactsPanel {conversationId} {messages} {refreshToken} />
+        {:else if activeTab === 'recall'}
+            <InspectorRecallPanel {conversationId} />
         {:else if activeTab === 'diff'}
             <section class="inspector-section">
                 <div class="section-row">
@@ -734,6 +988,14 @@
                     </ul>
                 {/if}
             </section>
+
+            <WorkspaceWorktreesPanel
+                compact={true}
+                {refreshToken}
+                onchanged={() => conversationId && void loadDiffAndCheckpoints(conversationId, nextTabSignal())}
+            />
+        {:else if activeTab === 'browser'}
+            <InspectorBrowserPdfPanel {conversationId} {messages} {refreshToken} />
         {:else if activeTab === 'context'}
             <section class="inspector-section">
                 <h3>{t($locale, 'chatInspector.tabContext')}</h3>
@@ -787,6 +1049,9 @@
                     {/if}
                 </div>
                 <p class="inspector-muted">{t($locale, 'chatDataSources.scope')}</p>
+                {#if dataSourcesNotice}
+                    <p class="inspector-notice" role="status">{dataSourcesNotice}</p>
+                {/if}
                 {#if dataSourcesLoading}
                     <p class="inspector-muted">{t($locale, 'chatDataSources.loading')}</p>
                 {:else if dataSources.length === 0}
@@ -796,25 +1061,39 @@
                         {#each dataSources as src (src.id)}
                             {@const isBlocked = src.blocked || src.accessPolicy === 'blocked'}
                             <li class="source-item" class:blocked={isBlocked}>
-                                <label class="source-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={!isBlocked && src.enabled}
-                                        disabled={dataSourcesSaving || isBlocked}
-                                        onchange={() => void toggleDataSource(src.id)}
-                                    />
-                                    <div class="source-meta">
-                                        <div class="source-meta-head">
-                                            <strong>{src.name}</strong>
-                                            {#if isBlocked}
-                                                <span class="source-blocked-badge">{t($locale, 'chatDataSources.blocked')}</span>
-                                            {/if}
+                                <div class="source-row">
+                                    <label class="source-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={!isBlocked && src.enabled}
+                                            disabled={dataSourcesSaving || isBlocked}
+                                            onchange={() => void toggleDataSource(src.id)}
+                                        />
+                                        <div class="source-meta">
+                                            <div class="source-meta-head">
+                                                <strong>{src.name}</strong>
+                                                {#if isBlocked}
+                                                    <span class="source-blocked-badge">{t($locale, 'chatDataSources.blocked')}</span>
+                                                {/if}
+                                            </div>
+                                            <small class="inspector-muted">
+                                                {src.kind}{src.location ? ` · ${src.location}` : ''}
+                                            </small>
                                         </div>
-                                        <small class="inspector-muted">
-                                            {src.kind}{src.location ? ` · ${src.location}` : ''}
-                                        </small>
-                                    </div>
-                                </label>
+                                    </label>
+                                    {#if !isBlocked}
+                                        <button
+                                            type="button"
+                                            class="index-btn"
+                                            disabled={Boolean(indexingSourceIds[src.id])}
+                                            onclick={() => void handleIndexDataSource(src)}
+                                        >
+                                            {indexingSourceIds[src.id]
+                                                ? t($locale, 'chatInspector.indexing')
+                                                : t($locale, 'chatInspector.indexNow')}
+                                        </button>
+                                    {/if}
+                                </div>
                             </li>
                         {/each}
                     </ul>
@@ -887,7 +1166,7 @@
         display: none;
     }
     .inspector-drawer {
-        width: 340px;
+        width: 360px;
         flex-shrink: 0;
         display: flex;
         flex-direction: column;
@@ -895,6 +1174,7 @@
         border-left: 1px solid var(--border);
         background: var(--panel);
         color: var(--content);
+        position: relative;
     }
     .inspector-header {
         display: flex;
@@ -951,7 +1231,7 @@
     }
     .inspector-tabs {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 2px;
         padding: 3px;
         background: var(--panel);
@@ -960,14 +1240,14 @@
     }
     .inspector-tab {
         min-width: 0;
-        min-height: 28px;
-        padding: 6px 2px;
+        min-height: 26px;
+        padding: 4px 3px;
         border: 1px solid transparent;
         border-radius: 7px;
         background: transparent;
         box-shadow: none;
         color: var(--muted);
-        font-size: 11.5px;
+        font-size: 11px;
         line-height: 1.2;
         text-align: center;
         white-space: nowrap;
@@ -1037,6 +1317,7 @@
         color: var(--danger);
         font-size: 12px;
     }
+    .plan-card,
     .goal-active-card {
         padding: 8px 10px;
         border: 1px solid var(--border);
@@ -1044,8 +1325,33 @@
         background: var(--canvas);
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        font-size: 13px;
+        gap: 6px;
+        font-size: 12px;
+    }
+    .plan-card[data-status='awaiting_approval'] {
+        border-color: var(--primary);
+    }
+    .plan-steps {
+        margin: 0;
+        padding-inline-start: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .plan-preview {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 11px;
+        color: var(--muted);
+    }
+    .status-pill {
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--muted);
+        white-space: nowrap;
     }
     .inspector-form {
         display: flex;
@@ -1094,6 +1400,7 @@
         flex-shrink: 0;
     }
     .task-list,
+    .task-children,
     .diff-file-list,
     .checkpoint-list,
     .source-list {
@@ -1104,6 +1411,15 @@
         flex-direction: column;
         gap: 6px;
     }
+    .task-tree-node {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .task-children {
+        padding-inline-start: 14px;
+        border-inline-start: 2px solid var(--border);
+    }
     .task-item {
         display: flex;
         align-items: flex-start;
@@ -1113,6 +1429,20 @@
         border: 1px solid var(--border);
         background: var(--canvas);
         font-size: 12px;
+    }
+    .task-title-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+    .task-stop-btn {
+        margin-inline-start: auto;
+        min-height: 24px;
+        padding: 2px 7px;
+        font-size: 11px;
+        border-radius: 6px;
+        flex: none;
     }
     .task-dot {
         font-weight: 700;
@@ -1132,6 +1462,7 @@
         flex-direction: column;
         gap: 2px;
         min-width: 0;
+        flex: 1;
         overflow-wrap: anywhere;
     }
     .task-label {
@@ -1218,6 +1549,20 @@
         border: 1px solid var(--border);
         background: var(--canvas);
     }
+    .source-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .index-btn {
+        flex: none;
+        min-height: 26px;
+        padding: 2px 8px;
+        font-size: 11px;
+        border-radius: 6px;
+        white-space: nowrap;
+    }
     .source-item.blocked {
         opacity: 0.65;
         border-style: dashed;
@@ -1231,6 +1576,8 @@
         padding: 0;
         border-radius: 0;
         cursor: pointer;
+        flex: 1;
+        min-width: 0;
     }
     .source-toggle input[type='checkbox'] {
         margin-top: 2px;
@@ -1267,7 +1614,7 @@
     }
     @media (max-width: 1024px) {
         .inspector-drawer {
-            width: 290px;
+            width: 300px;
         }
     }
     @media (pointer: coarse) {
@@ -1288,14 +1635,14 @@
             position: fixed;
             inset: 0;
             z-index: 49;
-            background: rgb(0 0 0 / .42);
+            background: rgb(0 0 0 / 0.42);
         }
         .inspector-drawer {
             position: fixed;
             inset: 0 0 0 auto;
             padding-top: env(safe-area-inset-top, 0px);
             padding-bottom: env(safe-area-inset-bottom, 0px);
-            width: min(92vw, 340px);
+            width: min(92vw, 340px) !important;
             z-index: 50;
             box-shadow: var(--dialog-shadow);
         }

@@ -12,6 +12,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
@@ -21,12 +23,21 @@ use nola_types::{
 use serde_json::{json, Value};
 
 use crate::adapter::{
-    collect_request_media, finalize_response, format_tail_reminders, parse_tool_arguments,
-    BuiltHttpRequest, LlmError, ProtocolMediaLimits, ProviderWireAdapter,
+    collect_request_media, finalize_response, format_tail_reminders,
+    normalized_wire_reasoning_effort, parse_tool_arguments, BuiltHttpRequest, LlmError,
+    ProtocolMediaLimits, ProviderWireAdapter,
 };
-use crate::sse::SseReader;
+use crate::sse::{ReasoningProgressGuard, SseReader};
 
 pub struct AnthropicMessagesAdapter;
+
+fn anthropic_cache_control(ttl_1h: bool) -> Value {
+    if ttl_1h {
+        json!({"type": "ephemeral", "ttl": "1h"})
+    } else {
+        json!({"type": "ephemeral"})
+    }
+}
 
 fn anthropic_endpoint(base: &str) -> String {
     let trimmed = base.trim_end_matches('/');
@@ -117,6 +128,8 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         self.media_limits()
             .validate_all(&all_media, &route.capabilities)?;
 
+        let cache_ctrl = anthropic_cache_control(params.anthropic_cache_ttl_1h);
+
         let mut system_blocks: Vec<Value> = req
             .frozen_system_prefix
             .iter()
@@ -124,7 +137,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
             .map(|b| json!({"type": "text", "text": b.text}))
             .collect();
         if let Some(last) = system_blocks.last_mut().and_then(|v| v.as_object_mut()) {
-            last.insert("cache_control".into(), json!({"type": "ephemeral"}));
+            last.insert("cache_control".into(), cache_ctrl.clone());
         }
 
         let mut messages: Vec<Value> = Vec::new();
@@ -238,7 +251,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                     )
                 }) {
                     if let Some(obj) = block.as_object_mut() {
-                        obj.insert("cache_control".into(), json!({"type": "ephemeral"}));
+                        obj.insert("cache_control".into(), cache_ctrl.clone());
                     }
                 }
             }
@@ -257,11 +270,8 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         // - effort == "none" -> thinking: {"type": "disabled"} (no output_config)
         // - explicit thinking budget (params.thinking_budget or "budget:<N>") -> thinking: {"type": "enabled", "budget_tokens": N}
         // - effort in low|medium|high|max -> output_config: {"effort": effort} (NEVER converted to budget_tokens)
-        let effort_norm = route
-            .reasoning_effort
-            .as_deref()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| !s.is_empty());
+        let effort_norm = normalized_wire_reasoning_effort(route.reasoning_effort.as_deref())
+            .map(|s| s.to_ascii_lowercase());
         let explicit_budget = params.thinking_budget.or_else(|| {
             effort_norm
                 .as_deref()
@@ -321,7 +331,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                 })
                 .collect();
             if let Some(last) = tools.last_mut().and_then(|v| v.as_object_mut()) {
-                last.insert("cache_control".into(), json!({"type": "ephemeral"}));
+                last.insert("cache_control".into(), cache_ctrl);
             }
             body.insert("tools".into(), Value::Array(tools));
         }
@@ -458,7 +468,18 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        let mut sse = SseReader::new(reader);
+        self.parse_sse_stream_cancellable(route, reader, None, on_delta)
+    }
+
+    fn parse_sse_stream_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        let mut sse = SseReader::new(reader).with_cancel(cancel);
+        let mut reasoning_guard = ReasoningProgressGuard::new();
         let mut response_id: Option<String> = None;
         let mut response_model: Option<String> = None;
         let mut content = String::new();
@@ -535,6 +556,9 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                             }
                             "thinking_delta" => {
                                 if let Some(t) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                    if !t.is_empty() {
+                                        reasoning_guard.observe_reasoning(t)?;
+                                    }
                                     reasoning.push_str(t);
                                     if let Some(b) = blocks.get_mut(&idx) {
                                         b.3.push_str(t);

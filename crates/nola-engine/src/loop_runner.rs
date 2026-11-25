@@ -6,30 +6,32 @@
 //! - Automatic `nola-store` session + event + `--resume` policy persistence
 //! - Clean `OutputLimit` continuation + cancellation + `--json-schema` validation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nola_llm::{adapter_for, LlmClient, LlmError};
+use nola_llm::{adapter_for, CallParams, LlmClient, LlmError};
 use nola_store::{EventPage, Store, StoreError, DEFAULT_MAX_EVENTS_PER_SCOPE};
-use nola_tools::{ToolContext, ToolRegistry};
+use nola_tools::{CodeModeDispatcher, ToolContext, ToolRegistry};
 use nola_types::{
-    estimate_request_tokens, new_id, now_ms, sha256_hex, ContextBudget, FrozenSystemBlock,
-    HistoryMessage, HookDecision, HookEvent, HostCapabilities, MediaAttachment, MemoryItem,
-    ModelRouteConfig, ModelStopReason, ModelStreamDelta, NormalizedModelResponse, ResourceEffect,
-    RuleScope, RuntimeReminder, Session, StructuredModelRequest, TokenUsage, ToolExecutionResult,
-    ToolModelPayload,
+    estimate_request_tokens, new_id, now_ms, sha256_hex, ContentVersion, ContextBudget,
+    FrozenSystemBlock, GenerationParams, HistoryMessage, HookDecision, HookEvent, HostCapabilities,
+    MediaAttachment, MemoryItem, ModelRouteConfig, ModelStopReason, ModelStreamDelta,
+    NormalizedModelResponse, ResourceEffect, ResourceOperation, RuleScope, RuntimeReminder,
+    Session, StructuredModelRequest, TokenUsage, ToolExecutionResult, ToolModelPayload,
+    VersionTransition,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::catalog::{ForceToolSet, ToolCatalog};
-use crate::compaction::{compact_history, compact_history_force};
+use crate::compaction::{compact_history, compact_history_force, CompactionLoopBreaker};
 use crate::hooks::HookRunner;
-use crate::loop_guard::LoopGuard;
+use crate::loop_guard::{LoopGuard, LoopGuardVerdict};
 use crate::middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
+use crate::planning::is_plan_mode;
 use crate::policy::EffectivePolicy;
 
 const MAX_PARALLEL_READ_TOOLS: usize = 12;
@@ -58,18 +60,67 @@ pub trait ModelCaller: Send + Sync {
         stream: bool,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError>;
+
+    /// Execute a model request with Wave-1 `CallParams` (cooperative cancellation,
+    /// multi-endpoint fallbacks, generation overrides, and repetitive-reasoning stream reset).
+    fn call_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        call_params: &CallParams,
+        stream: bool,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        if call_params
+            .cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return Err(LlmError::Cancelled);
+        }
+        self.call(route, req, stream, on_delta)
+    }
 }
+
+/// Alias matching callers referring to the concrete `LlmClient`-backed `ModelCaller`.
+pub type LlmClientModelCaller = HttpModelCaller;
 
 /// Production `ModelCaller` backed by `nola-llm::LlmClient`.
 pub struct HttpModelCaller {
     client: LlmClient,
+    fallbacks: Vec<ModelRouteConfig>,
+    generation: GenerationParams,
 }
 
 impl HttpModelCaller {
     pub fn new(timeout_secs: u64) -> Result<Self, LlmError> {
         Ok(Self {
             client: LlmClient::new(timeout_secs)?,
+            fallbacks: Vec::new(),
+            generation: GenerationParams::default(),
         })
+    }
+
+    pub fn from_client(client: LlmClient) -> Self {
+        Self {
+            client,
+            fallbacks: Vec::new(),
+            generation: GenerationParams::default(),
+        }
+    }
+
+    pub fn with_fallbacks(mut self, fallbacks: Vec<ModelRouteConfig>) -> Self {
+        self.fallbacks = fallbacks;
+        self
+    }
+
+    pub fn with_generation(mut self, generation: GenerationParams) -> Self {
+        self.generation = generation;
+        self
+    }
+
+    pub fn client(&self) -> &LlmClient {
+        &self.client
     }
 }
 
@@ -81,7 +132,34 @@ impl ModelCaller for HttpModelCaller {
         stream: bool,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        self.client.complete(route, req, stream, on_delta)
+        let params = CallParams {
+            generation: self.generation.clone(),
+            fallbacks: self.fallbacks.clone(),
+            ..Default::default()
+        };
+        self.client
+            .complete_with_call_params(route, req, &params, stream, on_delta)
+    }
+
+    fn call_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        call_params: &CallParams,
+        stream: bool,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        let mut effective = call_params.clone();
+        if effective.fallbacks.is_empty() && !self.fallbacks.is_empty() {
+            effective.fallbacks = self.fallbacks.clone();
+        }
+        if effective.generation == GenerationParams::default()
+            && self.generation != GenerationParams::default()
+        {
+            effective.generation = self.generation.clone();
+        }
+        self.client
+            .complete_with_call_params(route, req, &effective, stream, on_delta)
     }
 }
 
@@ -147,6 +225,126 @@ pub struct AgentRunConfig {
     pub inbox: Option<Arc<Mutex<Vec<String>>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModifiedFileRecord {
+    pub uri: String,
+    pub operation: ResourceOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<ContentVersion>,
+    pub last_modified_step: usize,
+    pub verified_after_edit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationCheckRecord {
+    pub step: usize,
+    pub tool_name: String,
+    pub summary: String,
+    pub passed: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationSummary {
+    pub modified_files: Vec<ModifiedFileRecord>,
+    pub verification_checks: Vec<VerificationCheckRecord>,
+    pub all_modified_verified: bool,
+}
+
+#[derive(Debug, Default)]
+struct VerificationClosureTracker {
+    modified: BTreeMap<String, ModifiedFileRecord>,
+    checks: Vec<VerificationCheckRecord>,
+    mutation_seq: usize,
+    last_mutation_seq: BTreeMap<String, usize>,
+    last_passing_check_seq: Option<usize>,
+}
+
+impl VerificationClosureTracker {
+    fn record_effects(&mut self, step: usize, effects: &[ResourceEffect]) {
+        for eff in effects {
+            if !eff.transition.changed() {
+                continue;
+            }
+            self.mutation_seq += 1;
+            let version = match &eff.transition {
+                VersionTransition::Created { after }
+                | VersionTransition::Modified { after, .. } => Some(after.clone()),
+                VersionTransition::Deleted { before } => Some(before.clone()),
+                VersionTransition::Unchanged { version } => Some(version.clone()),
+                VersionTransition::Unobservable { .. } => None,
+            };
+            self.last_mutation_seq
+                .insert(eff.uri.clone(), self.mutation_seq);
+            self.modified.insert(
+                eff.uri.clone(),
+                ModifiedFileRecord {
+                    uri: eff.uri.clone(),
+                    operation: eff.operation.clone(),
+                    version,
+                    last_modified_step: step,
+                    verified_after_edit: false,
+                },
+            );
+        }
+    }
+
+    fn record_tool_outcome(
+        &mut self,
+        step: usize,
+        tool_name: &str,
+        args: &Value,
+        result: &ToolExecutionResult,
+    ) {
+        self.record_effects(step, &result.effects);
+        let is_verification_tool = matches!(
+            tool_name,
+            "bash" | "pty_exec" | "lsp_diagnostics"
+        ) || (tool_name == "git"
+            && matches!(
+                args.get("action").and_then(|v| v.as_str()).unwrap_or(""),
+                "status" | "diff"
+            ));
+        if is_verification_tool && !self.modified.is_empty() {
+            let passed = !result.is_error;
+            self.mutation_seq += 1;
+            if passed {
+                self.last_passing_check_seq = Some(self.mutation_seq);
+            }
+            self.checks.push(VerificationCheckRecord {
+                step,
+                tool_name: tool_name.to_string(),
+                summary: result.payload.ui_summary().chars().take(180).collect(),
+                passed,
+            });
+        }
+    }
+
+    fn finalize(&self) -> Option<VerificationSummary> {
+        if self.modified.is_empty() && self.checks.is_empty() {
+            return None;
+        }
+        let mut files: Vec<ModifiedFileRecord> = self
+            .modified
+            .values()
+            .cloned()
+            .map(|mut rec| {
+                let mod_seq = self.last_mutation_seq.get(&rec.uri).copied().unwrap_or(0);
+                rec.verified_after_edit = self
+                    .last_passing_check_seq
+                    .is_some_and(|chk_seq| chk_seq > mod_seq);
+                rec
+            })
+            .collect();
+        files.sort_by(|a, b| a.uri.cmp(&b.uri));
+        let all_modified_verified = files.iter().all(|f| f.verified_after_edit);
+        Some(VerificationSummary {
+            modified_files: files,
+            verification_checks: self.checks.clone(),
+            all_modified_verified,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunResult {
     pub session_id: String,
@@ -155,6 +353,8 @@ pub struct AgentRunResult {
     pub usage: TokenUsage,
     pub effects: Vec<ResourceEffect>,
     pub cancelled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,8 +367,12 @@ struct PersistedSessionState {
 }
 
 /// Deterministic workspace-scoped memory namespace (`ws:<16-hex-sha256>`).
+/// Canonicalizes `workspace_root` first so symlink aliases (e.g. `/var` vs `/private/var` on macOS)
+/// always resolve to the exact same namespace.
 pub fn workspace_memory_namespace(workspace_root: &Path) -> String {
-    let digest = sha256_hex(workspace_root.to_string_lossy().as_bytes());
+    let canonical = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let digest = sha256_hex(canonical.to_string_lossy().as_bytes());
     format!("ws:{}", &digest[..16])
 }
 
@@ -416,11 +620,62 @@ impl AgentEngine {
             media: user_media,
         });
 
-        let middleware = ToolExecutionMiddleware {
-            policy: active_policy.clone(),
-            hooks: cfg.hooks,
-            approval: cfg.approval,
+        // Reload active durable session/workspace permission grants & sync Plan Mode from store
+        active_policy.apply_durable_grants(&self.store, &session_id, &run_ctx.workspace_root);
+        if self
+            .store
+            .get_kv(&format!("plan_mode:{session_id}"))
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            active_policy.plan_mode = is_plan_mode(&self.store, &session_id);
+        }
+
+        let middleware = Arc::new(
+            ToolExecutionMiddleware::new(active_policy.clone(), cfg.hooks, cfg.approval)
+                .with_persistence(self.store.clone(), session_id.clone()),
+        );
+
+        // Wire QuickJS `code_exec` host tool proxy through `ToolExecutionMiddleware` + `ToolRegistry`
+        // so `tools.<name>(args)` executes under full policy, Plan Mode, and hook enforcement!
+        let nested_effects: Arc<Mutex<Vec<ResourceEffect>>> = Arc::new(Mutex::new(Vec::new()));
+        let nested_reminders: Arc<Mutex<Vec<RuntimeReminder>>> = Arc::new(Mutex::new(Vec::new()));
+        let base_inner_ctx = run_ctx.clone();
+        let code_mode_dispatcher: CodeModeDispatcher = {
+            let reg = Arc::clone(&self.registry);
+            let mw = Arc::clone(&middleware);
+            let eff_buf = Arc::clone(&nested_effects);
+            let rem_buf = Arc::clone(&nested_reminders);
+            Arc::new(move |tool_name: &str, args: Value| -> Result<Value, String> {
+                let outcome = mw.execute(&reg, &base_inner_ctx, tool_name, args);
+                if !outcome.reminders.is_empty() {
+                    if let Ok(mut buf) = rem_buf.lock() {
+                        buf.extend(outcome.reminders);
+                    }
+                }
+                if !outcome.result.effects.is_empty() {
+                    if let Ok(mut buf) = eff_buf.lock() {
+                        buf.extend(outcome.result.effects.clone());
+                    }
+                }
+                if outcome.result.is_error {
+                    Err(outcome.result.payload.to_model_string())
+                } else {
+                    Ok(outcome.result.payload.to_model_value())
+                }
+            })
         };
+        let available_tool_names: Vec<String> = self
+            .registry
+            .all_specs()
+            .into_iter()
+            .map(|s| s.schema.name)
+            .filter(|n| n != "code_exec")
+            .collect();
+        let run_ctx =
+            run_ctx.with_code_mode_dispatcher(code_mode_dispatcher, available_tool_names);
+
         let budget = ContextBudget::for_window(
             cfg.route.context_window,
             cfg.route.capabilities.reasoning,
@@ -428,6 +683,8 @@ impl AgentEngine {
         .with_explicit_output_limit(cfg.route.max_output_tokens);
 
         let mut loop_guard = LoopGuard::default();
+        let mut compaction_breaker = CompactionLoopBreaker::default();
+        let mut verification_tracker = VerificationClosureTracker::default();
         let mut pending_reminders: Vec<RuntimeReminder> = Vec::new();
         // Run SessionStart lifecycle hooks
         let start_payload = json!({
@@ -570,27 +827,42 @@ impl AgentEngine {
             // Real LLM-assisted Tier-2 summarizer closure with automatic deterministic fallback
             // if the summarization call fails or returns empty content.
             let llm_summarizer = |slice: &[HistoryMessage]| -> Option<String> {
-                summarize_history_with_caller(self.caller.as_ref(), &cfg.route, slice)
+                summarize_history_with_caller(
+                    self.caller.as_ref(),
+                    &cfg.route,
+                    slice,
+                    Some(Arc::clone(&cfg.cancel)),
+                )
             };
 
             // Three-tier compaction (Tier-1 stale-read/reasoning/micro -> Tier-2 LLM/ledger -> Tier-3 hard limit!)
-            let comp = compact_history(
-                &mut history,
-                calibrated_budget,
-                raw_overhead,
-                Some(&llm_summarizer),
-            );
-            if comp.saved_tokens() > 0 {
-                self.emit_and_persist(
-                    &session_id,
-                    AgentEvent::Compacted {
-                        tokens_before: comp.tokens_before,
-                        tokens_after: comp.tokens_after,
-                        micro_tools: comp.micro_compacted_tools,
-                        summary_messages: comp.summary_compacted_messages,
-                    },
-                    &mut on_event,
-                );
+            // Guarded by `CompactionLoopBreaker` (`consecutive_compactions >= 3` without >= 15% reduction
+            // blocks further automatic compaction for this turn).
+            if !compaction_breaker.is_blocked() {
+                let trigger = calibrated_budget
+                    .history_budget(raw_overhead, calibrated_budget.auto_compact_threshold());
+                let pre_tokens = crate::compaction::estimate_history_tokens(&history);
+                if pre_tokens > trigger {
+                    let comp = compact_history(
+                        &mut history,
+                        calibrated_budget,
+                        raw_overhead,
+                        Some(&llm_summarizer),
+                    );
+                    compaction_breaker.record_attempt(comp.tokens_before, comp.tokens_after);
+                    if comp.saved_tokens() > 0 {
+                        self.emit_and_persist(
+                            &session_id,
+                            AgentEvent::Compacted {
+                                tokens_before: comp.tokens_before,
+                                tokens_after: comp.tokens_after,
+                                micro_tools: comp.micro_compacted_tools,
+                                summary_messages: comp.summary_compacted_messages,
+                            },
+                            &mut on_event,
+                        );
+                    }
+                }
             }
 
             let step_reminders = std::mem::take(&mut pending_reminders);
@@ -604,25 +876,50 @@ impl AgentEngine {
             };
             let estimated_req_tokens = estimate_request_tokens(&request);
 
+            let stream_reset_flag = Arc::new(AtomicBool::new(false));
+            let stream_reset_cb = Arc::clone(&stream_reset_flag);
+            let call_params = CallParams {
+                generation: GenerationParams::default(),
+                fallbacks: Vec::new(),
+                cancel: Some(Arc::clone(&cfg.cancel)),
+                on_stream_reset: Some(Arc::new(move || {
+                    stream_reset_cb.store(true, Ordering::SeqCst);
+                })),
+            };
+
             let mut step_streamed_text = false;
             let mut step_streamed_trailing_newlines = 0usize;
-            let resp = match self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
-                match delta {
-                    ModelStreamDelta::Text(t) => emit_step_text_delta(
-                        t,
-                        prior_step_trailing_newlines,
-                        &mut step_streamed_text,
-                        &mut step_streamed_trailing_newlines,
-                        &mut on_event,
-                    ),
-                    ModelStreamDelta::Reasoning(r) => {
-                        on_event(AgentEvent::ReasoningDelta { delta: r })
+            let resp = match self.caller.call_cancellable(
+                &cfg.route,
+                &request,
+                &call_params,
+                cfg.stream,
+                &mut |delta| {
+                    if stream_reset_flag.swap(false, Ordering::SeqCst) {
+                        step_streamed_text = false;
+                        step_streamed_trailing_newlines = 0;
                     }
-                    ModelStreamDelta::ToolCallStart { .. }
-                    | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
-                }
-            }) {
+                    match delta {
+                        ModelStreamDelta::Text(t) => emit_step_text_delta(
+                            t,
+                            prior_step_trailing_newlines,
+                            &mut step_streamed_text,
+                            &mut step_streamed_trailing_newlines,
+                            &mut on_event,
+                        ),
+                        ModelStreamDelta::Reasoning(r) => {
+                            on_event(AgentEvent::ReasoningDelta { delta: r })
+                        }
+                        ModelStreamDelta::ToolCallStart { .. }
+                        | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
+                    }
+                },
+            ) {
                 Ok(r) => r,
+                Err(LlmError::Cancelled) => {
+                    cancelled = true;
+                    break;
+                }
                 Err(err) if is_context_overflow_error(&err) => {
                     // Reactive context-overflow recovery: force-compact history (with LLM summarizer
                     // + deterministic fallback) and retry once cleanly!
@@ -649,22 +946,40 @@ impl AgentEngine {
                     request.history = history.clone();
                     step_streamed_text = false;
                     step_streamed_trailing_newlines = 0;
-                    self.caller.call(&cfg.route, &request, cfg.stream, &mut |delta| {
-                        match delta {
-                            ModelStreamDelta::Text(t) => emit_step_text_delta(
-                                t,
-                                prior_step_trailing_newlines,
-                                &mut step_streamed_text,
-                                &mut step_streamed_trailing_newlines,
-                                &mut on_event,
-                            ),
-                            ModelStreamDelta::Reasoning(r) => {
-                                on_event(AgentEvent::ReasoningDelta { delta: r })
+                    stream_reset_flag.store(false, Ordering::SeqCst);
+                    match self.caller.call_cancellable(
+                        &cfg.route,
+                        &request,
+                        &call_params,
+                        cfg.stream,
+                        &mut |delta| {
+                            if stream_reset_flag.swap(false, Ordering::SeqCst) {
+                                step_streamed_text = false;
+                                step_streamed_trailing_newlines = 0;
                             }
-                            ModelStreamDelta::ToolCallStart { .. }
-                            | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
+                            match delta {
+                                ModelStreamDelta::Text(t) => emit_step_text_delta(
+                                    t,
+                                    prior_step_trailing_newlines,
+                                    &mut step_streamed_text,
+                                    &mut step_streamed_trailing_newlines,
+                                    &mut on_event,
+                                ),
+                                ModelStreamDelta::Reasoning(r) => {
+                                    on_event(AgentEvent::ReasoningDelta { delta: r })
+                                }
+                                ModelStreamDelta::ToolCallStart { .. }
+                                | ModelStreamDelta::ToolCallArgsDelta { .. } => {}
+                            }
+                        },
+                    ) {
+                        Ok(r) => r,
+                        Err(LlmError::Cancelled) => {
+                            cancelled = true;
+                            break;
                         }
-                    })?
+                        Err(e) => return Err(AgentError::Llm(e)),
+                    }
                 }
                 Err(err) => return Err(AgentError::Llm(err)),
             };
@@ -934,6 +1249,12 @@ impl AgentEngine {
 
                 pending_reminders.extend(out.reminders);
                 all_effects.extend(out.result.effects.clone());
+                verification_tracker.record_tool_outcome(
+                    steps,
+                    &tc.name,
+                    &tc.arguments,
+                    &out.result,
+                );
                 // Auto-spill oversized tool payloads (>24 KiB) to disk OutputStore
                 // so huge logs/diffs never blow up the LLM context window, and auto-activate
                 // `tool_output` at the catalog tail so the model can immediately inspect slices!
@@ -982,12 +1303,54 @@ impl AgentEngine {
                 guard_batch.push((tc.name.clone(), tc.arguments.clone(), out.result));
             }
 
+            // Drain any nested effects/reminders emitted by QuickJS `code_exec` host tool calls
+            if let Ok(mut effs) = nested_effects.lock() {
+                if !effs.is_empty() {
+                    let drained: Vec<ResourceEffect> = effs.drain(..).collect();
+                    verification_tracker.record_effects(steps, &drained);
+                    all_effects.extend(drained);
+                }
+            }
+            if let Ok(mut rems) = nested_reminders.lock() {
+                pending_reminders.extend(rems.drain(..));
+            }
+
             // Cap active tool media attachments in history (keeping the newest 3) so long
             // vision sessions do not re-prefill dozens of stale base64 images every turn.
             evict_stale_tool_media(&mut history, MAX_ACTIVE_TOOL_MEDIA_ATTACHMENTS);
 
-            if let Some(reminder) = loop_guard.observe_batch(&guard_batch) {
-                pending_reminders.push(reminder);
+            match loop_guard.observe_batch_verdict(&guard_batch) {
+                LoopGuardVerdict::Continue => {}
+                LoopGuardVerdict::Remind(reminder) => {
+                    pending_reminders.push(reminder);
+                }
+                LoopGuardVerdict::TerminateNoProgress(summary) => {
+                    if cfg.stream {
+                        emit_step_text_delta(
+                            summary.clone(),
+                            prior_step_trailing_newlines,
+                            &mut step_streamed_text,
+                            &mut step_streamed_trailing_newlines,
+                            &mut on_event,
+                        );
+                    }
+                    accumulated_text_segments.push(summary.clone());
+                    final_text = join_assistant_segments(&accumulated_text_segments);
+                    history.push(HistoryMessage::Assistant {
+                        content: summary,
+                        reasoning: None,
+                        tool_calls: Vec::new(),
+                        continuation: None,
+                    });
+                    self.persist_state(
+                        &state_key,
+                        &history,
+                        &active_policy,
+                        catalog.active_names(),
+                        &session_usage,
+                    )?;
+                    break;
+                }
             }
 
             self.persist_state(
@@ -1003,11 +1366,27 @@ impl AgentEngine {
             final_text = join_assistant_segments(&accumulated_text_segments);
         }
 
+        let verification_summary = verification_tracker.finalize();
+        if let Some(ref summary) = verification_summary {
+            if let Ok(val) = serde_json::to_value(summary) {
+                let _ = self
+                    .store
+                    .set_kv(&format!("turn_verification:{session_id}"), &val);
+                let _ = self.store.append_event(
+                    &session_id,
+                    "verification_summary",
+                    val,
+                    DEFAULT_MAX_EVENTS_PER_SCOPE,
+                );
+            }
+        }
+
         let stop_payload = json!({
             "session_id": session_id,
             "steps": steps,
             "cancelled": cancelled,
             "final_text_len": final_text.len(),
+            "verification": verification_summary,
         });
         let _ = middleware
             .hooks
@@ -1031,6 +1410,7 @@ impl AgentEngine {
             usage: total_usage,
             effects: all_effects,
             cancelled,
+            verification: verification_summary,
         })
     }
 
@@ -1384,8 +1764,27 @@ fn build_compaction_summary_request(slice: &[HistoryMessage]) -> StructuredModel
             media: Vec::new(),
         }],
         ephemeral_tail_reminders: Vec::new(),
-        max_output_tokens: 1_024,
+        max_output_tokens: 2_048,
         json_schema: None,
+    }
+}
+
+fn compaction_summary_route(route: &ModelRouteConfig) -> ModelRouteConfig {
+    let mut summary_route = route.clone();
+    summary_route.reasoning_effort = Some("none".into());
+    summary_route.capabilities.reasoning = false;
+    summary_route
+}
+
+fn compaction_summary_call_params(cancel: Option<Arc<AtomicBool>>) -> CallParams {
+    CallParams {
+        generation: GenerationParams {
+            thinking_budget: Some(0),
+            ..Default::default()
+        },
+        fallbacks: Vec::new(),
+        cancel,
+        on_stream_reset: None,
     }
 }
 
@@ -1393,12 +1792,17 @@ fn summarize_history_with_caller(
     caller: &dyn ModelCaller,
     route: &ModelRouteConfig,
     slice: &[HistoryMessage],
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Option<String> {
     if slice.is_empty() {
         return None;
     }
     let req = build_compaction_summary_request(slice);
-    let resp = caller.call(route, &req, false, &mut |_| {}).ok()?;
+    let summary_route = compaction_summary_route(route);
+    let params = compaction_summary_call_params(cancel);
+    let resp = caller
+        .call_cancellable(&summary_route, &req, &params, false, &mut |_| {})
+        .ok()?;
     let trimmed = resp.content.trim();
     if trimmed.is_empty() {
         None
@@ -1416,7 +1820,11 @@ fn summarize_history_with_llm_client(
         return None;
     }
     let req = build_compaction_summary_request(slice);
-    let resp = client.complete(route, &req, false, &mut |_| {}).ok()?;
+    let summary_route = compaction_summary_route(route);
+    let params = compaction_summary_call_params(None);
+    let resp = client
+        .complete_with_call_params(&summary_route, &req, &params, false, &mut |_| {})
+        .ok()?;
     let trimmed = resp.content.trim();
     if trimmed.is_empty() {
         None
@@ -1437,22 +1845,143 @@ fn extract_compacted_summary(history: &[HistoryMessage]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn validate_json_output(raw: &str, schema: &Value) -> Result<(), AgentError> {
+/// Recursively validate a JSON output string against a JSON Schema subset supporting
+/// `type`, `required`, `properties`, `enum`, `additionalProperties`, and `items`.
+pub fn validate_json_output(raw: &str, schema: &Value) -> Result<(), AgentError> {
     let parsed: Value = serde_json::from_str(raw.trim()).map_err(|e| {
         AgentError::SchemaValidation(format!("final output is not valid JSON: {e}"))
     })?;
-    if let Some(required) = schema.get("required").and_then(|v| v.as_array()) {
-        let obj = parsed.as_object().ok_or_else(|| {
-            AgentError::SchemaValidation("expected JSON object matching schema".into())
-        })?;
-        for key in required.iter().filter_map(|v| v.as_str()) {
-            if !obj.contains_key(key) {
-                return Err(AgentError::SchemaValidation(format!(
-                    "JSON output missing required field '{key}'"
-                )));
+    validate_json_value(&parsed, schema, "$")
+}
+
+fn json_value_matches_type(val: &Value, expected: &str) -> bool {
+    match expected {
+        "object" => val.is_object(),
+        "array" => val.is_array(),
+        "string" => val.is_string(),
+        "boolean" => val.is_boolean(),
+        "null" => val.is_null(),
+        "number" => val.is_number(),
+        "integer" => match val {
+            Value::Number(n) => {
+                n.is_i64()
+                    || n.is_u64()
+                    || n.as_f64()
+                        .is_some_and(|f| f.is_finite() && f.fract() == 0.0)
+            }
+            _ => false,
+        },
+        _ => true,
+    }
+}
+
+fn validate_json_value(val: &Value, schema: &Value, path: &str) -> Result<(), AgentError> {
+    let Some(schema_obj) = schema.as_object() else {
+        if let Some(false) = schema.as_bool() {
+            return Err(AgentError::SchemaValidation(format!(
+                "{path}: value disallowed by false schema"
+            )));
+        }
+        return Ok(());
+    };
+
+    // 1. `type` (string or array of allowed type names)
+    if let Some(type_spec) = schema_obj.get("type") {
+        let matched = match type_spec {
+            Value::String(expected) => json_value_matches_type(val, expected),
+            Value::Array(types) => types
+                .iter()
+                .filter_map(|t| t.as_str())
+                .any(|expected| json_value_matches_type(val, expected)),
+            _ => true,
+        };
+        if !matched {
+            return Err(AgentError::SchemaValidation(format!(
+                "{path}: expected type {type_spec}, got {val}"
+            )));
+        }
+    }
+
+    // 2. `enum`
+    if let Some(enum_vals) = schema_obj.get("enum").and_then(|v| v.as_array()) {
+        if !enum_vals.iter().any(|allowed| allowed == val) {
+            return Err(AgentError::SchemaValidation(format!(
+                "{path}: value {val} is not in allowed enum {enum_vals:?}"
+            )));
+        }
+    }
+
+    // 3. Object constraints (`required`, `properties`, `additionalProperties`)
+    let has_object_constraints = schema_obj.contains_key("required")
+        || schema_obj.contains_key("properties")
+        || schema_obj.contains_key("additionalProperties");
+    if has_object_constraints {
+        if let Some(obj) = val.as_object() {
+            if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
+                for key in required.iter().filter_map(|v| v.as_str()) {
+                    if !obj.contains_key(key) {
+                        return Err(AgentError::SchemaValidation(format!(
+                            "{path}: JSON output missing required field '{key}'"
+                        )));
+                    }
+                }
+            }
+            let props = schema_obj.get("properties").and_then(|v| v.as_object());
+            if let Some(props_map) = props {
+                for (prop_name, prop_schema) in props_map {
+                    if let Some(prop_val) = obj.get(prop_name) {
+                        let child_path = format!("{path}.{prop_name}");
+                        validate_json_value(prop_val, prop_schema, &child_path)?;
+                    }
+                }
+            }
+            if let Some(addl) = schema_obj.get("additionalProperties") {
+                for (k, v) in obj {
+                    let declared = props.is_some_and(|p| p.contains_key(k));
+                    if declared {
+                        continue;
+                    }
+                    let child_path = format!("{path}.{k}");
+                    match addl {
+                        Value::Bool(false) => {
+                            return Err(AgentError::SchemaValidation(format!(
+                                "{child_path}: additional property '{k}' is not allowed"
+                            )));
+                        }
+                        Value::Bool(true) => {}
+                        sub_schema => validate_json_value(v, sub_schema, &child_path)?,
+                    }
+                }
+            }
+        } else if schema_obj.get("required").and_then(|v| v.as_array()).is_some() {
+            return Err(AgentError::SchemaValidation(format!(
+                "{path}: expected JSON object matching schema"
+            )));
+        }
+    }
+
+    // 4. Array constraints (`items`)
+    if let Some(items_schema) = schema_obj.get("items") {
+        if let Some(arr) = val.as_array() {
+            match items_schema {
+                Value::Array(tuple_schemas) => {
+                    for (idx, (elem, elem_schema)) in
+                        arr.iter().zip(tuple_schemas.iter()).enumerate()
+                    {
+                        let child_path = format!("{path}[{idx}]");
+                        validate_json_value(elem, elem_schema, &child_path)?;
+                    }
+                }
+                sub_schema => {
+                    for (idx, elem) in arr.iter().enumerate() {
+                        let child_path = format!("{path}[{idx}]");
+                        validate_json_value(elem, sub_schema, &child_path)?;
+                    }
+                }
             }
         }
     }
+
     Ok(())
 }
 
@@ -1610,6 +2139,7 @@ mod multi_step_text_tests {
                         workspace_trusted: true,
                         network_allowed: true,
                         rules: vec![],
+                        plan_mode: false,
                     },
                     hooks: HookRunner::default(),
                     approval: None,

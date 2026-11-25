@@ -1589,12 +1589,18 @@ mod tests {
         assert_eq!(proj["knowledge"]["wikiMarkdown"], "");
         assert!(proj["knowledge"]["entries"].is_array());
 
-        // Unknown/legacy profile normalizes to cautious
+        // Known profile (`accept_edits`) is preserved; unknown/legacy profile normalizes to cautious
         store
             .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": "accept_edits"}))
             .unwrap();
         let proj2 = conversation_configuration_json(&store, &sess);
-        assert_eq!(proj2["permissionProfile"], "cautious");
+        assert_eq!(proj2["permissionProfile"], "accept_edits");
+
+        store
+            .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": "unknown_legacy_mode"}))
+            .unwrap();
+        let proj3 = conversation_configuration_json(&store, &sess);
+        assert_eq!(proj3["permissionProfile"], "cautious");
     }
 
     #[test]
@@ -1642,6 +1648,8 @@ mod tests {
     fn dashboard_snapshot_uses_real_automation_stats() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        save_applied_config(&store, &AppliedConfig::default()).unwrap();
         let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
         suite
             .upsert_record(
@@ -1665,6 +1673,8 @@ mod tests {
     fn agent_settings_snapshot_includes_host_identity_and_all_fields() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        save_applied_config(&store, &AppliedConfig::default()).unwrap();
         let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
         store
             .upsert_mcp_server(&nola_types::McpServerConfig {
@@ -1892,6 +1902,8 @@ mod tests {
     fn builtin_skills_have_builtin_source_and_non_custom_category() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        save_applied_config(&store, &AppliedConfig::default()).unwrap();
         let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
 
         // Fresh discovery

@@ -29,9 +29,9 @@ Goal、Task、AgentRun 分离聚合与生命周期；子代理持有受限任务
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [goal_execution.rs](../../../../core/nola-application/src/goal_execution.rs) | Goal 执行模板与准入绑定 |
-| [submission.rs](../../../../core/nola-application/src/agent_room/submission.rs) | Room 接纳、结构化选择与原消息关联 |
-| [child_pump.rs](../../../../core/nola-mobile-bindings/src/child_pump.rs) | 移动端 child 的实际执行/恢复泵 |
+| [goal_execution.rs](../../../../crates/nola-modules/src/goals_sops.rs) | Goal 执行模板与准入绑定 |
+| [submission.rs](../../../../crates/nola-modules/src/rooms_peers.rs) | Room 接纳、结构化选择与原消息关联 |
+| [child_pump.rs](../../../../crates/nola-engine/src/subagents.rs) | 移动端 child 的实际执行/恢复泵 |
 
 当前源码仍有 AgentRoom、Room submission/dispatch 与独立成员 Context；统一 Conversation 是产品方向，不能文档化为底层 Room 已删除。主控结构化路由函数已有实现，也不能再一概标成“未实现”。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

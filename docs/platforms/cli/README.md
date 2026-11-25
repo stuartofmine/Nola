@@ -33,11 +33,11 @@
 
 提供宿主机服务与连接远端 Web 桥是两条独立命令路径。可用 `nola web --connect-host --help` 查看受信助手、Host 身份和令牌输入要求。 [连接宿主机的操作与边界](../../design/shared/HOST_CONNECTION_WORKFLOW.md)。
 
-实现位于 [cli](../../../apps/cli)，提供终端客户端、Agent Host 和本地 HTTP 服务。
+实现位于 [crates/nola-app](../../../crates/nola-app)，以单一 `nola` 二进制提供终端客户端、TUI、Agent Host、本地 HTTP/Web 服务与后台守护进程。
 
-- [CLI 使用与配置](../../../apps/cli/README.md)、[模型配置](../../architecture/模块/08-模型配置与调用/README.md)。
+- [CLI 入口实现](../../../crates/nola-app/src/cli.rs)、[模型配置](../../architecture/模块/08-模型配置与调用/README.md)。
 - [执行与恢复](../../architecture/模块/05-执行与恢复/README.md)、[权限与平台](../../architecture/模块/07-权限与平台/README.md)。
-- 构建使用 `cargo build --locked -p nola_cli -p nola_service --bins`；实际命令与交互按键以 `nola --help` 和终端帮助为准（支持 `--model` / `-m`、`--permission-profile`、`-y` / `--yes`、`nola skills`、`nola mcp`、`nola memory`、`nola version` 与 9 种界面语言 `zh` / `zh-hant` / `en` / `de` / `es` / `fr` / `ja` / `ko` / `ru`）。
+- 构建使用 `cargo build --locked -p nola-app --bin nola`；实际命令与交互按键以 `nola --help` 和终端帮助为准（支持 `--model` / `-m`、`--permission-profile`、`-y` / `--yes`、`nola skills`、`nola mcp`、`nola memory`、`nola update`、`nola version`、`nola tui` 与 `nola web`）。
 
 使用 `nola model --help`、`nola session --help` 或 `nola plugin --help` 可查看对应命令的用法。`nola version --json` 输出版本和构建号。`nola session delete <id> --json` 返回的 `deleted` 表示本次是否实际删除了会话，重复删除返回 `false`。
 

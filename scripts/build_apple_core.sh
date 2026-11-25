@@ -70,9 +70,17 @@ for arch in $ARCH_LIST; do
 done
 
 if [[ "${#BUILT_LIBS[@]}" -eq 1 ]]; then
-  cp -f "${BUILT_LIBS[0]}" "$OUT_LIB"
+  if [[ ! -f "$OUT_LIB" ]] || ! cmp -s "${BUILT_LIBS[0]}" "$OUT_LIB"; then
+    cp -f "${BUILT_LIBS[0]}" "$OUT_LIB"
+  fi
 else
-  lipo -create "${BUILT_LIBS[@]}" -output "$OUT_LIB"
+  TMP_LIB="$OUT_DIR/libnola_core.a.tmp"
+  lipo -create "${BUILT_LIBS[@]}" -output "$TMP_LIB"
+  if [[ ! -f "$OUT_LIB" ]] || ! cmp -s "$TMP_LIB" "$OUT_LIB"; then
+    mv -f "$TMP_LIB" "$OUT_LIB"
+  else
+    rm -f "$TMP_LIB"
+  fi
 fi
 printf '%s\n' "$PROFILE" > "$OUT_DIR/cargo-profile"
 

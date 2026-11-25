@@ -11,6 +11,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
@@ -21,9 +23,10 @@ use serde_json::{json, Value};
 
 use crate::adapter::{
     collect_request_media, finalize_response, format_tail_reminders, join_frozen_system_prefix,
-    BuiltHttpRequest, LlmError, ProtocolMediaLimits, ProviderWireAdapter,
+    normalized_wire_reasoning_effort, BuiltHttpRequest, LlmError, ProtocolMediaLimits,
+    ProviderWireAdapter,
 };
-use crate::sse::SseReader;
+use crate::sse::{ReasoningProgressGuard, SseReader};
 
 pub struct GeminiAdapter;
 
@@ -354,10 +357,12 @@ impl ProviderWireAdapter for GeminiAdapter {
                     "thinkingConfig".into(),
                     json!({ "thinkingBudget": budget, "includeThoughts": budget > 0 }),
                 );
-            } else if let Some(effort) = route.reasoning_effort.as_deref().map(str::trim) {
+            } else if let Some(effort) =
+                normalized_wire_reasoning_effort(route.reasoning_effort.as_deref())
+            {
                 if effort.eq_ignore_ascii_case("none") {
                     gen_cfg.insert("thinkingConfig".into(), json!({ "thinkingBudget": 0 }));
-                } else if !effort.is_empty() {
+                } else {
                     gen_cfg.insert(
                         "thinkingConfig".into(),
                         json!({
@@ -501,7 +506,18 @@ impl ProviderWireAdapter for GeminiAdapter {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        let mut sse = SseReader::new(reader);
+        self.parse_sse_stream_cancellable(route, reader, None, on_delta)
+    }
+
+    fn parse_sse_stream_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        let mut sse = SseReader::new(reader).with_cancel(cancel);
+        let mut reasoning_guard = ReasoningProgressGuard::new();
         let mut response_id: Option<String> = None;
         let mut response_model: Option<String> = None;
         let mut content = String::new();
@@ -555,6 +571,7 @@ impl ProviderWireAdapter for GeminiAdapter {
                         if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                             if !text.is_empty() {
                                 if part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                    reasoning_guard.observe_reasoning(text)?;
                                     reasoning.push_str(text);
                                     on_delta(ModelStreamDelta::Reasoning(text.to_string()));
                                 } else {

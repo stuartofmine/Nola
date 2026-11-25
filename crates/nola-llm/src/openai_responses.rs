@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
@@ -14,10 +16,11 @@ use serde_json::{json, Value};
 
 use crate::adapter::{
     collect_request_media, finalize_response, format_tail_reminders, join_frozen_system_prefix,
-    parse_tool_arguments, BuiltHttpRequest, LlmError, ProtocolMediaLimits, ProviderWireAdapter,
+    normalized_wire_reasoning_effort, parse_tool_arguments, BuiltHttpRequest, LlmError,
+    ProtocolMediaLimits, ProviderWireAdapter,
 };
 use crate::openai_chat::parse_openai_usage;
-use crate::sse::SseReader;
+use crate::sse::{ReasoningProgressGuard, SseReader};
 
 pub struct OpenAiResponsesAdapter;
 
@@ -211,12 +214,7 @@ pub(crate) fn build_responses_body(
             body.insert("top_p".into(), json!(tp));
         }
     }
-    if let Some(effort) = route
-        .reasoning_effort
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(effort) = normalized_wire_reasoning_effort(route.reasoning_effort.as_deref()) {
         if route.capabilities.reasoning {
             let mut r_obj = serde_json::Map::new();
             r_obj.insert("effort".into(), Value::String(effort.to_string()));
@@ -391,9 +389,11 @@ pub(crate) fn parse_responses_sse(
     protocol: ModelProtocol,
     route: &ModelRouteConfig,
     reader: &mut dyn BufRead,
+    cancel: Option<Arc<AtomicBool>>,
     on_delta: &mut dyn FnMut(ModelStreamDelta),
 ) -> Result<NormalizedModelResponse, LlmError> {
-    let mut sse = SseReader::new(reader);
+    let mut sse = SseReader::new(reader).with_cancel(cancel);
+    let mut reasoning_guard = ReasoningProgressGuard::new();
     let mut final_response_obj: Option<Value> = None;
     let mut content = String::new();
     let mut reasoning = String::new();
@@ -430,6 +430,7 @@ pub(crate) fn parse_responses_sse(
             }
             "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
                 if let Some(d) = payload.get("delta").and_then(|v| v.as_str()) {
+                    reasoning_guard.observe_reasoning(d)?;
                     reasoning.push_str(d);
                     on_delta(ModelStreamDelta::Reasoning(d.to_string()));
                 }
@@ -624,6 +625,16 @@ impl ProviderWireAdapter for OpenAiResponsesAdapter {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        parse_responses_sse(ModelProtocol::OpenAiResponses, route, reader, on_delta)
+        self.parse_sse_stream_cancellable(route, reader, None, on_delta)
+    }
+
+    fn parse_sse_stream_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        parse_responses_sse(ModelProtocol::OpenAiResponses, route, reader, cancel, on_delta)
     }
 }

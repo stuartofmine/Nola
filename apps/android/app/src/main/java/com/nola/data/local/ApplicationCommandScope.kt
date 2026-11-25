@@ -23,6 +23,7 @@ internal sealed interface ApplicationCommandScope {
         private val conversationField = setOf(
             "delete_conversation", "rename_conversation", "apply_active_permission_policy", "apply_pending_task_notice",
             "recover_expired_run_deliveries", "recover_observed_orphaned_run", "step_goal",
+            "branch_conversation", "truncate_conversation", "compact_conversation",
         )
         private val idField = setOf("session_delete")
         private val inputConversation = setOf(

@@ -11,6 +11,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
@@ -18,12 +20,14 @@ use nola_types::{
     StructuredModelRequest, TokenUsage,
 };
 use serde_json::{json, Value};
+use url::Url;
 
 use crate::adapter::{
-    collect_request_media, finalize_response, format_tail_reminders, join_frozen_system_prefix,
-    parse_tool_arguments, BuiltHttpRequest, LlmError, ProtocolMediaLimits, ProviderWireAdapter,
+    audio_format_for_mime, collect_request_media, finalize_response, format_tail_reminders,
+    join_frozen_system_prefix, normalized_wire_reasoning_effort, parse_tool_arguments,
+    BuiltHttpRequest, LlmError, ProtocolMediaLimits, ProviderWireAdapter,
 };
-use crate::sse::SseReader;
+use crate::sse::{ReasoningProgressGuard, SseReader};
 
 pub struct OpenAiChatAdapter;
 
@@ -36,6 +40,18 @@ fn chat_endpoint(base: &str) -> String {
     } else {
         format!("{trimmed}/v1/chat/completions")
     }
+}
+
+fn is_deepseek_chat_route(route: &ModelRouteConfig) -> bool {
+    let host = Url::parse(&route.endpoint)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .unwrap_or_default();
+    let model_lc = route.model.trim().to_ascii_lowercase();
+    host == "api.deepseek.com"
+        || host.ends_with(".deepseek.com")
+        || model_lc.starts_with("deepseek-")
+        || model_lc.contains("/deepseek-")
 }
 
 fn user_content_value(text: &str, media: &[MediaAttachment]) -> Value {
@@ -53,13 +69,22 @@ fn user_content_value(text: &str, media: &[MediaAttachment]) -> Value {
         } else {
             raw_mime.as_str()
         };
-        let data_url = format!("data:{mime};base64,{}", att.bytes_base64);
-        if mime == "application/pdf" {
+        if let Some(audio_fmt) = audio_format_for_mime(mime) {
+            parts.push(json!({
+                "type": "input_audio",
+                "input_audio": {
+                    "data": att.bytes_base64,
+                    "format": audio_fmt
+                }
+            }));
+        } else if mime == "application/pdf" {
+            let data_url = format!("data:{mime};base64,{}", att.bytes_base64);
             parts.push(json!({
                 "type": "file",
                 "file": { "filename": att.filename, "file_data": data_url }
             }));
         } else {
+            let data_url = format!("data:{mime};base64,{}", att.bytes_base64);
             parts.push(json!({
                 "type": "image_url",
                 "image_url": { "url": data_url }
@@ -75,7 +100,7 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
     }
 
     fn media_limits(&self) -> ProtocolMediaLimits {
-        ProtocolMediaLimits::OPENAI
+        ProtocolMediaLimits::OPENAI_CHAT
     }
 
     fn build_request(
@@ -222,8 +247,14 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
         if !params.stop.is_empty() {
             body.insert("stop".into(), json!(params.stop));
         }
-        if let Some(effort) = route.reasoning_effort.as_deref().filter(|s| !s.is_empty()) {
-            if route.capabilities.reasoning {
+        if let Some(effort) = normalized_wire_reasoning_effort(route.reasoning_effort.as_deref()) {
+            if is_deepseek_chat_route(route) {
+                if effort.eq_ignore_ascii_case("none") {
+                    body.insert("thinking".into(), json!({"type": "disabled"}));
+                } else if route.capabilities.reasoning {
+                    body.insert("thinking".into(), json!({"type": "enabled"}));
+                }
+            } else if route.capabilities.reasoning {
                 body.insert("reasoning_effort".into(), Value::String(effort.to_string()));
             }
         }
@@ -358,11 +389,22 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
 
     fn parse_sse_stream(
         &self,
-        _route: &ModelRouteConfig,
+        route: &ModelRouteConfig,
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        let mut sse = SseReader::new(reader);
+        self.parse_sse_stream_cancellable(route, reader, None, on_delta)
+    }
+
+    fn parse_sse_stream_cancellable(
+        &self,
+        _route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        let mut sse = SseReader::new(reader).with_cancel(cancel);
+        let mut reasoning_guard = ReasoningProgressGuard::new();
         let mut response_id: Option<String> = None;
         let mut response_model: Option<String> = None;
         let mut content = String::new();
@@ -426,6 +468,7 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
                 .and_then(|v| v.as_str())
             {
                 if !r.is_empty() {
+                    reasoning_guard.observe_reasoning(r)?;
                     reasoning.push_str(r);
                     on_delta(ModelStreamDelta::Reasoning(r.to_string()));
                 }

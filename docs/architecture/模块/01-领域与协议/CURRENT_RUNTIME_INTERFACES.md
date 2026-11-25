@@ -6,7 +6,7 @@
 
 ## CLI 启动与模型目录事务
 
-CLI 对话、init、wiki、Web 和 server 从有效文件读取模型目录。Host 先验证来源、路由与凭据，再通过顶层 `model` 命令中的 `apply_file_catalog` 一次性提交连接、模型及默认选择。目录出错时可继续使用之前可用的默认模型；文件语法错误阻止启动。该嵌套命令没有增加新的 HTTP 路径或顶层 wire tag。[启动入口](../../../../apps/cli/src/config_files.rs) · [命令定义](../../../../core/nola-application/src/model.rs) · [Application 事务](../../../../core/nola-application/src/application_command/capability_catalog.rs)
+CLI 对话、init、wiki、Web 和 server 从有效文件读取模型目录。Host 先验证来源、路由与凭据，再通过顶层 `model` 命令中的 `apply_file_catalog` 一次性提交连接、模型及默认选择。目录出错时可继续使用之前可用的默认模型；文件语法错误阻止启动。该嵌套命令没有增加新的 HTTP 路径或顶层 wire tag。[启动入口](../../../../crates/nola-app/src/config.rs) · [命令定义](../../../../crates/nola-llm/src/lib.rs) · [Application 事务](../../../../crates/nola-engine/src/catalog.rs)
 
 ## 当前实现导航（2026-11-08）
 

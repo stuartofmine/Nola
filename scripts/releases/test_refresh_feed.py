@@ -15,7 +15,7 @@ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
 class RefreshTests(unittest.TestCase):
     def test_renewal_authenticates_old_payload_and_only_changes_timestamps(self):
-        openssl=os.environ.get('OPENSSL_BIN','openssl')
+        openssl=module.default_openssl()
         with tempfile.TemporaryDirectory() as name:
             root=Path(name);key=root/'key.pem'
             subprocess.run([openssl,'genpkey','-algorithm','ED25519','-out',str(key)],check=True,capture_output=True);key.chmod(0o600)

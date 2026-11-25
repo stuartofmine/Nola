@@ -30,30 +30,30 @@ impl PermissionProfile {
         }
     }
 
-    /// Strict canonical parser accepting ONLY `"cautious"` and `"allow_all"`.
+    /// Strict canonical parser accepting ONLY `"cautious"`, `"accept_edits"`, and `"allow_all"`.
     /// Rejects unknown strings, case/punctuation variants, and legacy aliases.
     pub fn parse_strict(raw: &str) -> Result<Self, String> {
         match raw.trim() {
             "cautious" => Ok(Self::Cautious),
+            "accept_edits" => Ok(Self::AcceptEdits),
             "allow_all" => Ok(Self::AllowAll),
             other => Err(format!(
-                "invalid permission profile '{other}': expected strictly 'cautious' or 'allow_all'"
+                "invalid permission profile '{other}': expected strictly 'cautious', 'accept_edits', or 'allow_all'"
             )),
         }
     }
 
-    /// Returns true if this profile is one of the two strict canonical profiles.
+    /// Returns true if this profile is one of the strict canonical profiles.
     pub fn is_strict_canonical(self) -> bool {
-        matches!(self, Self::Cautious | Self::AllowAll)
+        matches!(self, Self::Cautious | Self::AcceptEdits | Self::AllowAll)
     }
 
-    /// Returns the strict canonical wire name (`"cautious"` or `"allow_all"`).
-    /// Non-canonical `AcceptEdits` conservatively maps to `"cautious"`.
+    /// Returns the strict canonical wire name (`"cautious"`, `"accept_edits"`, or `"allow_all"`).
     pub fn as_canonical_str(self) -> &'static str {
         match self {
             Self::Cautious => "cautious",
+            Self::AcceptEdits => "accept_edits",
             Self::AllowAll => "allow_all",
-            Self::AcceptEdits => "cautious",
         }
     }
 }
@@ -153,6 +153,10 @@ mod tests {
             PermissionProfile::Cautious
         );
         assert_eq!(
+            PermissionProfile::parse_strict("accept_edits").unwrap(),
+            PermissionProfile::AcceptEdits
+        );
+        assert_eq!(
             PermissionProfile::parse_strict("allow_all").unwrap(),
             PermissionProfile::AllowAll
         );
@@ -160,8 +164,8 @@ mod tests {
             "",
             "ask",
             "default",
-            "accept_edits",
             "accept-edits",
+            "ACCEPT_EDITS",
             "allow-all",
             "yolo",
             "CAUTIOUS",
@@ -174,13 +178,21 @@ mod tests {
             );
         }
         assert!(PermissionProfile::Cautious.is_strict_canonical());
+        assert!(PermissionProfile::AcceptEdits.is_strict_canonical());
         assert!(PermissionProfile::AllowAll.is_strict_canonical());
-        assert!(!PermissionProfile::AcceptEdits.is_strict_canonical());
         assert_eq!(PermissionProfile::Cautious.as_canonical_str(), "cautious");
-        assert_eq!(PermissionProfile::AllowAll.as_canonical_str(), "allow_all");
         assert_eq!(
             PermissionProfile::AcceptEdits.as_canonical_str(),
-            "cautious"
+            "accept_edits"
+        );
+        assert_eq!(PermissionProfile::AllowAll.as_canonical_str(), "allow_all");
+        assert_eq!(
+            PermissionProfile::parse("accept-edits"),
+            Some(PermissionProfile::AcceptEdits)
+        );
+        assert_eq!(
+            PermissionProfile::parse("accept_edits"),
+            Some(PermissionProfile::AcceptEdits)
         );
     }
 }

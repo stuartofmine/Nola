@@ -5,6 +5,7 @@
     import { workspacePageLocation } from '../lib/workspacePageLocation';
     import { parseWorkspaceReview, type WorkspaceReview } from '../lib/workspaceReview';
     import { listV2WorkspaceCheckpoints, redoV2Workspace, undoV2Workspace, type V2WorkspaceCheckpoint } from '../lib/v2Chat';
+    import WorkspaceWorktreesPanel from '../components/WorkspaceWorktreesPanel.svelte';
     import { locale, t } from '../lib/i18n';
     let {conversationId, hostId, onopen}: {conversationId?: string; hostId?: string; onopen?: () => void} = $props();
     const location = workspacePageLocation();
@@ -146,6 +147,9 @@
             {/each}
         {/if}
     {/if}
+    <div class="worktrees-card">
+        <WorkspaceWorktreesPanel onchanged={() => void load()} />
+    </div>
 {/snippet}
 <section class="workspace-review" class:embedded-review={!!onopen} aria-label={t($locale, 'chatInspector.review')}>
     {#if onopen}
@@ -184,4 +188,5 @@
     .checkpoint-item { justify-content: space-between; flex-wrap: wrap; }
     .checkpoint-label { flex: 1 1 auto; }
     .checkpoint-summary { font-size: .75rem; color: var(--muted); }
+    .worktrees-card { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 </style>

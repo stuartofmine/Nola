@@ -1488,4 +1488,14 @@
     <string name="chat_v2_context_compacted_range">Контекст сжат (%1$s → %2$s токенов)</string>
     <string name="chat_v2_context_compacted_after">Контекст сжат (%1$s токенов)</string>
     <string name="chat_v2_context_compaction_failed">Не удалось сжать контекст</string>
+    <string name="chat_v2_branch_conversation">Создать ветку диалога</string>
+    <string name="chat_v2_branch_failed">Не удалось создать ветку диалога</string>
+    <string name="chat_v2_workspace_review">Обзор рабочей области</string>
+    <string name="chat_v2_workspace_review_empty">Изменения в рабочей области не обнаружены</string>
+    <string name="chat_v2_workspace_review_host_required">Подключитесь к Web Agent Host для просмотра изменений рабочей области</string>
+    <string name="chat_v2_workspace_review_staged">Индексированные изменения</string>
+    <string name="chat_v2_workspace_review_unstaged">Неиндексированные изменения</string>
+    <string name="chat_v2_workspace_review_files">Файлы рабочей области</string>
+    <string name="chat_v2_workspace_review_truncated">Вывод сокращён для предпросмотра</string>
+    <string name="chat_v2_edit_resend_failed">Не удалось обрезать и повторно отправить сообщение</string>
 </resources>

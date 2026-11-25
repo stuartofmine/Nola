@@ -13,6 +13,8 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import com.nola.ui.components.NolaBadge
+import com.nola.ui.components.NolaCard
 import com.nola.ui.components.NolaIconButton
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
@@ -115,9 +117,12 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.MoreVert
@@ -343,6 +348,8 @@ internal fun ChatScreen(
     var showActions by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
+    var v2EditTarget by remember(state.conversationId) { mutableStateOf<ConversationMessage?>(null) }
+    var v2EditDraft by remember(state.conversationId) { mutableStateOf("") }
     var showExecutionBackendMenu by remember { mutableStateOf(false) }
     // Opening an inspector is navigation within this conversation. Its panel reloads
     // the authoritative content when the asynchronous Host binding becomes available.
@@ -1173,6 +1180,24 @@ internal fun ChatScreen(
                                     showActions = false
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_v2_branch_conversation)) },
+                                modifier = Modifier.testTag("chat.v2.branch"),
+                                enabled = draftWritable && !state.processingState.blocksInput,
+                                onClick = {
+                                    showActions = false
+                                    viewModel.branchConversation()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_v2_workspace_review)) },
+                                modifier = Modifier.testTag("chat.v2.workspace_review"),
+                                enabled = presentationReady,
+                                onClick = {
+                                    showActions = false
+                                    viewModel.openWorkspaceReview()
+                                }
+                            )
                         }
                         DropdownMenuItem(text = { Text(stringResource(R.string.chat_experts)) },
                             modifier = Modifier.testTag("chat.experts.open"),
@@ -1236,7 +1261,14 @@ internal fun ChatScreen(
             ChatTranscript(
             state = state,
             onExpertMention = { mentionDetails = it },
-            onResendEditedMessage = if (state.expertContextOwner == null && state.currentModel?.source != ModelInfo.ModelSource.WebHost) viewModel::beginMessageEdit else null,
+            onResendEditedMessage = when {
+                state.expertContextOwner != null -> null
+                state.currentModel?.source == ModelInfo.ModelSource.WebHost -> { msg ->
+                    v2EditTarget = msg
+                    v2EditDraft = msg.text
+                }
+                else -> viewModel::beginMessageEdit
+            },
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
             resumingExpertMessage = resumingExpertMessage,
@@ -1739,6 +1771,46 @@ internal fun ChatScreen(
             } else {
                 null
             }
+        )
+    }
+
+    v2EditTarget?.let { target ->
+        AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { v2EditTarget = null },
+            title = { Text(stringResource(R.string.chat_edit_resend)) },
+            text = {
+                OutlinedTextField(
+                    value = v2EditDraft,
+                    onValueChange = { v2EditDraft = it },
+                    minLines = 2,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth().testTag("chat.v2.edit.input")
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = v2EditDraft.isNotBlank() && !state.processingState.blocksInput,
+                    onClick = {
+                        val edited = v2EditDraft
+                        v2EditTarget = null
+                        viewModel.truncateAndResendV2Message(target, edited)
+                    },
+                ) { Text(stringResource(R.string.chat_edit_resend)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { v2EditTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    state.v2WorkspaceReview?.let { reviewState ->
+        V2WorkspaceReviewSheet(
+            review = reviewState,
+            onRefresh = viewModel::openWorkspaceReview,
+            onDismiss = viewModel::dismissWorkspaceReview,
         )
     }
 }
@@ -4894,6 +4966,132 @@ private fun StreamingActivityIndicator() {
                     .clip(CircleShape)
                     .background(dotColor)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun V2WorkspaceReviewSheet(
+    review: V2WorkspaceReviewState,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .testTag("chat.v2.workspace_review.sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onRefresh, enabled = !review.loading) {
+                    Text(stringResource(R.string.common_refresh))
+                }
+            }
+            if (review.workspaceRoot.isNotBlank()) {
+                Text(
+                    text = review.workspaceRoot,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (review.loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            review.error?.takeIf { it.isNotBlank() }?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (!review.loading && review.error == null && review.entries.isEmpty() && review.stagedDiff.isBlank() && review.unstagedDiff.isBlank()) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (review.entries.isNotEmpty()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_files),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    review.entries.forEachIndexed { index, entry ->
+                        if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (entry.status.isNotBlank()) {
+                                NolaBadge(text = entry.status, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Text(
+                                text = if (entry.isDir) "${entry.path}/" else entry.path,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+            if (review.stagedDiff.isNotBlank()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_staged),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = review.stagedDiff,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                }
+            }
+            if (review.unstagedDiff.isNotBlank()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_unstaged),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = review.unstagedDiff,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                }
+            }
+            if (review.truncated) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review_truncated),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 }

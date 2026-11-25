@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -29,7 +29,9 @@ use nola_modules::a2ui::{
 use nola_modules::rooms_peers::built_in_role_templates;
 use nola_modules::scheduler::spawn_background_scheduler;
 use nola_modules::ModulesSuite;
-use nola_store::{default_socket_path, EventPage, ServiceLock, Store, PROTOCOL_VERSION};
+use nola_store::{
+    default_socket_path, EventPage, ServiceLock, Store, SyncChangeRecord, PROTOCOL_VERSION,
+};
 use nola_types::{
     new_id, now_ms, sha256_hex, AgentRoom, ExpertPeer, GoalRecord, GoalStatus, McpServerConfig,
     McpTransport, MemoryItem, PermissionProfile, Session,
@@ -43,6 +45,187 @@ const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CONCURRENT_DAEMON_CLIENTS: usize = 32;
 
 static WRITE_MUTEX: Mutex<()> = Mutex::new(());
+static ACTIVE_RUNS: OnceLock<Mutex<BTreeMap<String, Value>>> = OnceLock::new();
+
+fn active_runs_map() -> &'static Mutex<BTreeMap<String, Value>> {
+    ACTIVE_RUNS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Register an active run for a conversation in daemon in-memory state and durable store KV.
+pub fn register_active_run(store: &Store, conv_id: &str, run_info: Value) {
+    if conv_id.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut map) = active_runs_map().lock() {
+        map.insert(conv_id.to_string(), run_info.clone());
+    }
+    let _ = store.set_kv(&format!("current_run:{conv_id}"), &run_info);
+}
+
+/// Clear an active run for a conversation from daemon in-memory state and durable store KV.
+pub fn clear_active_run(store: &Store, conv_id: &str) {
+    if conv_id.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut map) = active_runs_map().lock() {
+        map.remove(conv_id);
+    }
+    let _ = store.set_kv(&format!("current_run:{conv_id}"), &Value::Null);
+}
+
+fn lookup_active_run(store: &Store, conv_id: &str) -> Option<Value> {
+    if conv_id.trim().is_empty() {
+        return None;
+    }
+    if let Ok(map) = active_runs_map().lock() {
+        if let Some(val) = map.get(conv_id) {
+            if !val.is_null() {
+                return Some(val.clone());
+            }
+        }
+    }
+    if let Ok(Some(val)) = store.get_kv(&format!("current_run:{conv_id}")) {
+        if !val.is_null() {
+            return Some(val);
+        }
+    }
+    // Fall back to live running `durable_task` module records for this conversation.
+    if let Ok(tasks) = store.list_module_records::<Value>("durable_task") {
+        if let Some(t) = tasks.into_iter().find(|t| {
+            t.get("session_id").and_then(|v| v.as_str()) == Some(conv_id)
+                && t.get("status").and_then(|v| v.as_str()) == Some("running")
+        }) {
+            return Some(json!({
+                "conversation_id": conv_id,
+                "run_id": t.get("task_id").cloned().unwrap_or(Value::Null),
+                "assistant_message_id": t
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .map(|tid| format!("{tid}:assistant")),
+                "status": "running",
+                "task": t
+            }));
+        }
+    }
+    None
+}
+
+fn load_durable_permission_grants(store: &Store, conv_id: Option<&str>) -> Vec<Value> {
+    let mut grants: Vec<Value> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+
+    if let Ok(records) = store.list_module_records::<Value>("permission_grant") {
+        for rec in records {
+            let active = rec.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
+            if !active {
+                continue;
+            }
+            let rec_session = rec
+                .get("session_id")
+                .or_else(|| rec.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty() && *s != "global");
+            let matches_conv = match (conv_id, rec_session) {
+                (Some(cid), Some(rs)) => rs == cid,
+                _ => true,
+            };
+            if !matches_conv {
+                continue;
+            }
+            let gid = rec
+                .get("id")
+                .or_else(|| rec.get("grant_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if gid.is_empty() || seen_ids.insert(gid) {
+                grants.push(rec);
+            }
+        }
+    }
+
+    if let Some(cid) = conv_id.filter(|s| !s.trim().is_empty()) {
+        if let Ok(Some(Value::Array(conv_grants))) = store.get_kv(&format!("conv_grants:{cid}")) {
+            for g in conv_grants {
+                let gid = g
+                    .get("id")
+                    .or_else(|| g.get("grant_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if gid.is_empty() || seen_ids.insert(gid) {
+                    grants.push(g);
+                }
+            }
+        }
+    }
+    grants
+}
+
+fn load_pending_permission_requests(store: &Store, conv_id: Option<&str>) -> Vec<Value> {
+    let Some(cid) = conv_id.filter(|s| !s.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let mut pending = store
+        .get_kv(&format!("pending_permissions:{cid}"))
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    if let Ok(Some(Value::Array(waits))) = store.get_kv(&format!("open_waits:{cid}")) {
+        for w in waits {
+            let kind = w
+                .get("kind")
+                .or_else(|| w.get("type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if matches!(kind, "permission" | "approval" | "request_permission") {
+                pending.push(w);
+            }
+        }
+    }
+    pending
+}
+
+fn synchronize_session_state_after_truncate(store: &Store, conv_id: &str) {
+    let state_key = format!("session_state:{conv_id}");
+    let Ok(Some(mut state_val)) = store.get_kv(&state_key) else {
+        return;
+    };
+    let (messages, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
+    let rebuilt_history: Vec<Value> = messages
+        .iter()
+        .filter_map(|m| {
+            let role = m.get("role").and_then(|v| v.as_str())?;
+            let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            match role {
+                "user" => Some(json!({
+                    "role": "user",
+                    "content": content
+                })),
+                "assistant" => {
+                    let reasoning = m
+                        .get("reasoning")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty());
+                    let mut obj = json!({
+                        "role": "assistant",
+                        "content": content
+                    });
+                    if let Some(r) = reasoning {
+                        obj["reasoning"] = json!(r);
+                    }
+                    Some(obj)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    if let Some(obj) = state_val.as_object_mut() {
+        obj.insert("history".into(), Value::Array(rebuilt_history));
+    }
+    let _ = store.set_kv(&state_key, &state_val);
+}
 
 #[cfg(unix)]
 struct ActiveClientGuard(Arc<AtomicUsize>);
@@ -458,6 +641,11 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "begin_content_upload"
         | "append_content_chunk"
         | "seal_content_upload"
+        | "stage_assistant_journal_content"
+        | "put_conversation_pdf_resource"
+        | "delete_conversation_resource"
+        | "admit_conversation_user_message"
+        | "begin_queued_user_turn"
         | "backup" => true,
         "automation" => {
             let (op, payload) = extract_sub_command(cmd_args);
@@ -816,6 +1004,9 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str());
             let (profile, rev) = read_permission_state(store, id);
+            let grants = load_durable_permission_grants(store, id);
+            let pending = load_pending_permission_requests(store, id);
+            let is_active = id.and_then(|cid| lookup_active_run(store, cid)).is_some();
             Ok(json!({
                 "conversation_id": id,
                 "permission_profile": profile,
@@ -823,7 +1014,9 @@ pub fn dispatch_command(
                 "revision": rev,
                 "configuration_revision": rev,
                 "owner": {"kind": "local"},
-                "state": "inactive"
+                "state": if is_active { "active" } else { "inactive" },
+                "grants": grants,
+                "pending_requests": pending
             }))
         }
         "load_conversation_permission_projection_v1" => {
@@ -833,21 +1026,51 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
             let (profile, rev) = read_permission_state(store, Some(id));
+            let grants = load_durable_permission_grants(store, Some(id));
+            let pending = load_pending_permission_requests(store, Some(id));
             Ok(json!({
                 "conversation_id": id,
                 "permission_profile": profile,
                 "revision": rev,
-                "pending_requests": [],
-                "grants": []
+                "pending_requests": pending,
+                "pending": pending,
+                "grants": grants
             }))
         }
         "active_run" => {
-            let conv_id = args.get("conversation_id").and_then(|v| v.as_str());
-            Ok(json!({
-                "active": false,
-                "run": Value::Null,
-                "conversation_id": conv_id
-            }))
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str());
+            if let Some(cid) = conv_id.filter(|s| !s.trim().is_empty()) {
+                let found = lookup_active_run(store, cid);
+                let run_id = found
+                    .as_ref()
+                    .and_then(|r| r.get("run_id").cloned())
+                    .unwrap_or(Value::Null);
+                let assistant_message_id = found
+                    .as_ref()
+                    .and_then(|r| r.get("assistant_message_id").cloned())
+                    .unwrap_or(Value::Null);
+                Ok(json!({
+                    "active": found.is_some(),
+                    "run": found.unwrap_or(Value::Null),
+                    "run_id": run_id,
+                    "assistant_message_id": assistant_message_id,
+                    "conversation_id": cid
+                }))
+            } else {
+                let runs: Vec<Value> = active_runs_map()
+                    .lock()
+                    .map(|m| m.values().cloned().collect())
+                    .unwrap_or_default();
+                Ok(json!({
+                    "active": !runs.is_empty(),
+                    "run": runs.first().cloned().unwrap_or(Value::Null),
+                    "runs": runs,
+                    "conversation_id": Value::Null
+                }))
+            }
         }
         "load_conversation_export_page" => {
             let id = args
@@ -1332,6 +1555,7 @@ pub fn dispatch_command(
                     &format!("cancel_requested:{conv_id}"),
                     &json!({"requested_at_ms": now_ms()}),
                 );
+                clear_active_run(store, conv_id);
             }
             Ok(json!({
                 "ok": true,
@@ -1871,6 +2095,7 @@ pub fn dispatch_command(
             let deleted = store
                 .truncate_events_from(id, from_seq)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            synchronize_session_state_after_truncate(store, id);
             Ok(
                 json!({"ok": true, "conversation_id": id, "from_seq": from_seq, "deleted_events": deleted}),
             )
@@ -1889,6 +2114,13 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let up_to_seq = args
+                .get("up_to_seq")
+                .or_else(|| args.get("upToSeq"))
+                .or_else(|| args.get("branch_seq"))
+                .or_else(|| args.get("message_seq"))
+                .or_else(|| args.get("boundary_seq"))
+                .and_then(|v| v.as_i64());
             let parent = store
                 .get_session(id)
                 .map_err(|e| ("storage_error", e.to_string()))?;
@@ -1912,10 +2144,47 @@ pub fn dispatch_command(
             store
                 .upsert_session(&sess)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            if let Ok(EventPage::Events(ev)) = store.events_after(id, 0, 500) {
-                for e in ev {
-                    let _ = store.append_event(&new_conv_id, &e.kind, e.payload, 50_000);
+
+            // Copy transcript events paginated via read_event_range up to optional `up_to_seq`.
+            let mut next_seq = 1i64;
+            loop {
+                let batch = store
+                    .read_event_range(id, next_seq, 500)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                if batch.is_empty() {
+                    break;
                 }
+                let mut reached_limit = false;
+                for e in &batch {
+                    if let Some(max_seq) = up_to_seq {
+                        if e.seq > max_seq {
+                            reached_limit = true;
+                            break;
+                        }
+                    }
+                    let _ = store.append_event(&new_conv_id, &e.kind, e.payload.clone(), 50_000);
+                    next_seq = e.seq + 1;
+                }
+                if reached_limit || batch.len() < 500 {
+                    break;
+                }
+            }
+
+            // Copy session_state, meta, and knowledge from source to branched conversation.
+            if let Ok(Some(state_val)) = store.get_kv(&format!("session_state:{id}")) {
+                let _ = store.set_kv(&format!("session_state:{new_conv_id}"), &state_val);
+            }
+            if up_to_seq.is_some() {
+                synchronize_session_state_after_truncate(store, &new_conv_id);
+            }
+            if let Ok(Some(meta_val)) = store.get_kv(&crate::web_api::session_meta_key(id)) {
+                let _ = store.set_kv(&crate::web_api::session_meta_key(&new_conv_id), &meta_val);
+            }
+            if let Ok(Some(k_val)) = store.get_kv(&crate::web_api::conversation_knowledge_key(id)) {
+                let _ = store.set_kv(
+                    &crate::web_api::conversation_knowledge_key(&new_conv_id),
+                    &k_val,
+                );
             }
             Ok(
                 json!({"conversation": crate::web_api::session_to_conversation_json(store, &sess)}),
@@ -2585,16 +2854,35 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let items = store
+            let mut items = store
                 .get_kv(&format!("unknown_effect_recovery:{conv_id}"))
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
+            let verification = store
+                .get_kv(&format!("turn_verification:{conv_id}"))
+                .ok()
+                .flatten();
+            if let Some(ref ver) = verification {
+                if let Some(files) = ver.get("modified_files").and_then(|v| v.as_array()) {
+                    for f in files {
+                        if f.get("verified_after_edit").and_then(|v| v.as_bool()) == Some(false) {
+                            items.push(json!({
+                                "kind": "unverified_file_modification",
+                                "uri": f.get("uri").cloned().unwrap_or(Value::Null),
+                                "operation": f.get("operation").cloned().unwrap_or(Value::Null),
+                                "last_modified_step": f.get("last_modified_step").cloned().unwrap_or(Value::Null)
+                            }));
+                        }
+                    }
+                }
+            }
             Ok(json!({
                 "conversation_id": conv_id,
                 "pending": !items.is_empty(),
-                "items": items
+                "items": items,
+                "turn_verification": verification.unwrap_or(Value::Null)
             }))
         }
         "resolve_unknown_effect_recovery" => {
@@ -2618,12 +2906,24 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let tasks = store
+            let mut tasks = store
                 .get_kv(&format!("owned_task_recovery:{conv_id}"))
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
+            if let Ok(durable) = store.list_module_records::<Value>("durable_task") {
+                for t in durable {
+                    let sess_match = conv_id.is_empty()
+                        || t.get("session_id")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s == conv_id || s.starts_with(&format!("{conv_id}:")));
+                    let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    if sess_match && matches!(status, "running" | "interrupted") {
+                        tasks.push(t);
+                    }
+                }
+            }
             Ok(json!({
                 "conversation_id": conv_id,
                 "pending": !tasks.is_empty(),
@@ -2656,19 +2956,108 @@ pub fn dispatch_command(
                 .or_else(|| args.get("message_id"))
                 .and_then(|v| v.as_str());
             let target_seq = args.get("seq").and_then(|v| v.as_i64());
-            let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
-            let found = msgs.into_iter().find(|m| {
-                part_id.is_some_and(|pid| m.get("id").and_then(|v| v.as_str()) == Some(pid))
-                    || target_seq.is_some_and(|sq| m.get("seq").and_then(|v| v.as_i64()) == Some(sq))
-            });
-            match found {
-                Some(m) => Ok(json!({
-                    "conversation_id": conv_id,
-                    "part_id": part_id.or_else(|| m.get("id").and_then(|v| v.as_str())),
-                    "content": m.get("content").cloned().unwrap_or_else(|| json!("")),
-                    "message": m,
-                    "found": true
-                })),
+            let query = args.get("query").and_then(|v| v.as_str());
+
+            let found_event = if let Some(seq) = target_seq {
+                store
+                    .read_event_range(conv_id, seq, 1)
+                    .map_err(|e| ("storage_error", e.to_string()))?
+                    .into_iter()
+                    .find(|e| e.seq == seq)
+            } else if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
+                store
+                    .search_events_fts(Some(conv_id), q, 1)
+                    .map_err(|e| ("storage_error", e.to_string()))?
+                    .into_iter()
+                    .next()
+            } else if let Some(pid) = part_id {
+                let direct_seq = pid
+                    .strip_prefix("ev-")
+                    .or_else(|| pid.strip_prefix("msg-"))
+                    .and_then(|rest| rest.split(':').next())
+                    .and_then(|s| s.parse::<i64>().ok());
+                let mut hit = if let Some(sq) = direct_seq {
+                    store
+                        .read_event_range(conv_id, sq, 1)
+                        .ok()
+                        .and_then(|v| v.into_iter().find(|e| e.seq == sq))
+                } else {
+                    None
+                };
+                if hit.is_none() {
+                    if let Ok(fts_hits) = store.search_events_fts(Some(conv_id), pid, 16) {
+                        hit = fts_hits.into_iter().find(|e| {
+                            e.payload.get("id").and_then(|v| v.as_str()) == Some(pid)
+                                || e.payload.get("message_id").and_then(|v| v.as_str()) == Some(pid)
+                                || e.payload.get("part_id").and_then(|v| v.as_str()) == Some(pid)
+                        });
+                    }
+                }
+                if hit.is_none() {
+                    let mut cursor = 1i64;
+                    while hit.is_none() {
+                        let batch = store
+                            .read_event_range(conv_id, cursor, 64)
+                            .map_err(|e| ("storage_error", e.to_string()))?;
+                        if batch.is_empty() {
+                            break;
+                        }
+                        cursor = batch.last().map(|e| e.seq + 1).unwrap_or(cursor + 64);
+                        hit = batch.into_iter().find(|e| {
+                            format!("ev-{}", e.seq) == pid
+                                || format!("msg-{}", e.seq) == pid
+                                || e.payload.get("id").and_then(|v| v.as_str()) == Some(pid)
+                                || e.payload.get("message_id").and_then(|v| v.as_str()) == Some(pid)
+                                || e.payload.get("part_id").and_then(|v| v.as_str()) == Some(pid)
+                        });
+                    }
+                }
+                hit
+            } else {
+                None
+            };
+
+            match found_event {
+                Some(ev) => {
+                    let content = ev
+                        .payload
+                        .get("content")
+                        .or_else(|| ev.payload.get("text"))
+                        .or_else(|| ev.payload.get("delta"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let role = ev
+                        .payload
+                        .get("role")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_else(|| match ev.kind.as_str() {
+                            "user_message" => "user",
+                            "tool_result" => "tool",
+                            _ => "assistant",
+                        });
+                    let resolved_id = ev
+                        .payload
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("ev-{}", ev.seq));
+                    Ok(json!({
+                        "conversation_id": conv_id,
+                        "part_id": part_id.unwrap_or(&resolved_id),
+                        "seq": ev.seq,
+                        "kind": ev.kind,
+                        "content": content,
+                        "message": {
+                            "id": resolved_id,
+                            "seq": ev.seq,
+                            "role": role,
+                            "content": content,
+                            "created_at_ms": ev.created_at_ms
+                        },
+                        "found": true
+                    }))
+                }
                 None => Ok(json!({
                     "conversation_id": conv_id,
                     "part_id": part_id,
@@ -2683,6 +3072,15 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let from_seq = args
+                .get("from_seq")
+                .or_else(|| args.get("start_seq"))
+                .and_then(|v| v.as_i64());
             let start_offset = args
                 .get("start_offset")
                 .or_else(|| args.get("offset"))
@@ -2695,28 +3093,113 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(8192)
                 .clamp(1, 200_000) as usize;
-            let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
-            let full_text: String = msgs
-                .iter()
-                .map(|m| {
-                    let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("assistant");
-                    let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                    format!("[{role}]\n{content}")
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let chars: Vec<char> = full_text.chars().collect();
-            let total = chars.len();
-            let start = start_offset.min(total);
-            let end = (start + max_chars).min(total);
-            let slice: String = chars[start..end].iter().collect();
+
+            let format_ev = |ev: &nola_store::StoredEvent| -> Option<String> {
+                let text = ev
+                    .payload
+                    .get("content")
+                    .or_else(|| ev.payload.get("text"))
+                    .or_else(|| ev.payload.get("delta"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if text.is_empty() {
+                    return None;
+                }
+                let role = ev
+                    .payload
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| match ev.kind.as_str() {
+                        "user_message" => "user",
+                        "tool_result" => "tool",
+                        _ => "assistant",
+                    });
+                Some(format!("[{role}]\n{text}"))
+            };
+
+            if let Some(q) = query {
+                let hits = store
+                    .search_events_fts(Some(conv_id), q, 64)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                let matched_text = hits
+                    .iter()
+                    .filter_map(format_ev)
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let chars: Vec<char> = matched_text.chars().collect();
+                let total = chars.len();
+                let start = start_offset.min(total);
+                let end = (start + max_chars).min(total);
+                let slice: String = chars[start..end].iter().collect();
+                return Ok(json!({
+                    "conversation_id": conv_id,
+                    "text": slice,
+                    "start_offset": start,
+                    "end_offset": end,
+                    "total_chars": total,
+                    "has_more": end < total,
+                    "match_count": hits.len()
+                }));
+            }
+
+            // Stream bounded slices via `Store::read_event_range` without materializing full transcript!
+            let mut cursor_seq = from_seq.unwrap_or(1).max(1);
+            let mut collected = String::new();
+            let mut seen_chars = 0usize;
+            let mut slice_out = String::new();
+            let mut has_more = false;
+            let target_end = start_offset.saturating_add(max_chars);
+
+            'outer: loop {
+                let batch = store
+                    .read_event_range(conv_id, cursor_seq, 64)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                if batch.is_empty() {
+                    break;
+                }
+                let batch_len = batch.len();
+                cursor_seq = batch.last().map(|e| e.seq + 1).unwrap_or(cursor_seq + 64);
+                for ev in &batch {
+                    let Some(block) = format_ev(ev) else {
+                        continue;
+                    };
+                    if !collected.is_empty() {
+                        collected.clear();
+                        for ch in "\n\n".chars() {
+                            if seen_chars >= start_offset && seen_chars < target_end {
+                                slice_out.push(ch);
+                            }
+                            seen_chars += 1;
+                            if seen_chars > target_end {
+                                has_more = true;
+                                break 'outer;
+                            }
+                        }
+                    }
+                    collected.push('x');
+                    for ch in block.chars() {
+                        if seen_chars >= start_offset && seen_chars < target_end {
+                            slice_out.push(ch);
+                        }
+                        seen_chars += 1;
+                        if seen_chars > target_end {
+                            has_more = true;
+                            break 'outer;
+                        }
+                    }
+                }
+                if batch_len < 64 {
+                    break;
+                }
+            }
+            let end_offset = start_offset + slice_out.chars().count();
             Ok(json!({
                 "conversation_id": conv_id,
-                "text": slice,
-                "start_offset": start,
-                "end_offset": end,
-                "total_chars": total,
-                "has_more": end < total
+                "text": slice_out,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "total_chars": seen_chars,
+                "has_more": has_more
             }))
         }
         "load_conversation_task_projection_v1" => {
@@ -2745,6 +3228,17 @@ pub fn dispatch_command(
                 .or_else(|| args.get("conversation_id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            if let Some(from_seq) = input
+                .get("from_seq")
+                .or_else(|| input.get("truncate_from_seq"))
+                .or_else(|| input.get("target_seq"))
+                .and_then(|v| v.as_i64())
+            {
+                store
+                    .truncate_events_from(conv_id, from_seq)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                synchronize_session_state_after_truncate(store, conv_id);
+            }
             let mut rec = input.clone();
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("conversation_id".into(), json!(conv_id));
@@ -2764,6 +3258,17 @@ pub fn dispatch_command(
                 .or_else(|| args.get("conversation_id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            if let Some(from_seq) = input
+                .get("from_seq")
+                .or_else(|| input.get("truncate_from_seq"))
+                .or_else(|| input.get("target_seq"))
+                .and_then(|v| v.as_i64())
+            {
+                store
+                    .truncate_events_from(conv_id, from_seq)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                synchronize_session_state_after_truncate(store, conv_id);
+            }
             let mut rec = input.clone();
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("conversation_id".into(), json!(conv_id));
@@ -3032,13 +3537,60 @@ pub fn dispatch_command(
                 .ok()
                 .flatten()
                 .unwrap_or(Value::Null);
+            let active_run_val = lookup_active_run(store, conv_id);
+            let verification = store
+                .get_kv(&format!("turn_verification:{conv_id}"))
+                .ok()
+                .flatten();
+            let has_unverified_edits = verification
+                .as_ref()
+                .and_then(|v| v.get("all_modified_verified").and_then(|b| b.as_bool()))
+                == Some(false);
+            let durable_tasks: Vec<Value> = store
+                .list_module_records::<Value>("durable_task")
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| {
+                    let match_conv = conv_id.is_empty()
+                        || t.get("session_id")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s == conv_id || s.starts_with(&format!("{conv_id}:")));
+                    let match_run = run_id.is_empty()
+                        || t.get("task_id").and_then(|v| v.as_str()) == Some(run_id);
+                    match_conv && match_run
+                })
+                .collect();
+            let has_interrupted_task = durable_tasks.iter().any(|t| {
+                matches!(
+                    t.get("status").and_then(|v| v.as_str()),
+                    Some("interrupted" | "running" | "failed")
+                )
+            });
+            let recoverable = has_interrupted_task
+                || active_run_val.is_some()
+                || !intent.is_null()
+                || has_unverified_edits;
+            let state = if has_interrupted_task {
+                "interrupted"
+            } else if active_run_val.is_some() {
+                "active"
+            } else if has_unverified_edits {
+                "unverified"
+            } else if !intent.is_null() {
+                "pending_submission"
+            } else {
+                "idle"
+            };
             Ok(json!({
                 "conversation_id": conv_id,
                 "run_id": run_id,
                 "assistant_message_id": assistant_message_id,
-                "recoverable": false,
-                "state": "idle",
-                "pending_intent": intent
+                "recoverable": recoverable,
+                "state": state,
+                "pending_intent": intent,
+                "active_run": active_run_val.unwrap_or(Value::Null),
+                "durable_tasks": durable_tasks,
+                "turn_verification": verification.unwrap_or(Value::Null)
             }))
         }
         "accept_remote_run_context_usage" => {
@@ -3076,18 +3628,326 @@ pub fn dispatch_command(
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"ok": true, "accepted": true}))
         }
-        "pending_sync_changes" => Ok(json!([])),
-        "resolve_sync_change" => Ok(json!(true)),
-        "get_sync_cursor" => Ok(Value::Null),
-        "save_sync_cursor" => Ok(json!(true)),
+        "pending_sync_changes" => {
+            let scope = args
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(100)
+                .clamp(1, 1000) as usize;
+            let changes = store
+                .list_pending_sync_changes(scope, limit)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(serde_json::to_value(changes).unwrap_or_else(|_| json!([])))
+        }
+        "resolve_sync_change" => {
+            let input = args.get("input").unwrap_or(args);
+            let mut resolved_any = false;
+            if let Some(ids) = input.get("ids").and_then(|v| v.as_array()) {
+                for id_val in ids {
+                    if let Some(id) = id_val.as_str().filter(|s| !s.trim().is_empty()) {
+                        if store
+                            .resolve_sync_change(id)
+                            .map_err(|e| ("storage_error", e.to_string()))?
+                        {
+                            resolved_any = true;
+                        }
+                    }
+                }
+            } else if let Some(id) = input
+                .get("id")
+                .or_else(|| input.get("change_id"))
+                .or_else(|| args.get("id"))
+                .or_else(|| args.get("change_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                resolved_any = store
+                    .resolve_sync_change(id)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+            }
+            Ok(json!(resolved_any))
+        }
+        "get_sync_cursor" => {
+            let peer_id = args
+                .get("peer_id")
+                .or_else(|| args.get("replica_id"))
+                .or_else(|| args.get("replicaID"))
+                .or_else(|| args.get("scope"))
+                .or_else(|| args.get("source_host_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("default");
+            let cursor = store
+                .get_sync_cursor(peer_id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            match cursor {
+                Some(raw) => {
+                    let parsed_cursor = raw
+                        .parse::<i64>()
+                        .map(|n| json!(n))
+                        .unwrap_or_else(|_| json!(raw));
+                    Ok(json!({
+                        "peer_id": peer_id,
+                        "replica_id": peer_id,
+                        "cursor": parsed_cursor,
+                        "cursor_str": raw,
+                        "updated_at_ms": now_ms()
+                    }))
+                }
+                None => Ok(Value::Null),
+            }
+        }
+        "save_sync_cursor" => {
+            let input = args.get("input").unwrap_or(args);
+            let peer_id = input
+                .get("peer_id")
+                .or_else(|| input.get("replica_id"))
+                .or_else(|| input.get("replicaID"))
+                .or_else(|| input.get("scope"))
+                .or_else(|| args.get("peer_id"))
+                .or_else(|| args.get("replica_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("default");
+            let cursor_val = input
+                .get("cursor")
+                .or_else(|| args.get("cursor"))
+                .cloned()
+                .unwrap_or_else(|| json!("0"));
+            let cursor_str = match &cursor_val {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            };
+            store
+                .save_sync_cursor(peer_id, &cursor_str)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let updated_at_ms = input
+                .get("updated_at_ms")
+                .or_else(|| input.get("updatedAtMs"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            Ok(json!({
+                "ok": true,
+                "peer_id": peer_id,
+                "replica_id": peer_id,
+                "cursor": cursor_val,
+                "cursor_str": cursor_str,
+                "updated_at_ms": updated_at_ms
+            }))
+        }
         "apply_remote_sync_page" => {
             let input = args.get("input").unwrap_or(args);
-            let next_cursor = input
+            let peer_id = input
+                .get("peer_id")
+                .or_else(|| input.get("replica_id"))
+                .or_else(|| input.get("replicaID"))
+                .or_else(|| input.get("source_host_id"))
+                .or_else(|| args.get("peer_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("remote");
+            let next_cursor_val = input
                 .get("next_cursor")
+                .or_else(|| input.get("nextCursor"))
+                .or_else(|| input.get("cursor"))
                 .or_else(|| args.get("next_cursor"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            Ok(json!({"applied": 0, "skipped": 0, "cursor": next_cursor}))
+                .cloned();
+            let items: Vec<Value> = input
+                .get("changes")
+                .or_else(|| input.get("items"))
+                .or_else(|| input.get("records"))
+                .or_else(|| input.get("events"))
+                .or_else(|| args.get("changes"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut applied = 0usize;
+            let mut skipped = 0usize;
+            let ts = now_ms();
+
+            for item in items {
+                let change_id = item
+                    .get("id")
+                    .or_else(|| item.get("change_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| sha256_hex(item.to_string().as_bytes()));
+                let dedup_key = format!("sync_applied:{peer_id}:{change_id}");
+                if store.get_kv(&dedup_key).ok().flatten().is_some() {
+                    skipped += 1;
+                    continue;
+                }
+
+                let scope = item
+                    .get("scope")
+                    .or_else(|| item.get("conversation_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("global");
+                let entity_kind = item
+                    .get("entity_kind")
+                    .or_else(|| item.get("kind"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("module_record");
+                let entity_id = item
+                    .get("entity_id")
+                    .or_else(|| item.get("key"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&change_id);
+                let payload: Value = if let Some(p) = item.get("payload") {
+                    p.clone()
+                } else if let Some(raw) = item.get("payload_json").and_then(|v| v.as_str()) {
+                    serde_json::from_str(raw).unwrap_or_else(|_| json!({"raw": raw}))
+                } else {
+                    item.clone()
+                };
+
+                let apply_res: Result<(), String> = match entity_kind {
+                    "session" | "conversation" => {
+                        let sess = Session {
+                            id: payload
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(entity_id)
+                                .to_string(),
+                            title: payload
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Synced conversation")
+                                .to_string(),
+                            workspace_root: payload
+                                .get("workspace_root")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| suite.workspace_root.display().to_string()),
+                            model_connection: payload
+                                .get("model_connection")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string),
+                            model_id: payload
+                                .get("model_id")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string),
+                            created_at_ms: payload
+                                .get("created_at_ms")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(ts),
+                            updated_at_ms: payload
+                                .get("updated_at_ms")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(ts),
+                        };
+                        store.upsert_session(&sess).map_err(|e| e.to_string())
+                    }
+                    "event" => {
+                        let ev_kind = payload
+                            .get("kind")
+                            .or_else(|| item.get("event_kind"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("sync_event");
+                        let ev_payload = payload.get("payload").cloned().unwrap_or(payload.clone());
+                        store
+                            .append_event(scope, ev_kind, ev_payload, 50_000)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }
+                    "memory" => {
+                        let mem = MemoryItem {
+                            id: payload
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(entity_id)
+                                .to_string(),
+                            namespace: payload
+                                .get("namespace")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("default")
+                                .to_string(),
+                            title: payload
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Synced memory")
+                                .to_string(),
+                            content: payload
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            tags: payload
+                                .get("tags")
+                                .and_then(|v| v.as_array())
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|v| v.as_str().map(ToString::to_string))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            created_at_ms: payload
+                                .get("created_at_ms")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(ts),
+                            updated_at_ms: payload
+                                .get("updated_at_ms")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(ts),
+                        };
+                        store.upsert_memory(&mem).map_err(|e| e.to_string())
+                    }
+                    "kv" => store.set_kv(entity_id, &payload).map_err(|e| e.to_string()),
+                    other_kind => store
+                        .put_module_record(other_kind, entity_id, &payload)
+                        .map_err(|e| e.to_string()),
+                };
+
+                if apply_res.is_ok() {
+                    let _ = store.record_sync_change(&SyncChangeRecord {
+                        id: change_id.clone(),
+                        scope: scope.to_string(),
+                        entity_kind: entity_kind.to_string(),
+                        entity_id: entity_id.to_string(),
+                        payload_json: payload.to_string(),
+                        created_at_ms: ts,
+                        resolved: true,
+                    });
+                    let _ = store.set_kv(&dedup_key, &json!({"applied_at_ms": ts}));
+                    applied += 1;
+                } else {
+                    skipped += 1;
+                }
+            }
+
+            let cursor_out = if let Some(ref cv) = next_cursor_val {
+                let c_str = match cv {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    other => other.to_string(),
+                };
+                store
+                    .save_sync_cursor(peer_id, &c_str)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                cv.clone()
+            } else {
+                store
+                    .get_sync_cursor(peer_id)
+                    .ok()
+                    .flatten()
+                    .map(|s| s.parse::<i64>().map(|n| json!(n)).unwrap_or_else(|_| json!(s)))
+                    .unwrap_or_else(|| json!(0))
+            };
+
+            Ok(json!({
+                "applied": applied,
+                "skipped": skipped,
+                "cursor": cursor_out,
+                "peer_id": peer_id
+            }))
         }
         "peek_agent_command" => Ok(Value::Null),
         "load_run_identity" => {
@@ -3137,7 +3997,11 @@ pub fn dispatch_command(
                 obj.insert("id".into(), json!(grant_id));
                 obj.insert("grant_id".into(), json!(grant_id));
                 obj.insert("conversation_id".into(), json!(conv_id));
-                obj.entry("updated_at_ms".to_string()).or_insert_with(|| json!(ts));
+                if conv_id != "global" {
+                    obj.entry("session_id".to_string())
+                        .or_insert_with(|| json!(conv_id));
+                }
+                obj.entry("active".to_string()).or_insert_with(|| json!(true));
                 obj.insert("updated_at_ms".into(), json!(ts));
                 obj.entry("created_at_ms".to_string()).or_insert_with(|| json!(ts));
             }
@@ -3161,6 +4025,7 @@ pub fn dispatch_command(
             store
                 .set_kv(&key, &Value::Array(grants.clone()))
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            let _ = store.put_module_record("permission_grant", &grant_id, &grant);
             Ok(json!({
                 "ok": true,
                 "conversation_id": conv_id,
@@ -3204,10 +4069,15 @@ pub fn dispatch_command(
                     true
                 }
             });
-            let revoked = grants.len() < before;
+            let mut revoked = grants.len() < before;
             store
                 .set_kv(&key, &Value::Array(grants.clone()))
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(gid) = grant_id {
+                if store.delete_module_record("permission_grant", gid).unwrap_or(false) {
+                    revoked = true;
+                }
+            }
             Ok(json!({
                 "ok": true,
                 "conversation_id": conv_id,
@@ -3904,6 +4774,743 @@ pub fn dispatch_command(
                 )),
             }
         }
+        "put_conversation_pdf_resource" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let resource_id = input
+                .get("resource_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let filename = input
+                .get("filename")
+                .or_else(|| input.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("document.pdf")
+                .to_string();
+            let data_base64 = input
+                .get("data_base64")
+                .or_else(|| input.get("content_base64"))
+                .or_else(|| input.get("data"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let extracted_text = input
+                .get("extracted_text")
+                .or_else(|| input.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let page_count = input.get("page_count").and_then(|v| v.as_u64()).unwrap_or(1);
+            let digest = input
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| sha256_hex(data_base64.as_bytes()));
+            let size_bytes = input
+                .get("size_bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(data_base64.len() as u64);
+            let ts = now_ms();
+            let record = json!({
+                "resource_id": resource_id,
+                "id": resource_id,
+                "conversation_id": conv_id,
+                "kind": "pdf",
+                "mime_type": input.get("mime_type").and_then(|v| v.as_str()).unwrap_or("application/pdf"),
+                "filename": filename,
+                "page_count": page_count,
+                "size_bytes": size_bytes,
+                "sha256": digest,
+                "data_base64": data_base64,
+                "extracted_text": extracted_text,
+                "created_at_ms": ts,
+                "updated_at_ms": ts
+            });
+            let store_key = format!("{conv_id}:{resource_id}");
+            store
+                .put_module_record("conversation_resource", &store_key, &record)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "resource_id": resource_id,
+                "sha256": digest,
+                "size_bytes": size_bytes,
+                "resource": record
+            }))
+        }
+        "read_conversation_resource" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let resource_id = input
+                .get("resource_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("resource_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'resource_id'".into()))?;
+            let found = if let Some(cid) = conv_id {
+                store
+                    .get_module_record::<Value>("conversation_resource", &format!("{cid}:{resource_id}"))
+                    .map_err(|e| ("storage_error", e.to_string()))?
+            } else {
+                store
+                    .list_module_records::<Value>("conversation_resource")
+                    .map_err(|e| ("storage_error", e.to_string()))?
+                    .into_iter()
+                    .find(|r| {
+                        r.get("resource_id")
+                            .or_else(|| r.get("id"))
+                            .and_then(|v| v.as_str())
+                            == Some(resource_id)
+                    })
+            };
+            match found {
+                Some(rec) => Ok(json!({
+                    "found": true,
+                    "resource_id": resource_id,
+                    "resource": rec
+                })),
+                None => Err(("not_found", format!("conversation resource '{resource_id}' not found"))),
+            }
+        }
+        "list_conversation_resources" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let include_content = args
+                .get("include_content")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let all = store
+                .list_module_records::<Value>("conversation_resource")
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let resources: Vec<Value> = all
+                .into_iter()
+                .filter(|r| {
+                    conv_id.is_none_or(|cid| {
+                        r.get("conversation_id").and_then(|v| v.as_str()) == Some(cid)
+                    })
+                })
+                .map(|mut r| {
+                    if !include_content {
+                        if let Some(obj) = r.as_object_mut() {
+                            obj.remove("data_base64");
+                        }
+                    }
+                    r
+                })
+                .collect();
+            Ok(json!({
+                "conversation_id": conv_id,
+                "resources": resources
+            }))
+        }
+        "delete_conversation_resource" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let resource_id = input
+                .get("resource_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("resource_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'resource_id'".into()))?;
+            let deleted = store
+                .delete_module_record("conversation_resource", &format!("{conv_id}:{resource_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "resource_id": resource_id,
+                "deleted": deleted
+            }))
+        }
+        "admit_conversation_user_message" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let message_id = input
+                .get("message_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let adm_key = format!("msg_admission:{conv_id}:{message_id}");
+            if let Ok(Some(existing)) = store.get_kv(&adm_key) {
+                return Ok(existing);
+            }
+            let ts = input
+                .get("created_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            if store.get_session(conv_id).ok().flatten().is_none() {
+                let sess = Session {
+                    id: conv_id.to_string(),
+                    title: "New Chat".into(),
+                    workspace_root: suite.workspace_root.display().to_string(),
+                    model_connection: None,
+                    model_id: None,
+                    created_at_ms: ts,
+                    updated_at_ms: ts,
+                };
+                store
+                    .upsert_session(&sess)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+            }
+            let content = input
+                .get("content")
+                .or_else(|| input.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ev_payload = json!({
+                "id": message_id,
+                "message_id": message_id,
+                "role": "user",
+                "content": content,
+                "attachments": input.get("attachments").cloned().unwrap_or_else(|| json!([])),
+                "created_at_ms": ts
+            });
+            let ev = store
+                .append_event(conv_id, "user_message", ev_payload, 50_000)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let receipt = json!({
+                "ok": true,
+                "admitted": true,
+                "conversation_id": conv_id,
+                "message_id": message_id,
+                "seq": ev.seq,
+                "created_at_ms": ts
+            });
+            store
+                .set_kv(&adm_key, &receipt)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(receipt)
+        }
+        "begin_queued_user_turn" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let run_id = input
+                .get("command_id")
+                .or_else(|| input.get("run_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let assistant_message_id = input
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{run_id}:assistant"));
+            let core_config = input
+                .get("core_config")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let digest = sha256_hex(canonical_json_value(&core_config).to_string().as_bytes());
+            let ts = input
+                .get("now_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let (profile, rev) = read_permission_state(store, Some(conv_id));
+            let grants = load_durable_permission_grants(store, Some(conv_id));
+            let pending = load_pending_permission_requests(store, Some(conv_id));
+            let host_invocation = core_config
+                .pointer("/turn_identity/host_invocation")
+                .cloned()
+                .filter(|v| v.is_object())
+                .unwrap_or_else(|| json!({"version": 1, "host_id": "local-host"}));
+            let ctx_window = core_config
+                .pointer("/context_window/context_window_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(128_000);
+            let reserved = core_config
+                .pointer("/context_window/reserved_output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(16_384);
+            let prompt_limit = ctx_window.saturating_sub(reserved).max(4_096);
+            let exact_invocation = json!({
+                "conversation_id": conv_id,
+                "run_id": run_id,
+                "assistant_message_id": assistant_message_id,
+                "invocation_config_digest": digest,
+                "status": "running",
+                "host_invocation": host_invocation,
+                "context_budget": {
+                    "context_window_tokens": ctx_window,
+                    "reserved_output_tokens": reserved,
+                    "prompt_token_limit": prompt_limit,
+                    "auto_compact_tokens": (prompt_limit * 60) / 100,
+                    "compaction_target_tokens": (prompt_limit * 45) / 100,
+                    "auto_compact_percent": 60,
+                    "compaction_target_percent": 45
+                },
+                "core_session_id": core_config.get("session_id").cloned().unwrap_or_else(|| json!(conv_id)),
+                "checkpoint_revision": Value::Null,
+                "checkpoint_event_cursor": Value::Null,
+                "checkpoint_sha256": Value::Null,
+                "remote_tool_plan": Value::Null
+            });
+            store
+                .set_kv(&format!("exact_run_invocation:{conv_id}:{run_id}"), &exact_invocation)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            register_active_run(
+                store,
+                conv_id,
+                json!({
+                    "conversation_id": conv_id,
+                    "run_id": run_id,
+                    "assistant_message_id": assistant_message_id,
+                    "invocation_config_digest": digest,
+                    "status": "running",
+                    "started_at_ms": ts
+                }),
+            );
+            Ok(json!({
+                "conversation_id": conv_id,
+                "run_id": run_id,
+                "assistant_message_id": assistant_message_id,
+                "invocation_config_digest": digest,
+                "execution": {
+                    "control": {
+                        "status": "running",
+                        "run_id": run_id,
+                        "permission_projection_revision": rev
+                    },
+                    "permissions": {
+                        "revision": rev,
+                        "permission_profile": profile,
+                        "pending": pending,
+                        "grants": grants
+                    }
+                }
+            }))
+        }
+        "load_exact_run_invocation" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("conversationID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let expected_run_id = args
+                .get("expected_run_id")
+                .or_else(|| args.get("expectedRunID"))
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'expected_run_id'".into()))?;
+            let assistant_message_id = args
+                .get("assistant_message_id")
+                .or_else(|| args.get("assistantMessageID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let stored = store
+                .get_kv(&format!("exact_run_invocation:{conv_id}:{expected_run_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            match stored {
+                Some(inv) if !inv.is_null() => {
+                    if let Some(expected_am) = assistant_message_id {
+                        if inv.get("assistant_message_id").and_then(|v| v.as_str()) != Some(expected_am) {
+                            return Ok(Value::Null);
+                        }
+                    }
+                    Ok(inv)
+                }
+                _ => Ok(Value::Null),
+            }
+        }
+        "stage_assistant_journal_content" => {
+            let input = args.get("input").unwrap_or(args);
+            let part_id = input
+                .get("part_id")
+                .or_else(|| input.get("partID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'part_id'".into()))?;
+            let record = input.get("record").cloned().unwrap_or_else(|| json!({}));
+            let identity = record
+                .get("identity")
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!({
+                        "conversation_id": input.get("conversation_id").and_then(|v| v.as_str()).unwrap_or("default"),
+                        "run_id": input.get("run_id").and_then(|v| v.as_str()).unwrap_or("default"),
+                        "assistant_message_id": input.get("assistant_message_id").and_then(|v| v.as_str()).unwrap_or("default")
+                    })
+                });
+            let conv_id = identity
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let run_id = identity
+                .get("run_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let assistant_id = identity
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let content_ref = input.get("content").cloned().unwrap_or_else(|| json!({}));
+            let content_id = content_ref
+                .get("content_id")
+                .or_else(|| content_ref.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(part_id)
+                .to_string();
+            let restart = input
+                .get("restart")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let content_key = format!("assistant_journal_content:{conv_id}:{run_id}:{part_id}:{content_id}");
+            let mut text = if restart {
+                String::new()
+            } else {
+                store
+                    .get_kv(&content_key)
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("text").and_then(|s| s.as_str()).map(ToString::to_string))
+                    .unwrap_or_default()
+            };
+            if let Some(chunks) = input.get("chunks").and_then(|v| v.as_array()) {
+                for ch in chunks {
+                    if let Some(piece) = ch
+                        .get("text")
+                        .or_else(|| ch.get("data"))
+                        .or_else(|| ch.get("utf8"))
+                        .and_then(|v| v.as_str())
+                    {
+                        text.push_str(piece);
+                    }
+                }
+            } else if let Some(raw_text) = input.get("text").and_then(|v| v.as_str()) {
+                text.push_str(raw_text);
+            }
+            let total_bytes = text.len() as u64;
+            let digest = sha256_hex(text.as_bytes());
+            let ts = now_ms();
+            store
+                .set_kv(
+                    &content_key,
+                    &json!({
+                        "content_id": content_id,
+                        "part_id": part_id,
+                        "text": text,
+                        "total_utf8_bytes": total_bytes,
+                        "sha256": digest,
+                        "updated_at_ms": ts
+                    }),
+                )
+                .map_err(|e| ("storage_error", e.to_string()))?;
+
+            let part_key = format!("{conv_id}:{run_id}:{assistant_id}:{part_id}");
+            let prev_rev = store
+                .get_module_record::<Value>("assistant_journal_part", &part_key)
+                .ok()
+                .flatten()
+                .and_then(|p| {
+                    p.get("revision")
+                        .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
+                })
+                .unwrap_or(0);
+            let next_rev = prev_rev + 1;
+            let body_ref = json!({
+                "content_id": content_id,
+                "part_id": part_id,
+                "total_utf8_bytes": total_bytes.to_string(),
+                "utf8_bytes": total_bytes,
+                "sha256": digest,
+                "staged": true
+            });
+            let part_rec = json!({
+                "identity": identity,
+                "part_id": part_id,
+                "generation": "1",
+                "revision": next_rev.to_string(),
+                "metadata_revision": next_rev.to_string(),
+                "order_key": {"section": "body", "position": "0"},
+                "metadata": record.get("metadata").cloned().unwrap_or_else(|| json!({"kind": "text"})),
+                "bodies": [body_ref]
+            });
+            store
+                .put_module_record("assistant_journal_part", &part_key, &part_rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(body_ref)
+        }
+        "read_assistant_journal_parts" => {
+            let snapshot = args.get("snapshot").cloned().unwrap_or_else(|| json!({}));
+            let at = snapshot
+                .get("at")
+                .or_else(|| args.get("at"))
+                .cloned()
+                .unwrap_or_else(|| json!({"revision": "1"}));
+            let identity = snapshot
+                .get("identity")
+                .or_else(|| at.get("identity"))
+                .or_else(|| args.get("identity"));
+            let conv_filter = identity
+                .and_then(|i| i.get("conversation_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let run_filter = identity
+                .and_then(|i| i.get("run_id"))
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str());
+            let after_part_id = args
+                .get("after_part_id")
+                .or_else(|| args.get("afterPartID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let max_records = args
+                .get("max_records")
+                .or_else(|| args.get("maxRecords"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(64)
+                .clamp(1, 512) as usize;
+
+            let mut parts: Vec<Value> = store
+                .list_module_records::<Value>("assistant_journal_part")
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .into_iter()
+                .filter(|p| {
+                    let conv_ok = conv_filter.is_none_or(|c| {
+                        p.pointer("/identity/conversation_id").and_then(|v| v.as_str()) == Some(c)
+                    });
+                    let run_ok = run_filter.is_none_or(|r| {
+                        p.pointer("/identity/run_id").and_then(|v| v.as_str()) == Some(r)
+                    });
+                    conv_ok && run_ok
+                })
+                .collect();
+            parts.sort_by(|a, b| {
+                a.get("part_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .cmp(b.get("part_id").and_then(|v| v.as_str()).unwrap_or(""))
+            });
+            let filtered: Vec<Value> = parts
+                .into_iter()
+                .filter(|p| {
+                    after_part_id.is_none_or(|after| {
+                        p.get("part_id").and_then(|v| v.as_str()).unwrap_or("") > after
+                    })
+                })
+                .collect();
+            let has_more = filtered.len() > max_records;
+            let page: Vec<Value> = filtered.into_iter().take(max_records).collect();
+            let next_part_id = if has_more {
+                page.last()
+                    .and_then(|p| p.get("part_id").and_then(|v| v.as_str()))
+                    .map(ToString::to_string)
+            } else {
+                None
+            };
+            Ok(json!({
+                "at": at,
+                "parts": page,
+                "next_part_id": next_part_id
+            }))
+        }
+        "read_assistant_journal_part_changes" => {
+            let snapshot = args.get("snapshot").cloned().unwrap_or_else(|| json!({}));
+            let at = snapshot
+                .get("at")
+                .or_else(|| args.get("at"))
+                .cloned()
+                .unwrap_or_else(|| json!({"revision": "1"}));
+            let base = args
+                .get("base")
+                .cloned()
+                .unwrap_or_else(|| json!({"revision": "0"}));
+            let base_rev = base
+                .get("revision")
+                .or_else(|| base.get("sequence"))
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .unwrap_or(0);
+            let identity = snapshot
+                .get("identity")
+                .or_else(|| at.get("identity"))
+                .or_else(|| args.get("identity"));
+            let conv_filter = identity
+                .and_then(|i| i.get("conversation_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let run_filter = identity
+                .and_then(|i| i.get("run_id"))
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str());
+            let after_part_id = args
+                .get("after_part_id")
+                .or_else(|| args.get("afterPartID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let max_records = args
+                .get("max_records")
+                .or_else(|| args.get("maxRecords"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(64)
+                .clamp(1, 512) as usize;
+
+            let mut parts: Vec<Value> = store
+                .list_module_records::<Value>("assistant_journal_part")
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .into_iter()
+                .filter(|p| {
+                    let conv_ok = conv_filter.is_none_or(|c| {
+                        p.pointer("/identity/conversation_id").and_then(|v| v.as_str()) == Some(c)
+                    });
+                    let run_ok = run_filter.is_none_or(|r| {
+                        p.pointer("/identity/run_id").and_then(|v| v.as_str()) == Some(r)
+                    });
+                    let rev = p
+                        .get("revision")
+                        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                        .unwrap_or(0);
+                    conv_ok && run_ok && rev > base_rev
+                })
+                .collect();
+            parts.sort_by(|a, b| {
+                a.get("part_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .cmp(b.get("part_id").and_then(|v| v.as_str()).unwrap_or(""))
+            });
+            let filtered: Vec<Value> = parts
+                .into_iter()
+                .filter(|p| {
+                    after_part_id.is_none_or(|after| {
+                        p.get("part_id").and_then(|v| v.as_str()).unwrap_or("") > after
+                    })
+                })
+                .collect();
+            let has_more = filtered.len() > max_records;
+            let changes: Vec<Value> = filtered
+                .into_iter()
+                .take(max_records)
+                .map(|p| {
+                    let pid = p
+                        .get("part_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    json!({"part_id": pid, "head": p})
+                })
+                .collect();
+            let next_part_id = if has_more {
+                changes
+                    .last()
+                    .and_then(|c| c.get("part_id").and_then(|v| v.as_str()))
+                    .map(ToString::to_string)
+            } else {
+                None
+            };
+            Ok(json!({
+                "base": base,
+                "at": at,
+                "changes": changes,
+                "next_part_id": next_part_id
+            }))
+        }
+        "read_assistant_journal_range" => {
+            let snapshot = args.get("snapshot").cloned().unwrap_or_else(|| json!({}));
+            let identity = snapshot
+                .get("identity")
+                .or_else(|| snapshot.pointer("/at/identity"))
+                .or_else(|| args.get("identity"));
+            let conv_id = identity
+                .and_then(|i| i.get("conversation_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let run_id = identity
+                .and_then(|i| i.get("run_id"))
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let part_id = args
+                .get("part_id")
+                .or_else(|| args.get("partID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'part_id'".into()))?;
+            let content_id = args
+                .pointer("/content/content_id")
+                .or_else(|| args.pointer("/content/id"))
+                .or_else(|| args.get("content_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(part_id);
+            let offset_bytes = args
+                .get("offset_bytes")
+                .or_else(|| args.get("offsetBytes"))
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .unwrap_or(0) as usize;
+            let limit_bytes = args
+                .get("limit_bytes")
+                .or_else(|| args.get("limitBytes"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(32_768)
+                .clamp(1, 262_144) as usize;
+
+            let content_key = format!("assistant_journal_content:{conv_id}:{run_id}:{part_id}:{content_id}");
+            let full_text = store
+                .get_kv(&content_key)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .and_then(|v| v.get("text").and_then(|s| s.as_str()).map(ToString::to_string))
+                .unwrap_or_default();
+            let total = full_text.len();
+            let mut start = offset_bytes.min(total);
+            while start < total && !full_text.is_char_boundary(start) {
+                start += 1;
+            }
+            let mut end = start.saturating_add(limit_bytes).min(total);
+            while end > start && !full_text.is_char_boundary(end) {
+                end -= 1;
+            }
+            let slice = &full_text[start..end];
+            Ok(json!({
+                "offset_bytes": start.to_string(),
+                "next_offset_bytes": end.to_string(),
+                "total_utf8_bytes": total.to_string(),
+                "text": slice,
+                "end_of_content": end >= total
+            }))
+        }
         "backup" => {
             let dest = args
                 .get("destination")
@@ -4339,6 +5946,7 @@ fn build_conversation_projection_response(
         "archived_activity_part_ids": [],
         "show_assistant_placeholder": false
     });
+    let active_run_val = lookup_active_run(store, &sess.id).unwrap_or(Value::Null);
     let projection = json!({
         "contract_version": 1,
         "conversation_id": sess.id,
@@ -4347,7 +5955,7 @@ fn build_conversation_projection_response(
         "revision": revision,
         "configuration_revision": configuration_revision,
         "execution_ownership": {"kind": "user"},
-        "active_run": Value::Null,
+        "active_run": active_run_val,
         "messages": canonical_messages,
         "context_usage": context_usage,
         "surface": surface
@@ -4364,7 +5972,7 @@ fn build_conversation_projection_response(
         "updated_at_ms": sess.updated_at_ms,
         "settings_json": settings_json,
         "execution_ownership": {"kind": "user"},
-        "active_run": Value::Null,
+        "active_run": active_run_val,
         "context_usage": context_usage,
         "surface": surface,
         "conversation": conv,
@@ -8089,5 +9697,336 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rt_list["tasks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn daemon_real_sync_engine_branch_state_recovery_and_canonical_rpcs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // 1. Real Sync Engine backed by Store sync_changes & sync_cursors
+        store
+            .record_sync_change(&SyncChangeRecord {
+                id: "chg-local-1".into(),
+                scope: "conv-sync".into(),
+                entity_kind: "kv".into(),
+                entity_id: "k1".into(),
+                payload_json: r#"{"v":1}"#.into(),
+                created_at_ms: 1000,
+                resolved: false,
+            })
+            .unwrap();
+        let pending = dispatch_command(&store, &suite, "pending_sync_changes", &json!({})).unwrap();
+        assert_eq!(pending.as_array().unwrap().len(), 1);
+        assert_eq!(pending[0]["id"], "chg-local-1");
+
+        let resolved = dispatch_command(
+            &store,
+            &suite,
+            "resolve_sync_change",
+            &json!({"id": "chg-local-1"}),
+        )
+        .unwrap();
+        assert_eq!(resolved, json!(true));
+        let pending_after =
+            dispatch_command(&store, &suite, "pending_sync_changes", &json!({})).unwrap();
+        assert!(pending_after.as_array().unwrap().is_empty());
+
+        let saved_cur = dispatch_command(
+            &store,
+            &suite,
+            "save_sync_cursor",
+            &json!({"replica_id": "peer-a", "cursor": 42}),
+        )
+        .unwrap();
+        assert_eq!(saved_cur["cursor"], 42);
+        let got_cur = dispatch_command(
+            &store,
+            &suite,
+            "get_sync_cursor",
+            &json!({"replica_id": "peer-a"}),
+        )
+        .unwrap();
+        assert_eq!(got_cur["cursor"], 42);
+
+        // apply_remote_sync_page applies idempotently and updates cursor
+        let page = json!({
+            "input": {
+                "replica_id": "peer-a",
+                "next_cursor": 55,
+                "changes": [
+                    {"id": "rem-1", "scope": "global", "entity_kind": "kv", "entity_id": "synced_key", "payload": {"hello": "world"}},
+                    {"id": "rem-2", "scope": "conv-rem", "entity_kind": "event", "entity_id": "ev-1", "payload": {"kind": "user_message", "payload": {"content": "from remote"}}}
+                ]
+            }
+        });
+        let r1 = dispatch_command(&store, &suite, "apply_remote_sync_page", &page).unwrap();
+        assert_eq!(r1["applied"], 2);
+        assert_eq!(r1["skipped"], 0);
+        assert_eq!(r1["cursor"], 55);
+        assert_eq!(store.get_kv("synced_key").unwrap().unwrap()["hello"], "world");
+
+        // Re-applying same page MUST skip idempotently!
+        let r2 = dispatch_command(&store, &suite, "apply_remote_sync_page", &page).unwrap();
+        assert_eq!(r2["applied"], 0);
+        assert_eq!(r2["skipped"], 2);
+
+        // 2. branch_conversation copies session_state and supports up_to_seq truncation
+        let sess = Session {
+            id: "conv-src".into(),
+            title: "Original".into(),
+            workspace_root: dir.path().display().to_string(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: 1000,
+            updated_at_ms: 1000,
+        };
+        store.upsert_session(&sess).unwrap();
+        let e1 = store
+            .append_event("conv-src", "user_message", json!({"id": "u1", "role": "user", "content": "first"}), 50_000)
+            .unwrap();
+        let e2 = store
+            .append_event("conv-src", "assistant_message", json!({"id": "a1", "role": "assistant", "content": "second"}), 50_000)
+            .unwrap();
+        let _e3 = store
+            .append_event("conv-src", "user_message", json!({"id": "u2", "role": "user", "content": "third"}), 50_000)
+            .unwrap();
+        store
+            .set_kv(
+                "session_state:conv-src",
+                &json!({
+                    "history": [
+                        {"role": "user", "content": "first"},
+                        {"role": "assistant", "content": "second"},
+                        {"role": "user", "content": "third"}
+                    ],
+                    "pinned": true
+                }),
+            )
+            .unwrap();
+
+        let branched = dispatch_command(
+            &store,
+            &suite,
+            "branch_conversation",
+            &json!({"conversation_id": "conv-src", "up_to_seq": e2.seq}),
+        )
+        .unwrap();
+        let new_id = branched["conversation"]["id"].as_str().unwrap().to_string();
+        let new_state = store.get_kv(&format!("session_state:{new_id}")).unwrap().unwrap();
+        assert_eq!(new_state["pinned"], true);
+        assert_eq!(new_state["history"].as_array().unwrap().len(), 2);
+
+        // truncate_conversation & prepare_edited_resend atomically trim session_state
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "prepare_edited_resend",
+            &json!({"conversation_id": "conv-src", "from_seq": e2.seq}),
+        )
+        .unwrap();
+        let trimmed_state = store.get_kv("session_state:conv-src").unwrap().unwrap();
+        assert_eq!(trimmed_state["history"].as_array().unwrap().len(), 1);
+        assert_eq!(e1.seq, 1);
+
+        // 3. Active run tracking, durable permission_grant projection, & recovery inspection
+        store
+            .put_module_record(
+                "permission_grant",
+                "pg-1",
+                &json!({"id": "pg-1", "session_id": "conv-src", "tool": "bash", "active": true}),
+            )
+            .unwrap();
+        let perm_proj = dispatch_command(
+            &store,
+            &suite,
+            "load_conversation_permission_projection_v1",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(perm_proj["grants"].as_array().unwrap().len(), 1);
+        assert_eq!(perm_proj["grants"][0]["id"], "pg-1");
+
+        store
+            .put_module_record(
+                "durable_task",
+                "dt-1",
+                &json!({"task_id": "dt-1", "session_id": "conv-src", "status": "interrupted", "role": "worker"}),
+            )
+            .unwrap();
+        store
+            .set_kv(
+                "turn_verification:conv-src",
+                &json!({
+                    "all_modified_verified": false,
+                    "modified_files": [{"uri": "file:///tmp/a.rs", "operation": "write", "last_modified_step": 1, "verified_after_edit": false}]
+                }),
+            )
+            .unwrap();
+        let rec_run = dispatch_command(
+            &store,
+            &suite,
+            "inspect_run_recovery",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(rec_run["recoverable"], true);
+        assert_eq!(rec_run["state"], "interrupted");
+
+        let rec_eff = dispatch_command(
+            &store,
+            &suite,
+            "inspect_unknown_effect_recovery",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(rec_eff["pending"], true);
+
+        let rec_owned = dispatch_command(
+            &store,
+            &suite,
+            "inspect_owned_task_recovery",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(rec_owned["pending"], true);
+
+        // 4. Direct event range / FTS historical reads
+        let hist_part = dispatch_command(
+            &store,
+            &suite,
+            "read_historical_part",
+            &json!({"conversation_id": "conv-src", "seq": 1}),
+        )
+        .unwrap();
+        assert_eq!(hist_part["found"], true);
+        assert_eq!(hist_part["content"], "first");
+
+        let range_fts = dispatch_command(
+            &store,
+            &suite,
+            "read_conversation_text_range",
+            &json!({"conversation_id": "conv-src", "query": "first"}),
+        )
+        .unwrap();
+        assert!(range_fts["text"].as_str().unwrap().contains("first"));
+
+        // 5. Missing canonical & resource RPCs
+        let pdf = dispatch_command(
+            &store,
+            &suite,
+            "put_conversation_pdf_resource",
+            &json!({"conversation_id": "conv-src", "resource_id": "pdf-1", "filename": "spec.pdf", "data_base64": "JVBERi0=", "page_count": 3}),
+        )
+        .unwrap();
+        assert_eq!(pdf["resource_id"], "pdf-1");
+        let pdf_read = dispatch_command(
+            &store,
+            &suite,
+            "read_conversation_resource",
+            &json!({"conversation_id": "conv-src", "resource_id": "pdf-1"}),
+        )
+        .unwrap();
+        assert_eq!(pdf_read["resource"]["filename"], "spec.pdf");
+        let pdf_list = dispatch_command(
+            &store,
+            &suite,
+            "list_conversation_resources",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(pdf_list["resources"].as_array().unwrap().len(), 1);
+        let pdf_del = dispatch_command(
+            &store,
+            &suite,
+            "delete_conversation_resource",
+            &json!({"conversation_id": "conv-src", "resource_id": "pdf-1"}),
+        )
+        .unwrap();
+        assert_eq!(pdf_del["deleted"], true);
+
+        let adm = dispatch_command(
+            &store,
+            &suite,
+            "admit_conversation_user_message",
+            &json!({"input": {"conversation_id": "conv-src", "message_id": "m-admit-1", "content": "queued hello"}}),
+        )
+        .unwrap();
+        assert_eq!(adm["admitted"], true);
+
+        let begun = dispatch_command(
+            &store,
+            &suite,
+            "begin_queued_user_turn",
+            &json!({"input": {"conversation_id": "conv-src", "command_id": "run-q-1", "core_config": {"model": "gpt-4o"}}}),
+        )
+        .unwrap();
+        assert_eq!(begun["run_id"], "run-q-1");
+        let active = dispatch_command(
+            &store,
+            &suite,
+            "active_run",
+            &json!({"conversation_id": "conv-src"}),
+        )
+        .unwrap();
+        assert_eq!(active["active"], true);
+        assert_eq!(active["run_id"], "run-q-1");
+
+        let exact = dispatch_command(
+            &store,
+            &suite,
+            "load_exact_run_invocation",
+            &json!({"conversation_id": "conv-src", "expected_run_id": "run-q-1", "assistant_message_id": "run-q-1:assistant"}),
+        )
+        .unwrap();
+        assert_eq!(exact["run_id"], "run-q-1");
+        assert_eq!(exact["invocation_config_digest"].as_str().unwrap().len(), 64);
+
+        let staged = dispatch_command(
+            &store,
+            &suite,
+            "stage_assistant_journal_content",
+            &json!({
+                "input": {
+                    "record": {"identity": {"conversation_id": "conv-src", "run_id": "run-q-1", "assistant_message_id": "run-q-1:assistant"}},
+                    "part_id": "part-1",
+                    "content": {"content_id": "c-1"},
+                    "chunks": [{"text": "Hello journal world"}]
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(staged["staged"], true);
+
+        let j_parts = dispatch_command(
+            &store,
+            &suite,
+            "read_assistant_journal_parts",
+            &json!({"snapshot": {"identity": {"conversation_id": "conv-src", "run_id": "run-q-1"}, "at": {"revision": "1"}}}),
+        )
+        .unwrap();
+        assert_eq!(j_parts["parts"].as_array().unwrap().len(), 1);
+
+        let j_changes = dispatch_command(
+            &store,
+            &suite,
+            "read_assistant_journal_part_changes",
+            &json!({"snapshot": {"identity": {"conversation_id": "conv-src", "run_id": "run-q-1"}, "at": {"revision": "1"}}, "base": {"revision": "0"}}),
+        )
+        .unwrap();
+        assert_eq!(j_changes["changes"].as_array().unwrap().len(), 1);
+
+        let j_range = dispatch_command(
+            &store,
+            &suite,
+            "read_assistant_journal_range",
+            &json!({"snapshot": {"identity": {"conversation_id": "conv-src", "run_id": "run-q-1"}}, "part_id": "part-1", "content": {"content_id": "c-1"}, "offset_bytes": "6", "limit_bytes": 7}),
+        )
+        .unwrap();
+        assert_eq!(j_range["text"], "journal");
+        assert_eq!(j_range["end_of_content"], false);
+
+        clear_active_run(&store, "conv-src");
     }
 }

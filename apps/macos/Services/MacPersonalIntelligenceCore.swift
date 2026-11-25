@@ -9,6 +9,14 @@ import NolaCore
 #endif
 
 enum MacPersonalIntelligenceCore {
+    static var isMemorySelectionAvailable: Bool {
+        #if canImport(NolaCore)
+        return nola_core_memory_selection_abi_version() > 0
+        #else
+        return false
+        #endif
+    }
+
     private struct RecallRequest: Encodable {
         let query: String
         let limit: Int

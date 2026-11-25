@@ -5,6 +5,13 @@
     import { ApiError, errorMessage } from '../lib/api';
     import { workspaceContentNavigationEvent, navigateWorkspace } from '../lib/workspaceNavigation';
     import { workspaceTabCloseEvent } from '../lib/workspacePageLocation';
+    import { layoutDefaults, setWorkspaceWidth, visiblePanelWidths, workspaceWidths } from '../lib/workspaceLayout';
+    import {
+        expertAccentPalette,
+        expertBubbleColor,
+        expertBubblePalette,
+        observeExpertBubbleColors,
+    } from '../lib/expertBubbleColors';
     import type { ConfirmationHandle } from '../lib/confirmation';
     import {
         emptyContentTabs,
@@ -25,9 +32,11 @@
         compactV2Conversation,
         createV2Conversation,
         emptyV2TokenUsage,
+        fetchV2AgentRoomsDirectory,
         formatPermissionSummary,
         getV2Conversation,
         getV2ConversationConfiguration,
+        getV2ConversationPlan,
         hasConfiguredChatModel,
         listV2Conversations,
         listV2Experts,
@@ -37,14 +46,19 @@
         mergeV2TokenUsage,
         normalizeV2PermissionProfile,
         normalizeV2ReasoningEffort,
+        observeV2ConversationProgress,
         parseV2Attachment,
         patchV2ConversationConfiguration,
         respondV2Permission,
         respondV2UserInput,
         streamV2ChatMessage,
+        streamV2ConversationObserve,
         submitV2UiInteraction,
         truncateV2Conversation,
+        updateV2ConversationPlan,
+        type V2AgentRoom,
         type V2Attachment,
+        type V2ConversationPlan,
         type V2Expert,
         type V2Message,
         type V2ModelChoice,
@@ -59,6 +73,9 @@
     import ChatConversationManager from '../components/ChatConversationManager.svelte';
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import ConversationInspector from '../components/ConversationInspector.svelte';
+    import DesktopPluginNavigation from '../components/DesktopPluginNavigation.svelte';
+    import ExpertRoomManager from '../components/ExpertRoomManager.svelte';
+    import PanelResizeHandle from '../components/PanelResizeHandle.svelte';
     import WorkspaceListNavigation from '../components/WorkspaceListNavigation.svelte';
     import WorkspaceResourceNavigation from '../components/WorkspaceResourceNavigation.svelte';
     import ConversationContentTabsView from '../components/ConversationContentTabs.svelte';
@@ -119,8 +136,13 @@
     let copiedMessageIds = $state<Record<string, boolean>>({});
     const copyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    // @ Expert mention picker
+    // @ Expert mention picker & Rooms
     let availableExperts = $state<V2Expert[]>([]);
+    let availableRooms = $state<V2AgentRoom[]>([]);
+    let attachedRoom = $state<V2AgentRoom | null>(null);
+    let hostId = $state('local');
+    let expertManagerOpen = $state(false);
+    let expertColorVersion = $state(0);
     let expertsLoading = $state(false);
     let expertsLoaded = $state(false);
     let expertPickerOpen = $state(false);
@@ -128,6 +150,19 @@
     let expertTriggerRange = $state<{ start: number; end: number } | null>(null);
     let expertHighlightIdx = $state(0);
     let selectedExperts = $state<V2Expert[]>([]);
+
+    // Plan Mode & Active Stream Reconnection
+    let conversationPlan = $state<V2ConversationPlan>({ enabled: false, status: 'idle', steps: [] });
+    let planBusy = $state(false);
+    let reconnecting = $state(false);
+
+    const panelLayout = $derived(visiblePanelWidths(viewportWidth, $workspaceWidths, true));
+    const showPlanBanner = $derived(
+        conversationPlan.status === 'awaiting_approval' ||
+            (conversationPlan.enabled &&
+                conversationPlan.status === 'draft' &&
+                (Boolean(conversationPlan.markdown) || conversationPlan.steps.length > 0)),
+    );
 
     const filteredExperts = $derived.by(() => {
         const q = expertQuery.trim().toLowerCase();
@@ -238,12 +273,199 @@
         if (expertsLoading || (expertsLoaded && !forceRefresh)) return;
         expertsLoading = true;
         try {
-            availableExperts = await listV2Experts(forceRefresh);
+            const dir = await fetchV2AgentRoomsDirectory();
+            hostId = dir.hostId;
+            availableExperts = dir.experts;
+            availableRooms = dir.rooms;
+            if (active) {
+                attachedRoom = dir.rooms.find(r => r.sessionId === active?.conversationId) ?? attachedRoom;
+            }
             expertsLoaded = true;
         } catch {
-            // Keep graceful empty list if agent-rooms is unavailable.
+            try {
+                availableExperts = await listV2Experts(forceRefresh);
+                expertsLoaded = true;
+            } catch {
+                // Keep graceful empty list if agent-rooms is unavailable.
+            }
         } finally {
             expertsLoading = false;
+        }
+    }
+
+    function resolveExpertAccent(expertId?: string, expertName?: string, explicitColor?: string) {
+        void expertColorVersion;
+        const key = expertId || expertName || 'expert';
+        const color = expertBubbleColor(hostId, key, explicitColor);
+        return {
+            accent: expertAccentPalette[color],
+            light: expertBubblePalette[color][0],
+            dark: expertBubblePalette[color][1],
+        };
+    }
+
+    async function handleTogglePlanMode() {
+        if (!active || planBusy) return;
+        const convId = active.conversationId;
+        planBusy = true;
+        error = '';
+        try {
+            const nextEnabled = !conversationPlan.enabled;
+            const updated = await updateV2ConversationPlan(convId, {
+                enabled: nextEnabled,
+                action: nextEnabled ? 'enable' : 'disable',
+            });
+            if (active?.conversationId === convId) {
+                conversationPlan = updated;
+                statusNotice = updated.enabled
+                    ? t($locale, 'chatInspector.planActive')
+                    : t($locale, 'chatInspector.planMode');
+            }
+        } catch (cause) {
+            if (active?.conversationId === convId) error = errorMessage(cause);
+        } finally {
+            planBusy = false;
+        }
+    }
+
+    async function handlePlanDecision(action: 'approve' | 'reject' | 'clear') {
+        if (!active || planBusy) return;
+        const convId = active.conversationId;
+        planBusy = true;
+        error = '';
+        try {
+            const updated = await updateV2ConversationPlan(convId, {
+                action,
+                ...(action === 'clear' ? { enabled: false } : {}),
+            });
+            if (active?.conversationId === convId) {
+                conversationPlan = updated;
+            }
+        } catch (cause) {
+            if (active?.conversationId === convId) error = errorMessage(cause);
+        } finally {
+            planBusy = false;
+        }
+    }
+
+    async function reconnectActiveTurn(convId: string, serial: number) {
+        try {
+            const obs = await observeV2ConversationProgress(convId);
+            if (serial !== generation || active?.conversationId !== convId || !obs.active) return;
+            reconnecting = true;
+            streaming = true;
+            statusNotice = t($locale, 'chatInspector.reconnecting');
+            const assistantId = `obs-${Date.now()}`;
+            const hasTrailingAssistant =
+                messages.length > 0 && messages[messages.length - 1].role === 'assistant' && !messages[messages.length - 1].seq;
+            const targetId = hasTrailingAssistant ? messages[messages.length - 1].id : assistantId;
+            if (!hasTrailingAssistant) {
+                messages = [
+                    ...messages,
+                    {
+                        id: assistantId,
+                        role: 'assistant',
+                        content: obs.text ?? '',
+                        reasoning: obs.reasoning ?? '',
+                        toolCalls: obs.toolCalls ?? [],
+                        createdAtMs: Date.now(),
+                    },
+                ];
+            }
+            if (obs.pendingPermission) pendingPermission = obs.pendingPermission;
+            if (obs.pendingQuestion) pendingQuestion = obs.pendingQuestion;
+            await scrollToBottom(true);
+
+            const controller = new AbortController();
+            streamController = controller;
+            const updateObserved = (fn: (m: V2Message) => V2Message) => {
+                messages = messages.map(m => (m.id === targetId ? fn(m) : m));
+            };
+
+            try {
+                await streamV2ConversationObserve(
+                    convId,
+                    {
+                        onSnapshot: snap => {
+                            if (serial !== generation) return;
+                            updateObserved(m => ({
+                                ...m,
+                                content: snap.text !== undefined ? snap.text : m.content,
+                                reasoning: snap.reasoning !== undefined ? snap.reasoning : m.reasoning,
+                                toolCalls: snap.toolCalls?.length ? snap.toolCalls : m.toolCalls,
+                            }));
+                            if (snap.pendingPermission !== undefined) pendingPermission = snap.pendingPermission;
+                            if (snap.pendingQuestion !== undefined) pendingQuestion = snap.pendingQuestion;
+                            void scrollToBottom(false);
+                        },
+                        onTextDelta: delta => {
+                            if (serial !== generation) return;
+                            updateObserved(m => ({ ...m, content: m.content + delta }));
+                            void scrollToBottom(false);
+                        },
+                        onReasoningDelta: delta => {
+                            if (serial !== generation) return;
+                            updateObserved(m => ({ ...m, reasoning: (m.reasoning ?? '') + delta }));
+                        },
+                        onToolStarted: (callId, name, args) => {
+                            if (serial !== generation) return;
+                            updateObserved(m => ({
+                                ...m,
+                                toolCalls: [...(m.toolCalls ?? []), { callId, name, arguments: args, status: 'running' }],
+                            }));
+                        },
+                        onToolFinished: (callId, name, ok, summary) => {
+                            if (serial !== generation) return;
+                            updateObserved(m => {
+                                const list = m.toolCalls ?? [];
+                                const idx = list.findIndex(tc => tc.callId === callId);
+                                const next = {
+                                    callId,
+                                    name,
+                                    status: ok ? ('completed' as const) : ('failed' as const),
+                                    summary,
+                                };
+                                if (idx >= 0) {
+                                    const copy = [...list];
+                                    copy[idx] = { ...copy[idx], ...next };
+                                    return { ...m, toolCalls: copy };
+                                }
+                                return { ...m, toolCalls: [...list, next] };
+                            });
+                        },
+                        onPermissionRequested: prompt => {
+                            if (serial !== generation) return;
+                            pendingPermission = prompt;
+                        },
+                        onUserQuestion: question => {
+                            if (serial !== generation) return;
+                            pendingQuestion = question;
+                        },
+                        onTurnCompleted: (_finalText, turnUsage) => {
+                            if (serial !== generation) return;
+                            if (turnUsage) sessionUsage = mergeV2TokenUsage(sessionUsage, turnUsage);
+                        },
+                        onError: msg => {
+                            if (serial !== generation) return;
+                            error = msg;
+                        },
+                    },
+                    controller.signal,
+                );
+                if (serial === generation && active?.conversationId === convId) {
+                    await reloadActiveConversation(convId, serial).catch(() => {});
+                }
+            } finally {
+                if (streamController === controller) streamController = null;
+                if (serial === generation) {
+                    streaming = false;
+                    reconnecting = false;
+                    statusNotice = '';
+                }
+            }
+        } catch {
+            // Optional active turn reconnection if host does not report an active run.
+            if (serial === generation) reconnecting = false;
         }
     }
 
@@ -396,10 +618,13 @@
             syncUrl(conv.conversationId);
         }
         loading = true;
+        conversationPlan = { enabled: false, status: 'idle', steps: [] };
+        attachedRoom = availableRooms.find(r => r.sessionId === conv.conversationId) ?? null;
         try {
-            const [loaded, cfgResult] = await Promise.allSettled([
+            const [loaded, cfgResult, planResult] = await Promise.allSettled([
                 loadV2MessagesWithUsage(conv.conversationId),
                 getV2ConversationConfiguration(conv.conversationId),
+                getV2ConversationPlan(conv.conversationId),
             ]);
             if (serial !== generation) return;
             if (loaded.status === 'fulfilled') {
@@ -415,7 +640,11 @@
                     selectedModelId = cfgResult.value.selectedModelId;
                 }
             }
+            if (planResult.status === 'fulfilled') {
+                conversationPlan = planResult.value;
+            }
             await scrollToBottom(true);
+            void reconnectActiveTurn(conv.conversationId, serial);
         } catch (cause) {
             if (serial !== generation) return;
             error = errorMessage(cause);
@@ -838,6 +1067,14 @@
                         if (serial !== generation) return;
                         if (summary) statusNotice = summary;
                     },
+                    onExpertReply: reply => {
+                        if (serial !== generation) return;
+                        updateAssistant(m => ({
+                            ...m,
+                            expertReplies: [...(m.expertReplies ?? []), reply],
+                        }));
+                        void scrollToBottom(false);
+                    },
                     onTurnCompleted: (finalText, turnUsage) => {
                         if (serial !== generation) return;
                         if (finalText) {
@@ -1141,7 +1378,11 @@
         };
         window.addEventListener(workspaceContentNavigationEvent, handleContentNav);
         window.addEventListener('nola:models-updated', handleModelsUpdated);
+        const stopColorObserver = observeExpertBubbleColors(() => {
+            expertColorVersion++;
+        });
         void refreshModelChoices();
+        void ensureExpertsLoaded();
 
         void (async () => {
             try {
@@ -1168,6 +1409,7 @@
         return () => {
             window.removeEventListener(workspaceContentNavigationEvent, handleContentNav);
             window.removeEventListener('nola:models-updated', handleModelsUpdated);
+            stopColorObserver();
             // Detach SSE reader on unmount WITHOUT killing the Host run!
             detachStream();
             for (const timer of copyTimers.values()) clearTimeout(timer);
@@ -1199,9 +1441,27 @@
 />
 <svelte:head><title>{active?.title || t($locale, 'chatPage.title')} — Nola</title></svelte:head>
 <ConfirmationDialog bind:this={confirmation} />
+<ExpertRoomManager
+    open={expertManagerOpen}
+    conversationId={active?.conversationId ?? null}
+    attachedRoomId={attachedRoom?.id ?? null}
+    onclose={() => (expertManagerOpen = false)}
+    onupdated={(nextExperts, nextRooms) => {
+        availableExperts = nextExperts;
+        availableRooms = nextRooms;
+        expertsLoaded = true;
+    }}
+    onattachRoom={room => {
+        attachedRoom = room;
+    }}
+/>
 
-<div class="chat-shell" class:sidebar-collapsed={!sidebarOpen}>
-    <aside class="chat-sidebar" aria-label={t($locale, 'chatInspector.list.conversations')}>
+<div
+    class="chat-shell"
+    class:sidebar-collapsed={!sidebarOpen}
+    style:--sidebar-width="{panelLayout.sidebar}px"
+>
+    <aside id="chat-sidebar-panel" class="chat-sidebar" aria-label={t($locale, 'chatInspector.list.conversations')}>
         <div class="sidebar-top">
             <WorkspaceListNavigation category={listCategory} visible={sidebarOpen} collapsed={!sidebarOpen} onchange={setListCategory} />
             <div class="sidebar-tools">
@@ -1261,13 +1521,19 @@
             </div>
         {/if}
 
+        <DesktopPluginNavigation
+            selectedPath={selectedContentTab?.kind === 'page' ? selectedContentTab.path : ''}
+            compact={!sidebarOpen}
+            onopen={openManagementTab}
+        />
+
         <footer class="sidebar-footer">
             <button
                 type="button"
                 class="sidebar-action sidebar-footer-item"
                 title={t($locale, 'shell.settings')}
                 aria-label={t($locale, 'shell.settings')}
-                onclick={() => openManagementTab('/settings')}
+                onclick={() => openManagementTab('/settings?section=general')}
             >
                 <PrototypeIcon name="settings" size={16} />
                 {#if sidebarOpen}
@@ -1275,6 +1541,17 @@
                 {/if}
             </button>
         </footer>
+        {#if sidebarOpen && viewportWidth > 760}
+            <PanelResizeHandle
+                label={t($locale, 'shell.resizeSidebar')}
+                controls="chat-sidebar-panel"
+                value={panelLayout.sidebar}
+                min={220}
+                max={panelLayout.sidebarMax}
+                defaultValue={layoutDefaults.sidebar}
+                onchange={next => setWorkspaceWidth('sidebar', next)}
+            />
+        {/if}
     </aside>
 
     <main id="page-main" tabindex="-1" class="chat-main">
@@ -1301,6 +1578,19 @@
             />
             {#if isConversationTabActive}
                 <div class="topbar-actions">
+                    <button
+                        type="button"
+                        class="topbar-pill topbar-icon-pill"
+                        class:active={Boolean(attachedRoom)}
+                        title={t($locale, 'rooms.manageExperts')}
+                        aria-label={t($locale, 'rooms.manageExperts')}
+                        onclick={() => (expertManagerOpen = true)}
+                    >
+                        <span>@</span>
+                        <span class="topbar-btn-label">
+                            {attachedRoom ? attachedRoom.name : t($locale, 'rooms.experts')}
+                        </span>
+                    </button>
                     {#if active}
                         <button
                             type="button"
@@ -1370,9 +1660,30 @@
                         {:else}
                             <div class="messages-list">
                                 {#each messages as msg, msgIndex (msg.id)}
-                                    <article class="message" class:user={msg.role === 'user'} class:assistant={msg.role === 'assistant'} data-message-id={msg.id}>
+                                    {@const msgExpertPalette = msg.expertName ? resolveExpertAccent(msg.expertId, msg.expertName, msg.expertColor) : null}
+                                    <article
+                                        class="message"
+                                        class:user={msg.role === 'user'}
+                                        class:assistant={msg.role === 'assistant'}
+                                        class:expert-styled={Boolean(msgExpertPalette)}
+                                        style:--expert-accent={msgExpertPalette?.accent}
+                                        style:--expert-light={msgExpertPalette?.light}
+                                        style:--expert-dark={msgExpertPalette?.dark}
+                                        data-message-id={msg.id}
+                                    >
                                         <div class="message-head">
-                                            <div class="message-role">{msg.role === 'user' ? t($locale, 'chatInspector.you') : 'Nola'}</div>
+                                            <div class="message-role">
+                                                {#if msg.role === 'user'}
+                                                    {t($locale, 'chatInspector.you')}
+                                                {:else if msg.expertName}
+                                                    <span class="expert-role-badge">
+                                                        <span class="expert-dot" aria-hidden="true"></span>
+                                                        @{msg.expertName}
+                                                    </span>
+                                                {:else}
+                                                    Nola
+                                                {/if}
+                                            </div>
                                             <div class="message-actions">
                                                 <button type="button" class="msg-action" onclick={() => copyMessage(msg)}>
                                                     {copiedMessageIds[msg.id] ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
@@ -1461,6 +1772,32 @@
                                                             if (active) messages = await loadV2Messages(active.conversationId);
                                                         }}
                                                     />
+                                                {/each}
+                                            </div>
+                                        {/if}
+
+                                        {#if msg.expertReplies?.length}
+                                            <div class="expert-replies" aria-label={t($locale, 'chatInspector.expertReplies')}>
+                                                {#each msg.expertReplies as reply, rIdx (`${reply.expertId ?? reply.expertName}-${rIdx}`)}
+                                                    {@const palette = resolveExpertAccent(reply.expertId, reply.expertName, reply.color)}
+                                                    <section
+                                                        class="expert-reply-card"
+                                                        style:--expert-accent={palette.accent}
+                                                        style:--expert-light={palette.light}
+                                                        style:--expert-dark={palette.dark}
+                                                    >
+                                                        <header class="expert-reply-head">
+                                                            <span class="expert-reply-avatar" aria-hidden="true">
+                                                                {Array.from(reply.expertName.trim())[0] ?? 'E'}
+                                                            </span>
+                                                            <strong>@{reply.expertName}</strong>
+                                                            {#if reply.role}<span class="expert-reply-meta">{reply.role}</span>{/if}
+                                                            {#if reply.status}<span class="expert-reply-status">{reply.status}</span>{/if}
+                                                        </header>
+                                                        <div class="expert-reply-body">
+                                                            <Markdown source={reply.content} />
+                                                        </div>
+                                                    </section>
                                                 {/each}
                                             </div>
                                         {/if}
@@ -1590,6 +1927,44 @@
                                 >{t($locale, 'chatSession.configureModel')}</a>
                             </div>
                         {/if}
+                        {#if showPlanBanner}
+                            <div class="plan-approval-banner" role="region" aria-label={t($locale, 'chatInspector.planMode')}>
+                                <div class="plan-banner-head">
+                                    <strong>
+                                        {conversationPlan.status === 'awaiting_approval'
+                                            ? t($locale, 'chatInspector.planPendingApproval')
+                                            : conversationPlan.summary || t($locale, 'chatInspector.planActive')}
+                                    </strong>
+                                    <div class="plan-banner-actions">
+                                        <button
+                                            type="button"
+                                            class="primary compact-action"
+                                            disabled={planBusy}
+                                            onclick={() => void handlePlanDecision('approve')}
+                                        >
+                                            {t($locale, 'chatInspector.planApprove')}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="compact-action danger"
+                                            disabled={planBusy}
+                                            onclick={() => void handlePlanDecision('reject')}
+                                        >
+                                            {t($locale, 'chatInspector.planReject')}
+                                        </button>
+                                    </div>
+                                </div>
+                                {#if conversationPlan.steps.length}
+                                    <ol class="plan-banner-steps">
+                                        {#each conversationPlan.steps.slice(0, 6) as step, sIdx (step.id ?? sIdx)}
+                                            <li>{step.title}</li>
+                                        {/each}
+                                    </ol>
+                                {:else if conversationPlan.markdown}
+                                    <p class="plan-banner-summary">{conversationPlan.markdown.slice(0, 260)}</p>
+                                {/if}
+                            </div>
+                        {/if}
                         {#if statusNotice}
                             <p class="notice" role="status">{statusNotice}</p>
                         {/if}
@@ -1649,6 +2024,18 @@
                             >
                                 @ {t($locale, 'rooms.experts')}
                             </button>
+                            {#if active}
+                                <button
+                                    type="button"
+                                    class="toolbar-btn"
+                                    class:active={conversationPlan.enabled}
+                                    disabled={planBusy}
+                                    aria-pressed={conversationPlan.enabled}
+                                    onclick={() => void handleTogglePlanMode()}
+                                >
+                                    {conversationPlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
+                                </button>
+                            {/if}
                             {#if modelChoices.length}
                                 <select
                                     class="toolbar-select"
@@ -1696,6 +2083,7 @@
                                         <p class="expert-popup-empty">{t($locale, 'rooms.noExperts')}</p>
                                     {:else}
                                         {#each filteredExperts as exp, idx (exp.id)}
+                                            {@const expPalette = resolveExpertAccent(exp.id, exp.name, exp.color)}
                                             <button
                                                 type="button"
                                                 role="option"
@@ -1704,13 +2092,28 @@
                                                 aria-selected={idx === expertHighlightIdx}
                                                 onclick={() => selectExpert(exp)}
                                             >
-                                                <span class="expert-option-name">@{exp.name}</span>
+                                                <span class="expert-option-name">
+                                                    <span class="expert-dot" style:background={expPalette.accent} aria-hidden="true"></span>
+                                                    @{exp.name}
+                                                </span>
                                                 {#if exp.description}
                                                     <small class="muted">{exp.description}</small>
                                                 {/if}
                                             </button>
                                         {/each}
                                     {/if}
+                                    <div class="expert-popup-footer">
+                                        <button
+                                            type="button"
+                                            class="expert-manage-btn"
+                                            onclick={() => {
+                                                closeExpertPicker();
+                                                expertManagerOpen = true;
+                                            }}
+                                        >
+                                            {t($locale, 'rooms.manageExperts')}
+                                        </button>
+                                    </div>
                                 </div>
                             {/if}
 
@@ -1754,20 +2157,37 @@
                 </div>
 
                 {#if inspectorOpen}
-                    <ConversationInspector
-                        conversationId={active?.conversationId ?? null}
-                        {messages}
-                        usage={sessionUsage}
-                        {streaming}
-                        onclose={() => (inspectorOpen = false)}
-                        onopenPage={openManagementTab}
-                        oncompacted={summary => {
-                            statusNotice = summary;
-                            if (active) {
-                                void reloadActiveConversation(active.conversationId, generation).catch(() => {});
-                            }
-                        }}
-                    />
+                    <div class="inspector-split-wrap">
+                        {#if viewportWidth > 760}
+                            <PanelResizeHandle
+                                label={t($locale, 'shell.resizeInspector')}
+                                controls="conversation-inspector-panel"
+                                value={panelLayout.inspector}
+                                min={320}
+                                max={panelLayout.inspectorMax}
+                                defaultValue={layoutDefaults.inspector}
+                                reverse={true}
+                                onchange={next => setWorkspaceWidth('inspector', next)}
+                            />
+                        {/if}
+                        <ConversationInspector
+                            conversationId={active?.conversationId ?? null}
+                            {messages}
+                            usage={sessionUsage}
+                            {streaming}
+                            width={viewportWidth > 760 ? panelLayout.inspector : undefined}
+                            plan={conversationPlan}
+                            onclose={() => (inspectorOpen = false)}
+                            onopenPage={openManagementTab}
+                            onplanchange={next => (conversationPlan = next)}
+                            oncompacted={summary => {
+                                statusNotice = summary;
+                                if (active) {
+                                    void reloadActiveConversation(active.conversationId, generation).catch(() => {});
+                                }
+                            }}
+                        />
+                    </div>
                 {/if}
             </div>
         </div>
@@ -1797,7 +2217,7 @@
 <style>
     .chat-shell {
         display: grid;
-        grid-template-columns: 280px minmax(0, 1fr);
+        grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
         height: 100dvh;
         min-height: 0;
         background: var(--canvas);
@@ -1807,11 +2227,12 @@
         grid-template-columns: 56px minmax(0, 1fr);
     }
     .chat-sidebar {
+        position: relative;
         display: flex;
         flex-direction: column;
         min-width: 0;
         min-height: 0;
-        overflow: hidden;
+        overflow: visible;
         border-right: 1px solid var(--border);
         background: var(--panel);
         padding: 10px 8px;
@@ -2396,8 +2817,135 @@
         border-color: var(--border);
     }
     .expert-option-name {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-size: 13px;
         font-weight: 600;
+    }
+    .expert-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--expert-accent, var(--info));
+        flex: none;
+    }
+    .expert-role-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--content);
+    }
+    .message.expert-styled {
+        border-left: 3px solid var(--expert-accent, var(--info));
+        background: var(--expert-light, var(--panel));
+    }
+    .expert-replies {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .expert-reply-card {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--expert-accent, var(--info));
+        background: var(--expert-light, var(--canvas));
+    }
+    .expert-reply-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 12px;
+    }
+    .expert-reply-avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #fff;
+        background: var(--expert-accent, var(--info));
+        flex: none;
+    }
+    .expert-reply-meta,
+    .expert-reply-status {
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--muted);
+    }
+    .expert-reply-body {
+        font-size: 13px;
+    }
+    .expert-popup-footer {
+        border-top: 1px solid var(--border);
+        margin-top: 4px;
+        padding-top: 6px;
+    }
+    .expert-manage-btn {
+        width: 100%;
+        min-height: 32px;
+        padding: 4px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+        text-align: center;
+    }
+    .plan-approval-banner {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 12px;
+        border: 1px solid var(--primary);
+        border-radius: 10px;
+        background: var(--panel);
+        font-size: 12px;
+    }
+    .plan-banner-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .plan-banner-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .plan-banner-steps {
+        margin: 0;
+        padding-inline-start: 18px;
+        color: var(--muted);
+    }
+    .plan-banner-summary {
+        margin: 0;
+        color: var(--muted);
+        white-space: pre-wrap;
+    }
+    .inspector-split-wrap {
+        position: relative;
+        display: flex;
+        min-height: 0;
+        flex-shrink: 0;
+    }
+    @media (prefers-color-scheme: dark) {
+        :global(:root:not([data-appearance='light'])) .message.expert-styled,
+        :global(:root:not([data-appearance='light'])) .expert-reply-card {
+            background: var(--expert-dark, var(--panel));
+        }
+    }
+    :global(:root[data-appearance='dark']) .message.expert-styled,
+    :global(:root[data-appearance='dark']) .expert-reply-card {
+        background: var(--expert-dark, var(--panel));
     }
     .composer-box {
         display: flex;

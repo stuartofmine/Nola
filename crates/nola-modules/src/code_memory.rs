@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Native Rust Code-Memory workspace symbol & text indexer backed by SQLite
-//! `module_records` (`kind = "code_memory_index"`).
+//! Native Rust Tree-sitter AST Code-Memory Engine backed by SQLite
+//! (`code_files`, `code_symbols`, `code_symbols_fts`, `code_edges`).
+//!
+//! Uses real Tree-sitter grammars (`tree-sitter-rust`, `tree-sitter-typescript`,
+//! `tree-sitter-javascript`, `tree-sitter-python`, `tree-sitter-swift`,
+//! `tree-sitter-kotlin-ng`, plus `arborium` grammars for Go/Java/C/C++/C#/Ruby/
+//! PHP/Dart/Bash/Lua/SQL/HTML/CSS/Svelte/Vue/etc.) on desktop/CLI targets, with a
+//! lightweight regex fallback on mobile targets or unknown extensions.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::Instant;
 
 use ignore::WalkBuilder;
-use nola_store::Store;
+use nola_store::{CodeEdgeRow, CodeFileRow, CodeSymbolRow, Store};
 use nola_tools::{path_within_workspace, ToolContext, ToolHandler, ToolRegistry};
 use nola_types::{
     now_ms, sha256_hex, CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier,
@@ -27,7 +33,10 @@ const MAX_INDEXED_FILE_BYTES: u64 = 1024 * 1024; // 1 MiB per source file
 const MAX_SNIPPET_CONTEXT_LINES: usize = 120;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "svelte", "py", "kt", "swift", "go", "java", "c", "cpp", "h",
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "svelte", "vue", "py", "kt", "kts", "swift",
+    "go", "java", "c", "h", "cc", "cpp", "cxx", "hpp", "cs", "rb", "php", "dart", "sh", "bash",
+    "lua", "sql", "html", "css", "scss", "json", "toml", "yaml", "yml", "md", "proto", "graphql",
+    "hcl", "tf", "xml", "m", "mm",
 ];
 
 const SKIP_DIR_NAMES: &[&str] = &[
@@ -76,14 +85,63 @@ pub struct IndexStats {
     pub duration_ms: u64,
 }
 
-fn index_storage_id(workspace_root: &Path) -> String {
-    let canonical = workspace_root
+fn canonical_workspace_key(workspace_root: &Path) -> String {
+    workspace_root
         .canonicalize()
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
-    sha256_hex(canonical.to_string_lossy().as_bytes())
+        .unwrap_or_else(|_| workspace_root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn detect_language_from_path(path: &Path) -> Option<&'static str> {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        let lower = name.to_ascii_lowercase();
+        if lower == "dockerfile" || lower.starts_with("dockerfile.") {
+            return Some("dockerfile");
+        }
+    }
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "rs" => Some("rust"),
+        "ts" => Some("typescript"),
+        "tsx" => Some("tsx"),
+        "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+        "py" => Some("python"),
+        "swift" => Some("swift"),
+        "kt" | "kts" => Some("kotlin"),
+        "go" => Some("go"),
+        "java" => Some("java"),
+        "c" | "h" => Some("c"),
+        "cc" | "cpp" | "cxx" | "hpp" => Some("cpp"),
+        "cs" => Some("c-sharp"),
+        "rb" => Some("ruby"),
+        "php" => Some("php"),
+        "dart" => Some("dart"),
+        "sh" | "bash" => Some("bash"),
+        "lua" => Some("lua"),
+        "sql" => Some("sql"),
+        "html" => Some("html"),
+        "css" => Some("css"),
+        "scss" => Some("scss"),
+        "svelte" => Some("svelte"),
+        "vue" => Some("vue"),
+        "json" => Some("json"),
+        "toml" => Some("toml"),
+        "yaml" | "yml" => Some("yaml"),
+        "md" => Some("markdown"),
+        "proto" => Some("proto"),
+        "graphql" => Some("graphql"),
+        "hcl" | "tf" => Some("hcl"),
+        "xml" => Some("xml"),
+        "m" | "mm" => Some("objc"),
+        _ => None,
+    }
 }
 
 fn is_supported_source_file(path: &Path) -> bool {
+    if detect_language_from_path(path).is_some() {
+        return true;
+    }
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| {
@@ -106,15 +164,7 @@ fn normalize_rel_path(workspace_root: &Path, abs_path: &Path) -> String {
     rel.to_string_lossy().replace('\\', "/")
 }
 
-fn file_mtime_ms(meta: &fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-fn walk_source_files(workspace_root: &Path) -> Vec<(String, std::path::PathBuf)> {
+fn walk_source_files(workspace_root: &Path) -> Vec<(String, PathBuf)> {
     let mut files = Vec::new();
     let mut builder = WalkBuilder::new(workspace_root);
     builder
@@ -154,6 +204,545 @@ fn walk_source_files(workspace_root: &Path) -> Vec<(String, std::path::PathBuf)>
     files
 }
 
+struct ParsedFileData {
+    language: String,
+    symbols: Vec<CodeSymbolRow>,
+    edges: Vec<CodeEdgeRow>,
+}
+
+// --- Tree-sitter AST Extractor (Desktop / CLI) ---
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod ts_ast {
+    use super::*;
+    use arborium::tree_sitter::{Language, Node, Parser};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static PARSERS: RefCell<HashMap<&'static str, Parser>> = RefCell::new(HashMap::new());
+    }
+
+    fn grammar_for(language: &str) -> Option<Language> {
+        match language {
+            "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+            "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+            "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
+            "python" => Some(tree_sitter_python::LANGUAGE.into()),
+            "swift" => Some(tree_sitter_swift::LANGUAGE.into()),
+            "kotlin" => Some(tree_sitter_kotlin_ng::LANGUAGE.into()),
+            other => arborium::get_language(other),
+        }
+    }
+
+    pub(super) fn extract_ast(
+        ws_key: &str,
+        rel_path: &str,
+        language: &'static str,
+        source: &[u8],
+    ) -> Option<ParsedFileData> {
+        let tree = PARSERS.with(|cache| {
+            let mut parsers = cache.borrow_mut();
+            if !parsers.contains_key(language) {
+                let lang = grammar_for(language)?;
+                let mut parser = Parser::new();
+                parser.set_language(&lang).ok()?;
+                parsers.insert(language, parser);
+            }
+            parsers.get_mut(language)?.parse(source, None)
+        })?;
+
+        let mut symbols = Vec::new();
+        let mut edges = Vec::new();
+        let mut seen_edges: HashSet<(String, String, i64, &'static str)> = HashSet::new();
+        let mut scope_stack: Vec<(String, bool)> = Vec::new(); // (name, is_type_container)
+
+        visit_node(
+            tree.root_node(),
+            ws_key,
+            rel_path,
+            language,
+            source,
+            &mut scope_stack,
+            &mut symbols,
+            &mut edges,
+            &mut seen_edges,
+        );
+
+        Some(ParsedFileData {
+            language: language.to_string(),
+            symbols,
+            edges,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn visit_node(
+        node: Node<'_>,
+        ws_key: &str,
+        rel_path: &str,
+        language: &str,
+        source: &[u8],
+        scope_stack: &mut Vec<(String, bool)>,
+        symbols: &mut Vec<CodeSymbolRow>,
+        edges: &mut Vec<CodeEdgeRow>,
+        seen_edges: &mut HashSet<(String, String, i64, &'static str)>,
+    ) {
+        collect_references(
+            node,
+            ws_key,
+            rel_path,
+            source,
+            scope_stack,
+            edges,
+            seen_edges,
+        );
+
+        let mut pushed_scope = false;
+        let in_type = scope_stack.iter().any(|(_, is_t)| *is_t);
+
+        // Rust `impl Foo` / `impl Trait for Foo` pushes `Foo` as type scope
+        if node.kind() == "impl_item" {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = declared_type_name(type_node, source) {
+                    scope_stack.push((type_name, true));
+                    pushed_scope = true;
+                }
+            }
+        }
+
+        // JS/TS named arrow functions: `const foo = (...) => ...`
+        if node.kind() == "variable_declarator" {
+            if let Some(val) = node.child_by_field_name("value") {
+                if val.kind() == "arrow_function" || val.kind() == "function_expression" {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source) {
+                            let name = name.trim();
+                            if !name.is_empty() {
+                                let kind = if in_type { "method" } else { "function" };
+                                let qualified = build_qualified_name(rel_path, scope_stack, name);
+                                let start_line = (node.start_position().row + 1) as i64;
+                                let end_line = (node.end_position().row + 1) as i64;
+                                let sig = first_line(node, source);
+                                let id = sha256_hex(
+                                    format!("{ws_key}:{rel_path}:{qualified}:{start_line}")
+                                        .as_bytes(),
+                                );
+                                symbols.push(CodeSymbolRow {
+                                    id,
+                                    workspace_root: ws_key.to_string(),
+                                    rel_path: rel_path.to_string(),
+                                    name: name.to_string(),
+                                    qualified_name: qualified,
+                                    kind: kind.to_string(),
+                                    language: language.to_string(),
+                                    start_line,
+                                    end_line,
+                                    signature: sig,
+                                });
+                                scope_stack.push((name.to_string(), false));
+                                pushed_scope = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(raw_kind) = node_symbol_kind(node, language) {
+            if let Some(name_node) = declaration_name_node(node) {
+                if let Ok(raw_name) = name_node.utf8_text(source) {
+                    let name = raw_name.trim();
+                    if !name.is_empty() {
+                        let refined = refine_swift_kind(node, source, raw_kind);
+                        let effective_kind = if refined == "function" && in_type {
+                            "method"
+                        } else {
+                            refined
+                        };
+                        let qualified = build_qualified_name(rel_path, scope_stack, name);
+                        let start_line = (node.start_position().row + 1) as i64;
+                        let end_line = (node.end_position().row + 1) as i64;
+                        let sig = callable_or_first_line(node, source, effective_kind);
+                        let id = sha256_hex(
+                            format!(
+                                "{ws_key}:{rel_path}:{qualified}:{start_line}:{}",
+                                symbols.len()
+                            )
+                            .as_bytes(),
+                        );
+                        symbols.push(CodeSymbolRow {
+                            id,
+                            workspace_root: ws_key.to_string(),
+                            rel_path: rel_path.to_string(),
+                            name: name.to_string(),
+                            qualified_name: qualified,
+                            kind: effective_kind.to_string(),
+                            language: language.to_string(),
+                            start_line,
+                            end_line,
+                            signature: sig,
+                        });
+                        if is_container_kind(node.kind()) && !pushed_scope {
+                            scope_stack.push((name.to_string(), is_type_container(node.kind())));
+                            pushed_scope = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            visit_node(
+                child,
+                ws_key,
+                rel_path,
+                language,
+                source,
+                scope_stack,
+                symbols,
+                edges,
+                seen_edges,
+            );
+        }
+
+        if pushed_scope {
+            scope_stack.pop();
+        }
+    }
+
+    fn build_qualified_name(
+        rel_path: &str,
+        scope_stack: &[(String, bool)],
+        name: &str,
+    ) -> String {
+        if scope_stack.is_empty() {
+            format!("{rel_path}::{name}")
+        } else {
+            let scope: Vec<&str> = scope_stack.iter().map(|(s, _)| s.as_str()).collect();
+            format!("{rel_path}::{}::{name}", scope.join("::"))
+        }
+    }
+
+    fn node_symbol_kind(node: Node<'_>, language: &str) -> Option<&'static str> {
+        match node.kind() {
+            "function_item"
+            | "function_signature_item"
+            | "function_definition"
+            | "function_declaration"
+            | "function_signature"
+            | "local_function"
+            | "function" => {
+                if node
+                    .parent()
+                    .is_some_and(|p| p.kind() == "method_signature")
+                {
+                    None
+                } else {
+                    Some("function")
+                }
+            }
+            "method_definition"
+            | "method_declaration"
+            | "method"
+            | "method_signature"
+            | "abstract_method_signature"
+            | "protocol_function_declaration" => Some("method"),
+            "struct_item" | "struct_specifier" => Some("struct"),
+            "enum_item" | "enum_declaration" | "enum_specifier" => Some("enum"),
+            "trait_item" => Some("trait"),
+            "interface_declaration" | "protocol_declaration" => Some("interface"),
+            "type_item" | "type_alias_declaration" | "typealias_declaration" => Some("type"),
+            "type_declaration" if language == "go" => Some("type"),
+            "class_definition"
+            | "class_declaration"
+            | "class_specifier"
+            | "class"
+            | "abstract_class_declaration"
+            | "object_declaration" => Some("class"),
+            "mod_item" | "module" | "namespace_definition" => Some("module"),
+            "const_item" | "static_item" => Some("constant"),
+            "macro_definition" => Some("macro"),
+            _ => None,
+        }
+    }
+
+    fn refine_swift_kind<'a>(node: Node<'_>, source: &[u8], fallback: &'a str) -> &'a str {
+        let Some(decl_kind) = node.child_by_field_name("declaration_kind") else {
+            return fallback;
+        };
+        match decl_kind.utf8_text(source).ok().map(str::trim) {
+            Some("struct") => "struct",
+            Some("enum") => "enum",
+            Some("protocol") => "interface",
+            _ => fallback,
+        }
+    }
+
+    fn declaration_name_node(node: Node<'_>) -> Option<Node<'_>> {
+        if let Some(name) = node
+            .child_by_field_name("name")
+            .or_else(|| node.child_by_field_name("function"))
+        {
+            return find_identifier(name).or(Some(name));
+        }
+        if let Some(declarator) = node.child_by_field_name("declarator") {
+            if let Some(name) = find_identifier(declarator) {
+                return Some(name);
+            }
+        }
+        let mut cursor = node.walk();
+        let found = node.named_children(&mut cursor).find(|child| {
+            matches!(
+                child.kind(),
+                "identifier"
+                    | "field_identifier"
+                    | "type_identifier"
+                    | "simple_identifier"
+                    | "property_identifier"
+                    | "name"
+                    | "constant"
+                    | "type_spec"
+            )
+        });
+        found.and_then(|n| find_identifier(n).or(Some(n)))
+    }
+
+    fn find_identifier(node: Node<'_>) -> Option<Node<'_>> {
+        if matches!(
+            node.kind(),
+            "identifier"
+                | "field_identifier"
+                | "type_identifier"
+                | "simple_identifier"
+                | "property_identifier"
+                | "name"
+                | "constant"
+        ) {
+            return Some(node);
+        }
+        let mut cursor = node.walk();
+        let found = node.named_children(&mut cursor).find_map(find_identifier);
+        found
+    }
+
+    fn declared_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+        if matches!(
+            node.kind(),
+            "type_identifier" | "identifier" | "simple_identifier"
+        ) {
+            return node
+                .utf8_text(source)
+                .ok()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned);
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if let Some(name) = declared_type_name(child, source) {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn is_container_kind(kind: &str) -> bool {
+        matches!(
+            kind,
+            "struct_item"
+                | "struct_specifier"
+                | "enum_item"
+                | "enum_declaration"
+                | "trait_item"
+                | "class_definition"
+                | "class_declaration"
+                | "class_specifier"
+                | "class"
+                | "abstract_class_declaration"
+                | "interface_declaration"
+                | "protocol_declaration"
+                | "object_declaration"
+                | "mod_item"
+                | "module"
+                | "namespace_definition"
+                | "function_item"
+                | "function_definition"
+                | "function_declaration"
+                | "method_definition"
+                | "method_declaration"
+                | "method"
+        )
+    }
+
+    fn is_type_container(kind: &str) -> bool {
+        matches!(
+            kind,
+            "struct_item"
+                | "struct_specifier"
+                | "enum_item"
+                | "enum_declaration"
+                | "trait_item"
+                | "class_definition"
+                | "class_declaration"
+                | "class_specifier"
+                | "class"
+                | "abstract_class_declaration"
+                | "interface_declaration"
+                | "protocol_declaration"
+                | "object_declaration"
+        )
+    }
+
+    fn callable_or_first_line(node: Node<'_>, source: &[u8], kind: &str) -> String {
+        if matches!(kind, "function" | "method") {
+            let end = node
+                .child_by_field_name("body")
+                .map(|b| b.start_byte())
+                .unwrap_or_else(|| node.end_byte());
+            let sig: String = String::from_utf8_lossy(&source[node.start_byte()..end])
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(200)
+                .collect();
+            if !sig.is_empty() {
+                return sig;
+            }
+        }
+        first_line(node, source)
+    }
+
+    fn first_line(node: Node<'_>, source: &[u8]) -> String {
+        let slice = &source[node.start_byte()..node.end_byte()];
+        String::from_utf8_lossy(slice)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .chars()
+            .take(200)
+            .collect()
+    }
+
+    fn terminal_identifier(value: &str) -> Option<String> {
+        value
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|p| !p.is_empty())
+            .next_back()
+            .filter(|s| s.len() > 1 && !s.chars().all(|c| c.is_ascii_digit()))
+            .map(ToOwned::to_owned)
+    }
+
+    fn collect_references(
+        node: Node<'_>,
+        ws_key: &str,
+        rel_path: &str,
+        source: &[u8],
+        scope_stack: &[(String, bool)],
+        edges: &mut Vec<CodeEdgeRow>,
+        seen_edges: &mut HashSet<(String, String, i64, &'static str)>,
+    ) {
+        let from_symbol = scope_stack
+            .last()
+            .map(|(s, _)| s.clone())
+            .unwrap_or_else(|| rel_path.to_string());
+
+        if matches!(
+            node.kind(),
+            "call"
+                | "call_expression"
+                | "function_call"
+                | "method_invocation"
+                | "invocation_expression"
+        ) {
+            let target = node
+                .child_by_field_name("function")
+                .or_else(|| node.child_by_field_name("callee"))
+                .or_else(|| node.child_by_field_name("name"))
+                .or_else(|| node.child_by_field_name("target"))
+                .or_else(|| {
+                    let mut c = node.walk();
+                    let found = node.named_children(&mut c).next();
+                    found
+                });
+            if let Some(target_node) = target {
+                if let Ok(text) = target_node.utf8_text(source) {
+                    if let Some(to_symbol) = terminal_identifier(text) {
+                        if to_symbol != from_symbol {
+                            let line = (node.start_position().row + 1) as i64;
+                            if seen_edges.insert((
+                                from_symbol.clone(),
+                                to_symbol.clone(),
+                                line,
+                                "calls",
+                            )) {
+                                edges.push(CodeEdgeRow {
+                                    workspace_root: ws_key.to_string(),
+                                    from_symbol,
+                                    to_symbol,
+                                    rel_path: rel_path.to_string(),
+                                    line,
+                                    edge_kind: "calls".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        if matches!(
+            node.kind(),
+            "use_declaration"
+                | "import_statement"
+                | "import_from_statement"
+                | "import_header"
+                | "import_declaration"
+                | "using_directive"
+        ) {
+            let mut stack = vec![node];
+            while let Some(cur) = stack.pop() {
+                let mut cursor = cur.walk();
+                for child in cur.named_children(&mut cursor) {
+                    if matches!(
+                        child.kind(),
+                        "identifier" | "type_identifier" | "simple_identifier" | "name"
+                    ) {
+                        if let Ok(text) = child.utf8_text(source) {
+                            let to_symbol = text.trim().to_string();
+                            let line = (child.start_position().row + 1) as i64;
+                            if to_symbol.len() > 1
+                                && seen_edges.insert((
+                                    rel_path.to_string(),
+                                    to_symbol.clone(),
+                                    line,
+                                    "imports",
+                                ))
+                            {
+                                edges.push(CodeEdgeRow {
+                                    workspace_root: ws_key.to_string(),
+                                    from_symbol: rel_path.to_string(),
+                                    to_symbol,
+                                    rel_path: rel_path.to_string(),
+                                    line,
+                                    edge_kind: "imports".to_string(),
+                                });
+                            }
+                        }
+                    } else {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Regex Fallback Extractor (Mobile or unknown grammars) ---
 struct SymbolMatchers {
     rust: Vec<(&'static str, Regex)>,
     ts_js: Vec<(&'static str, Regex)>,
@@ -312,17 +901,23 @@ fn matchers() -> &'static SymbolMatchers {
     })
 }
 
-fn extract_symbols(rel_path: &str, ext: &str, content: &str) -> Vec<CodeSymbol> {
+fn extract_regex_fallback(
+    ws_key: &str,
+    rel_path: &str,
+    ext: &str,
+    language: &str,
+    content: &str,
+) -> ParsedFileData {
     let m = matchers();
     let rules: &[(&str, Regex)] = match ext {
         "rs" => &m.rust,
-        "ts" | "tsx" | "js" | "jsx" | "svelte" => &m.ts_js,
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "svelte" | "vue" => &m.ts_js,
         "py" => &m.python,
         "go" => &m.go,
-        "java" | "kt" => &m.java_kt,
+        "java" | "kt" | "kts" => &m.java_kt,
         "swift" => &m.swift,
-        "c" | "cpp" | "h" => &m.c_cpp,
-        _ => return Vec::new(),
+        "c" | "cc" | "cpp" | "cxx" | "h" | "hpp" => &m.c_cpp,
+        _ => &[],
     };
 
     let mut symbols = Vec::new();
@@ -341,16 +936,25 @@ fn extract_symbols(rel_path: &str, ext: &str, content: &str) -> Vec<CodeSymbol> 
             if let Some(caps) = re.captures(line) {
                 if let Some(name_match) = caps.get(1) {
                     let name = name_match.as_str();
-                    // Filter common C/Java control-flow keywords mis-captured as functions
                     if matches!(name, "if" | "for" | "while" | "switch" | "catch" | "return") {
                         break;
                     }
-                    let signature: String = trimmed.chars().take(160).collect();
-                    symbols.push(CodeSymbol {
+                    let start_line = (idx + 1) as i64;
+                    let qualified_name = format!("{rel_path}::{name}");
+                    let id = sha256_hex(
+                        format!("{ws_key}:{rel_path}:{qualified_name}:{start_line}").as_bytes(),
+                    );
+                    let signature: String = trimmed.chars().take(200).collect();
+                    symbols.push(CodeSymbolRow {
+                        id,
+                        workspace_root: ws_key.to_string(),
+                        rel_path: rel_path.to_string(),
                         name: name.to_string(),
+                        qualified_name,
                         kind: (*kind).to_string(),
-                        file: rel_path.to_string(),
-                        line: idx + 1,
+                        language: language.to_string(),
+                        start_line,
+                        end_line: start_line,
                         signature,
                     });
                     break;
@@ -358,10 +962,43 @@ fn extract_symbols(rel_path: &str, ext: &str, content: &str) -> Vec<CodeSymbol> 
             }
         }
     }
-    symbols
+    ParsedFileData {
+        language: language.to_string(),
+        symbols,
+        edges: Vec::new(),
+    }
 }
 
-/// Index or incrementally update workspace symbols in SQLite `module_records`.
+fn parse_source_file(
+    ws_key: &str,
+    rel_path: &str,
+    abs_path: &Path,
+    content: &str,
+) -> ParsedFileData {
+    let ext = abs_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let detected = detect_language_from_path(abs_path);
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let Some(lang) = detected {
+        if let Some(parsed) = ts_ast::extract_ast(ws_key, rel_path, lang, content.as_bytes()) {
+            // For Svelte/Vue templates where embedded <script> blocks need fallback symbols if AST yields none
+            if !parsed.symbols.is_empty() || !matches!(lang, "svelte" | "vue") {
+                return parsed;
+            }
+        }
+    }
+
+    let lang_label = detected.unwrap_or(if ext.is_empty() { "unknown" } else { ext.as_str() });
+    extract_regex_fallback(ws_key, rel_path, &ext, lang_label, content)
+}
+
+/// Index or incrementally update workspace source symbols & call/import edges in SQLite
+/// (`code_files`, `code_symbols`, `code_symbols_fts`, `code_edges`), skipping unchanged files
+/// by SHA-256 content hash and pruning deleted files.
 pub fn index_workspace(
     store: &Store,
     workspace_root: &Path,
@@ -375,101 +1012,87 @@ pub fn index_workspace(
         ));
     }
 
-    let key = index_storage_id(workspace_root);
-    let existing = if force_full {
-        None
+    let ws_key = canonical_workspace_key(workspace_root);
+    let existing_hashes = if force_full {
+        std::collections::HashMap::new()
     } else {
         store
-            .get_module_record::<WorkspaceCodeIndex>(KIND_CODE_MEMORY_INDEX, &key)
+            .get_code_file_hashes(&ws_key)
             .map_err(|e| e.to_string())?
     };
-    let prev_files = existing.map(|idx| idx.files).unwrap_or_default();
 
     let walked = walk_source_files(workspace_root);
-    let mut next_files = BTreeMap::new();
+    let mut existing_rel_paths = HashSet::with_capacity(walked.len());
     let mut files_indexed = 0usize;
     let mut files_reused = 0usize;
+    let ts_now = now_ms();
 
     for (rel_path, abs_path) in walked {
         let Ok(meta) = fs::metadata(&abs_path) else {
             continue;
         };
-        let size = meta.len();
-        if size > MAX_INDEXED_FILE_BYTES {
+        if meta.len() > MAX_INDEXED_FILE_BYTES {
             continue;
         }
-        let mtime = file_mtime_ms(&meta);
-
-        if let Some(prev) = prev_files.get(&rel_path) {
-            if prev.mtime_ms == mtime && prev.size == size {
-                next_files.insert(rel_path, prev.clone());
-                files_reused += 1;
-                continue;
-            }
-        }
-
-        let Ok(content) = fs::read_to_string(&abs_path) else {
+        let Ok(raw_bytes) = fs::read(&abs_path) else {
             continue;
         };
-        let ext = abs_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let symbols = extract_symbols(&rel_path, &ext, &content);
-        next_files.insert(
-            rel_path.clone(),
-            IndexedFileEntry {
-                path: rel_path,
-                mtime_ms: mtime,
-                size,
-                symbols,
-            },
-        );
+        let Ok(content) = String::from_utf8(raw_bytes) else {
+            continue;
+        };
+        let sha = sha256_hex(content.as_bytes());
+        existing_rel_paths.insert(rel_path.clone());
+
+        if !force_full && existing_hashes.get(&rel_path).is_some_and(|h| h == &sha) {
+            files_reused += 1;
+            continue;
+        }
+
+        let parsed = parse_source_file(&ws_key, &rel_path, &abs_path, &content);
+        let file_row = CodeFileRow {
+            workspace_root: ws_key.clone(),
+            rel_path: rel_path.clone(),
+            sha256: sha,
+            language: parsed.language,
+            line_count: content.lines().count() as i64,
+            updated_at_ms: ts_now,
+        };
+        store
+            .replace_code_file_index(&file_row, &parsed.symbols, &parsed.edges)
+            .map_err(|e| e.to_string())?;
         files_indexed += 1;
     }
 
-    let total_files = next_files.len();
-    let total_symbols: usize = next_files.values().map(|f| f.symbols.len()).sum();
-
-    let index = WorkspaceCodeIndex {
-        workspace_root: workspace_root.display().to_string(),
-        indexed_at_ms: now_ms(),
-        files: next_files,
-    };
     store
-        .put_module_record(KIND_CODE_MEMORY_INDEX, &key, &index)
+        .prune_missing_code_files(&ws_key, &existing_rel_paths)
+        .map_err(|e| e.to_string())?;
+
+    let stats = store
+        .code_index_stats(&ws_key)
         .map_err(|e| e.to_string())?;
 
     Ok(IndexStats {
         workspace_root: workspace_root.display().to_string(),
         files_indexed,
         files_reused,
-        total_files,
-        total_symbols,
+        total_files: stats.file_count.max(0) as usize,
+        total_symbols: stats.symbol_count.max(0) as usize,
         duration_ms: start.elapsed().as_millis() as u64,
     })
 }
 
-fn load_or_build_index(
-    store: &Store,
-    workspace_root: &Path,
-) -> Result<WorkspaceCodeIndex, String> {
-    let key = index_storage_id(workspace_root);
-    if let Some(idx) = store
-        .get_module_record::<WorkspaceCodeIndex>(KIND_CODE_MEMORY_INDEX, &key)
-        .map_err(|e| e.to_string())?
-    {
-        return Ok(idx);
+fn ensure_indexed(store: &Store, workspace_root: &Path) -> Result<String, String> {
+    let ws_key = canonical_workspace_key(workspace_root);
+    let stats = store
+        .code_index_stats(&ws_key)
+        .map_err(|e| e.to_string())?;
+    if stats.file_count == 0 {
+        index_workspace(store, workspace_root, false)?;
     }
-    index_workspace(store, workspace_root, false)?;
-    store
-        .get_module_record::<WorkspaceCodeIndex>(KIND_CODE_MEMORY_INDEX, &key)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "failed to load newly built code memory index".to_string())
+    Ok(ws_key)
 }
 
-/// Search indexed symbols by name, kind, and optional path substring with ranked matches.
+/// Search indexed symbols via SQLite FTS5 (`code_symbols_fts`) with ranking and optional filters.
 pub fn search_symbols(
     store: &Store,
     workspace_root: &Path,
@@ -478,55 +1101,60 @@ pub fn search_symbols(
     path_filter: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Value>, String> {
-    let idx = load_or_build_index(store, workspace_root)?;
-    let q_lower = query.trim().to_ascii_lowercase();
-    let kind_lower = kind.map(|k| k.trim().to_ascii_lowercase());
-    let path_lower = path_filter.map(|p| p.trim().to_ascii_lowercase());
+    let ws_key = ensure_indexed(store, workspace_root)?;
+    let q_trimmed = query.trim();
+    let q_lower = q_trimmed.to_ascii_lowercase();
+    let kind_norm = kind
+        .map(|k| k.trim().to_ascii_lowercase())
+        .filter(|k| !k.is_empty());
+    let path_lower = path_filter
+        .map(|p| p.trim().to_ascii_lowercase())
+        .filter(|p| !p.is_empty());
     let cap = limit.clamp(1, 200);
+    let fetch_cap = if path_lower.is_some() {
+        (cap * 5).min(1_000)
+    } else {
+        (cap * 2).min(400)
+    };
 
-    let mut scored: Vec<(u32, &CodeSymbol)> = Vec::new();
-    for entry in idx.files.values() {
+    let rows = store
+        .search_code_symbols(&ws_key, q_trimmed, kind_norm.as_deref(), fetch_cap)
+        .map_err(|e| e.to_string())?;
+
+    let mut scored: Vec<(u32, CodeSymbolRow)> = Vec::new();
+    for sym in rows {
         if let Some(ref pf) = path_lower {
-            if !pf.is_empty() && !entry.path.to_ascii_lowercase().contains(pf) {
+            if !sym.rel_path.to_ascii_lowercase().contains(pf) {
                 continue;
             }
         }
-        for sym in &entry.symbols {
-            if let Some(ref kf) = kind_lower {
-                if !kf.is_empty() && sym.kind.to_ascii_lowercase() != *kf {
-                    continue;
-                }
-            }
-            let score = if q_lower.is_empty() {
-                10
+        let score = if q_lower.is_empty() {
+            10
+        } else {
+            let name_l = sym.name.to_ascii_lowercase();
+            let qname_l = sym.qualified_name.to_ascii_lowercase();
+            let sig_l = sym.signature.to_ascii_lowercase();
+            if name_l == q_lower {
+                100
+            } else if name_l.starts_with(&q_lower) {
+                80
+            } else if name_l.contains(&q_lower) {
+                60
+            } else if qname_l.contains(&q_lower) {
+                45
+            } else if sig_l.contains(&q_lower) {
+                35
             } else {
-                let name_l = sym.name.to_ascii_lowercase();
-                let sig_l = sym.signature.to_ascii_lowercase();
-                let file_l = sym.file.to_ascii_lowercase();
-                if name_l == q_lower {
-                    100
-                } else if name_l.starts_with(&q_lower) {
-                    80
-                } else if name_l.contains(&q_lower) {
-                    60
-                } else if sig_l.contains(&q_lower) {
-                    35
-                } else if file_l.contains(&q_lower) {
-                    20
-                } else {
-                    0
-                }
-            };
-            if score > 0 {
-                scored.push((score, sym));
+                20
             }
-        }
+        };
+        scored.push((score, sym));
     }
 
     scored.sort_by(|a, b| {
         b.0.cmp(&a.0)
-            .then_with(|| a.1.file.cmp(&b.1.file))
-            .then_with(|| a.1.line.cmp(&b.1.line))
+            .then_with(|| a.1.rel_path.cmp(&b.1.rel_path))
+            .then_with(|| a.1.start_line.cmp(&b.1.start_line))
     });
 
     Ok(scored
@@ -535,9 +1163,12 @@ pub fn search_symbols(
         .map(|(score, sym)| {
             json!({
                 "name": sym.name,
+                "qualified_name": sym.qualified_name,
                 "kind": sym.kind,
-                "file": sym.file,
-                "line": sym.line,
+                "language": sym.language,
+                "file": sym.rel_path,
+                "line": sym.start_line,
+                "end_line": sym.end_line,
                 "signature": sym.signature,
                 "score": score
             })
@@ -616,7 +1247,9 @@ pub fn read_symbol_snippet(
     line: Option<usize>,
     context_lines: usize,
 ) -> Result<Value, String> {
-    let mut resolved_file = file.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let mut resolved_file = file
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     let mut resolved_line = line;
     let mut resolved_symbol: Option<Value> = None;
 
@@ -685,23 +1318,389 @@ pub fn read_symbol_snippet(
     }))
 }
 
+/// Traverse callers and/or callees in the SQLite `code_edges` call graph (`depth: 1..=4`).
+pub fn trace_symbol(
+    store: &Store,
+    workspace_root: &Path,
+    symbol: &str,
+    direction: &str,
+    depth: usize,
+    limit: usize,
+) -> Result<Value, String> {
+    let trimmed = symbol.trim();
+    if trimmed.is_empty() {
+        return Err("symbol must not be empty".into());
+    }
+    let dir = match direction.trim().to_ascii_lowercase().as_str() {
+        "callers" => "callers",
+        "callees" => "callees",
+        "both" | "" => "both",
+        other => {
+            return Err(format!(
+                "invalid direction '{other}' (expected 'callers', 'callees', or 'both')"
+            ));
+        }
+    };
+    let max_depth = depth.clamp(1, 4);
+    let edge_cap = limit.clamp(1, 200);
+    let ws_key = ensure_indexed(store, workspace_root)?;
+
+    // Resolve seed symbol name(s) via index if user passed a qualified name
+    let mut seed_names = BTreeSet::new();
+    seed_names.insert(trimmed.to_string());
+    if let Some(short) = trimmed.rsplit("::").next() {
+        if !short.is_empty() {
+            seed_names.insert(short.to_string());
+        }
+    }
+
+    let mut callers: Vec<Value> = Vec::new();
+    let mut callees: Vec<Value> = Vec::new();
+    let mut seen_caller_edges: HashSet<(String, String, String, i64)> = HashSet::new();
+    let mut seen_callee_edges: HashSet<(String, String, String, i64)> = HashSet::new();
+
+    if matches!(dir, "callers" | "both") {
+        let mut queue: VecDeque<(String, usize)> =
+            seed_names.iter().map(|s| (s.clone(), 0)).collect();
+        let mut visited: HashSet<String> = seed_names.iter().cloned().collect();
+        while let Some((cur, d)) = queue.pop_front() {
+            if d >= max_depth || callers.len() >= edge_cap {
+                break;
+            }
+            let incoming = store
+                .list_code_edges_to(&ws_key, &cur, edge_cap)
+                .map_err(|e| e.to_string())?;
+            for edge in incoming {
+                if callers.len() >= edge_cap {
+                    break;
+                }
+                let dedup_key = (
+                    edge.from_symbol.clone(),
+                    edge.to_symbol.clone(),
+                    edge.rel_path.clone(),
+                    edge.line,
+                );
+                if seen_caller_edges.insert(dedup_key) {
+                    callers.push(json!({
+                        "depth": d + 1,
+                        "from": edge.from_symbol,
+                        "to": edge.to_symbol,
+                        "file": edge.rel_path,
+                        "line": edge.line,
+                        "kind": edge.edge_kind
+                    }));
+                    if d + 1 < max_depth && visited.insert(edge.from_symbol.clone()) {
+                        queue.push_back((edge.from_symbol, d + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    if matches!(dir, "callees" | "both") {
+        let mut queue: VecDeque<(String, usize)> =
+            seed_names.iter().map(|s| (s.clone(), 0)).collect();
+        let mut visited: HashSet<String> = seed_names.iter().cloned().collect();
+        while let Some((cur, d)) = queue.pop_front() {
+            if d >= max_depth || callees.len() >= edge_cap {
+                break;
+            }
+            let outgoing = store
+                .list_code_edges_from(&ws_key, &cur, edge_cap)
+                .map_err(|e| e.to_string())?;
+            for edge in outgoing {
+                if callees.len() >= edge_cap {
+                    break;
+                }
+                let dedup_key = (
+                    edge.from_symbol.clone(),
+                    edge.to_symbol.clone(),
+                    edge.rel_path.clone(),
+                    edge.line,
+                );
+                if seen_callee_edges.insert(dedup_key) {
+                    callees.push(json!({
+                        "depth": d + 1,
+                        "from": edge.from_symbol,
+                        "to": edge.to_symbol,
+                        "file": edge.rel_path,
+                        "line": edge.line,
+                        "kind": edge.edge_kind
+                    }));
+                    if d + 1 < max_depth && visited.insert(edge.to_symbol.clone()) {
+                        queue.push_back((edge.to_symbol, d + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(json!({
+        "symbol": trimmed,
+        "direction": dir,
+        "depth": max_depth,
+        "caller_count": callers.len(),
+        "callee_count": callees.len(),
+        "callers": callers,
+        "callees": callees
+    }))
+}
+
+fn module_dir_of(rel_path: &str) -> String {
+    match rel_path.rsplit_once('/') {
+        Some((dir, _)) if !dir.is_empty() => dir.to_string(),
+        _ => ".".to_string(),
+    }
+}
+
+/// Produce a directory/module/language symbol & cross-file dependency architecture overview.
+pub fn codebase_architecture(
+    store: &Store,
+    workspace_root: &Path,
+    max_modules: usize,
+) -> Result<Value, String> {
+    let ws_key = ensure_indexed(store, workspace_root)?;
+    let stats = store
+        .code_index_stats(&ws_key)
+        .map_err(|e| e.to_string())?;
+    let file_hashes = store
+        .get_code_file_hashes(&ws_key)
+        .map_err(|e| e.to_string())?;
+    let symbols = store
+        .search_code_symbols(&ws_key, "", None, 20_000)
+        .map_err(|e| e.to_string())?;
+
+    let mut dir_files: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut dir_symbols: BTreeMap<String, usize> = BTreeMap::new();
+    let mut dir_languages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut dir_kinds: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut sym_to_files: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for rel_path in file_hashes.keys() {
+        let dir = module_dir_of(rel_path);
+        dir_files.entry(dir).or_default().insert(rel_path.clone());
+    }
+    for sym in &symbols {
+        let dir = module_dir_of(&sym.rel_path);
+        dir_files
+            .entry(dir.clone())
+            .or_default()
+            .insert(sym.rel_path.clone());
+        *dir_symbols.entry(dir.clone()).or_insert(0) += 1;
+        dir_languages
+            .entry(dir.clone())
+            .or_default()
+            .insert(sym.language.clone());
+        *dir_kinds
+            .entry(dir)
+            .or_default()
+            .entry(sym.kind.clone())
+            .or_insert(0) += 1;
+        sym_to_files
+            .entry(sym.name.clone())
+            .or_default()
+            .insert(sym.rel_path.clone());
+    }
+
+    // Compute cross-file dependencies from indexed edges (bounded)
+    let mut cross_file_deps: BTreeMap<(String, String), usize> = BTreeMap::new();
+    let mut checked_sources: HashSet<String> = HashSet::new();
+    for sym in symbols.iter().take(500) {
+        if !checked_sources.insert(sym.name.clone()) {
+            continue;
+        }
+        if let Ok(edges) = store.list_code_edges_from(&ws_key, &sym.name, 50) {
+            for edge in edges {
+                if let Some(target_files) = sym_to_files.get(&edge.to_symbol) {
+                    for tf in target_files {
+                        if tf != &edge.rel_path {
+                            *cross_file_deps
+                                .entry((edge.rel_path.clone(), tf.clone()))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for rel_path in file_hashes.keys().take(500) {
+        if let Ok(edges) = store.list_code_edges_from(&ws_key, rel_path, 50) {
+            for edge in edges {
+                if let Some(target_files) = sym_to_files.get(&edge.to_symbol) {
+                    for tf in target_files {
+                        if tf != rel_path {
+                            *cross_file_deps
+                                .entry((rel_path.clone(), tf.clone()))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut modules: Vec<Value> = dir_files
+        .into_iter()
+        .map(|(dir, files)| {
+            let sym_count = dir_symbols.get(&dir).copied().unwrap_or(0);
+            let langs: Vec<String> = dir_languages
+                .remove(&dir)
+                .map(|s| s.into_iter().collect())
+                .unwrap_or_default();
+            let kinds = dir_kinds.remove(&dir).unwrap_or_default();
+            json!({
+                "module": dir,
+                "file_count": files.len(),
+                "symbol_count": sym_count,
+                "languages": langs,
+                "kinds": kinds
+            })
+        })
+        .collect();
+    modules.sort_by(|a, b| {
+        b["symbol_count"]
+            .as_u64()
+            .cmp(&a["symbol_count"].as_u64())
+            .then_with(|| a["module"].as_str().cmp(&b["module"].as_str()))
+    });
+    modules.truncate(max_modules.clamp(1, 200));
+
+    let mut dependencies: Vec<Value> = cross_file_deps
+        .into_iter()
+        .map(|((from_file, to_file), count)| {
+            json!({
+                "from_file": from_file,
+                "to_file": to_file,
+                "reference_count": count
+            })
+        })
+        .collect();
+    dependencies.sort_by(|a, b| {
+        b["reference_count"]
+            .as_u64()
+            .cmp(&a["reference_count"].as_u64())
+    });
+    dependencies.truncate(100);
+
+    Ok(json!({
+        "workspace_root": workspace_root.display().to_string(),
+        "total_files": stats.file_count,
+        "total_symbols": stats.symbol_count,
+        "total_edges": stats.edge_count,
+        "modules": modules,
+        "cross_file_dependencies": dependencies
+    }))
+}
+
+/// Report indexed files, symbols, edges, and language breakdown via `code_index_stats`.
+pub fn codebase_coverage(store: &Store, workspace_root: &Path) -> Result<Value, String> {
+    let ws_key = ensure_indexed(store, workspace_root)?;
+    let stats = store
+        .code_index_stats(&ws_key)
+        .map_err(|e| e.to_string())?;
+    let file_hashes = store
+        .get_code_file_hashes(&ws_key)
+        .map_err(|e| e.to_string())?;
+    let symbols = store
+        .search_code_symbols(&ws_key, "", None, 50_000)
+        .map_err(|e| e.to_string())?;
+
+    let mut files_by_lang: BTreeMap<String, usize> = BTreeMap::new();
+    let mut syms_by_lang: BTreeMap<String, usize> = BTreeMap::new();
+    let mut syms_by_kind: BTreeMap<String, usize> = BTreeMap::new();
+
+    for rel_path in file_hashes.keys() {
+        let lang = detect_language_from_path(Path::new(rel_path)).unwrap_or("unknown");
+        *files_by_lang.entry(lang.to_string()).or_insert(0) += 1;
+    }
+    for sym in &symbols {
+        *syms_by_lang.entry(sym.language.clone()).or_insert(0) += 1;
+        *syms_by_kind.entry(sym.kind.clone()).or_insert(0) += 1;
+    }
+
+    let ast_engine = if cfg!(not(any(target_os = "android", target_os = "ios"))) {
+        "tree-sitter"
+    } else {
+        "regex-fallback"
+    };
+
+    Ok(json!({
+        "workspace_root": workspace_root.display().to_string(),
+        "ast_engine": ast_engine,
+        "indexed_files": stats.file_count,
+        "indexed_symbols": stats.symbol_count,
+        "indexed_edges": stats.edge_count,
+        "last_updated_at_ms": stats.last_updated_at_ms,
+        "files_by_language": files_by_lang,
+        "symbols_by_language": syms_by_lang,
+        "symbols_by_kind": syms_by_kind
+    }))
+}
+
+fn resolve_workspace_root<'a>(
+    ctx: &'a ToolContext,
+    fallback: &'a Option<PathBuf>,
+) -> &'a Path {
+    if ctx.workspace_root.exists() {
+        &ctx.workspace_root
+    } else if let Some(ref fb) = fallback {
+        fb.as_path()
+    } else {
+        &ctx.workspace_root
+    }
+}
+
+/// Register all 7 Deferred Code-Memory tools directly from an `Arc<Store>`.
+pub fn register_code_memory_tools(registry: &mut ToolRegistry, store: Arc<Store>) {
+    register_code_memory_tools_internal(registry, store, None);
+}
+
+/// Register all 7 Deferred Code-Memory tools on `ToolRegistry` using a `ModulesSuite`.
 pub fn register_tools(suite: &Arc<ModulesSuite>, registry: &mut ToolRegistry) {
+    register_code_memory_tools_internal(
+        registry,
+        Arc::new(suite.store.clone()),
+        Some(suite.workspace_root.clone()),
+    );
+}
+
+fn register_code_memory_tools_internal(
+    registry: &mut ToolRegistry,
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
+) {
     registry.register(Arc::new(CodebaseIndexTool {
-        suite: Arc::clone(suite),
+        store: Arc::clone(&store),
+        fallback_workspace: fallback_workspace.clone(),
     }));
     registry.register(Arc::new(CodebaseSearchTool {
-        suite: Arc::clone(suite),
+        store: Arc::clone(&store),
+        fallback_workspace: fallback_workspace.clone(),
     }));
     registry.register(Arc::new(CodebaseTextSearchTool {
-        suite: Arc::clone(suite),
+        fallback_workspace: fallback_workspace.clone(),
     }));
     registry.register(Arc::new(CodebaseReadSymbolTool {
-        suite: Arc::clone(suite),
+        store: Arc::clone(&store),
+        fallback_workspace: fallback_workspace.clone(),
+    }));
+    registry.register(Arc::new(CodebaseTraceTool {
+        store: Arc::clone(&store),
+        fallback_workspace: fallback_workspace.clone(),
+    }));
+    registry.register(Arc::new(CodebaseArchitectureTool {
+        store: Arc::clone(&store),
+        fallback_workspace: fallback_workspace.clone(),
+    }));
+    registry.register(Arc::new(CodebaseCoverageTool {
+        store,
+        fallback_workspace,
     }));
 }
 
 struct CodebaseIndexTool {
-    suite: Arc<ModulesSuite>,
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
 }
 
 impl ToolHandler for CodebaseIndexTool {
@@ -709,11 +1708,11 @@ impl ToolHandler for CodebaseIndexTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "codebase_index".into(),
-                description: "Index or incrementally update workspace source symbols into SQLite Code-Memory.".into(),
+                description: "Index or incrementally update workspace source symbols & call graph into SQLite Code-Memory using Tree-sitter AST.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "force_full": { "type": "boolean", "description": "Re-parse all files ignoring cached mtime/size (default false)" }
+                        "force_full": { "type": "boolean", "description": "Re-parse all files ignoring cached SHA-256 hashes (default false)" }
                     }
                 }),
             },
@@ -728,12 +1727,8 @@ impl ToolHandler for CodebaseIndexTool {
             .get("force_full")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let root = if ctx.workspace_root.exists() {
-            &ctx.workspace_root
-        } else {
-            &self.suite.workspace_root
-        };
-        match index_workspace(&self.suite.store, root, force_full) {
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match index_workspace(&self.store, root, force_full) {
             Ok(stats) => ToolExecutionResult::ok_structured(
                 serde_json::to_value(&stats).unwrap_or(json!({})),
                 format!(
@@ -747,7 +1742,8 @@ impl ToolHandler for CodebaseIndexTool {
 }
 
 struct CodebaseSearchTool {
-    suite: Arc<ModulesSuite>,
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
 }
 
 impl ToolHandler for CodebaseSearchTool {
@@ -755,12 +1751,12 @@ impl ToolHandler for CodebaseSearchTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "codebase_search".into(),
-                description: "Search indexed workspace symbols by name, kind, or path with ranked matches.".into(),
+                description: "Search indexed workspace AST symbols via FTS5 by name, kind, or path with ranked matches.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "query": { "type": "string", "description": "Symbol name or substring" },
-                        "kind": { "type": "string", "description": "Optional symbol kind (function, struct, class, enum, trait, interface, method, export)" },
+                        "kind": { "type": "string", "description": "Optional symbol kind (function, method, struct, class, enum, trait, interface, type, module, constant)" },
                         "path": { "type": "string", "description": "Optional relative path substring filter" },
                         "limit": { "type": "integer", "description": "Maximum matches (default 20)" }
                     },
@@ -777,16 +1773,9 @@ impl ToolHandler for CodebaseSearchTool {
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
         let kind = args.get("kind").and_then(|v| v.as_str());
         let path_filter = args.get("path").and_then(|v| v.as_str());
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(20) as usize;
-        let root = if ctx.workspace_root.exists() {
-            &ctx.workspace_root
-        } else {
-            &self.suite.workspace_root
-        };
-        match search_symbols(&self.suite.store, root, query, kind, path_filter, limit) {
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match search_symbols(&self.store, root, query, kind, path_filter, limit) {
             Ok(matches) => {
                 let count = matches.len();
                 let files: BTreeSet<&str> = matches
@@ -809,7 +1798,7 @@ impl ToolHandler for CodebaseSearchTool {
 }
 
 struct CodebaseTextSearchTool {
-    suite: Arc<ModulesSuite>,
+    fallback_workspace: Option<PathBuf>,
 }
 
 impl ToolHandler for CodebaseTextSearchTool {
@@ -839,15 +1828,8 @@ impl ToolHandler for CodebaseTextSearchTool {
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
         let is_regex = args.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
         let path_filter = args.get("path").and_then(|v| v.as_str());
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30) as usize;
-        let root = if ctx.workspace_root.exists() {
-            &ctx.workspace_root
-        } else {
-            &self.suite.workspace_root
-        };
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(30) as usize;
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
         match search_text(root, query, is_regex, path_filter, limit) {
             Ok(matches) => {
                 let count = matches.len();
@@ -867,7 +1849,8 @@ impl ToolHandler for CodebaseTextSearchTool {
 }
 
 struct CodebaseReadSymbolTool {
-    suite: Arc<ModulesSuite>,
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
 }
 
 impl ToolHandler for CodebaseReadSymbolTool {
@@ -875,7 +1858,8 @@ impl ToolHandler for CodebaseReadSymbolTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "codebase_read_symbol".into(),
-                description: "Read the exact source snippet around a symbol's file and line range.".into(),
+                description: "Read the exact source snippet around a symbol's file and line range."
+                    .into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -903,12 +1887,8 @@ impl ToolHandler for CodebaseReadSymbolTool {
             .get("context_lines")
             .and_then(|v| v.as_u64())
             .unwrap_or(30) as usize;
-        let root = if ctx.workspace_root.exists() {
-            &ctx.workspace_root
-        } else {
-            &self.suite.workspace_root
-        };
-        match read_symbol_snippet(&self.suite.store, root, name, file, line, context_lines) {
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match read_symbol_snippet(&self.store, root, name, file, line, context_lines) {
             Ok(data) => {
                 let target_file = data["file"].as_str().unwrap_or("").to_string();
                 let target_line = data["target_line"].as_u64().unwrap_or(1);
@@ -922,15 +1902,157 @@ impl ToolHandler for CodebaseReadSymbolTool {
     }
 }
 
+struct CodebaseTraceTool {
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
+}
+
+impl ToolHandler for CodebaseTraceTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "codebase_trace".into(),
+                description: "Trace callers and/or callees of a symbol across the indexed AST call graph.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "symbol": { "type": "string", "description": "Symbol name to trace" },
+                        "direction": { "type": "string", "enum": ["callers", "callees", "both"], "description": "Traversal direction (default 'both')" },
+                        "depth": { "type": "integer", "description": "Traversal depth 1..=4 (default 2)" },
+                        "limit": { "type": "integer", "description": "Max edges per direction (default 50)" }
+                    },
+                    "required": ["symbol"]
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::Memory,
+            read_only: true,
+        }
+    }
+
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        let symbol = args.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+        let direction = args
+            .get("direction")
+            .and_then(|v| v.as_str())
+            .unwrap_or("both");
+        let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match trace_symbol(&self.store, root, symbol, direction, depth, limit) {
+            Ok(data) => {
+                let callers = data["caller_count"].as_u64().unwrap_or(0);
+                let callees = data["callee_count"].as_u64().unwrap_or(0);
+                ToolExecutionResult::ok_structured(
+                    data,
+                    format!(
+                        "Traced '{symbol}' ({direction}, depth {}): {callers} caller(s), {callees} callee(s)",
+                        depth.clamp(1, 4)
+                    ),
+                )
+            }
+            Err(e) => ToolExecutionResult::err_structured("codebase_trace_error", e, None),
+        }
+    }
+}
+
+struct CodebaseArchitectureTool {
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
+}
+
+impl ToolHandler for CodebaseArchitectureTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "codebase_architecture".into(),
+                description: "Summarize directory/module symbol distribution, languages, and cross-file dependencies.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "max_modules": { "type": "integer", "description": "Maximum modules to return (default 50)" }
+                    }
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::Memory,
+            read_only: true,
+        }
+    }
+
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        let max_modules = args
+            .get("max_modules")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50) as usize;
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match codebase_architecture(&self.store, root, max_modules) {
+            Ok(data) => {
+                let mods = data["modules"].as_array().map(|a| a.len()).unwrap_or(0);
+                let deps = data["cross_file_dependencies"]
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                ToolExecutionResult::ok_structured(
+                    data,
+                    format!("Architecture summary: {mods} module(s), {deps} cross-file dep(s)"),
+                )
+            }
+            Err(e) => ToolExecutionResult::err_structured("codebase_architecture_error", e, None),
+        }
+    }
+}
+
+struct CodebaseCoverageTool {
+    store: Arc<Store>,
+    fallback_workspace: Option<PathBuf>,
+}
+
+impl ToolHandler for CodebaseCoverageTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "codebase_coverage".into(),
+                description: "Report indexed file, symbol, edge counts and language breakdown from SQLite Code-Memory.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {}
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::Memory,
+            read_only: true,
+        }
+    }
+
+    fn execute(&self, ctx: &ToolContext, _args: Value) -> ToolExecutionResult {
+        let root = resolve_workspace_root(ctx, &self.fallback_workspace);
+        match codebase_coverage(&self.store, root) {
+            Ok(data) => {
+                let files = data["indexed_files"].as_u64().unwrap_or(0);
+                let syms = data["indexed_symbols"].as_u64().unwrap_or(0);
+                let edges = data["indexed_edges"].as_u64().unwrap_or(0);
+                ToolExecutionResult::ok_structured(
+                    data,
+                    format!("Code-Memory coverage: {files} file(s), {syms} symbol(s), {edges} edge(s)"),
+                )
+            }
+            Err(e) => ToolExecutionResult::err_structured("codebase_coverage_error", e, None),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn code_memory_indexes_searches_and_reads_symbols_incrementally() {
+    fn code_memory_indexes_searches_traces_and_summarizes_rust_ts_python_project() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
+        let py_dir = dir.path().join("scripts");
         fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&py_dir).unwrap();
         fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
         fs::write(
             dir.path().join("node_modules/pkg/ignored.ts"),
@@ -939,41 +2061,73 @@ mod tests {
         .unwrap();
         fs::write(
             src.join("engine.rs"),
-            "pub struct QuantumPlanner {\n    pub depth: usize,\n}\n\npub fn compute_trajectory(step: usize) -> usize {\n    step * 42\n}\n",
+            r#"pub struct QuantumPlanner {
+    pub depth: usize,
+}
+
+impl QuantumPlanner {
+    pub fn plan_orbit(&self, step: usize) -> usize {
+        compute_trajectory(step)
+    }
+}
+
+pub fn compute_trajectory(step: usize) -> usize {
+    scale_factor(step) * 42
+}
+
+pub fn scale_factor(n: usize) -> usize {
+    n + 1
+}
+"#,
         )
         .unwrap();
         fs::write(
             src.join("widget.ts"),
-            "export interface DashboardState { ready: boolean }\nexport function renderDashboard(state: DashboardState) { return state.ready; }\n",
+            r#"export interface DashboardState {
+    ready: boolean;
+}
+
+export function renderDashboard(state: DashboardState): boolean {
+    return formatStatus(state.ready);
+}
+
+export const formatStatus = (ready: boolean): boolean => ready;
+"#,
+        )
+        .unwrap();
+        fs::write(
+            py_dir.join("pipeline.py"),
+            r#"class DataPipeline:
+    def run_stage(self, x):
+        return normalize_value(x)
+
+def normalize_value(v):
+    return v * 2
+"#,
         )
         .unwrap();
 
-        let store = Store::open_in_memory().unwrap();
-        let suite = Arc::new(ModulesSuite::new(
-            store.clone(),
-            dir.path().to_path_buf(),
-            None,
-        ));
+        let store = Arc::new(Store::open_in_memory().unwrap());
         let mut reg = ToolRegistry::with_builtin_tools();
-        suite.register_tools(&mut reg);
+        register_code_memory_tools(&mut reg, Arc::clone(&store));
         let ctx = ToolContext::new(dir.path());
 
-        // 1. First index parses both source files and skips node_modules
+        // 1. First index parses Rust, TypeScript, and Python via Tree-sitter AST and skips node_modules
         let idx1 = reg.execute("codebase_index", &ctx, json!({}));
         assert!(!idx1.is_error, "{}", idx1.payload.to_model_value());
         let idx1_v = idx1.payload.to_model_value();
-        assert_eq!(idx1_v["total_files"], 2);
-        assert_eq!(idx1_v["files_indexed"], 2);
-        assert!(idx1_v["total_symbols"].as_u64().unwrap() >= 4);
+        assert_eq!(idx1_v["total_files"], 3);
+        assert_eq!(idx1_v["files_indexed"], 3);
+        assert!(idx1_v["total_symbols"].as_u64().unwrap() >= 8);
 
-        // 2. Incremental second index reuses cached entries
+        // 2. Incremental second index skips unchanged files by SHA-256
         let idx2 = reg.execute("codebase_index", &ctx, json!({}));
         assert!(!idx2.is_error);
         let idx2_v = idx2.payload.to_model_value();
         assert_eq!(idx2_v["files_indexed"], 0);
-        assert_eq!(idx2_v["files_reused"], 2);
+        assert_eq!(idx2_v["files_reused"], 3);
 
-        // 3. Symbol search finds Rust & TS symbols and skips ignored dirs
+        // 3. FTS5 symbol search finds Rust, TS, and Python symbols and skips ignored dirs
         let sym_hit = reg.execute(
             "codebase_search",
             &ctx,
@@ -983,7 +2137,19 @@ mod tests {
         let sym_v = sym_hit.payload.to_model_value();
         assert_eq!(sym_v["count"], 1);
         assert_eq!(sym_v["matches"][0]["file"], "src/engine.rs");
-        assert_eq!(sym_v["matches"][0]["line"], 5);
+        assert_eq!(sym_v["matches"][0]["language"], "rust");
+
+        let py_hit = reg.execute(
+            "codebase_search",
+            &ctx,
+            json!({"query": "DataPipeline", "kind": "class"}),
+        );
+        assert!(!py_hit.is_error);
+        assert_eq!(py_hit.payload.to_model_value()["count"], 1);
+        assert_eq!(
+            py_hit.payload.to_model_value()["matches"][0]["language"],
+            "python"
+        );
 
         let ignored_hit = reg.execute(
             "codebase_search",
@@ -996,7 +2162,7 @@ mod tests {
         let txt_hit = reg.execute(
             "codebase_text_search",
             &ctx,
-            json!({"query": "step \\* 42", "regex": true}),
+            json!({"query": "scale_factor\\(step\\) \\* 42", "regex": true}),
         );
         assert!(!txt_hit.is_error);
         assert_eq!(txt_hit.payload.to_model_value()["count"], 1);
@@ -1014,5 +2180,56 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("renderDashboard"));
+
+        // 6. codebase_trace: callers & callees across AST call graph
+        let trace_res = reg.execute(
+            "codebase_trace",
+            &ctx,
+            json!({"symbol": "compute_trajectory", "direction": "both", "depth": 2}),
+        );
+        assert!(!trace_res.is_error, "{}", trace_res.payload.to_model_value());
+        let trace_v = trace_res.payload.to_model_value();
+        assert!(
+            trace_v["callers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["from"] == "plan_orbit"),
+            "expected plan_orbit caller: {trace_v}"
+        );
+        assert!(
+            trace_v["callees"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["to"] == "scale_factor"),
+            "expected scale_factor callee: {trace_v}"
+        );
+
+        // 7. codebase_architecture
+        let arch_res = reg.execute("codebase_architecture", &ctx, json!({}));
+        assert!(!arch_res.is_error, "{}", arch_res.payload.to_model_value());
+        let arch_v = arch_res.payload.to_model_value();
+        assert_eq!(arch_v["total_files"], 3);
+        assert!(arch_v["modules"].as_array().unwrap().len() >= 2);
+
+        // 8. codebase_coverage
+        let cov_res = reg.execute("codebase_coverage", &ctx, json!({}));
+        assert!(!cov_res.is_error, "{}", cov_res.payload.to_model_value());
+        let cov_v = cov_res.payload.to_model_value();
+        assert_eq!(cov_v["indexed_files"], 3);
+        assert!(cov_v["indexed_symbols"].as_u64().unwrap() >= 8);
+        assert!(cov_v["indexed_edges"].as_u64().unwrap() >= 3);
+        assert_eq!(cov_v["files_by_language"]["rust"], 1);
+        assert_eq!(cov_v["files_by_language"]["typescript"], 1);
+        assert_eq!(cov_v["files_by_language"]["python"], 1);
+
+        // 9. Deleting a file prunes it on next index
+        fs::remove_file(py_dir.join("pipeline.py")).unwrap();
+        let idx3 = reg.execute("codebase_index", &ctx, json!({}));
+        assert!(!idx3.is_error);
+        assert_eq!(idx3.payload.to_model_value()["total_files"], 2);
+        let pruned_hit = reg.execute("codebase_search", &ctx, json!({"query": "DataPipeline"}));
+        assert_eq!(pruned_hit.payload.to_model_value()["count"], 0);
     }
 }

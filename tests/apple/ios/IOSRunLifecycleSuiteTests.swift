@@ -284,13 +284,13 @@ private actor PermissionGETAttemptCounter {
         let config = WebAgentProvider.Config(baseURL: URL(string: "http://127.0.0.1:8123")!, token: "fixture",
             expectedHostId: "host", clientId: "client")
         let provider = WebAgentProvider(config: config) { request in
-            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/events")
-            let wire = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-            let input = try WebAgentProvider.decryptMobileJSON(wire, token: "fixture")
-            XCTAssertEqual(input["operation"] as? String, "discover")
-            XCTAssertEqual(input["expected_host_id"] as? String, "host")
-            XCTAssertEqual(input["client_id"] as? String, "client")
-            XCTAssertNil(input["messages"])
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/conversation/observe")
+            let items = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let query = Dictionary(uniqueKeysWithValues: items.compactMap { item in item.value.map { (item.name, $0) } })
+            XCTAssertEqual(query["operation"], "discover")
+            XCTAssertEqual(query["expected_host_id"], "host")
+            XCTAssertEqual(query["client_id"], "client")
+            XCTAssertNil(request.httpBody)
             var response = try WebAgentProvider.encryptMobileJSON(["source_host_id": "host", "conversation_id": "conversation", "client_id": "client", "result": Self.object()], token: "fixture")
             response["type"] = "encrypted"
             let data = try JSONSerialization.data(withJSONObject: response)

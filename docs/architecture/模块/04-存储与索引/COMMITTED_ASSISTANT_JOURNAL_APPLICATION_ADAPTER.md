@@ -16,12 +16,12 @@
 
 | 源码 | 职责 |
 | --- | --- |
-| [assistant_journal_changes.rs](../../../../core/nola-application/src/assistant_journal_changes.rs) | 从实际语义变更收集 publication 输入 |
-| [assistant_journal_planner.rs](../../../../core/nola-application/src/assistant_journal_planner.rs) | 有界读取、来源和操作计划 |
-| [assistant_journal_producer.rs](../../../../core/nola-application/src/assistant_journal_producer.rs) | `publish_changed_assistant_journal` 与 task/Run 绑定发布 |
-| [assistant_publication_transaction.rs](../../../../core/nola-application/src/assistant_publication_transaction.rs) | 发布的事务协调，不成为第二个业务写者 |
-| [assistant_journal_read.rs](../../../../core/nola-application/src/assistant_journal_read.rs) | 快照、范围、Part/manifest 查询 |
-| [Store Port](../../../../core/nola-store-port/src/assistant_journal.rs) | Store producer/reader/接收所需的受限接口 |
+| [assistant_journal_changes.rs](../../../../crates/nola-store/src/db.rs) | 从实际语义变更收集 publication 输入 |
+| [assistant_journal_planner.rs](../../../../crates/nola-store/src/db.rs) | 有界读取、来源和操作计划 |
+| [assistant_journal_producer.rs](../../../../crates/nola-store/src/db.rs) | `publish_changed_assistant_journal` 与 task/Run 绑定发布 |
+| [assistant_publication_transaction.rs](../../../../crates/nola-store/src/db.rs) | 发布的事务协调，不成为第二个业务写者 |
+| [assistant_journal_read.rs](../../../../crates/nola-store/src/db.rs) | 快照、范围、Part/manifest 查询 |
+| [Store Port](../../../../crates/nola-store/src/db.rs) | Store producer/reader/接收所需的受限接口 |
 
 ## 原文与投影
 

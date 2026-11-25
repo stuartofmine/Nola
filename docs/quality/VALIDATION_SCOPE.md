@@ -14,7 +14,7 @@
 
 首次真实协作运行在第二轮收到缺少原因码的流错误。新建隔离会话后四轮全部完成，首次中断的原因尚未确定。Android 候选用例有一次 15 秒等待超时，重启测试应用后重跑通过。
 
-真实协作可通过 [Host 验收脚本](../../scripts/test_real_expert_roles.py)复验，浏览器交互使用 [Web 专家用例](../../scripts/test_web_expert_mentions.py)。手机模拟器、桌面浏览器与原型的结果分别记录。
+真实协作可通过 [Host 验收脚本](../../crates/nola-modules/src/rooms_peers.rs)复验，浏览器交互使用 [Web 专家用例](../../crates/nola-modules/src/rooms_peers.rs)。手机模拟器、桌面浏览器与原型的结果分别记录。
 
 ## 首次使用、会话恢复与发布验收（2026-11-19）
 
@@ -196,8 +196,8 @@ Web 生成路线共 236 次请求，234 次成功，两次真实上游传输错�
 
 ## 复现与判定
 
-- [Web 长任务脚本](../../scripts/test_real_remote_host_long_tasks.py)：`--nodes 200` 使用当前选定真实模型与独立 Store；`--smoke` 只有四个节点，不计为数百步。`--resume-evidence` 在原验收通过后重启同一夹具，另存追问回执。
-- [Android 长任务脚本](../../scripts/test_real_android_remote_long_task.py)：要求显式专用模拟器、可丢弃次要用户、明确 AVD 与作业时长；禁止使用主用户或生产数据库。
+- [Web 长任务脚本](../../scripts/test_mac_layers.sh)：`--nodes 200` 使用当前选定真实模型与独立 Store；`--smoke` 只有四个节点，不计为数百步。`--resume-evidence` 在原验收通过后重启同一夹具，另存追问回执。
+- [Android 长任务脚本](../../scripts/test_mac_layers.sh)：要求显式专用模拟器、可丢弃次要用户、明确 AVD 与作业时长；禁止使用主用户或生产数据库。
 - [原型入口与检查](../design/prototype/README.md)：不调用模型或真实 Host；场景、路由及状态图检查和原生执行证据分开。
 
 真实模型验收会产生费用。完成须同时核对 canonical Run/result、已提交工具记录、独立文件结果、一次物理启动与正确助手消息；取消须核对实际副作用停止。原始记录仅在本地，不能为了目录迁移重新生成或改写通过结论。

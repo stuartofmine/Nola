@@ -15,4 +15,4 @@ Run hardware detection on the inference machine. Inspect CPU, usable system memo
 | vLLM | Use a compatible checkpoint and tokenizer, or a supported quantized MLX checkpoint on the Metal path. Engine installation depends on the executing OS and hardware. |
 | MLX | Use an MLX-format model directory with the native Mac client’s MLX runtime. |
 
-The estimated window includes input, history and generation. It is not a measurement of throughput or answer quality. Validate loading and inference separately on the intended device. [Planner](../../../../apps/cli/src/model_acquisition/planning.rs) · [Engine setup](../../../../apps/cli/src/model_acquisition/engine_setup.rs) · [Storage](../../../../apps/cli/src/model_acquisition/storage.rs)
+The estimated window includes input, history and generation. It is not a measurement of throughput or answer quality. Validate loading and inference separately on the intended device. [Planner](../../../../crates/nola-modules/src/local_models_plugins.rs) · [Engine setup](../../../../crates/nola-modules/src/local_models_plugins.rs) · [Storage](../../../../crates/nola-modules/src/local_models_plugins.rs)

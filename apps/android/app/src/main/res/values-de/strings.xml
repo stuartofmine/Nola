@@ -1488,4 +1488,14 @@
     <string name="chat_v2_context_compacted_range">Kontext komprimiert (%1$s → %2$s Tokens)</string>
     <string name="chat_v2_context_compacted_after">Kontext komprimiert (%1$s Tokens)</string>
     <string name="chat_v2_context_compaction_failed">Kontextkomprimierung fehlgeschlagen</string>
+    <string name="chat_v2_branch_conversation">Unterhaltung verzweigen</string>
+    <string name="chat_v2_branch_failed">Unterhaltung konnte nicht verzweigt werden</string>
+    <string name="chat_v2_workspace_review">Workspace-Prüfung</string>
+    <string name="chat_v2_workspace_review_empty">Keine Änderungen im Workspace erkannt</string>
+    <string name="chat_v2_workspace_review_host_required">Mit einem Web Agent Host verbinden, um Workspace-Änderungen zu prüfen</string>
+    <string name="chat_v2_workspace_review_staged">Vorgemerkte Änderungen</string>
+    <string name="chat_v2_workspace_review_unstaged">Nicht vorgemerkte Änderungen</string>
+    <string name="chat_v2_workspace_review_files">Workspace-Dateien</string>
+    <string name="chat_v2_workspace_review_truncated">Ausgabe für die Vorschau gekürzt</string>
+    <string name="chat_v2_edit_resend_failed">Nachricht konnte nicht gekürzt und erneut gesendet werden</string>
 </resources>

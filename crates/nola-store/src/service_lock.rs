@@ -110,7 +110,32 @@ pub fn read_discovery(db_path: &Path) -> Result<Option<ServiceDiscovery>, StoreE
             return Ok(None);
         }
     }
+    #[cfg(windows)]
+    {
+        if disc.pid == 0 || !is_windows_pid_alive(disc.pid) {
+            return Ok(None);
+        }
+    }
     Ok(Some(disc))
+}
+
+#[cfg(windows)]
+fn is_windows_pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle == 0 {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut exit_code);
+        let _ = CloseHandle(handle);
+        ok != 0 && exit_code == STILL_ACTIVE as u32
+    }
 }
 
 /// Exclusive lock guard held for the lifetime of a single-writer Nola daemon.
@@ -160,6 +185,38 @@ impl ServiceLock {
                 return Err(StoreError::Io(err));
             }
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
+            use windows_sys::Win32::Storage::FileSystem::{
+                LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+            };
+            use windows_sys::Win32::System::IO::OVERLAPPED;
+
+            let _ = crate::vault::protect_private_path(&lock_path);
+            let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+            let ok = unsafe {
+                LockFileEx(
+                    lock_file.as_raw_handle() as HANDLE,
+                    LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                    0,
+                    u32::MAX,
+                    u32::MAX,
+                    &mut overlapped,
+                )
+            };
+            if ok == 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
+                    return Err(StoreError::LockBusy(format!(
+                        "another Nola single-writer holds {}",
+                        lock_path.display()
+                    )));
+                }
+                return Err(StoreError::Io(err));
+            }
+        }
 
         #[cfg(unix)]
         let euid = unsafe { libc::geteuid() };
@@ -191,6 +248,24 @@ impl ServiceLock {
 impl Drop for ServiceLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.discovery_file);
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Foundation::HANDLE;
+            use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+            use windows_sys::Win32::System::IO::OVERLAPPED;
+
+            unsafe {
+                let mut overlapped: OVERLAPPED = std::mem::zeroed();
+                let _ = UnlockFileEx(
+                    self._lock_file.as_raw_handle() as HANDLE,
+                    0,
+                    u32::MAX,
+                    u32::MAX,
+                    &mut overlapped,
+                );
+            }
+        }
     }
 }
 

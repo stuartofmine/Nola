@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use nola_types::{
     GenerationParams, MediaAttachment, ModelCapabilities, ModelProtocol, ModelRouteConfig,
@@ -29,10 +31,48 @@ pub enum LlmError {
     Wire(String),
     #[error("media policy error: {0}")]
     Media(String),
+    #[error("request cancelled")]
+    Cancelled,
+    #[error("model entered repetitive reasoning loop")]
+    RepetitiveReasoning,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+/// Normalize a route's `reasoning_effort` for wire transmission.
+///
+/// Returns `None` for `None`, blank strings, `"auto"`, `"automatic"`, and `"default"`
+/// (case-insensitive) so provider-default selections NEVER leak onto the wire.
+pub fn normalized_wire_reasoning_effort(raw: Option<&str>) -> Option<&str> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("auto")
+        || trimmed.eq_ignore_ascii_case("automatic")
+        || trimmed.eq_ignore_ascii_case("default")
+    {
+        return None;
+    }
+    Some(trimmed)
+}
+
+/// Maps a supported audio MIME type to its canonical OpenAI `input_audio.format` token.
+pub fn audio_format_for_mime(mime: &str) -> Option<&'static str> {
+    match mime.trim().to_ascii_lowercase().as_str() {
+        "audio/wav" | "audio/x-wav" => Some("wav"),
+        "audio/mp3" | "audio/mpeg" => Some("mp3"),
+        "audio/ogg" => Some("ogg"),
+        "audio/flac" => Some("flac"),
+        "audio/m4a" => Some("m4a"),
+        "audio/aac" => Some("aac"),
+        _ => None,
+    }
+}
+
+/// Returns true when `mime` is a supported inline audio MIME type.
+pub fn is_supported_audio_mime(mime: &str) -> bool {
+    audio_format_for_mime(mime).is_some()
 }
 
 /// Wire HTTP request built by a `ProviderWireAdapter`.
@@ -43,27 +83,37 @@ pub struct BuiltHttpRequest {
     pub body: Value,
 }
 
-/// Per-protocol media guardrails enforced uniformly across ALL 4 wire adapters.
+/// Per-protocol media guardrails enforced uniformly across ALL 5 wire adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtocolMediaLimits {
     pub max_bytes_per_item: usize,
     pub max_items_per_request: usize,
+    pub supports_audio: bool,
 }
 
 impl ProtocolMediaLimits {
     pub const ANTHROPIC: Self = Self {
         max_bytes_per_item: 5 * 1024 * 1024,
         max_items_per_request: 80,
+        supports_audio: false,
     };
 
     pub const OPENAI: Self = Self {
         max_bytes_per_item: 20 * 1024 * 1024,
         max_items_per_request: 80,
+        supports_audio: false,
+    };
+
+    pub const OPENAI_CHAT: Self = Self {
+        max_bytes_per_item: 20 * 1024 * 1024,
+        max_items_per_request: 80,
+        supports_audio: true,
     };
 
     pub const GEMINI: Self = Self {
         max_bytes_per_item: 20 * 1024 * 1024,
         max_items_per_request: 80,
+        supports_audio: true,
     };
 
     pub fn validate_all(
@@ -85,9 +135,16 @@ impl ProtocolMediaLimits {
                 "image/png" | "image/jpeg" | "image/jpg" | "image/gif" | "image/webp"
             );
             let is_pdf = mime == "application/pdf";
-            if !is_image && !is_pdf {
+            let is_audio = is_supported_audio_mime(&mime);
+            if !is_image && !is_pdf && !is_audio {
                 return Err(LlmError::Media(format!(
                     "unsupported media mime type '{}'",
+                    att.mime_type
+                )));
+            }
+            if is_audio && !self.supports_audio {
+                return Err(LlmError::Media(format!(
+                    "audio media '{}' is not supported by this wire protocol",
                     att.mime_type
                 )));
             }
@@ -142,6 +199,16 @@ pub trait ProviderWireAdapter: Send + Sync {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError>;
+    fn parse_sse_stream_cancellable(
+        &self,
+        route: &ModelRouteConfig,
+        reader: &mut dyn BufRead,
+        cancel: Option<Arc<AtomicBool>>,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
+        let _ = cancel;
+        self.parse_sse_stream(route, reader, on_delta)
+    }
 }
 
 /// Resolve the canonical wire adapter for a `ModelProtocol`.

@@ -31,9 +31,9 @@ Repository/UnitOfWork 封装数据访问；存储适配器不按客户端名称�
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [schema_store.rs](../../../../core/nola-store/src/schema_store.rs) | 当前 schema 的组合初始化与严格三项版本/身份校验 |
-| [canonical_text_store.rs](../../../../core/nola-store/src/canonical_text_store.rs) | 规范原文与内容引用 |
-| [assistant_journal.rs](../../../../core/nola-store-port/src/assistant_journal.rs) | journal 读取/发布/接收的存储端口 |
+| [schema_store.rs](../../../../crates/nola-store/src/db.rs) | 当前 schema 的组合初始化与严格三项版本/身份校验 |
+| [canonical_text_store.rs](../../../../crates/nola-store/src/db.rs) | 规范原文与内容引用 |
+| [assistant_journal.rs](../../../../crates/nola-store/src/db.rs) | journal 读取/发布/接收的存储端口 |
 
 同 schema 不等于所有平台共享同一个文件路径；大文本已含 SQLite canonical 对象、分块、stream head/manifest，不能统称 ~/.nola/blobs。schema.sql 是组合 DDL 的一个入口，不是唯一文件。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

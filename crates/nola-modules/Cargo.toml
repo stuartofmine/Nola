@@ -13,16 +13,27 @@ nola-store = { workspace = true }
 nola-llm = { workspace = true }
 nola-tools = { workspace = true }
 nola-engine = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 ignore = { workspace = true }
 libc = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
+ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 url = { workspace = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+arborium = { workspace = true }
+tree-sitter-javascript = { workspace = true }
+tree-sitter-kotlin-ng = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-swift = { workspace = true }
+tree-sitter-typescript = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

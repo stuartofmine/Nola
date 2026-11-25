@@ -118,6 +118,10 @@ impl SeedOverride {
     }
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// Optional generation parameters forwarded to compatible LLM wire adapters.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +144,13 @@ pub struct GenerationParams {
         skip_serializing_if = "Option::is_none"
     )]
     pub thinking_budget: Option<usize>,
+    /// When true, Anthropic ephemeral cache breakpoints include `"ttl": "1h"`.
+    #[serde(
+        default,
+        alias = "anthropic_cache_ttl_1h",
+        skip_serializing_if = "is_false"
+    )]
+    pub anthropic_cache_ttl_1h: bool,
 }
 
 impl GenerationParams {
@@ -384,7 +395,14 @@ mod tests {
             top_k: Some(40),
             repetition_penalty: Some(1.1),
             thinking_budget: None,
+            anthropic_cache_ttl_1h: true,
         };
+        let serialized = serde_json::to_string(&params).unwrap();
+        assert!(serialized.contains("\"anthropicCacheTtl1h\":true"));
+        let roundtrip: GenerationParams = serde_json::from_str(&serialized).unwrap();
+        assert!(roundtrip.anthropic_cache_ttl_1h);
+        let default_json = serde_json::to_string(&GenerationParams::default()).unwrap();
+        assert!(!default_json.contains("anthropicCacheTtl1h"));
         params.apply_seed_override(SeedOverride::Inherit);
         assert_eq!(params.seed, Some(42));
         params.apply_seed_override(SeedOverride::Clear);

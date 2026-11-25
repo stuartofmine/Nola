@@ -3652,6 +3652,146 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(v2CompactionSummary = null) }
     }
 
+    fun branchConversation() {
+        val state = _uiState.value
+        if (state.processingState.blocksInput) return
+        val convId = state.conversationId ?: return
+        val isRemote = state.currentModel?.source == ModelInfo.ModelSource.WebHost || state.executionHostBinding != null
+        viewModelScope.launch {
+            try {
+                if (isRemote) {
+                    val remoteConvId = state.v2SessionId?.takeIf { it.isNotBlank() } ?: convId
+                    val cfg = withContext(Dispatchers.IO) {
+                        state.executionHostBinding?.let { resolveBoundHost(it) }
+                            ?: remoteObservationConfiguration
+                            ?: webAgentProvider.config
+                            ?: error("Web Agent Host is not configured")
+                    }
+                    val result = withContext(Dispatchers.IO) {
+                        webAgentProvider.v2BranchConversation(remoteConvId, cfg)
+                    }
+                    val branchedObj = result["conversation"] as? JsonObject
+                    val branchedRemoteId = branchedObj?.get("id")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: result["conversationId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: result["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    val sourceTitle = state.conversations.firstOrNull { it.id == convId }?.title?.takeIf { it.isNotBlank() } ?: "Chat"
+                    val branchedTitle = branchedObj?.get("title")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: "$sourceTitle (copy)"
+                    val localCopy = withContext(Dispatchers.IO) {
+                        conversationRepo.createConversation(
+                            title = branchedTitle,
+                            modelInfo = state.currentModel,
+                            hostBinding = state.executionHostBinding,
+                        )
+                    }
+                    loadConversations()
+                    loadConversation(localCopy.id)
+                    if (branchedRemoteId != null) {
+                        _uiState.update { it.copy(v2SessionId = branchedRemoteId, error = null) }
+                    }
+                } else {
+                    val result = withContext(Dispatchers.IO) {
+                        applicationRuntime.v2BranchConversation(convId)
+                    }
+                    val newId = result["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: (result["conversation"] as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: result["conversation_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    loadConversations()
+                    if (newId != null) {
+                        loadConversation(newId)
+                    }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(error = error.localizedMessage ?: error.message ?: context.getString(R.string.chat_v2_branch_failed))
+                }
+            }
+        }
+    }
+
+    fun openWorkspaceReview() {
+        val state = _uiState.value
+        val convId = state.conversationId ?: return
+        _uiState.update { it.copy(v2WorkspaceReview = V2WorkspaceReviewState(loading = true)) }
+        viewModelScope.launch {
+            try {
+                val cfg = withContext(Dispatchers.IO) {
+                    state.executionHostBinding?.let { resolveBoundHost(it) }
+                        ?: remoteObservationConfiguration
+                        ?: webAgentProvider.config
+                }
+                if (cfg == null) {
+                    _uiState.update {
+                        it.copy(v2WorkspaceReview = V2WorkspaceReviewState(error = context.getString(R.string.chat_v2_workspace_review_host_required)))
+                    }
+                    return@launch
+                }
+                val remoteConvId = state.v2SessionId?.takeIf { it.isNotBlank() } ?: convId
+                val raw = withContext(Dispatchers.IO) {
+                    webAgentProvider.v2WorkspaceReview(remoteConvId, cfg)
+                }
+                _uiState.update { it.copy(v2WorkspaceReview = parseV2WorkspaceReview(raw)) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        v2WorkspaceReview = V2WorkspaceReviewState(
+                            error = error.localizedMessage ?: error.message ?: context.getString(R.string.chat_v2_workspace_review_empty)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissWorkspaceReview() {
+        _uiState.update { it.copy(v2WorkspaceReview = null) }
+    }
+
+    fun truncateAndResendV2Message(message: ConversationMessage, editedText: String) {
+        val trimmed = editedText.trim()
+        if (trimmed.isEmpty()) return
+        val state = _uiState.value
+        if (state.processingState.blocksInput) return
+        val convId = state.conversationId ?: return
+        val isRemote = state.currentModel?.source == ModelInfo.ModelSource.WebHost || state.executionHostBinding != null
+        val boundaryIndex = state.messages.indexOfFirst { it.id == message.id }
+        val fromSeq = message.meta?.get("nola.v2Seq")?.toLongOrNull()
+            ?: (boundaryIndex.takeIf { it >= 0 }?.plus(1)?.toLong() ?: 1L)
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (isRemote) {
+                        val remoteConvId = state.v2SessionId?.takeIf { it.isNotBlank() } ?: convId
+                        val cfg = state.executionHostBinding?.let { resolveBoundHost(it) }
+                            ?: remoteObservationConfiguration
+                            ?: webAgentProvider.config
+                            ?: error("Web Agent Host is not configured")
+                        webAgentProvider.v2TruncateConversation(remoteConvId, fromSeq, cfg)
+                    } else {
+                        applicationRuntime.v2TruncateConversation(convId, fromSeq)
+                    }
+                }
+                if (boundaryIndex >= 0) {
+                    _uiState.update { current ->
+                        if (current.conversationId != convId) current
+                        else current.copy(messages = current.messages.take(boundaryIndex), error = null)
+                    }
+                }
+                sendMessage(trimmed)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(error = error.localizedMessage ?: error.message ?: context.getString(R.string.chat_v2_edit_resend_failed))
+                }
+            }
+        }
+    }
+
     fun reloadContextState() {
         val convId = _uiState.value.conversationId
         if (convId != null) {
@@ -4876,6 +5016,21 @@ class ChatViewModel @Inject constructor(
             com.nola.core.AndroidAgentPermissionMode.AcceptEdits -> "accept_edits"
             com.nola.core.AndroidAgentPermissionMode.Cautious -> "cautious"
         }
+        val hybridState = _uiState.value
+        val deviceBridge = if (hybridState.hybridDeviceToolsEnabled) {
+            val tools = webAgentProvider.contextToolSchemas(
+                conversationId = remoteConvId,
+                hybridDeviceToolsEnabled = true,
+                hybridDeviceCapabilities = hybridState.hybridDeviceCapabilities,
+                permissionMode = hybridState.permissionMode,
+            )
+            webAgentProvider.deviceBridgeAdvertisement(
+                config = configuration,
+                sessionId = remoteConvId,
+                allowedCapabilities = hybridState.hybridDeviceCapabilities,
+                preparedTools = tools,
+            )
+        } else null
         try {
             webAgentProvider.streamV2Message(
                 conversationId = remoteConvId,
@@ -4884,6 +5039,7 @@ class ChatViewModel @Inject constructor(
                 modelId = selectedModelId,
                 permissionProfile = permissionProfile,
                 selectedExperts = selectedExperts,
+                deviceBridge = deviceBridge,
             ).collect { event ->
                 if (!currentRemoteJournal(owner) && !executionSession.v2TurnCompleted) return@collect
                 handleAgentEvent(event, convId)
@@ -5278,10 +5434,13 @@ class ChatViewModel @Inject constructor(
 
             is SseEvent.DeviceToolRequest -> {
                 val hostConfig = remoteObservationConfiguration
+                val activeRemoteSessionId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() }
+                val matchesSession = event.sessionId == convId ||
+                    (activeRemoteSessionId != null && event.sessionId == activeRemoteSessionId)
                 if (hostConfig == null ||
                     !hostConfig.expectedHostId.equals(event.hostId) ||
                     !hostConfig.clientId.equals(event.clientId) ||
-                    event.sessionId != convId ||
+                    !matchesSession ||
                     event.protocolVersion != 1 ||
                     event.nonce.isBlank() ||
                     event.expiresAt < System.currentTimeMillis() / 1_000L
@@ -6284,7 +6443,8 @@ class ChatViewModel @Inject constructor(
                 request = request,
                 decision = decision,
                 executor = { hostCall ->
-                    val bridgePlan = localToolPlan(request.sessionId, stateSnapshot)
+                    val localConvId = stateSnapshot.conversationId ?: request.sessionId
+                    val bridgePlan = localToolPlan(localConvId, stateSnapshot)
                     withContext(Dispatchers.IO) {
                         agentHostExecutor.execute(hostCall, bridgePlan)
                     }
@@ -6306,7 +6466,7 @@ class ChatViewModel @Inject constructor(
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 _uiState.update {
-                    if (it.conversationId != request.sessionId) it else it.copy(
+                    if (it.conversationId != request.sessionId && it.v2SessionId != request.sessionId) it else it.copy(
                         processingState = ProcessingState.BuildingContext,
                         error = error.message ?: context.getString(R.string.chat_agent_error)
                     )

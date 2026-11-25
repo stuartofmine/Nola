@@ -16,6 +16,7 @@
         return loader ? observedPageLoad<Awaited<ReturnType<typeof loader>>>(path, loader, failure => console.error('[Nola] page load failed', JSON.stringify(failure))) : undefined;
     }
     import { locale, t } from './lib/i18n';
+    import { desktopPluginCatalog, desktopPluginPath } from './lib/desktopPluginPages';
     import { createWorkspaceDrafts, workspaceDraftsContext } from './lib/workspaceDrafts';
     import { initialWorkspaceLocation, workspaceClick, workspaceDestination, workspaceNavigationEvent, workspaceContentNavigationEvent } from './lib/workspaceNavigation';
     const drafts = createWorkspaceDrafts();
@@ -158,7 +159,22 @@
             else if ((history.state?.nolaWorkspaceIndex ?? 0) > 0) history.back();
             else window.dispatchEvent(new CustomEvent(workspaceNavigationEvent, {detail: viewportWidth > 760 ? '/chat' : '/today', cancelable: true}));
         }}><PrototypeIcon name="back" size={18} /></button>
-        <a href={viewportWidth > 760 ? '/chat' : '/conversations'}>{t($locale, 'chatInspector.list.conversations')}</a>
+        <div class="management-nav-links">
+            {#if $desktopPluginCatalog.pages.length}
+                <nav class="management-plugin-links" aria-label={t($locale, 'plugin.pages')}>
+                    {#each $desktopPluginCatalog.pages as pluginPage (pluginPage.id)}
+                        <a
+                            href={desktopPluginPath(pluginPage.id)}
+                            aria-current={path === '/plugin-page' && new URL(window.location.href).searchParams.get('id') === pluginPage.id ? 'page' : undefined}
+                        >
+                            {pluginPage.title}
+                        </a>
+                    {/each}
+                </nav>
+            {/if}
+            <a href="/experts" aria-current={path === '/experts' ? 'page' : undefined}>{t($locale, 'rooms.experts')}</a>
+            <a href={viewportWidth > 760 ? '/chat' : '/conversations'}>{t($locale, 'chatInspector.list.conversations')}</a>
+        </div>
     </header>{/if}
     <main id="page-main" tabindex="-1">{@render pageContent()}</main>
 </div>
@@ -204,4 +220,7 @@
     .management-navigation button, .management-navigation a { min-height: 44px; display: flex; align-items: center; color: var(--muted); }
     .management-navigation button { min-width: 44px; justify-content: center; border: 0; background: transparent; }
     .management-navigation a { text-decoration: none; font-size: .875rem; }
+    .management-nav-links { display: flex; align-items: center; gap: 14px; overflow-x: auto; }
+    .management-plugin-links { display: flex; align-items: center; gap: 10px; }
+    .management-nav-links a[aria-current='page'] { color: var(--content); font-weight: 600; }
 </style>

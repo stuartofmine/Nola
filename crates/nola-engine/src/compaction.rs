@@ -15,13 +15,75 @@
 use std::collections::BTreeSet;
 
 use nola_types::{
-    estimate_history_message_tokens, ContextBudget, HistoryMessage, ToolModelPayload,
+    estimate_history_message_tokens, sha256_hex, ContextBudget, HistoryMessage, ToolModelPayload,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const RECENT_TOOL_KEEP_COUNT: usize = 6;
 const RECENT_REASONING_KEEP_COUNT: usize = 2;
 const MICRO_COMPACT_CHAR_THRESHOLD: usize = 1_200;
+const COMPACTION_LOOP_MAX_CONSECUTIVE_LOW_YIELD: usize = 3;
+const COMPACTION_LOOP_MIN_REDUCTION_PCT: usize = 15;
+
+/// Source-message lineage recorded whenever history messages are folded into a summary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionSummaryMetadata {
+    pub start_index: usize,
+    pub end_index: usize,
+    pub message_count: usize,
+    pub source_sha256: String,
+}
+
+impl CompactionSummaryMetadata {
+    pub fn from_slice(start_index: usize, slice: &[HistoryMessage]) -> Self {
+        let serialized = serde_json::to_vec(slice).unwrap_or_default();
+        Self {
+            start_index,
+            end_index: start_index.saturating_add(slice.len()),
+            message_count: slice.len(),
+            source_sha256: sha256_hex(&serialized),
+        }
+    }
+}
+
+/// Prevents infinite automatic compaction loops when repeated compactions fail to reclaim
+/// at least 15% of the estimated token count (`consecutive_compactions >= 3`).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CompactionLoopBreaker {
+    pub consecutive_compactions: usize,
+    pub automatic_compaction_blocked: bool,
+}
+
+impl CompactionLoopBreaker {
+    pub fn is_blocked(&self) -> bool {
+        self.automatic_compaction_blocked
+    }
+
+    /// Record an automatic compaction attempt. Returns `true` if automatic compaction is now blocked.
+    pub fn record_attempt(&mut self, tokens_before: usize, tokens_after: usize) -> bool {
+        if tokens_before == 0 {
+            return self.automatic_compaction_blocked;
+        }
+        let saved = tokens_before.saturating_sub(tokens_after);
+        let reduced_enough =
+            saved.saturating_mul(100) >= tokens_before.saturating_mul(COMPACTION_LOOP_MIN_REDUCTION_PCT);
+        if reduced_enough {
+            self.consecutive_compactions = 0;
+        } else {
+            self.consecutive_compactions = self.consecutive_compactions.saturating_add(1);
+            if self.consecutive_compactions >= COMPACTION_LOOP_MAX_CONSECUTIVE_LOW_YIELD {
+                self.automatic_compaction_blocked = true;
+            }
+        }
+        self.automatic_compaction_blocked
+    }
+
+    pub fn reset(&mut self) {
+        self.consecutive_compactions = 0;
+        self.automatic_compaction_blocked = false;
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompactionReport {
@@ -29,6 +91,7 @@ pub struct CompactionReport {
     pub tokens_after: usize,
     pub micro_compacted_tools: usize,
     pub summary_compacted_messages: usize,
+    pub lineage: Option<CompactionSummaryMetadata>,
 }
 
 impl CompactionReport {
@@ -179,11 +242,13 @@ fn compact_history_inner(
             tokens_after: after_tier1,
             micro_compacted_tools,
             summary_compacted_messages: 0,
+            lineage: None,
         };
     }
 
     // --- Tier 2: Structured Working-State Summary Compaction ---
     let mut summary_compacted_messages = 0usize;
+    let mut lineage: Option<CompactionSummaryMetadata> = None;
     let keep_recent = if force { 2 } else { 6 }.min(history.len().saturating_sub(1));
     let mut split_idx = history.len().saturating_sub(keep_recent);
     // Avoid splitting between an Assistant tool_calls turn and its matching Tool results!
@@ -192,6 +257,7 @@ fn compact_history_inner(
     }
     if split_idx >= 2 && !matches!(history.get(split_idx), Some(HistoryMessage::Tool { .. })) {
         let old_slice = &history[..split_idx];
+        let meta = CompactionSummaryMetadata::from_slice(0, old_slice);
         let summary_text = summarizer
             .and_then(|f| f(old_slice))
             .filter(|s| !s.trim().is_empty())
@@ -200,7 +266,8 @@ fn compact_history_inner(
         let mut candidate = Vec::with_capacity(history.len() - split_idx + 1);
         candidate.push(HistoryMessage::User {
             content: format!(
-                "<compacted_history_summary>\n{summary_text}\n</compacted_history_summary>"
+                "<compacted_history_summary>\n[lineage: messages={} range={}..{} sha256={}]\n{summary_text}\n</compacted_history_summary>",
+                meta.message_count, meta.start_index, meta.end_index, &meta.source_sha256[..16]
             ),
             media: Vec::new(),
         });
@@ -210,6 +277,7 @@ fn compact_history_inner(
         if after_tier2 < after_tier1 || (force && candidate.len() < history.len()) {
             *history = candidate;
             summary_compacted_messages = split_idx;
+            lineage = Some(meta);
         }
     }
 
@@ -245,11 +313,13 @@ fn compact_history_inner(
             cut -= 1;
         }
         if cut >= 1 && !matches!(history.get(cut), Some(HistoryMessage::Tool { .. })) {
+            let meta = CompactionSummaryMetadata::from_slice(0, &history[..cut]);
             let summary_text = deterministic_ledger_summary(&history[..cut]);
             let mut trimmed = Vec::with_capacity(history.len() - cut + 1);
             trimmed.push(HistoryMessage::User {
                 content: format!(
-                    "<compacted_history_summary>\n{summary_text}\n</compacted_history_summary>"
+                    "<compacted_history_summary>\n[lineage: messages={} range={}..{} sha256={}]\n{summary_text}\n</compacted_history_summary>",
+                    meta.message_count, meta.start_index, meta.end_index, &meta.source_sha256[..16]
                 ),
                 media: Vec::new(),
             });
@@ -257,6 +327,7 @@ fn compact_history_inner(
             if estimate_history_tokens(&trimmed) < current_tokens {
                 *history = trimmed;
                 summary_compacted_messages = summary_compacted_messages.saturating_add(cut);
+                lineage = Some(meta);
             }
         }
     }
@@ -279,6 +350,7 @@ fn compact_history_inner(
         tokens_after,
         micro_compacted_tools,
         summary_compacted_messages,
+        lineage,
     }
 }
 

@@ -4,9 +4,11 @@ import com.nola.data.remote.mobile_crypto.EncryptedEnvelope
 import com.nola.data.remote.mobile_crypto.MobileCrypto
 import com.nola.agent.trace.AgentTraceEvent
 import io.ktor.client.HttpClient
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import com.nola.data.remote.applyStreamingTimeouts
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
@@ -117,36 +119,58 @@ class SseClient @Inject constructor(
             setBody(TextContent(bodyJson, ContentType.Application.Json))
             applyStreamingTimeouts(requestClient)
         }.execute { response ->
-            if (response.status.value !in 200..299) {
-                throw SseStatusException(response.status.value)
-            }
-            val channel = response.bodyAsChannel()
-            val dataLines = mutableListOf<String>()
-            suspend fun flushFrame(): Boolean {
-                val payload = sseFramePayload(dataLines) ?: return false
-                dataLines.clear()
-                if (payload == "[DONE]") return true
-                try {
-                    decodeSsePayload(payload, mobileCryptoToken, json)?.let { emit(it) }
-                } catch (e: Exception) {
-                    if (e is IllegalStateException) throw e
-                    throw IllegalStateException("Failed to decode Agent Host SSE event", e)
-                }
-                return false
-            }
-            while (!channel.isClosedForRead) {
-                val line = channel.readUTF8Line() ?: break
-                if (line.isEmpty()) {
-                    if (flushFrame()) break
-                    continue
-                }
-                sseDataLineValue(line)?.let { dataLines.add(it) }
-            }
-            if (dataLines.isNotEmpty()) {
-                flushFrame()
-            }
+            collectSseResponse(response, mobileCryptoToken) { emit(it) }
         }
     }.flowOn(Dispatchers.IO)
+
+    fun streamGet(
+        url: String,
+        headers: Map<String, String>,
+        mobileCryptoToken: String? = null,
+        requestClient: HttpClient = httpClient
+    ): Flow<SseEvent> = flow {
+        requestClient.prepareGet(url) {
+            headers.forEach { (k, v) -> this.headers.append(k, v) }
+            applyStreamingTimeouts(requestClient)
+        }.execute { response ->
+            collectSseResponse(response, mobileCryptoToken) { emit(it) }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private suspend fun collectSseResponse(
+        response: HttpResponse,
+        mobileCryptoToken: String?,
+        emitEvent: suspend (SseEvent) -> Unit,
+    ) {
+        if (response.status.value !in 200..299) {
+            throw SseStatusException(response.status.value)
+        }
+        val channel = response.bodyAsChannel()
+        val dataLines = mutableListOf<String>()
+        suspend fun flushFrame(): Boolean {
+            val payload = sseFramePayload(dataLines) ?: return false
+            dataLines.clear()
+            if (payload == "[DONE]") return true
+            try {
+                decodeSsePayload(payload, mobileCryptoToken, json)?.let { emitEvent(it) }
+            } catch (e: Exception) {
+                if (e is IllegalStateException) throw e
+                throw IllegalStateException("Failed to decode Agent Host SSE event", e)
+            }
+            return false
+        }
+        while (!channel.isClosedForRead) {
+            val line = channel.readUTF8Line() ?: break
+            if (line.isEmpty()) {
+                if (flushFrame()) break
+                continue
+            }
+            sseDataLineValue(line)?.let { dataLines.add(it) }
+        }
+        if (dataLines.isNotEmpty()) {
+            flushFrame()
+        }
+    }
 }
 
 internal fun sseDataLineValue(line: String): String? {

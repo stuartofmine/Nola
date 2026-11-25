@@ -1248,11 +1248,11 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
            FileManager.default.isExecutableFile(atPath: configured) {
             return URL(fileURLWithPath: configured)
         }
-        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola") {
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-runtime") {
             return bundled
         }
         let adjacent = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/nola", isDirectory: false)
+            .appendingPathComponent("Contents/MacOS/nola-runtime", isDirectory: false)
         return FileManager.default.isExecutableFile(atPath: adjacent.path) ? adjacent : nil
     }
 }
