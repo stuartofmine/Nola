@@ -17,7 +17,6 @@
     }
     import { locale, t } from './lib/i18n';
     import { createWorkspaceDrafts, workspaceDraftsContext } from './lib/workspaceDrafts';
-    import { restoreBrowserWorkspaceCompletions } from './lib/browserWorkspaceCompletions';
     import { initialWorkspaceLocation, workspaceClick, workspaceDestination, workspaceNavigationEvent, workspaceContentNavigationEvent } from './lib/workspaceNavigation';
     const drafts = createWorkspaceDrafts();
     setContext(workspaceDraftsContext, drafts);
@@ -76,8 +75,6 @@
         return {destroy() { cancelled = true; if (frame) cancelAnimationFrame(frame); }};
     }
     onMount(() => {
-        const recovery = new AbortController();
-        if (path !== '/login') void restoreBrowserWorkspaceCompletions(drafts, recovery.signal);
         try { loadWorkspaceWidths(localStorage); } catch { /* Optional browser preference. */ }
         let index = 0;
         let restoring = false;
@@ -126,7 +123,6 @@
         window.addEventListener('popstate', pop);
         window.addEventListener('beforeunload', unload);
         return () => {
-            recovery.abort();
             document.removeEventListener('click', click);
             window.removeEventListener(workspaceNavigationEvent, requested);
             window.removeEventListener('popstate', pop);

@@ -6,4 +6,5 @@ pub mod config;
 pub mod daemon;
 pub mod ffi;
 pub mod tui;
+pub mod web_api;
 pub mod web_server;

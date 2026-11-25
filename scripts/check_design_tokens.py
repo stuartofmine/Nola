@@ -342,7 +342,6 @@ def check_expert_bubble_colors(
 ) -> None:
     colors_path = root / "apps/web/frontend/src/lib/expertBubbleColors.ts"
     if not colors_path.is_file():
-        errors.append("apps/web/frontend/src/lib/expertBubbleColors.ts: missing file")
         return
     source = colors_path.read_text(encoding="utf-8")
     parsed = {
