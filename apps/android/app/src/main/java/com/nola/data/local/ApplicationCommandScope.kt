@@ -24,6 +24,7 @@ internal sealed interface ApplicationCommandScope {
             "delete_conversation", "rename_conversation", "apply_active_permission_policy", "apply_pending_task_notice",
             "recover_expired_run_deliveries", "recover_observed_orphaned_run", "step_goal",
         )
+        private val idField = setOf("session_delete")
         private val inputConversation = setOf(
             "begin_assistant_turn", "begin_queued_user_turn", "promote_queued_assistant_turn", "begin_automation_assistant_turn", "reduce_and_accept_host_response",
             "reduce_and_commit_active_submission", "patch_conversation_configuration",
@@ -45,6 +46,9 @@ internal sealed interface ApplicationCommandScope {
                 "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes" -> command.ownerAt("identity", "owner")
                 "list_ui_surfaces" -> command.text("conversation_id")
                 in conversationField -> command.text("conversation_id")
+                in idField -> command.text("id")
+                "session_create" -> command.text("id") ?: return Global
+                "events_after" -> command.text("scope") ?: command.text("conversation_id") ?: return Global
                 in inputConversation -> input?.text("conversation_id")
                 in sessionField -> command.text("session_id")
                 in runInput -> input?.text("run_id")?.let(resolveRun)

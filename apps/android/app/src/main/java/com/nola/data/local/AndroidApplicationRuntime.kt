@@ -156,6 +156,45 @@ class AndroidApplicationRuntime(
         terminalResult(transmitEnvelope(transportEnvelope(command), readOnly = true))
     }
 
+    /** Lean v2 Application queries & mutations routed directly to Rust v2 `daemon::dispatch_command`. */
+    fun v2Health(): JsonObject = executeQuery(buildJsonObject { put("type", "health") }).jsonObject
+
+    fun v2ListSessions(): JsonObject = executeQuery(buildJsonObject { put("type", "sessions_list") }).jsonObject
+
+    fun v2CreateSession(title: String = "New conversation", id: String? = null): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "session_create")
+            put("title", title)
+            if (!id.isNullOrBlank()) put("id", id)
+        }
+    ).jsonObject
+
+    fun v2DeleteSession(id: String): JsonObject = submitMutation(
+        buildJsonObject { put("type", "session_delete"); put("id", id) }
+    ).jsonObject
+
+    fun v2SearchMemory(query: String = "", limit: Int = 50): JsonObject = executeQuery(
+        buildJsonObject { put("type", "memory_search"); put("query", query); put("limit", limit) }
+    ).jsonObject
+
+    fun v2SaveMemory(title: String, content: String, namespace: String = "default", id: String? = null): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "memory_save")
+            put("title", title)
+            put("content", content)
+            put("namespace", namespace)
+            if (!id.isNullOrBlank()) put("id", id)
+        }
+    ).jsonObject
+
+    fun v2ListModuleRecords(kind: String): JsonObject = executeQuery(
+        buildJsonObject { put("type", "module_list"); put("kind", kind) }
+    ).jsonObject
+
+    fun v2UpsertModuleRecord(kind: String, record: JsonObject): JsonObject = submitMutation(
+        buildJsonObject { put("type", "module_upsert"); put("kind", kind); put("record", record) }
+    ).jsonObject
+
     /** Only the native fresh Host factory calls this with its actual complete config. */
     internal fun attestEditedResendHostPolicy(target: String, config: JsonObject, submission: JsonObject): JsonObject = synchronized(lock) {
         check(handle != 0L) { "Application is closed" }

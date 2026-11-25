@@ -214,7 +214,9 @@ fn handle_client(mut stream: UnixStream, store: &Store, suite: &ModulesSuite) {
 }
 
 /// Process a complete UDS / FFI JSON envelope with idempotent `request_id` receipts.
+/// Conforms strictly to Android `ApplicationReceiptValidation` & iOS/macOS receipt contracts.
 pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Value {
+    let received_at = chrono::Utc::now().to_rfc3339();
     let request_id = req
         .get("request_id")
         .and_then(|v| v.as_str())
@@ -238,7 +240,20 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
 
     let is_mutation = matches!(
         cmd_type,
-        "session_create" | "session_delete" | "module_upsert" | "module_delete" | "memory_save" | "backup"
+        "session_create"
+            | "create_conversation"
+            | "rename_conversation"
+            | "patch_conversation_configuration"
+            | "session_delete"
+            | "delete_conversation"
+            | "module_upsert"
+            | "module_delete"
+            | "memory_save"
+            | "memory_delete"
+            | "put_product_setting"
+            | "set_conversation_permission"
+            | "select_conversation_execution"
+            | "backup"
     );
 
     if is_mutation && !request_id.is_empty() {
@@ -248,20 +263,52 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
         }
     }
 
+    let completed_at = chrono::Utc::now().to_rfc3339();
     let resp = match dispatch_command(store, suite, cmd_type, &cmd_args) {
-        Ok(result) => json!({
+        Ok(result) => {
+            if is_mutation {
+                let next_rev = store
+                    .get_kv("app_committed_revision")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    + 1;
+                let _ = store.set_kv("app_committed_revision", &json!(next_rev));
+                json!({
+                    "protocol_version": PROTOCOL_VERSION,
+                    "client_id": client_id,
+                    "request_id": request_id,
+                    "received_at": received_at,
+                    "completed_at": completed_at,
+                    "status": "committed",
+                    "committed_revision": next_rev,
+                    "result": result
+                })
+            } else {
+                json!({
+                    "protocol_version": PROTOCOL_VERSION,
+                    "client_id": client_id,
+                    "request_id": request_id,
+                    "received_at": received_at,
+                    "completed_at": completed_at,
+                    "status": "committed",
+                    "result": result
+                })
+            }
+        }
+        Err((code, msg)) => json!({
             "protocol_version": PROTOCOL_VERSION,
-            "request_id": request_id,
             "client_id": client_id,
-            "status": "committed",
-            "result": result
-        }),
-        Err(msg) => json!({
-            "protocol_version": PROTOCOL_VERSION,
             "request_id": request_id,
-            "client_id": client_id,
+            "received_at": received_at,
+            "completed_at": completed_at,
             "status": "rejected",
-            "error": {"message": msg}
+            "error": {
+                "code": code,
+                "message": msg,
+                "recoverable": false
+            }
         }),
     };
 
@@ -276,57 +323,187 @@ pub fn dispatch_command(
     suite: &ModulesSuite,
     cmd_type: &str,
     args: &Value,
-) -> Result<Value, String> {
+) -> Result<Value, (&'static str, String)> {
     match cmd_type {
         "health" => Ok(json!({"ok": true, "version": "2.0.0", "protocol_version": PROTOCOL_VERSION})),
         "command_receipt" => {
             let rid = args.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
             let rec = store
                 .get_kv(&format!("cmd_receipt:{rid}"))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(rec.unwrap_or(Value::Null))
         }
-        "projection_snapshot" | "sessions_list" => {
-            let sessions = store.list_sessions(200).map_err(|e| e.to_string())?;
+        "projection_snapshot" | "sessions_list" | "list_conversations" => {
+            let sessions = store
+                .list_sessions(200)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let conversations: Vec<Value> = sessions
+                .iter()
+                .map(|s| crate::web_api::session_to_conversation_json(store, s))
+                .collect();
             let goals: Vec<Value> = suite.list_records("goal").unwrap_or_default();
             let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
-            Ok(json!({"sessions": sessions, "goals": goals, "rooms": rooms}))
+            Ok(json!({
+                "sessions": sessions,
+                "conversations": conversations,
+                "goals": goals,
+                "rooms": rooms
+            }))
         }
-        "session_create" => {
+        "load_conversation" | "load_conversation_projection_v1" | "load_conversation_projection_window_v1" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let sess = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("conversation '{id}' not found")))?;
+            let conv = crate::web_api::session_to_conversation_json(store, &sess);
+            let (messages, events) = crate::web_api::reconstruct_v2_messages(store, id);
+            Ok(json!({
+                "conversation": conv,
+                "messages": messages,
+                "events": events,
+                "has_more": false
+            }))
+        }
+        "session_create" | "create_conversation" => {
             let ts = now_ms();
             let s = Session {
                 id: args
                     .get("id")
+                    .or_else(|| args.get("conversation_id"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .unwrap_or_else(new_id),
                 title: args
                     .get("title")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("New Session")
+                    .unwrap_or("New conversation")
                     .to_string(),
                 workspace_root: args
                     .get("workspace_root")
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| suite.workspace_root.display().to_string()),
-                model_connection: None,
-                model_id: None,
+                model_connection: args
+                    .get("selected_model_source")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string),
+                model_id: args
+                    .get("selected_model_id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string),
                 created_at_ms: ts,
                 updated_at_ms: ts,
             };
-            store.upsert_session(&s).map_err(|e| e.to_string())?;
-            Ok(serde_json::to_value(&s).unwrap_or(json!({})))
+            store
+                .upsert_session(&s)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let mut val = serde_json::to_value(&s).unwrap_or(json!({}));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert(
+                    "conversation".into(),
+                    crate::web_api::session_to_conversation_json(store, &s),
+                );
+            }
+            Ok(val)
         }
-        "session_delete" => {
-            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing 'id'")?;
-            store.delete_session(id).map_err(|e| e.to_string())?;
-            Ok(json!({"deleted": id}))
+        "rename_conversation" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing title".into()))?;
+            let mut sess = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("conversation '{id}' not found")))?;
+            sess.title = title.to_string();
+            sess.updated_at_ms = now_ms();
+            store
+                .upsert_session(&sess)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(crate::web_api::session_to_conversation_json(store, &sess))
+        }
+        "patch_conversation_configuration" | "select_conversation_execution" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let mut sess = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("conversation '{id}' not found")))?;
+            if let Some(src) = args
+                .get("selected_model_source")
+                .or_else(|| args.get("selectedModelSource"))
+                .and_then(|v| v.as_str())
+            {
+                sess.model_connection = (!src.is_empty()).then(|| src.to_string());
+            }
+            if let Some(mid) = args
+                .get("selected_model_id")
+                .or_else(|| args.get("selectedModelId"))
+                .and_then(|v| v.as_str())
+            {
+                sess.model_id = (!mid.is_empty()).then(|| mid.to_string());
+            }
+            if let Some(pinned) = args
+                .get("is_pinned")
+                .or_else(|| args.get("isPinned"))
+                .and_then(|v| v.as_bool())
+            {
+                let key = crate::web_api::session_meta_key(id);
+                let mut meta = store
+                    .get_kv(&key)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| json!({"isPinned": false, "revision": 1, "configurationRevision": 1}));
+                meta["isPinned"] = json!(pinned);
+                let next_cfg = meta
+                    .get("configurationRevision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1)
+                    + 1;
+                meta["configurationRevision"] = json!(next_cfg);
+                let _ = store.set_kv(&key, &meta);
+            }
+            sess.updated_at_ms = now_ms();
+            store
+                .upsert_session(&sess)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(crate::web_api::session_to_conversation_json(store, &sess))
+        }
+        "session_delete" | "delete_conversation" => {
+            let id = args
+                .get("id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            store
+                .delete_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"deleted": id, "ok": true}))
         }
         "events_after" | "projection_event_suffix" | "projection_cursor_wait" => {
-            let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("");
+            let scope = args
+                .get("scope")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let after_seq = args.get("after_seq").and_then(|v| v.as_i64()).unwrap_or(0);
-            match store.events_after(scope, after_seq, 200).map_err(|e| e.to_string())? {
+            match store
+                .events_after(scope, after_seq, 200)
+                .map_err(|e| ("storage_error", e.to_string()))?
+            {
                 EventPage::Events(ev) => Ok(json!({"status": "ok", "events": ev})),
                 EventPage::ResyncRequired {
                     earliest_retained_seq,
@@ -338,14 +515,57 @@ pub fn dispatch_command(
                 })),
             }
         }
+        "get_product_setting" => {
+            let key = args
+                .get("key")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'key'".into()))?;
+            let val = store
+                .get_kv(&format!("product_setting:{key}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"key": key, "value": val.unwrap_or(Value::Null)}))
+        }
+        "put_product_setting" => {
+            let key = args
+                .get("key")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'key'".into()))?;
+            let value = args.get("value").cloned().unwrap_or(Value::Null);
+            store
+                .set_kv(&format!("product_setting:{key}"), &value)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"key": key, "value": value, "ok": true}))
+        }
+        "set_conversation_permission" => {
+            let id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let mode = args
+                .get("permission_mode")
+                .or_else(|| args.get("mode"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("cautious");
+            store
+                .set_kv(&format!("conv_perm:{id}"), &json!(mode))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"conversation_id": id, "permission_mode": mode, "ok": true}))
+        }
         "module_list" => {
             let kind = args.get("kind").and_then(|v| v.as_str()).unwrap_or("goal");
-            let items: Vec<Value> = suite.list_records(kind).map_err(|e| e.to_string())?;
+            let items: Vec<Value> = suite
+                .list_records(kind)
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"kind": kind, "items": items}))
         }
         "module_upsert" => {
-            let kind = args.get("kind").and_then(|v| v.as_str()).ok_or("missing 'kind'")?;
-            let record = args.get("record").ok_or("missing 'record'")?;
+            let kind = args
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'kind'".into()))?;
+            let record = args
+                .get("record")
+                .ok_or(("invalid_argument", "missing 'record'".into()))?;
             let id = record
                 .get("id")
                 .and_then(|v| v.as_str())
@@ -353,18 +573,30 @@ pub fn dispatch_command(
                 .unwrap_or_else(new_id);
             suite
                 .upsert_record(kind, &id, record)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"ok": true, "id": id}))
         }
         "module_delete" => {
-            let kind = args.get("kind").and_then(|v| v.as_str()).ok_or("missing 'kind'")?;
-            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing 'id'")?;
-            let deleted = suite.delete_record(kind, id).map_err(|e| e.to_string())?;
+            let kind = args
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'kind'".into()))?;
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            let deleted = suite
+                .delete_record(kind, id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"deleted": deleted}))
         }
         "memory_search" => {
             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let items = store.search_memory(q, None, 25).map_err(|e| e.to_string())?;
+            let ns = args.get("namespace").and_then(|v| v.as_str());
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+            let items = store
+                .search_memory(q, ns, limit)
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"items": items}))
         }
         "memory_save" => {
@@ -390,23 +622,172 @@ pub fn dispatch_command(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
-                tags: Vec::new(),
+                tags: args
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(ToString::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 created_at_ms: ts,
                 updated_at_ms: ts,
             };
-            store.upsert_memory(&item).map_err(|e| e.to_string())?;
+            store
+                .upsert_memory(&item)
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(serde_json::to_value(&item).unwrap_or(json!({})))
+        }
+        "memory_delete" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            store
+                .delete_memory(id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"deleted": id, "ok": true}))
+        }
+        "model" | "skill" | "memory" | "automation" | "mcp" | "data_source" => {
+            dispatch_domain_command(store, suite, cmd_type, args)
         }
         "backup" => {
             let dest = args
                 .get("destination")
                 .and_then(|v| v.as_str())
-                .ok_or("missing 'destination'")?;
+                .ok_or(("invalid_argument", "missing 'destination'".into()))?;
             store
                 .backup_to(Path::new(dest))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"backup": dest}))
         }
-        other => Err(format!("unsupported daemon command '{other}'")),
+        other => Err((
+            "unsupported_command",
+            format!("unsupported daemon command '{other}'"),
+        )),
+    }
+}
+
+fn dispatch_domain_command(
+    store: &Store,
+    suite: &ModulesSuite,
+    domain: &str,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let op = args
+        .get("operation")
+        .and_then(|v| v.get("type").or(Some(v)))
+        .and_then(|v| v.as_str())
+        .unwrap_or("list");
+    match (domain, op) {
+        ("memory", "list" | "recall" | "search") => {
+            let q = args
+                .pointer("/operation/query")
+                .or_else(|| args.get("query"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let items = store
+                .search_memory(q, None, 100)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let records: Vec<Value> = items
+                .iter()
+                .map(crate::web_api::memory_item_to_record)
+                .collect();
+            Ok(json!({"items": items, "records": records}))
+        }
+        ("memory", "upsert" | "save" | "update_if_revision") => {
+            let payload = args.get("operation").unwrap_or(args);
+            let ts = now_ms();
+            let item = MemoryItem {
+                id: payload
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id),
+                namespace: payload
+                    .get("namespace")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default")
+                    .to_string(),
+                title: payload
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Memory")
+                    .to_string(),
+                content: payload
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tags: Vec::new(),
+                created_at_ms: ts,
+                updated_at_ms: ts,
+            };
+            store
+                .upsert_memory(&item)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(crate::web_api::memory_item_to_record(&item))
+        }
+        ("memory", "delete") => {
+            let id = args
+                .pointer("/operation/id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            store
+                .delete_memory(id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"deleted": id, "ok": true}))
+        }
+        (_, "list" | "list_profiles" | "list_editors" | "list_usage") => {
+            let items: Vec<Value> = suite
+                .list_records(domain)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"kind": domain, "items": items, "profiles": items}))
+        }
+        (_, "get") => {
+            let id = args
+                .pointer("/operation/id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            let items: Vec<Value> = suite
+                .list_records(domain)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let found = items
+                .into_iter()
+                .find(|v| v.get("id").and_then(|x| x.as_str()) == Some(id));
+            Ok(found.unwrap_or(Value::Null))
+        }
+        (_, "delete") => {
+            let id = args
+                .pointer("/operation/id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'id'".into()))?;
+            let deleted = suite
+                .delete_record(domain, id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"deleted": deleted, "id": id}))
+        }
+        _ => {
+            let payload = args.get("operation").unwrap_or(args);
+            let id = payload
+                .get("id")
+                .or_else(|| payload.pointer("/record/id"))
+                .or_else(|| payload.pointer("/profile/id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let record = payload
+                .get("record")
+                .or_else(|| payload.get("profile"))
+                .unwrap_or(payload);
+            suite
+                .upsert_record(domain, &id, record)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "id": id, "record": record}))
+        }
     }
 }
