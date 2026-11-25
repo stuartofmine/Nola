@@ -141,6 +141,17 @@ impl FileMutationPipeline {
         let before = fs::read(path)
             .ok()
             .map(|b| ContentVersion::Sha256(sha256_hex(&b)));
+        let after_sha = sha256_hex(new_bytes);
+        let after = ContentVersion::Sha256(after_sha.clone());
+        // Preserve mtime if file already exists with identical content!
+        if before.as_ref() == Some(&after) {
+            ctx.file_state.record(path, after_sha);
+            return Ok(ResourceEffect {
+                uri: path.display().to_string(),
+                operation: op_hint,
+                transition: VersionTransition::Unchanged { version: after },
+            });
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("failed to create parent dir: {e}"))?;
         }
@@ -159,9 +170,7 @@ impl FileMutationPipeline {
             let _ = fs::remove_file(&tmp);
             format!("failed to commit file {}: {e}", path.display())
         })?;
-        let after_sha = sha256_hex(new_bytes);
-        ctx.file_state.record(path, after_sha.clone());
-        let after = ContentVersion::Sha256(after_sha);
+        ctx.file_state.record(path, after_sha);
 
         let (operation, transition) = match before {
             None => (ResourceOperation::Create, VersionTransition::Created { after }),
@@ -212,13 +221,15 @@ impl ToolHandler for ReadFileTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "read_file".into(),
-                description: "Read a UTF-8 text file with 1-based line numbers (supports start_line/end_line) or inspect spreadsheets (.xlsx/.xls/.ods), PDFs (.pdf), audio, and images.".into(),
+                description: "Read a UTF-8 text file by 1-based line range (start_line/end_line) or UTF-8 safe byte range (start_byte/max_bytes), or inspect spreadsheets (.xlsx/.xls/.ods), PDFs (.pdf), audio, and images.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": { "type": "string", "description": "File path relative to workspace or absolute" },
                         "start_line": { "type": "integer", "description": "1-based start line (default 1)" },
                         "end_line": { "type": "integer", "description": "1-based inclusive end line (default start_line + 399)" },
+                        "start_byte": { "type": "integer", "description": "Optional 0-based UTF-8 byte offset for byte-range reading" },
+                        "max_bytes": { "type": "integer", "description": "Optional maximum bytes to return for byte-range reading" },
                         "page": { "type": "integer", "description": "Optional 1-based page number for PDFs" }
                     },
                     "required": ["path"]
@@ -293,6 +304,38 @@ impl ToolHandler for ReadFileTool {
         ctx.file_state.record(&path, digest.clone());
 
         let text = String::from_utf8_lossy(&bytes);
+
+        let start_byte_opt = args.get("start_byte").and_then(|v| v.as_u64()).map(|n| n as usize);
+        let max_bytes_opt = args.get("max_bytes").and_then(|v| v.as_u64()).map(|n| n as usize);
+        if start_byte_opt.is_some() || max_bytes_opt.is_some() {
+            let req_start = start_byte_opt.unwrap_or(0);
+            let max_bytes = max_bytes_opt
+                .unwrap_or(MAX_READ_RESPONSE_BYTES)
+                .clamp(1, MAX_READ_RESPONSE_BYTES);
+            let total_bytes = text.len();
+            let (slice, actual_start, next_start) =
+                crate::output_store::utf8_byte_slice(&text, req_start, max_bytes);
+            return ToolExecutionResult::ok_structured(
+                json!({
+                    "path": path.display().to_string(),
+                    "sha256": digest,
+                    "start_byte": actual_start,
+                    "bytes_returned": slice.len(),
+                    "next_start_byte": next_start,
+                    "total_bytes": total_bytes,
+                    "truncated": next_start < total_bytes,
+                    "content": slice
+                }),
+                format!(
+                    "Read {} (bytes {}-{} of {})",
+                    path.display(),
+                    actual_start,
+                    next_start,
+                    total_bytes
+                ),
+            );
+        }
+
         let lines: Vec<&str> = text.lines().collect();
         let total_lines = lines.len();
         let start = args
@@ -366,12 +409,14 @@ impl ToolHandler for WriteFileTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "write_file".into(),
-                description: "Create or overwrite a UTF-8 file atomically and return its SHA-256 version transition.".into(),
+                description: "Create or overwrite a UTF-8 file atomically (supports optional expected_sha256 concurrency check and dry_run) and return its SHA-256 version transition.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": { "type": "string" },
-                        "content": { "type": "string" }
+                        "content": { "type": "string" },
+                        "expected_sha256": { "type": "string", "description": "Optional expected SHA-256 hex digest of existing file; fails with existing_file_version_mismatch if it differs" },
+                        "dry_run": { "type": "boolean", "description": "Validate and preview transition without writing to disk (default false)" }
                     },
                     "required": ["path", "content"]
                 }),
@@ -389,7 +434,74 @@ impl ToolHandler for WriteFileTool {
         let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
             return ToolExecutionResult::err_structured("missing_param", "missing required 'content'", None);
         };
+        let expected_sha256 = args
+            .get("expected_sha256")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let dry_run = args
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let path = resolve_path(&ctx.workspace_root, raw_path);
+        if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
+            && !path_within_workspace(&ctx.workspace_root, &path)
+        {
+            return ToolExecutionResult::err_structured(
+                "write_error",
+                format!("write target '{}' escapes workspace boundary", path.display()),
+                None,
+            );
+        }
+
+        let existing_sha = fs::read(&path).ok().map(|b| sha256_hex(&b));
+        if let Some(expected) = expected_sha256 {
+            if existing_sha.as_deref() != Some(expected) {
+                return ToolExecutionResult::err_structured(
+                    "existing_file_version_mismatch",
+                    format!(
+                        "existing file version mismatch for {}: expected sha256 '{}', actual '{}'",
+                        path.display(),
+                        expected,
+                        existing_sha.as_deref().unwrap_or("<missing>")
+                    ),
+                    Some(json!({
+                        "path": path.display().to_string(),
+                        "expected_sha256": expected,
+                        "actual_sha256": existing_sha
+                    })),
+                );
+            }
+        }
+
+        if dry_run {
+            let new_sha = sha256_hex(content.as_bytes());
+            let after = ContentVersion::Sha256(new_sha.clone());
+            let transition = match existing_sha {
+                None => VersionTransition::Created { after },
+                Some(ref b) if b == &new_sha => VersionTransition::Unchanged { version: after },
+                Some(b) => VersionTransition::Modified {
+                    before: ContentVersion::Sha256(b),
+                    after,
+                },
+            };
+            let bytes = content.len();
+            let lines = content.lines().count();
+            return ToolExecutionResult::ok_structured(
+                json!({
+                    "path": path.display().to_string(),
+                    "dry_run": true,
+                    "would_change": transition.changed(),
+                    "bytes": bytes,
+                    "lines": lines,
+                    "sha256": new_sha,
+                    "transition": transition
+                }),
+                format!("Dry-run write {} ({bytes} bytes, {lines} lines)", path.display()),
+            );
+        }
+
         match FileMutationPipeline::write_bytes(ctx, &path, content.as_bytes(), ResourceOperation::Create) {
             Ok(effect) => {
                 let bytes = content.len();

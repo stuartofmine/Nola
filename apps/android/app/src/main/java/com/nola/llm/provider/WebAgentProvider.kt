@@ -587,6 +587,55 @@ class WebAgentProvider @Inject constructor(
         )
     }
 
+    suspend fun v2RespondPermission(
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2RespondPermission(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            requestId = requestId,
+            allow = allow,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2RespondUserInput(
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2RespondUserInput(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            requestId = requestId,
+            answer = answer,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2SubmitUiInteraction(
+        conversationId: String,
+        interaction: JsonObject,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2SubmitUiInteraction(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            interaction = interaction,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
     override fun generateSummaryStream(input: ModelInput): Flow<String> = flow {
         val cfg = checkNotNull(config) { "Web Agent Host is not configured" }.copy()
         val prompt = input.messages.lastOrNull()?.get("content")?.toString().orEmpty()

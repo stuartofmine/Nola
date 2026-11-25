@@ -72,6 +72,7 @@ import com.nola.domain.model.CustomDataSourceConfig
 import com.nola.domain.model.DataSourceCatalogBuilder
 import com.nola.domain.model.DataSourceUsageRecord
 import com.nola.domain.model.HostAgentPermissionRequest
+import com.nola.domain.model.HostAgentToolEvent
 import com.nola.domain.model.decodeAgentThinkingFromMeta
 import com.nola.domain.model.decodeHostToolEventsFromMeta
 import com.nola.domain.projection.CONVERSATION_SURFACE_LIVE_META_KEY
@@ -4952,6 +4953,32 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private val v2PermissionRequestIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    private fun isV2SseEvent(event: SseEvent): Boolean = when (event) {
+        is SseEvent.V2SessionStarted,
+        is SseEvent.V2TextDelta,
+        is SseEvent.V2ReasoningDelta,
+        is SseEvent.V2ToolStarted,
+        is SseEvent.V2ToolFinished,
+        is SseEvent.V2Compacted,
+        is SseEvent.V2UiSurface,
+        is SseEvent.V2PermissionRequested,
+        is SseEvent.V2UserQuestion,
+        is SseEvent.V2TurnCompleted -> true
+        else -> false
+    }
+
+    private fun upsertV2UiSurface(surfaces: List<JsonObject>, snapshot: JsonObject): List<JsonObject> {
+        val surfaceId = ((snapshot["identity"] as? JsonObject)?.get("surface_id") as? JsonPrimitive)?.contentOrNull
+            ?.takeIf { it.isNotBlank() }
+            ?: return surfaces + snapshot
+        val index = surfaces.indexOfFirst { existing ->
+            ((existing["identity"] as? JsonObject)?.get("surface_id") as? JsonPrimitive)?.contentOrNull == surfaceId
+        }
+        return if (index < 0) surfaces + snapshot else surfaces.toMutableList().also { it[index] = snapshot }
+    }
+
     private suspend fun handleAgentEvent(event: SseEvent, convId: String) {
         if (event is SseEvent.SubmissionReceipt) {
             val configuration = checkNotNull(remoteObservationConfiguration)
@@ -4968,7 +4995,7 @@ class ChatViewModel @Inject constructor(
             }
             return
         }
-        if (!remoteSubmissionAdmitted) {
+        if (!remoteSubmissionAdmitted && !isV2SseEvent(event)) {
             if (event is SseEvent.Error) _uiState.update { it.copy(error = if (mainExpertRequiresTools(event.code)) context.getString(R.string.expert_main_requires_tools) else event.message, processingState = ProcessingState.BuildingContext) }
             else if (event is SseEvent.AssistantJournal || event is SseEvent.AssistantTerminal || event is SseEvent.PermissionRequest)
                 error("Remote event preceded source submission admission")
@@ -5014,16 +5041,135 @@ class ChatViewModel @Inject constructor(
                 verifyRemoteTerminal(owner, event.envelope.getValue("seal_digest").jsonPrimitive.content, candidate)
             }
             is SseEvent.Trace -> Unit
-            is SseEvent.V2SessionStarted,
-            is SseEvent.V2TextDelta,
-            is SseEvent.V2ReasoningDelta,
-            is SseEvent.V2ToolStarted,
-            is SseEvent.V2ToolFinished,
-            is SseEvent.V2Compacted,
-            is SseEvent.V2UiSurface,
-            is SseEvent.V2PermissionRequested,
-            is SseEvent.V2UserQuestion,
-            is SseEvent.V2TurnCompleted -> Unit
+            is SseEvent.V2SessionStarted -> {
+                retireSubmittedDraft()
+                val resolvedSessionId = event.sessionId.takeIf { it.isNotBlank() } ?: convId
+                _uiState.update {
+                    it.copy(
+                        v2SessionId = resolvedSessionId,
+                        processingState = ProcessingState.Streaming,
+                        error = null,
+                    )
+                }
+            }
+            is SseEvent.V2TextDelta -> {
+                if (event.delta.isNotEmpty()) {
+                    _uiState.update {
+                        it.copy(
+                            currentResponse = it.currentResponse + event.delta,
+                            processingState = ProcessingState.Streaming,
+                            thinkingFinished = true,
+                        )
+                    }
+                }
+            }
+            is SseEvent.V2ReasoningDelta -> {
+                if (event.delta.isNotEmpty()) {
+                    _uiState.update {
+                        it.copy(
+                            thinking = it.thinking + event.delta,
+                            processingState = ProcessingState.Streaming,
+                            thinkingFinished = false,
+                        )
+                    }
+                }
+            }
+            is SseEvent.V2ToolStarted -> {
+                val toolEvent = HostAgentToolEvent(
+                    id = event.callId.ifBlank { UUID.randomUUID().toString() },
+                    toolName = event.name.ifBlank { "tool" },
+                    status = "running",
+                )
+                _uiState.update {
+                    it.copy(
+                        toolEvents = upsertHostToolEvent(it.toolEvents, toolEvent),
+                        processingState = ProcessingState.Streaming,
+                    )
+                }
+            }
+            is SseEvent.V2ToolFinished -> {
+                val toolEvent = HostAgentToolEvent(
+                    id = event.callId.ifBlank { UUID.randomUUID().toString() },
+                    toolName = event.name.ifBlank { "tool" },
+                    status = if (event.isError) "error" else "done",
+                    resultSummary = event.summary.takeIf { it.isNotBlank() },
+                    error = event.isError,
+                )
+                _uiState.update {
+                    it.copy(
+                        toolEvents = upsertHostToolEvent(it.toolEvents, toolEvent),
+                        processingState = ProcessingState.Streaming,
+                    )
+                }
+            }
+            is SseEvent.V2Compacted -> {
+                _uiState.update {
+                    it.copy(
+                        v2CompactionSummary = event.summary.takeIf { s -> s.isNotBlank() } ?: "Context compacted",
+                        processingState = ProcessingState.Streaming,
+                    )
+                }
+            }
+            is SseEvent.V2UiSurface -> {
+                _uiState.update {
+                    it.copy(
+                        v2UiSurfaces = upsertV2UiSurface(it.v2UiSurfaces, event.snapshot),
+                        processingState = ProcessingState.Streaming,
+                    )
+                }
+            }
+            is SseEvent.V2PermissionRequested -> {
+                val requestId = event.requestId.ifBlank { UUID.randomUUID().toString() }
+                val argsMap: Map<String, Any> = (event.arguments as? JsonObject)
+                    ?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: v.toString() }
+                    .orEmpty()
+                val request = HostAgentPermissionRequest(
+                    allowConversation = false,
+                    id = requestId,
+                    toolName = event.tool.ifBlank { "tool" },
+                    args = argsMap,
+                    reason = event.reason,
+                    message = event.reason.ifBlank { event.tool },
+                    sessionId = convId,
+                )
+                v2PermissionRequestIds.add(requestId)
+                permissionSession.enqueueHostRequest(request)
+                val queued = permissionSession.hostRequests()
+                _uiState.update {
+                    it.copy(
+                        toolEvents = transitionHostToolPermission(it.toolEvents, request, "permission_required"),
+                        pendingPermissionRequests = queued,
+                        permissionRequest = queued.firstOrNull(),
+                        processingState = ProcessingState.Streaming,
+                        thinkingFinished = true,
+                    )
+                }
+            }
+            is SseEvent.V2UserQuestion -> {
+                val prompt = V2UserQuestionPrompt(
+                    requestId = event.requestId,
+                    conversationId = convId,
+                    question = event.question,
+                    options = event.options,
+                )
+                _uiState.update {
+                    it.copy(
+                        pendingUserQuestion = prompt,
+                        processingState = ProcessingState.Streaming,
+                        thinkingFinished = true,
+                    )
+                }
+            }
+            is SseEvent.V2TurnCompleted -> {
+                _uiState.update {
+                    it.copy(
+                        currentResponse = event.finalText.takeIf { text -> text.isNotBlank() } ?: it.currentResponse,
+                        thinkingFinished = true,
+                        pendingUserQuestion = null,
+                        processingState = ProcessingState.Idle,
+                    )
+                }
+            }
             is SseEvent.TurnLifecycle -> {
                 // Core lifecycle is only a hint; exact Run seal proves completion.
                 val owner = remoteJournalTurn
@@ -5247,6 +5393,7 @@ class ChatViewModel @Inject constructor(
             return
         }
 
+        val isV2Permission = v2PermissionRequestIds.remove(request.id) || (request.nonce == null && !request.deviceBridge)
         executionScope.launch {
             try {
                 _uiState.update {
@@ -5255,11 +5402,23 @@ class ChatViewModel @Inject constructor(
                         error = null
                     )
                 }
-                webAgentProvider.submitHostPermissionDecision(
-                    hostPermissionDecisionPayload(request, allow, rememberForConversation), configuration,
-                )
+                if (isV2Permission) {
+                    val targetConversationId = request.sessionId?.takeIf { it.isNotBlank() }
+                        ?: _uiState.value.conversationId.orEmpty()
+                    webAgentProvider.v2RespondPermission(
+                        conversationId = targetConversationId,
+                        requestId = request.id,
+                        allow = allow,
+                        configuration = configuration,
+                    )
+                } else {
+                    webAgentProvider.submitHostPermissionDecision(
+                        hostPermissionDecisionPayload(request, allow, rememberForConversation), configuration,
+                    )
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (isV2Permission) v2PermissionRequestIds.add(request.id)
                 if (_uiState.value.conversationId == request.sessionId) {
                     permissionSession.prependHostRequest(request)
                     val restored = permissionSession.hostRequests()
@@ -5271,6 +5430,59 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
+
+    fun respondToV2UserQuestion(requestId: String, answer: String?) {
+        val currentPrompt = _uiState.value.pendingUserQuestion
+        val conversationId = currentPrompt?.takeIf { it.requestId == requestId }?.conversationId
+            ?: _uiState.value.conversationId
+            ?: return
+        val configuration = remoteObservationConfiguration ?: webAgentProvider.config ?: return
+        _uiState.update { state ->
+            if (state.pendingUserQuestion?.requestId == requestId) {
+                state.copy(pendingUserQuestion = null, processingState = ProcessingState.Streaming, error = null)
+            } else {
+                state
+            }
+        }
+        executionScope.launch {
+            try {
+                webAgentProvider.v2RespondUserInput(
+                    conversationId = conversationId,
+                    requestId = requestId,
+                    answer = answer,
+                    configuration = configuration,
+                )
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (_uiState.value.conversationId == conversationId && currentPrompt != null) {
+                    _uiState.update {
+                        it.copy(
+                            pendingUserQuestion = currentPrompt,
+                            error = e.message ?: context.getString(R.string.chat_agent_error),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun submitV2UiInteraction(conversationId: String, interaction: JsonObject): JsonObject =
+        withContext(Dispatchers.IO) {
+            val configuration = remoteObservationConfiguration ?: webAgentProvider.config
+                ?: error("Web Agent Host is not configured")
+            val result = webAgentProvider.v2SubmitUiInteraction(
+                conversationId = conversationId,
+                interaction = interaction,
+                configuration = configuration,
+            )
+            val updatedSnapshot = result["snapshot"] as? JsonObject
+            if (updatedSnapshot != null && _uiState.value.conversationId == conversationId) {
+                _uiState.update { state ->
+                    state.copy(v2UiSurfaces = upsertV2UiSurface(state.v2UiSurfaces, updatedSnapshot))
+                }
+            }
+            result
+        }
 
     private fun clearGenerationJobIfCurrent(job: Job?) {
         turnRuntime.clearGenerationIfCurrent(job)

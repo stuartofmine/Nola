@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! AgentRoom, ExpertPeer personas, and Subagent delegation module.
+//! AgentRoom, ExpertPeer personas, built-in role templates, and Subagent delegation module.
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -21,6 +21,69 @@ use crate::ModulesSuite;
 pub const KIND_EXPERT: &str = "expert_peer";
 pub const KIND_ROOM: &str = "agent_room";
 
+/// Seven built-in expert role templates (`architect`, `reviewer`, `debugger`,
+/// `researcher`, `writer`, `planner`, `security`) for AgentRoom / CLI / Web UI.
+pub fn built_in_role_templates() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "architect",
+            "name": "System Architect",
+            "role": "architect",
+            "description": "Designs clean module boundaries, data flows, and resilient interfaces.",
+            "system_prompt": "You are a principal software architect. Focus on clean boundaries, minimal coupling, clear invariants, and concrete trade-off analysis.",
+            "suggested_tools": ["codebase_search", "codebase_read_symbol", "read_file", "grep"]
+        }),
+        json!({
+            "id": "reviewer",
+            "name": "Code Reviewer",
+            "role": "reviewer",
+            "description": "Audits diffs for correctness, regressions, edge cases, and maintainability.",
+            "system_prompt": "You are a rigorous code reviewer. Identify bugs, missing edge-case handling, concurrency hazards, and API mismatches with exact file:line citations.",
+            "suggested_tools": ["codebase_search", "codebase_text_search", "read_file", "grep"]
+        }),
+        json!({
+            "id": "debugger",
+            "name": "Root-Cause Debugger",
+            "role": "debugger",
+            "description": "Isolates failures, forms falsifiable hypotheses, and verifies minimal fixes.",
+            "system_prompt": "You are a root-cause debugger. Reproduce issues deterministically, inspect failing logs/stack traces, verify hypotheses, and recommend the minimal fix plus regression test.",
+            "suggested_tools": ["bash", "read_file", "grep", "codebase_search"]
+        }),
+        json!({
+            "id": "researcher",
+            "name": "Technical Researcher",
+            "role": "researcher",
+            "description": "Surveys codebases, documentation, and specs to synthesize grounded answers.",
+            "system_prompt": "You are a thorough technical researcher. Gather primary evidence from workspace files and documentation, cite sources clearly, and highlight unknowns honestly.",
+            "suggested_tools": ["codebase_search", "codebase_text_search", "read_file", "web_search"]
+        }),
+        json!({
+            "id": "writer",
+            "name": "Technical Writer",
+            "role": "writer",
+            "description": "Drafts concise documentation, changelogs, ADRs, and user guides.",
+            "system_prompt": "You are a technical writer. Produce clear, accurate, concise documentation and release notes grounded in actual code behavior.",
+            "suggested_tools": ["read_file", "write_file", "edit_file"]
+        }),
+        json!({
+            "id": "planner",
+            "name": "Execution Planner",
+            "role": "planner",
+            "description": "Breaks complex initiatives into ordered, verifiable milestones and checklists.",
+            "system_prompt": "You are an engineering planner. Decompose goals into crisp, dependency-ordered steps with explicit acceptance checks and risk mitigations.",
+            "suggested_tools": ["codebase_search", "read_file", "goal_manage", "sop_manage"]
+        }),
+        json!({
+            "id": "security",
+            "name": "Security Auditor",
+            "role": "security",
+            "description": "Reviews authentication, SSRF, path traversal, secrets, and sandbox boundaries.",
+            "system_prompt": "You are a security auditor. Check trust boundaries, fail-closed auth, path traversal, command injection, SSRF, secret redaction, and least privilege.",
+            "suggested_tools": ["codebase_text_search", "codebase_read_symbol", "read_file", "grep"]
+        }),
+    ]
+}
+
 /// Extract `@ExpertName` mentions from a room message.
 pub fn parse_expert_mentions(message: &str) -> Vec<String> {
     let mut mentions = Vec::new();
@@ -38,10 +101,63 @@ pub fn parse_expert_mentions(message: &str) -> Vec<String> {
     mentions
 }
 
+fn expert_matches_target(expert: &ExpertPeer, target: &str) -> bool {
+    let t = target.trim().trim_start_matches('@');
+    if t.is_empty() {
+        return false;
+    }
+    expert.id.eq_ignore_ascii_case(t)
+        || expert.name.eq_ignore_ascii_case(t)
+        || expert.role.eq_ignore_ascii_case(t)
+        || expert.name.replace(' ', "_").eq_ignore_ascii_case(t)
+        || expert.name.replace(' ', "-").eq_ignore_ascii_case(t)
+}
+
+/// Select experts inside a room based on explicit `target_recipient` (`--to`) or `@mentions`.
+pub fn select_room_experts(
+    scoped_experts: Vec<ExpertPeer>,
+    user_message: &str,
+    target_recipient: Option<&str>,
+) -> Result<Vec<ExpertPeer>, String> {
+    if let Some(target) = target_recipient.map(str::trim).filter(|s| !s.is_empty()) {
+        let matched: Vec<ExpertPeer> = scoped_experts
+            .into_iter()
+            .filter(|e| expert_matches_target(e, target))
+            .collect();
+        if matched.is_empty() {
+            return Err(format!("no expert in room matched recipient '{target}'"));
+        }
+        return Ok(matched);
+    }
+
+    let mentions = parse_expert_mentions(user_message);
+    let selected: Vec<ExpertPeer> = if !mentions.is_empty() {
+        scoped_experts
+            .into_iter()
+            .filter(|e| mentions.iter().any(|m| expert_matches_target(e, m)))
+            .collect()
+    } else {
+        scoped_experts
+    };
+
+    if selected.is_empty() {
+        return Err(if mentions.is_empty() {
+            "room has no participating experts".into()
+        } else {
+            format!(
+                "no expert in room matched mention(s): {}",
+                mentions.join(", ")
+            )
+        });
+    }
+    Ok(selected)
+}
+
 /// Real multi-expert AgentRoom router & turn executor.
 pub struct RoomRuntime;
 
 impl RoomRuntime {
+    /// Backward-compatible room message dispatch (routes via `@mentions` or broadcasts to room experts).
     pub fn send_message(
         suite: &Arc<ModulesSuite>,
         caller: Arc<dyn ModelCaller>,
@@ -49,6 +165,19 @@ impl RoomRuntime {
         policy: EffectivePolicy,
         room_id: &str,
         user_message: &str,
+    ) -> Result<Vec<Value>, String> {
+        Self::send_message_to(suite, caller, base_route, policy, room_id, user_message, None)
+    }
+
+    /// Room message dispatch supporting explicit `target_recipient: Option<&str>` (`--to`).
+    pub fn send_message_to(
+        suite: &Arc<ModulesSuite>,
+        caller: Arc<dyn ModelCaller>,
+        base_route: ModelRouteConfig,
+        policy: EffectivePolicy,
+        room_id: &str,
+        user_message: &str,
+        target_recipient: Option<&str>,
     ) -> Result<Vec<Value>, String> {
         let room = suite
             .get_record::<AgentRoom>(KIND_ROOM, room_id)
@@ -74,38 +203,17 @@ impl RoomRuntime {
                 .collect()
         };
 
-        let mentions = parse_expert_mentions(user_message);
-        let selected: Vec<ExpertPeer> = if !mentions.is_empty() {
-            scoped_experts
-                .into_iter()
-                .filter(|e| {
-                    mentions.iter().any(|m| {
-                        e.name.eq_ignore_ascii_case(m)
-                            || e.id.eq_ignore_ascii_case(m)
-                            || e.name.replace(' ', "_").eq_ignore_ascii_case(m)
-                    })
-                })
-                .collect()
-        } else {
-            scoped_experts
-        };
-
-        if selected.is_empty() {
-            return Err(if mentions.is_empty() {
-                format!("room '{}' has no participating experts", room.name)
-            } else {
-                format!(
-                    "no expert in room '{}' matched mention(s): {}",
-                    room.name,
-                    mentions.join(", ")
-                )
-            });
-        }
+        let selected = select_room_experts(scoped_experts, user_message, target_recipient)
+            .map_err(|e| format!("room '{}': {e}", room.name))?;
 
         let _ = suite.store.append_event(
             &room.session_id,
             "room_user_message",
-            json!({"room_id": room.id, "text": user_message}),
+            json!({
+                "room_id": room.id,
+                "text": user_message,
+                "target_recipient": target_recipient
+            }),
             DEFAULT_MAX_EVENTS_PER_SCOPE,
         );
 
@@ -208,13 +316,13 @@ impl ToolHandler for RoomManageTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "room_manage".into(),
-                description: "Create and list Expert Peers and multi-agent Collaboration Rooms.".into(),
+                description: "Create and list Expert Peers, role templates, and multi-agent Collaboration Rooms.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["create_expert", "list_experts", "create_room", "list_rooms", "delete_room"]
+                            "enum": ["create_expert", "list_experts", "list_templates", "create_room", "list_rooms", "delete_room"]
                         },
                         "id": { "type": "string" },
                         "name": { "type": "string" },
@@ -233,6 +341,14 @@ impl ToolHandler for RoomManageTool {
 
     fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         match args.get("action").and_then(|v| v.as_str()).unwrap_or("") {
+            "list_templates" => {
+                let templates = built_in_role_templates();
+                let count = templates.len();
+                ToolExecutionResult::ok_structured(
+                    json!({"count": count, "templates": templates}),
+                    format!("Listed {count} built-in expert role template(s)"),
+                )
+            }
             "create_expert" => {
                 let peer = ExpertPeer {
                     id: args
@@ -343,5 +459,60 @@ impl ToolHandler for RoomManageTool {
                 None,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_templates_and_explicit_target_routing_work() {
+        let templates = built_in_role_templates();
+        assert_eq!(templates.len(), 7);
+        let ids: Vec<&str> = templates
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .collect();
+        for expected in [
+            "architect",
+            "reviewer",
+            "debugger",
+            "researcher",
+            "writer",
+            "planner",
+            "security",
+        ] {
+            assert!(ids.contains(&expected), "missing role template {expected}");
+        }
+
+        let experts = vec![
+            ExpertPeer {
+                id: "exp-1".into(),
+                name: "Rust Auditor".into(),
+                role: "security".into(),
+                system_prompt: String::new(),
+                model_override: None,
+                allowed_tools: vec![],
+                updated_at_ms: 0,
+            },
+            ExpertPeer {
+                id: "exp-2".into(),
+                name: "UI Architect".into(),
+                role: "architect".into(),
+                system_prompt: String::new(),
+                model_override: None,
+                allowed_tools: vec![],
+                updated_at_ms: 0,
+            },
+        ];
+
+        let targeted =
+            select_room_experts(experts.clone(), "Review this patch", Some("security")).unwrap();
+        assert_eq!(targeted.len(), 1);
+        assert_eq!(targeted[0].id, "exp-1");
+
+        let missing = select_room_experts(experts, "Hello", Some("nonexistent")).unwrap_err();
+        assert!(missing.contains("nonexistent"));
     }
 }

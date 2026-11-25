@@ -33,6 +33,13 @@ import kotlinx.serialization.json.jsonPrimitive
 internal fun ChatUiState.dismissingDisplayedError(expected: ChatUiState): ChatUiState =
     if (this === expected) copy(error = null) else this
 
+data class V2UserQuestionPrompt(
+    val requestId: String,
+    val conversationId: String,
+    val question: String,
+    val options: List<String> = emptyList(),
+)
+
 data class ChatUiState(
     val expertContextOwner: com.nola.domain.model.AgentRoomContextOwner? = null,
     val expertContextParentId: String? = null,
@@ -119,6 +126,10 @@ data class ChatUiState(
     val pendingExpertHostAdmission: com.nola.data.local.AndroidPendingExpertAdmission? = null,
     val expertHostConfirmationStatus: String? = null,
     val checkingExpertHostAdmission: Boolean = false,
+    val pendingUserQuestion: V2UserQuestionPrompt? = null,
+    val v2UiSurfaces: List<JsonObject> = emptyList(),
+    val v2SessionId: String? = null,
+    val v2CompactionSummary: String? = null,
 ) {
     // Updated only at admission/observation/save boundaries, never by a render-time query.
     val permissionApplicationStatus: String get() {
@@ -248,6 +259,8 @@ internal fun ChatUiState.beginAssistantTurn(
     toolEvents = emptyList(),
     permissionRequest = null,
     pendingPermissionRequests = emptyList(),
+    pendingUserQuestion = null,
+    v2CompactionSummary = null,
     answerSources = emptyList(),
     coreTaskProjection = AgentCoreTaskProjection(),
     coreSkillProjection = com.nola.core.AgentCoreSkillRuntimeProjection(),

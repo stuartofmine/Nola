@@ -1156,6 +1156,8 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
         scope: MacPermissionGrantScope
     ) async throws
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws
+    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data
     func sendTaskGuidance(
         conversationID: String,
         parentRunID: String,
@@ -2517,6 +2519,19 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         allow: Bool,
         scope: MacPermissionGrantScope = .once
     ) async throws {
+        if permissionRequest.nonce.hasPrefix("v2-") {
+            guard let configuration = configuration(for: permissionRequest.sessionID)
+                ?? (try? configurationStore.load()) else {
+                throw MacRemoteHostError.notConfigured
+            }
+            try await v2RespondPermission(
+                conversationID: permissionRequest.sessionID,
+                requestID: permissionRequest.id,
+                allow: allow,
+                configuration: configuration
+            )
+            return
+        }
         try await sendPermissionDecision(request: permissionRequest, decision: permissionRequest.decision(allow: allow, scope: scope))
     }
 
@@ -3002,6 +3017,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 assistantJournalCursor: notification.through).bindingCanonicalRun(notification.through.identity.run_id)
         }
         object["source_host_id"] = sourceHostID
+        if let v2Event = decodeV2Event(
+            from: object,
+            sourceHostID: sourceHostID,
+            expectedConversationID: expectedConversationID,
+            expectedRunID: expectedRunID
+        ) {
+            return v2Event
+        }
         if object["type"] as? String == "permission_request" {
             guard object["host_id"] as? String == sourceHostID,
                   object["client_id"] as? String == (try configurationStore.clientID()),
@@ -3148,6 +3171,200 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.setValue(base64URL(Data(signature)), forHTTPHeaderField: "X-Nola-Mobile-Auth")
     }
 
+    private func decodeV2Event(
+        from object: [String: Any],
+        sourceHostID: String,
+        expectedConversationID: String,
+        expectedRunID: String?
+    ) -> MacLocalAgentEvent? {
+        guard let type = object["type"] as? String else { return nil }
+        // Optional session/conversation consistency check: delta frames omit session_id/conversation_id,
+        // while frames that carry one must match if non-empty.
+        let frameConversationID = (object["conversation_id"] as? String)
+            ?? (object["session_id"] as? String)
+        if let frameConversationID, !frameConversationID.isEmpty, frameConversationID != expectedConversationID {
+            // Allow turn_completed / session_started whose session_id may be the server-assigned session
+            if type != "session_started" && type != "turn_completed" {
+                return nil
+            }
+        }
+        switch type {
+        case "session_started":
+            let sessionID = (object["session_id"] as? String) ?? expectedConversationID
+            let model = (object["model"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: "",
+                title: "session_started",
+                detail: sessionID,
+                isError: false,
+                v2Event: .sessionStarted(sessionID: sessionID, model: model)
+            ).bindingCanonicalRun(expectedRunID)
+        case "text_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_text_delta",
+                isError: false,
+                v2Event: .textDelta(delta)
+            ).bindingCanonicalRun(expectedRunID)
+        case "reasoning_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_reasoning_delta",
+                isError: false,
+                v2Event: .reasoningDelta(delta)
+            ).bindingCanonicalRun(expectedRunID)
+        case "tool_started":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            return MacLocalAgentEvent(
+                kind: .toolStarted,
+                text: "",
+                title: name,
+                detail: nil,
+                isError: false,
+                toolCallID: callID,
+                v2Event: .toolStarted(callID: callID, name: name)
+            ).bindingCanonicalRun(expectedRunID)
+        case "tool_finished":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            let isError = (object["is_error"] as? Bool) ?? false
+            let summary = (object["summary"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .toolFinished,
+                text: summary,
+                title: name,
+                detail: summary,
+                isError: isError,
+                toolCallID: callID,
+                v2Event: .toolFinished(callID: callID, name: name, isError: isError, summary: summary)
+            ).bindingCanonicalRun(expectedRunID)
+        case "compacted":
+            let summary = (object["summary"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: summary,
+                title: "compacted",
+                detail: summary,
+                isError: false,
+                v2Event: .compacted(summary: summary)
+            ).bindingCanonicalRun(expectedRunID)
+        case "ui_surface":
+            let snapshotObject = object["snapshot"]
+            let snapshotJSON: String = {
+                guard let snapshotObject,
+                      JSONSerialization.isValidJSONObject(snapshotObject),
+                      let data = try? JSONSerialization.data(withJSONObject: snapshotObject, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return "{}"
+                }
+                return text
+            }()
+            let phase = (snapshotObject as? [String: Any])?["phase"] as? String
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: snapshotJSON,
+                title: "ui_surface",
+                detail: phase,
+                isError: false,
+                v2Event: .uiSurface(snapshotJSON: snapshotJSON)
+            ).bindingCanonicalRun(expectedRunID)
+        case "permission_requested":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let tool = (object["tool"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "tool"
+            let reason = (object["reason"] as? String) ?? ""
+            let argsJSON: String = {
+                guard let rawArgs = object["arguments"],
+                      JSONSerialization.isValidJSONObject(rawArgs),
+                      let data = try? JSONSerialization.data(withJSONObject: rawArgs, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return ""
+                }
+                return text
+            }()
+            let clientID = (try? configurationStore.clientID()) ?? "nola-macos"
+            let request = MacRemotePermissionRequest(
+                id: requestID,
+                allowConversation: false,
+                protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
+                nonce: "v2-\(requestID)",
+                hostID: sourceHostID,
+                clientID: clientID,
+                sessionID: expectedConversationID,
+                toolName: tool,
+                arguments: argsJSON,
+                callID: requestID,
+                reason: reason,
+                message: reason.isEmpty ? "Allow \(tool)?" : reason,
+                expiresAt: nil
+            )
+            return MacLocalAgentEvent(
+                kind: .permissionRequested,
+                text: reason,
+                title: tool,
+                detail: reason,
+                isError: false,
+                toolCallID: requestID,
+                permissionRequest: request,
+                v2Event: .permissionRequested(requestID: requestID, tool: tool, reason: reason, argumentsJSON: argsJSON)
+            ).bindingCanonicalRun(expectedRunID)
+        case "user_question":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let questionText = (object["question"] as? String) ?? ""
+            let rawOptions = (object["options"] as? [String]) ?? []
+            let mappedOptions = rawOptions.enumerated().map { index, label in
+                MacRemoteUserInputOption(id: "opt-\(index)", label: label, detail: "")
+            }
+            let question = MacRemoteUserInputQuestion(
+                id: requestID,
+                prompt: questionText,
+                options: mappedOptions,
+                allowsFreeform: true,
+                required: true,
+                maxTextCharacters: 4096
+            )
+            let userInput = MacRemoteUserInputRequest(
+                id: requestID,
+                conversationID: expectedConversationID,
+                runID: expectedRunID ?? expectedConversationID,
+                sessionID: expectedConversationID,
+                revision: 1,
+                schemaDigest: "",
+                state: "open",
+                questions: [question]
+            )
+            return MacLocalAgentEvent(
+                kind: .userInputRequested,
+                text: questionText,
+                title: "user_question",
+                detail: rawOptions.joined(separator: ", "),
+                isError: false,
+                userInputRequest: userInput,
+                v2Event: .userQuestion(requestID: requestID, question: questionText, options: rawOptions)
+            ).bindingCanonicalRun(expectedRunID)
+        case "turn_completed" where object["protocol_version"] == nil:
+            let sessionID = (object["session_id"] as? String) ?? expectedConversationID
+            let finalText = (object["final_text"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .finished,
+                text: finalText,
+                title: nil,
+                detail: "v2_turn_completed",
+                isError: false,
+                v2Event: .turnCompleted(sessionID: sessionID, finalText: finalText)
+            ).bindingCanonicalRun(expectedRunID)
+        default:
+            return nil
+        }
+    }
+
     func v2RespondPermission(conversationID: String, requestID: String, allow: Bool, configuration: MacRemoteHostConfiguration) async throws {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
         req.httpMethod = "POST"
@@ -3158,6 +3375,18 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
+    }
+
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
+        guard let configuration = configuration(for: conversationID) ?? (try? configurationStore.load()) else {
+            throw MacRemoteHostError.notConfigured
+        }
+        try await v2RespondUserInput(
+            conversationID: conversationID,
+            requestID: requestID,
+            answer: answer,
+            configuration: configuration
+        )
     }
 
     func v2RespondUserInput(conversationID: String, requestID: String, answer: String?, configuration: MacRemoteHostConfiguration) async throws {
@@ -3172,6 +3401,37 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
+    }
+
+    @discardableResult
+    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+        guard let configuration = configuration(for: conversationId) ?? (try? configurationStore.load()) else {
+            throw MacRemoteHostError.notConfigured
+        }
+        return try await v2SubmitUiInteraction(
+            conversationId: conversationId,
+            interaction: interaction,
+            configuration: configuration
+        )
+    }
+
+    @discardableResult
+    func v2SubmitUiInteraction(
+        conversationId: String,
+        interaction: [String: Any],
+        configuration: MacRemoteHostConfiguration
+    ) async throws -> Data {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationId)/ui-interactions"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: interaction)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        return data
     }
 
     func v2TruncateConversation(conversationID: String, fromSeq: Int64, configuration: MacRemoteHostConfiguration) async throws {
@@ -3215,5 +3475,11 @@ extension MacRemoteAgentRunning {
     }
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws {
         throw MacPermissionInstructionError.unsupported
+    }
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
+        throw MacRemoteHostError.invalidResponse
+    }
+    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+        throw MacRemoteHostError.invalidResponse
     }
 }

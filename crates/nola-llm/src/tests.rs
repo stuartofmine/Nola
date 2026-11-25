@@ -6,19 +6,20 @@
 use std::io::Cursor;
 
 use nola_types::{
-    FrozenSystemBlock, HistoryMessage, MediaAttachment, ModelCapabilities, ModelProtocol,
-    ModelRouteConfig, ModelStopReason, ModelStreamDelta, ModelToolCall, ProviderContinuation,
-    RuntimeReminder, StructuredModelRequest, ToolModelPayload, ToolSchema,
+    FrozenSystemBlock, GenerationParams, HistoryMessage, MediaAttachment, ModelCapabilities,
+    ModelProtocol, ModelRouteConfig, ModelStopReason, ModelStreamDelta, ModelToolCall,
+    ProviderContinuation, RuntimeReminder, StructuredModelRequest, ToolModelPayload, ToolSchema,
 };
 use serde_json::json;
 
-use crate::{adapter_for, is_local_or_lan_endpoint, PrivacyRedactor};
+use crate::{adapter_for, is_local_or_lan_endpoint, is_loopback_url, LlmClient, PrivacyRedactor};
 
-const ALL_PROTOCOLS: [ModelProtocol; 4] = [
+const ALL_PROTOCOLS: [ModelProtocol; 5] = [
     ModelProtocol::OpenAiChat,
     ModelProtocol::OpenAiResponses,
     ModelProtocol::AnthropicMessages,
     ModelProtocol::SiwcResponses,
+    ModelProtocol::Gemini,
 ];
 
 fn sample_route(protocol: ModelProtocol) -> ModelRouteConfig {
@@ -38,6 +39,9 @@ fn sample_route(protocol: ModelProtocol) -> ModelRouteConfig {
             native_pdf_input: true,
             reasoning: true,
             sampling_parameters: true,
+            stream_reasoning: true,
+            supported_reasoning_levels: vec!["low".into(), "medium".into(), "high".into()],
+            supports_reasoning_summary: false,
         },
         reasoning_effort: Some("medium".into()),
         prompt_cache_key: Some("session-cache-1".into()),
@@ -146,6 +150,11 @@ fn all_four_protocols_preserve_system_prefix_and_never_emit_mid_system_roles() {
                 assert_eq!(r0.body["instructions"], r1.body["instructions"]);
                 let input = r1.body["input"].as_array().unwrap();
                 assert_eq!(input.last().unwrap()["role"], "user");
+            }
+            ModelProtocol::Gemini => {
+                assert_eq!(r0.body["systemInstruction"], r1.body["systemInstruction"]);
+                let contents = r1.body["contents"].as_array().unwrap();
+                assert_eq!(contents.last().unwrap()["role"], "user");
             }
         }
     }
@@ -341,4 +350,231 @@ fn continuation_roundtrip_and_streaming_reasoning_parity() {
     assert!(!is_local_or_lan_endpoint("https://api.openai.com/v1"));
     let redacted = PrivacyRedactor::redact_text("token sk-1234567890abcdefghijklmno");
     assert_eq!(redacted, "token [REDACTED_API_KEY]");
+}
+
+#[test]
+fn anthropic_wire_contract_reasoning_cache_breakpoint_empty_tool_result_and_usage() {
+    let anth = adapter_for(ModelProtocol::AnthropicMessages);
+
+    // 1. effort == "medium" -> output_config.effort = "medium" (NEVER thinking.budget_tokens!)
+    let route_med = sample_route(ModelProtocol::AnthropicMessages);
+    let mut req = sample_request(false);
+    req.history.push(HistoryMessage::Tool {
+        call_id: "c_empty".into(),
+        tool_name: "bash".into(),
+        payload: ToolModelPayload::text(""),
+        is_error: false,
+        media: vec![],
+    });
+    let built_med = anth.build_request(&route_med, &req, true).unwrap();
+    assert_eq!(built_med.body["output_config"]["effort"], "medium");
+    assert!(built_med.body.get("thinking").is_none());
+
+    // Empty tool_result must be "" rather than synthetic "(empty)"
+    let msgs = built_med.body["messages"].as_array().unwrap();
+    let last_user_blocks = msgs.last().unwrap()["content"].as_array().unwrap();
+    let empty_tr = last_user_blocks
+        .iter()
+        .find(|b| b.get("tool_use_id").and_then(|v| v.as_str()) == Some("c_empty"))
+        .unwrap();
+    assert_eq!(empty_tr["content"], "");
+    // Message-level ephemeral cache breakpoint present on last user content block
+    assert_eq!(
+        last_user_blocks.last().unwrap()["cache_control"],
+        json!({"type": "ephemeral"})
+    );
+
+    // 2. effort == "none" -> thinking.type = "disabled", NO output_config
+    let mut route_none = sample_route(ModelProtocol::AnthropicMessages);
+    route_none.reasoning_effort = Some("none".into());
+    let built_none = anth.build_request(&route_none, &req, false).unwrap();
+    assert_eq!(built_none.body["thinking"], json!({"type": "disabled"}));
+    assert!(built_none.body.get("output_config").is_none());
+
+    // 3. explicit thinking budget ("budget:4096") -> thinking.type = "enabled", budget_tokens = 4096
+    let mut route_budget = sample_route(ModelProtocol::AnthropicMessages);
+    route_budget.reasoning_effort = Some("budget:4096".into());
+    let built_budget = anth.build_request(&route_budget, &req, false).unwrap();
+    assert_eq!(
+        built_budget.body["thinking"],
+        json!({"type": "enabled", "budget_tokens": 4096})
+    );
+    assert!(built_budget.body.get("output_config").is_none());
+    assert!(built_budget.body.get("temperature").is_none());
+
+    // 4. usage_reported = true when usage object present
+    let decoded = anth
+        .decode_response(
+            &route_med,
+            &json!({
+                "id": "msg_u",
+                "model": "claude",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cache_read_input_tokens": 800,
+                    "cache_creation_input_tokens": 100
+                }
+            }),
+        )
+        .unwrap();
+    assert!(decoded.usage.usage_reported);
+    assert_eq!(decoded.usage.cache_hit_rate_bps_normalized(true), Some(8_000));
+}
+
+#[test]
+fn openai_responses_chat_siwc_gemini_and_loopback_proxy_contracts() {
+    let params = GenerationParams {
+        seed: Some(123),
+        stop: vec!["STOP".into()],
+        top_k: Some(32),
+        repetition_penalty: Some(1.05),
+        thinking_budget: None,
+    };
+
+    // OpenAI Responses: reasoning.summary ONLY when supports_reasoning_summary && effort != "none"
+    let resp_ad = adapter_for(ModelProtocol::OpenAiResponses);
+    let mut r_no_sum = sample_route(ModelProtocol::OpenAiResponses);
+    r_no_sum.capabilities.supports_reasoning_summary = false;
+    let b_no_sum = resp_ad
+        .build_request_with_params(&r_no_sum, &sample_request(false), &params, false)
+        .unwrap();
+    assert!(b_no_sum.body["reasoning"].get("summary").is_none());
+    assert_eq!(b_no_sum.body["seed"], 123);
+    assert_eq!(b_no_sum.body["stop"], json!(["STOP"]));
+
+    let mut r_with_sum = sample_route(ModelProtocol::OpenAiResponses);
+    r_with_sum.capabilities.supports_reasoning_summary = true;
+    let b_with_sum = resp_ad
+        .build_request_with_params(&r_with_sum, &sample_request(false), &params, false)
+        .unwrap();
+    assert_eq!(b_with_sum.body["reasoning"]["summary"], "auto");
+
+    r_with_sum.reasoning_effort = Some("none".into());
+    let b_none = resp_ad
+        .build_request_with_params(&r_with_sum, &sample_request(false), &params, false)
+        .unwrap();
+    assert!(b_none.body["reasoning"].get("summary").is_none());
+
+    // OpenAI Responses reasoning_tokens + usage_reported
+    let decoded_resp = resp_ad
+        .decode_response(
+            &r_no_sum,
+            &json!({
+                "id": "resp_1",
+                "model": "gpt-5",
+                "status": "completed",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
+                "usage": {
+                    "input_tokens": 200,
+                    "output_tokens": 50,
+                    "output_tokens_details": {"reasoning_tokens": 17}
+                }
+            }),
+        )
+        .unwrap();
+    assert!(decoded_resp.usage.usage_reported);
+    assert_eq!(decoded_resp.usage.reasoning_tokens, 17);
+
+    // OpenAI Chat: seed/stop/top_k/repetition_penalty + completion_tokens_details.reasoning_tokens
+    let chat_ad = adapter_for(ModelProtocol::OpenAiChat);
+    let chat_route = sample_route(ModelProtocol::OpenAiChat);
+    let b_chat = chat_ad
+        .build_request_with_params(&chat_route, &sample_request(false), &params, false)
+        .unwrap();
+    assert_eq!(b_chat.body["seed"], 123);
+    assert_eq!(b_chat.body["stop"], json!(["STOP"]));
+    assert_eq!(b_chat.body["top_k"], 32);
+    let decoded_chat = chat_ad
+        .decode_response(
+            &chat_route,
+            &json!({
+                "id": "chat_1",
+                "model": "qwen3",
+                "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 40,
+                    "completion_tokens_details": {"reasoning_tokens": 12}
+                }
+            }),
+        )
+        .unwrap();
+    assert!(decoded_chat.usage.usage_reported);
+    assert_eq!(decoded_chat.usage.reasoning_tokens, 12);
+
+    // SIWC: official endpoint, stream:true, store:false, strip forbidden params & x-nola-read-only, nola namespace
+    let siwc_ad = adapter_for(ModelProtocol::SiwcResponses);
+    let mut siwc_route = sample_route(ModelProtocol::SiwcResponses);
+    siwc_route.endpoint = "https://api.openai.com/v1".into();
+    let mut siwc_req = sample_request(false);
+    siwc_req.prefix_stable_tools[0].parameters = json!({
+        "type": "object",
+        "x-nola-read-only": true,
+        "properties": {"path": {"type": "string"}}
+    });
+    let b_siwc = siwc_ad
+        .build_request_with_params(&siwc_route, &siwc_req, &params, false)
+        .unwrap();
+    assert_eq!(b_siwc.url, "https://api.openai.com/v1/responses");
+    assert_eq!(b_siwc.body["stream"], true);
+    assert_eq!(b_siwc.body["store"], false);
+    assert!(b_siwc.body.get("max_output_tokens").is_none());
+    assert!(b_siwc.body.get("temperature").is_none());
+    assert!(b_siwc.body.get("top_p").is_none());
+    assert!(b_siwc.body.get("seed").is_none());
+    let ns_tool = &b_siwc.body["tools"][0];
+    assert_eq!(ns_tool["type"], "namespace");
+    assert_eq!(ns_tool["name"], "nola");
+    assert!(ns_tool["tools"][0]["parameters"].get("x-nola-read-only").is_none());
+
+    // Gemini decode + SSE
+    let gem_ad = adapter_for(ModelProtocol::Gemini);
+    let gem_route = sample_route(ModelProtocol::Gemini);
+    let b_gem = gem_ad
+        .build_request_with_params(&gem_route, &sample_request(false), &params, false)
+        .unwrap();
+    assert!(b_gem.url.ends_with("/v1beta/models/test-model:generateContent"));
+    assert_eq!(b_gem.body["generationConfig"]["seed"], 123);
+    assert_eq!(b_gem.body["generationConfig"]["stopSequences"], json!(["STOP"]));
+    let decoded_gem = gem_ad
+        .decode_response(
+            &gem_route,
+            &json!({
+                "responseId": "gem_1",
+                "modelVersion": "gemini-2.5-pro",
+                "candidates": [{
+                    "finishReason": "STOP",
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"text": "thinking...", "thought": true},
+                            {"text": "hello world"}
+                        ]
+                    }
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 120,
+                    "candidatesTokenCount": 30,
+                    "cachedContentTokenCount": 60,
+                    "thoughtsTokenCount": 9
+                }
+            }),
+        )
+        .unwrap();
+    assert_eq!(decoded_gem.content, "hello world");
+    assert_eq!(decoded_gem.reasoning.as_deref(), Some("thinking..."));
+    assert!(decoded_gem.usage.usage_reported);
+    assert_eq!(decoded_gem.usage.reasoning_tokens, 9);
+    assert_eq!(decoded_gem.usage.cache_read_tokens, 60);
+
+    // Loopback proxy bypass helper
+    assert!(is_loopback_url("http://127.0.0.1:8081/v1/chat/completions"));
+    assert!(is_loopback_url("http://localhost:11434/v1"));
+    assert!(is_loopback_url("http://[::1]:8080/v1"));
+    assert!(!is_loopback_url("https://api.openai.com/v1/responses"));
+    let client = LlmClient::new(15).unwrap();
+    let _ = client.client_for_url("http://127.0.0.1:8081");
 }

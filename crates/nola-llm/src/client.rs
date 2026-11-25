@@ -2,25 +2,48 @@
 //! Blocking HTTP client with retries, streaming SSE, and optional audit request logging.
 
 use std::io::BufReader;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use nola_types::{
-    ModelRouteConfig, ModelStreamDelta, NormalizedModelResponse, StructuredModelRequest,
+    GenerationParams, ModelRouteConfig, ModelStreamDelta, NormalizedModelResponse,
+    StructuredModelRequest,
 };
 use reqwest::blocking::Client;
 use serde_json::Value;
+use url::Url;
 
 use crate::adapter::{adapter_for, LlmError};
 use crate::privacy::PrivacyRedactor;
 
 static AUDIT_SEQ: AtomicU64 = AtomicU64::new(1);
 
+/// Returns true when the target URL's host is a loopback address (`localhost`, `127.0.0.1`, `::1`, etc.).
+pub fn is_loopback_url(raw_url: &str) -> bool {
+    let Ok(url) = Url::parse(raw_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let lower = host.trim_end_matches('.').to_ascii_lowercase();
+    if lower == "localhost" || lower.ends_with(".localhost") {
+        return true;
+    }
+    let clean = lower.trim_start_matches('[').trim_end_matches(']');
+    clean
+        .parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
 /// Concrete HTTP transport client for executing `StructuredModelRequest`s.
 #[derive(Clone)]
 pub struct LlmClient {
     http: Client,
+    http_loopback: Client,
     max_retries: usize,
     privacy_redaction: bool,
     audit_dir: Option<PathBuf>,
@@ -28,8 +51,14 @@ pub struct LlmClient {
 
 impl LlmClient {
     pub fn new(timeout_secs: u64) -> Result<Self, LlmError> {
+        let timeout = Duration::from_secs(timeout_secs.max(10));
         let http = Client::builder()
-            .timeout(Duration::from_secs(timeout_secs.max(10)))
+            .timeout(timeout)
+            .build()
+            .map_err(|e| LlmError::Http(e.to_string()))?;
+        let http_loopback = Client::builder()
+            .timeout(timeout)
+            .no_proxy()
             .build()
             .map_err(|e| LlmError::Http(e.to_string()))?;
         let audit_dir = std::env::var("NOLA_EVAL_REQUEST_AUDIT_DIR")
@@ -38,10 +67,21 @@ impl LlmClient {
             .map(PathBuf::from);
         Ok(Self {
             http,
+            http_loopback,
             max_retries: 3,
             privacy_redaction: true,
             audit_dir,
         })
+    }
+
+    /// Select the proxy-bypassing client for loopback URLs (`127.0.0.1`, `localhost`, `::1`),
+    /// and the standard system-proxy client for remote URLs.
+    pub fn client_for_url(&self, url: &str) -> &Client {
+        if is_loopback_url(url) {
+            &self.http_loopback
+        } else {
+            &self.http
+        }
     }
 
     pub fn with_privacy_redaction(mut self, enabled: bool) -> Self {
@@ -58,18 +98,31 @@ impl LlmClient {
         stream: bool,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
+        self.complete_with_params(route, req, &GenerationParams::default(), stream, on_delta)
+    }
+
+    /// Execute a model request with optional advanced `GenerationParams` (`seed`, `stop`, `top_k`, etc.).
+    pub fn complete_with_params(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        params: &GenerationParams,
+        stream: bool,
+        on_delta: &mut dyn FnMut(ModelStreamDelta),
+    ) -> Result<NormalizedModelResponse, LlmError> {
         let adapter = adapter_for(route.protocol);
         let sanitized = if self.privacy_redaction {
             PrivacyRedactor::sanitize_request(&route.endpoint, req)
         } else {
             req.clone()
         };
-        let built = adapter.build_request(route, &sanitized, stream)?;
+        let built = adapter.build_request_with_params(route, &sanitized, params, stream)?;
         self.write_audit_snapshot(&built.url, &built.body);
 
+        let http = self.client_for_url(&built.url);
         let mut last_err = None;
         for attempt in 0..=self.max_retries {
-            let mut rb = self.http.post(&built.url).json(&built.body);
+            let mut rb = http.post(&built.url).json(&built.body);
             for (k, v) in &built.headers {
                 rb = rb.header(k.as_str(), v.as_str());
             }

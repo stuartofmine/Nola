@@ -41,6 +41,8 @@ pub struct SubagentTaskSnapshot {
     pub role: String,
     pub session_id: String,
     pub status: TaskStatus,
+    #[serde(default)]
+    pub cancelling: bool,
     pub output: String,
     pub error: Option<String>,
     pub steps: usize,
@@ -76,6 +78,12 @@ impl SubagentManager {
             parent_cancel: Mutex::new(None),
             tasks: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// Attach or replace the backing store used to persist durable subagent snapshots.
+    pub fn with_store(mut self, store: Store) -> Self {
+        self.store = store;
+        self
     }
 
     /// Bind active parent route & policy before spawning child agents.
@@ -163,18 +171,23 @@ impl SubagentManager {
         let session_id = format!("sub_{task_id}");
         let cancel = Arc::new(AtomicBool::new(false));
         let inbox = Arc::new(Mutex::new(Vec::new()));
+        let initial_snap = SubagentTaskSnapshot {
+            task_id: task_id.clone(),
+            role: role.clone(),
+            session_id: session_id.clone(),
+            status: TaskStatus::Running,
+            cancelling: false,
+            output: String::new(),
+            error: None,
+            steps: 0,
+            started_at_ms: now_ms(),
+            ended_at_ms: None,
+        };
+        let _ = self
+            .store
+            .put_module_record("durable_task", &task_id, &initial_snap);
         let entry = Arc::new(SubagentEntry {
-            snapshot: Mutex::new(SubagentTaskSnapshot {
-                task_id: task_id.clone(),
-                role: role.clone(),
-                session_id: session_id.clone(),
-                status: TaskStatus::Running,
-                output: String::new(),
-                error: None,
-                steps: 0,
-                started_at_ms: now_ms(),
-                ended_at_ms: None,
-            }),
+            snapshot: Mutex::new(initial_snap),
             cancel: Arc::clone(&cancel),
             inbox: Arc::clone(&inbox),
         });
@@ -184,8 +197,10 @@ impl SubagentManager {
             .insert(task_id.clone(), Arc::clone(&entry));
 
         let store = self.store.clone();
+        let persist_store = self.store.clone();
+        let persist_task_id = task_id.clone();
         let caller = Arc::clone(&self.caller);
-        let child_ctx = ctx.clone();
+        let child_ctx = ctx.clone().with_session_id(session_id.clone());
         let child_entry = Arc::clone(&entry);
         let run_child = move || {
             let mut reg = ToolRegistry::with_builtin_tools();
@@ -245,33 +260,34 @@ impl SubagentManager {
                     child_c.store(true, Ordering::SeqCst);
                 }
             });
-            match run_res {
+            let final_snap = match run_res {
                 Ok(res) => {
                     let mut snap = child_entry.snapshot.lock().unwrap();
                     snap.output = res.final_text;
                     snap.steps = res.steps;
-                    if snap.status != TaskStatus::Stopped {
-                        snap.status = if res.cancelled || cancel.load(Ordering::Relaxed) {
-                            TaskStatus::Stopped
-                        } else {
-                            TaskStatus::Completed
-                        };
-                    }
+                    snap.cancelling = false;
+                    snap.status = if res.cancelled || cancel.load(Ordering::SeqCst) {
+                        TaskStatus::Stopped
+                    } else {
+                        TaskStatus::Completed
+                    };
                     snap.ended_at_ms.get_or_insert_with(now_ms);
+                    snap.clone()
                 }
                 Err(e) => {
                     let mut snap = child_entry.snapshot.lock().unwrap();
-                    if snap.status != TaskStatus::Stopped {
+                    snap.cancelling = false;
+                    if cancel.load(Ordering::SeqCst) {
+                        snap.status = TaskStatus::Stopped;
+                    } else {
                         snap.error = Some(e.to_string());
-                        snap.status = if cancel.load(Ordering::Relaxed) {
-                            TaskStatus::Stopped
-                        } else {
-                            TaskStatus::Failed
-                        };
+                        snap.status = TaskStatus::Failed;
                     }
                     snap.ended_at_ms.get_or_insert_with(now_ms);
+                    snap.clone()
                 }
-            }
+            };
+            let _ = persist_store.put_module_record("durable_task", &persist_task_id, &final_snap);
         };
 
         if background {
@@ -285,20 +301,33 @@ impl SubagentManager {
     }
 
     pub fn list(&self) -> Vec<SubagentTaskSnapshot> {
-        self.tasks
-            .lock()
-            .unwrap()
-            .values()
-            .map(|e| e.snapshot.lock().unwrap().clone())
-            .collect()
+        let mut by_id: BTreeMap<String, SubagentTaskSnapshot> = self
+            .store
+            .list_module_records::<SubagentTaskSnapshot>("durable_task")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.task_id.clone(), s))
+            .collect();
+        for (id, entry) in self.tasks.lock().unwrap().iter() {
+            by_id.insert(id.clone(), entry.snapshot.lock().unwrap().clone());
+        }
+        by_id.into_values().collect()
     }
 
     pub fn read(&self, task_id: &str) -> Result<SubagentTaskSnapshot, String> {
-        self.tasks
+        if let Some(snap) = self
+            .tasks
             .lock()
             .unwrap()
             .get(task_id)
             .map(|e| e.snapshot.lock().unwrap().clone())
+        {
+            return Ok(snap);
+        }
+        self.store
+            .get_module_record::<SubagentTaskSnapshot>("durable_task", task_id)
+            .ok()
+            .flatten()
             .ok_or_else(|| format!("unknown task '{task_id}'"))
     }
 
@@ -329,12 +358,28 @@ impl SubagentManager {
             .cloned()
             .ok_or_else(|| format!("unknown task '{task_id}'"))?;
         entry.cancel.store(true, Ordering::SeqCst);
-        let mut snap = entry.snapshot.lock().unwrap();
-        if snap.status == TaskStatus::Running {
-            snap.status = TaskStatus::Stopped;
-            snap.ended_at_ms = Some(now_ms());
+        {
+            let mut snap = entry.snapshot.lock().unwrap();
+            if snap.status == TaskStatus::Running && snap.ended_at_ms.is_none() {
+                snap.cancelling = true;
+                let _ = self
+                    .store
+                    .put_module_record("durable_task", task_id, &*snap);
+            }
         }
-        Ok(snap.clone())
+        // Wait briefly (up to 300ms) for the worker thread to observe cancellation and seal
+        // TaskStatus::Stopped without prematurely overwriting status while it is still executing.
+        let deadline = Instant::now() + Duration::from_millis(300);
+        loop {
+            let snap = entry.snapshot.lock().unwrap().clone();
+            if snap.ended_at_ms.is_some()
+                || snap.status != TaskStatus::Running
+                || Instant::now() >= deadline
+            {
+                return Ok(snap);
+            }
+            thread::sleep(Duration::from_millis(15));
+        }
     }
 
     pub fn send_message(&self, task_id: &str, message: String) -> Result<usize, String> {

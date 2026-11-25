@@ -267,7 +267,26 @@ public final class ChatManager: ObservableObject {
     @Published private(set) var unknownEffectRecoveryChecking = false
     @Published private(set) var unknownEffectPendingConversationID: UUID?
     private var frozenUnknownEffectInspection: IOSUnknownEffectRecoveryInspection?
+    public struct V2UserQuestionPrompt: Identifiable, Equatable, Sendable {
+        public let requestID: String
+        public let conversationID: String
+        public let question: String
+        public let options: [String]
+        public var id: String { requestID }
+
+        public init(requestID: String, conversationID: String, question: String, options: [String] = []) {
+            self.requestID = requestID
+            self.conversationID = conversationID
+            self.question = question
+            self.options = options
+        }
+    }
+
     @Published public var pendingHostPermissionRequest: HostAgentPermissionRequest?
+    @Published public var pendingV2UserQuestion: V2UserQuestionPrompt?
+    @Published public private(set) var v2UiSurfaces: [AgentCoreJSONValue] = []
+    @Published public private(set) var v2SessionID: String?
+    @Published public private(set) var v2CompactionSummary: String?
     /// Conversation that owns the suspended Host permission request. Keeping
     /// this separate from the request wire payload prevents a request from
     /// appearing in, or being resolved from, another conversation after the
@@ -2265,6 +2284,90 @@ public final class ChatManager: ObservableObject {
                 }
             }
         }
+    }
+
+    private func upsertV2UiSurface(_ snapshot: AgentCoreJSONValue) {
+        var surfaceID: String?
+        if case .object(let root) = snapshot,
+           case .object(let identity) = root["identity"],
+           case .string(let sid) = identity["surface_id"],
+           !sid.isEmpty {
+            surfaceID = sid
+        }
+        guard let surfaceID else {
+            v2UiSurfaces.append(snapshot)
+            return
+        }
+        if let index = v2UiSurfaces.firstIndex(where: { existing in
+            if case .object(let root) = existing,
+               case .object(let identity) = root["identity"],
+               case .string(let sid) = identity["surface_id"] {
+                return sid == surfaceID
+            }
+            return false
+        }) {
+            v2UiSurfaces[index] = snapshot
+        } else {
+            v2UiSurfaces.append(snapshot)
+        }
+    }
+
+    public func respondToV2UserQuestion(requestID: String, answer: String?) async throws {
+        if !isConversationExecution, let selectedExecution {
+            try await selectedExecution.respondToV2UserQuestion(requestID: requestID, answer: answer)
+            return
+        }
+        let existingPrompt = pendingV2UserQuestion
+        let conversationID = existingPrompt?.requestID == requestID
+            ? existingPrompt?.conversationID
+            : currentConversationId?.uuidString
+        guard let conversationID, !conversationID.isEmpty else {
+            throw IOSApplicationRuntimeError.rejected("No active conversation for user question")
+        }
+        let provider = remoteSubmissionProviders[conversationID]
+            ?? (effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider
+        guard let provider else {
+            throw IOSApplicationRuntimeError.rejected("No paired Web Agent Host provider available")
+        }
+        if pendingV2UserQuestion?.requestID == requestID {
+            pendingV2UserQuestion = nil
+        }
+        do {
+            try await provider.v2RespondUserInput(
+                conversationID: conversationID,
+                requestID: requestID,
+                answer: answer
+            )
+        } catch {
+            if let existingPrompt, existingPrompt.requestID == requestID {
+                pendingV2UserQuestion = existingPrompt
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func submitV2UIInteraction(conversationId: String, interaction: [String: Any]) async throws -> [String: Any] {
+        if !isConversationExecution, let selectedExecution {
+            return try await selectedExecution.submitV2UIInteraction(
+                conversationId: conversationId,
+                interaction: interaction
+            )
+        }
+        let provider = remoteSubmissionProviders[conversationId]
+            ?? (effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider
+        guard let provider else {
+            throw IOSApplicationRuntimeError.rejected("No paired Web Agent Host provider available")
+        }
+        let result = try await provider.v2SubmitUiInteraction(
+            conversationId: conversationId,
+            interaction: interaction
+        )
+        if let rawSnapshot = result["snapshot"],
+           let snapshot = WebAgentProvider.coreJSONValue(from: rawSnapshot) {
+            upsertV2UiSurface(snapshot)
+        }
+        return result
     }
 
     public func resolveHostPermissionRequest(requestId: String, _ decision: HostAgentPermissionDecision) {
@@ -4422,6 +4525,8 @@ public final class ChatManager: ObservableObject {
                 self.processingState = .streaming(progress: prog)
             }
 
+            var v2TurnCompletedReceived = false
+            var v2FinalText = ""
             if model.isWebBackend {
                 guard let journalProvider else {
                     throw NolaError.llm(.invalidResponse(reason: "The selected provider does not support Agent events."))
@@ -4663,9 +4768,132 @@ public final class ChatManager: ObservableObject {
                             conversation.externalExecutionSessions[backendID] = sessionID
                             conversation.lastActiveAt = Date()
                             try store.upsertConversation(conversation)
-                        case .v2TextDelta, .v2ReasoningDelta, .v2ToolStarted, .v2ToolFinished,
-                             .v2UiSurface, .v2PermissionRequested, .v2UserQuestion, .v2TurnCompleted:
-                            break
+                        case .v2SessionStarted(let sessionId):
+                            v2SessionID = sessionId.isEmpty ? conversationID : sessionId
+                            self.retrievalInProgress = false
+                            self.processingState = .streaming(progress: 0.05)
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                        case .v2TextDelta(let delta):
+                            if webAgentThinkingOpen {
+                                webAgentThinkingOpen = false
+                            }
+                            if !delta.isEmpty {
+                                self.retrievalInProgress = false
+                                self.thinkingFinished = true
+                                accumulated += delta
+                                if streamOutputEnabled {
+                                    currentResponse += delta
+                                }
+                                chunkIdx += 1
+                                self.processingState = .streaming(progress: min(0.99, Double(chunkIdx) * 0.04))
+                            }
+                        case .v2ReasoningDelta(let delta):
+                            if !delta.isEmpty {
+                                self.retrievalInProgress = false
+                                self.thinkingFinished = false
+                                if thinkingEnabled {
+                                    thinking += delta
+                                }
+                                self.processingState = .streaming(progress: min(0.98, max(0.05, Double(chunkIdx) * 0.04)))
+                            }
+                        case .v2ToolStarted(let callID, let name):
+                            let id = callID.isEmpty ? UUID().uuidString : callID
+                            upsertHostToolEvent(HostAgentToolEvent(
+                                id: id,
+                                name: name,
+                                status: .running,
+                                display: name
+                            ))
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                            self.retrievalInProgress = false
+                            self.processingState = .streaming(progress: min(0.98, Double(hostToolEvents.count) * 0.10))
+                        case .v2ToolFinished(let callID, let name, let isError, let summary):
+                            let id = callID.isEmpty ? UUID().uuidString : callID
+                            upsertHostToolEvent(HostAgentToolEvent(
+                                id: id,
+                                name: name,
+                                status: isError ? .failed : .succeeded,
+                                display: summary.isEmpty ? name : summary,
+                                text: summary
+                            ))
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                            self.processingState = .streaming(progress: min(0.98, Double(hostToolEvents.count) * 0.10))
+                        case .v2Compacted(let summary):
+                            v2CompactionSummary = summary.isEmpty ? "Context compacted" : summary
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                        case .v2UiSurface(let snapshot):
+                            upsertV2UiSurface(snapshot)
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                        case .v2PermissionRequested(let requestID, let tool, let reason):
+                            let id = requestID.isEmpty ? UUID().uuidString : requestID
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                            upsertHostToolEvent(HostAgentToolEvent(
+                                id: id,
+                                name: tool,
+                                status: .permissionRequired,
+                                display: reason.isEmpty ? tool : reason
+                            ))
+                            self.retrievalInProgress = false
+                            self.thinkingFinished = true
+                            self.processingState = .streaming(progress: min(0.98, Double(hostToolEvents.count) * 0.10))
+                            let v2Request = HostAgentPermissionRequest(
+                                id: id,
+                                allowConversation: false,
+                                toolName: tool,
+                                reason: reason,
+                                message: reason.isEmpty ? tool : reason,
+                                sessionId: conversationID
+                            )
+                            startHostPermissionInteraction(
+                                v2Request,
+                                conversationId: generationConversationId,
+                                isCurrent: { myGeneration == self.activeGenerationId },
+                                send: { payload in
+                                    let resolutionDecision = (payload["resolution"] as? [String: Any])?["decision"] as? String
+                                    let decision = (payload["decision"] as? String) ?? resolutionDecision
+                                    let allow = (payload["allow"] as? Bool)
+                                        ?? (decision == "allow_once" || decision == "allow_conversation" || decision == "allow")
+                                    try await journalProvider.v2RespondPermission(
+                                        conversationID: conversationID,
+                                        requestID: id,
+                                        allow: allow
+                                    )
+                                },
+                                onSubmitted: { [weak self] permissionDecision in
+                                    guard let self else { return }
+                                    if case .provideInstruction = permissionDecision { return }
+                                    self.applyAgentTrace(AgentTraceAdapter.permissionResolved(
+                                        requestId: id,
+                                        toolName: tool,
+                                        allowed: permissionDecision.isAllowed,
+                                        context: &self.agentTraceContext
+                                    ))
+                                }
+                            )
+                        case .v2UserQuestion(let requestID, let question, let options):
+                            applyAgentTrace(AgentTraceAdapter.web(event, context: &agentTraceContext))
+                            self.retrievalInProgress = false
+                            self.thinkingFinished = true
+                            self.pendingV2UserQuestion = V2UserQuestionPrompt(
+                                requestID: requestID,
+                                conversationID: conversationID,
+                                question: question,
+                                options: options
+                            )
+                            self.processingState = .streaming(progress: min(0.98, Double(hostToolEvents.count) * 0.10))
+                        case .v2TurnCompleted(let sessionID, let finalText):
+                            v2TurnCompletedReceived = true
+                            if !sessionID.isEmpty {
+                                v2SessionID = sessionID
+                            }
+                            v2FinalText = finalText.isEmpty ? currentResponse : finalText
+                            if !v2FinalText.isEmpty {
+                                currentResponse = v2FinalText
+                            }
+                            self.thinkingFinished = true
+                            self.pendingV2UserQuestion = nil
+                            self.retrievalInProgress = false
+                            self.processingState = .idle
                         case .error(let message):
                             // Keep the source failure until its durable rejection
                             // arrives; the generic receipt must not erase the
@@ -4691,41 +4919,41 @@ public final class ChatManager: ObservableObject {
                 "accumulatedLength": String(accumulated.count)
             ])
 
-            var finalJournalContent: IOSJournalMessageContent?
-            if model.isWebBackend {
-                guard let journalConsumer, try await journalConsumer.recoverTerminal() else {
-                    throw IOSApplicationRuntimeError.rejected("Host stream ended without a durable terminal seal; Run remains recoverable")
+                var finalJournalContent: IOSJournalMessageContent?
+                if model.isWebBackend && !v2TurnCompletedReceived {
+                    guard let journalConsumer, try await journalConsumer.recoverTerminal() else {
+                        throw IOSApplicationRuntimeError.rejected("Host stream ended without a durable terminal seal; Run remains recoverable")
+                    }
+                    guard myGeneration == activeGenerationId else { throw CancellationError() }
+                    await refreshRemoteJournalPresentation(journalConsumer, forceWindow: true)
+                    if let conversationID = generationConversationId {
+                        remoteObservationUnresolved = false
+                        observedRemoteRun = nil
+                        refreshPermissionOwnerProjection(conversationID: conversationID)
+                        refreshCommittedContextUsage(conversationID: conversationID)
+                    }
+                    refreshCommittedAssistant()
+                    guard let conversationID = generationConversationId else {
+                        throw IOSApplicationRuntimeError.rejected("Completed Run has no conversation owner")
+                    }
+                    let owner = IOSCommittedAssistantOwner(conversationID: conversationID.uuidString,
+                        assistantMessageID: turnIdentity.assistantMessageID, generation: myGeneration)
+                    guard let snapshot = try IOSCommittedAssistantProjection.load(from: container.applicationRuntime, owner: owner),
+                          let cursor = snapshot.journalCursor else {
+                        throw IOSApplicationRuntimeError.rejected("Completed Run is missing its committed assistant journal")
+                    }
+                    let content = try await committedJournalReader.read(at: cursor)
+                    guard myGeneration == activeGenerationId else { throw CancellationError() }
+                    finalJournalContent = content
+                    presentJournalContent(content, generation: myGeneration)
                 }
-                guard myGeneration == activeGenerationId else { throw CancellationError() }
-                await refreshRemoteJournalPresentation(journalConsumer, forceWindow: true)
-                if let conversationID = generationConversationId {
-                    remoteObservationUnresolved = false
-                    observedRemoteRun = nil
-                    refreshPermissionOwnerProjection(conversationID: conversationID)
-                    refreshCommittedContextUsage(conversationID: conversationID)
-                }
-                refreshCommittedAssistant()
-                guard let conversationID = generationConversationId else {
-                    throw IOSApplicationRuntimeError.rejected("Completed Run has no conversation owner")
-                }
-                let owner = IOSCommittedAssistantOwner(conversationID: conversationID.uuidString,
-                    assistantMessageID: turnIdentity.assistantMessageID, generation: myGeneration)
-                guard let snapshot = try IOSCommittedAssistantProjection.load(from: container.applicationRuntime, owner: owner),
-                      let cursor = snapshot.journalCursor else {
-                    throw IOSApplicationRuntimeError.rejected("Completed Run is missing its committed assistant journal")
-                }
-                let content = try await committedJournalReader.read(at: cursor)
-                guard myGeneration == activeGenerationId else { throw CancellationError() }
-                finalJournalContent = content
-                presentJournalContent(content, generation: myGeneration)
-            }
-            let finalParsed = ChatThinkingParser.splitThinkingBlocks(from: accumulated)
-            let finalThinking = model.isWebBackend
-                ? finalJournalContent?.reasoning ?? ""
-                : finalParsed.thinking
-            var finalClean = model.isWebBackend
-                ? finalJournalContent?.text ?? ""
-                : finalParsed.response
+                let finalParsed = ChatThinkingParser.splitThinkingBlocks(from: accumulated)
+                let finalThinking = model.isWebBackend
+                    ? (v2TurnCompletedReceived ? thinking : (finalJournalContent?.reasoning ?? ""))
+                    : finalParsed.thinking
+                var finalClean = model.isWebBackend
+                    ? (v2TurnCompletedReceived ? (v2FinalText.isEmpty ? currentResponse : v2FinalText) : (finalJournalContent?.text ?? ""))
+                    : finalParsed.response
             // Remove leading blank lines to avoid empty first line in UI while preserving intentional internal spacing
             finalClean = ChatTextPolicy.trimmingLeadingNewlines(from: finalClean)
 

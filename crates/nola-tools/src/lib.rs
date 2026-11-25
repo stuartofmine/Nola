@@ -54,6 +54,7 @@ pub use shell_pipeline::{validation_snapshot, ShellExecutionPipeline};
 #[derive(Clone)]
 pub struct ToolContext {
     pub workspace_root: PathBuf,
+    pub session_id: String,
     pub file_state: Arc<FileAccessState>,
     pub shell: Arc<ShellExecutionPipeline>,
     pub pty: Arc<PtyManager>,
@@ -73,6 +74,7 @@ impl ToolContext {
             .unwrap_or_else(|_| workspace_root.as_ref().to_path_buf());
         Self {
             workspace_root: root,
+            session_id: "default".to_string(),
             file_state: Arc::new(FileAccessState::default()),
             shell: Arc::new(ShellExecutionPipeline::default()),
             pty: Arc::new(PtyManager::default()),
@@ -85,6 +87,11 @@ impl ToolContext {
             permission_profile: PermissionProfile::Cautious,
             sandbox_mode: SandboxMode::Auto,
         }
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        self
     }
 }
 

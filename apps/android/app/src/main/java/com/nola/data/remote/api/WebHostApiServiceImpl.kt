@@ -373,7 +373,9 @@ class WebHostApiServiceImpl @Inject constructor(
             "changes" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-changes", request, pinnedCertificateSha256)
             "revision" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-revision", request, pinnedCertificateSha256)
             "interactions" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
-            else -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
+            "queued-input" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/events", pinnedCertificateSha256)
+            "queued-input/cancel" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/cancel", request, pinnedCertificateSha256)
+            else -> error("Unsupported generative UI operation: $operation")
         }
     }
 
@@ -429,7 +431,8 @@ class WebHostApiServiceImpl @Inject constructor(
         val reqId = payload["request_id"]?.toString()
             ?: payload["id"]?.toString()
             ?: ""
-        val decisionStr = payload["decision"]?.toString()?.lowercase()
+        val resolutionDecision = (payload["resolution"] as? Map<*, *>)?.get("decision")?.toString()?.lowercase()
+        val decisionStr = payload["decision"]?.toString()?.lowercase() ?: resolutionDecision
         val allow = (payload["allow"] as? Boolean)
             ?: (payload["approved"] as? Boolean)
             ?: (decisionStr == "allow" || decisionStr == "approve" || decisionStr == "allow_once" || decisionStr == "allow_conversation")
@@ -498,7 +501,7 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override suspend fun prepareToolPlan(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject =
-        getV2Json(hostBaseUrl, token, "agent/tools", pinnedCertificateSha256)
+        postV2Json(hostBaseUrl, token, "agent/tool-plan/prepare", request, pinnedCertificateSha256)
 
     override fun streamBoundAgentRequest(
         hostBaseUrl: String,

@@ -39,6 +39,7 @@ impl ToolHandler for GitTool {
                             "enum": ["status", "diff", "log", "show", "blame", "commit", "worktree_list", "worktree_create", "worktree_remove"]
                         },
                         "message": { "type": "string", "description": "Commit message (for action=commit)" },
+                        "author": { "type": "string", "description": "Optional commit author 'Name <email>' (for action=commit)" },
                         "target": { "type": "string", "description": "Commit ref (show), file path (blame), or worktree path (worktree_create/remove)" },
                         "path": { "type": "string", "description": "Optional file/directory filter for diff or log" },
                         "staged": { "type": "boolean", "description": "Diff staged changes (--cached) for action=diff" },
@@ -162,18 +163,37 @@ impl ToolHandler for GitTool {
                 run_git(ctx, &["worktree", "remove", "--force", "--", &path_s], "git worktree remove")
             }
             "commit" => {
-                let Some(msg) = args.get("message").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) else {
+                let Some(msg) = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                else {
                     return ToolExecutionResult::err_structured(
                         "missing_param",
                         "commit requires non-empty 'message'",
                         None,
                     );
                 };
+                let author = args
+                    .get("author")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                if let Some(a) = author {
+                    if let Err(e) = reject_flag_injection(a, "author") {
+                        return e;
+                    }
+                }
+                if let Err(err_res) = verify_git_identity(ctx) {
+                    return err_res;
+                }
                 let before_head = git_head(ctx);
-                let out = Command::new("git")
-                    .args(["commit", "-m", msg])
-                    .current_dir(&ctx.workspace_root)
-                    .output();
+                let mut cmd = git_command(ctx);
+                cmd.args(["commit", "-m", msg]);
+                if let Some(a) = author {
+                    cmd.arg(format!("--author={a}"));
+                }
+                let out = cmd.output();
                 match out {
                     Ok(o) if o.status.success() => {
                         let after_head = git_head(ctx).unwrap_or_else(|| "HEAD".into());
@@ -221,10 +241,64 @@ impl ToolHandler for GitTool {
     }
 }
 
+fn git_command(ctx: &ToolContext) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "diff.external=",
+        "-c",
+        "core.pager=cat",
+    ])
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .env("GIT_PAGER", "cat")
+    .current_dir(&ctx.workspace_root);
+    cmd
+}
+
+fn git_config_get(ctx: &ToolContext, key: &str) -> Option<String> {
+    git_command(ctx)
+        .args(["config", "--get", key])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn verify_git_identity(ctx: &ToolContext) -> Result<(), ToolExecutionResult> {
+    let has_name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+        || git_config_get(ctx, "user.name").is_some();
+    let has_email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+        || git_config_get(ctx, "user.email").is_some();
+    if !has_name || !has_email {
+        let mut missing = Vec::new();
+        if !has_name {
+            missing.push("user.name");
+        }
+        if !has_email {
+            missing.push("user.email");
+        }
+        return Err(ToolExecutionResult::err_structured(
+            "git_identity_missing",
+            format!(
+                "git commit requires configured identity ({}); set via `git config user.name` and `git config user.email`",
+                missing.join(", ")
+            ),
+            Some(json!({"missing_config": missing})),
+        ));
+    }
+    Ok(())
+}
+
 fn git_head(ctx: &ToolContext) -> Option<String> {
-    Command::new("git")
+    git_command(ctx)
         .args(["rev-parse", "HEAD"])
-        .current_dir(&ctx.workspace_root)
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -233,12 +307,7 @@ fn git_head(ctx: &ToolContext) -> Option<String> {
 }
 
 fn run_git(ctx: &ToolContext, args: &[&str], label: &str) -> ToolExecutionResult {
-    match Command::new("git")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(args)
-        .current_dir(&ctx.workspace_root)
-        .output()
-    {
+    match git_command(ctx).args(args).output() {
         Ok(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
             ToolExecutionResult::ok_structured(

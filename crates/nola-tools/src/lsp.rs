@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Real JSON-RPC 2.0 Language Server Protocol (LSP) client pool + diagnostics/navigation tool:
 //! - Dedicated background reader thread with finite `recv_timeout(10s)` (never blocks forever!)
-//! - Caches push `textDocument/publishDiagnostics` notifications AND responds to server requests
+//! - Caches push `textDocument/publishDiagnostics` notifications
+//! - Strictly rejects reverse server-initiated edit/command requests with JSON-RPC `-32601`
 //! - Properly kills & reaps LSP child processes on `Drop` and evicts dead/timed-out sessions
-//! - Uses `url::Url::from_file_path` and 16 MiB `Content-Length` cap
-//! - Read-only `python3 -B -c "import ast..."` fallback (never writes `.pyc`!)
+//! - Enforces 8 MiB `Content-Length` cap, 8 KiB header cap, and rejects duplicate `Content-Length`
+//! - Session-isolated pool keyed by `(session_id, workspace_root, language_id)`
+//! - Returns explicit structured errors when LSP servers are unavailable (no silent fallbacks!)
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -22,7 +24,8 @@ use crate::file_pipeline::resolve_path;
 use crate::{ToolContext, ToolHandler};
 
 const LSP_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_LSP_FRAME_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_LSP_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_LSP_HEADER_BYTES: usize = 8 * 1024;
 
 struct LspServerSpec {
     language_id: &'static str,
@@ -65,6 +68,28 @@ fn path_to_uri(path: &Path) -> String {
     url::Url::from_file_path(path)
         .map(|u| u.to_string())
         .unwrap_or_else(|_| format!("file://{}", path.display()))
+}
+
+/// Build the JSON-RPC 2.0 reply to a server-to-client request.
+/// Only `workspace/configuration` is allowed (`result: []`); `workspace/applyEdit`,
+/// `workspace/executeCommand`, and all unknown methods are rejected with `-32601`.
+pub(crate) fn build_reverse_request_reply(req_id: Value, method: &str) -> Value {
+    if method == "workspace/configuration" {
+        json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": []
+        })
+    } else {
+        json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {
+                "code": -32601,
+                "message": "client does not allow server-initiated edits or commands"
+            }
+        })
+    }
 }
 
 struct LspSession {
@@ -121,14 +146,9 @@ impl LspSession {
                 let has_method = frame.get("method").and_then(|v| v.as_str());
                 let has_id = frame.get("id").cloned();
                 match (has_id, has_method) {
-                    // Server-to-client request: reply immediately so server never deadlocks!
+                    // Server-to-client request: allow only workspace/configuration, reject all others!
                     (Some(req_id), Some(method)) => {
-                        let result = if method == "workspace/configuration" {
-                            json!([])
-                        } else {
-                            Value::Null
-                        };
-                        let reply = json!({"jsonrpc": "2.0", "id": req_id, "result": result});
+                        let reply = build_reverse_request_reply(req_id, method);
                         let _ = write_lsp_frame(&stdin_bg, &reply);
                     }
                     // Notification: cache `textDocument/publishDiagnostics`
@@ -187,6 +207,7 @@ impl LspSession {
                     "textDocument": {
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
                         "definition": {"linkSupport": true},
+                        "implementation": {"linkSupport": true},
                         "documentSymbol": {},
                         "publishDiagnostics": {}
                     }
@@ -234,7 +255,10 @@ impl LspSession {
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
                 self.closed.store(true, Ordering::SeqCst);
-                Err(format!("lsp request '{method}' timed out after {}s", LSP_TIMEOUT.as_secs()))
+                Err(format!(
+                    "lsp request '{method}' timed out after {}s",
+                    LSP_TIMEOUT.as_secs()
+                ))
             }
         }
     }
@@ -290,47 +314,89 @@ fn write_lsp_frame(stdin: &Mutex<Option<ChildStdin>>, msg: &Value) -> Result<(),
     w.flush().map_err(|e| e.to_string())
 }
 
-fn read_lsp_frame(reader: &mut dyn BufRead) -> Result<Value, String> {
-    let mut content_length: usize = 0;
-    let mut header = String::new();
+pub(crate) fn read_lsp_frame(reader: &mut dyn BufRead) -> Result<Value, String> {
+    let mut content_length: Option<usize> = None;
+    let mut header_bytes = 0usize;
+    let mut line = Vec::new();
     loop {
-        header.clear();
-        let n = reader.read_line(&mut header).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("lsp stdout EOF".into());
+        line.clear();
+        loop {
+            let avail = reader.fill_buf().map_err(|e| e.to_string())?;
+            if avail.is_empty() {
+                return Err("lsp stdout EOF".into());
+            }
+            if let Some(nl) = avail.iter().position(|&b| b == b'\n') {
+                let take = nl + 1;
+                header_bytes += take;
+                if header_bytes > MAX_LSP_HEADER_BYTES {
+                    return Err(format!(
+                        "lsp header exceeds {MAX_LSP_HEADER_BYTES} bytes"
+                    ));
+                }
+                line.extend_from_slice(&avail[..take]);
+                reader.consume(take);
+                break;
+            } else {
+                let take = avail.len();
+                header_bytes += take;
+                if header_bytes > MAX_LSP_HEADER_BYTES {
+                    return Err(format!(
+                        "lsp header exceeds {MAX_LSP_HEADER_BYTES} bytes"
+                    ));
+                }
+                line.extend_from_slice(avail);
+                reader.consume(take);
+            }
         }
-        let trimmed = header.trim();
+        let line_str = std::str::from_utf8(&line)
+            .map_err(|_| "invalid UTF-8 in lsp header".to_string())?;
+        let trimmed = line_str.trim();
         if trimmed.is_empty() {
             break;
         }
         if let Some((k, v)) = trimmed.split_once(':') {
             if k.trim().eq_ignore_ascii_case("content-length") {
-                content_length = v.trim().parse().unwrap_or(0);
+                if content_length.is_some() {
+                    return Err("duplicate Content-Length header in lsp frame".into());
+                }
+                let parsed = v
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid lsp Content-Length: '{}'", v.trim()))?;
+                content_length = Some(parsed);
             }
         }
     }
-    if content_length == 0 || content_length > MAX_LSP_FRAME_BYTES {
-        return Err(format!("invalid lsp Content-Length: {content_length}"));
+    let len = content_length.ok_or_else(|| "missing lsp Content-Length header".to_string())?;
+    if len == 0 || len > MAX_LSP_FRAME_BYTES {
+        return Err(format!("invalid lsp Content-Length: {len}"));
     }
-    let mut buf = vec![0u8; content_length];
+    let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).map_err(|e| e.to_string())?;
     serde_json::from_slice(&buf).map_err(|e| e.to_string())
 }
 
-/// Per-(workspace, language) LSP pool that never kills sibling workspace sessions
-/// and automatically evicts dead/timed-out sessions.
+type LspPoolKey = (String, PathBuf, String);
+
+/// Per-(session, workspace, language) LSP pool so sessions never share mutable open-document
+/// state and dead/timed-out sessions are automatically evicted.
 #[derive(Default)]
 pub struct LspPool {
-    sessions: Mutex<BTreeMap<(PathBuf, String), Arc<LspSession>>>,
+    sessions: Mutex<BTreeMap<LspPoolKey, Arc<LspSession>>>,
 }
 
 impl LspPool {
     fn get_or_spawn(
         &self,
+        session_id: &str,
         workspace_root: &Path,
         spec: &LspServerSpec,
     ) -> Result<Arc<LspSession>, String> {
-        let key = (workspace_root.to_path_buf(), spec.language_id.to_string());
+        let key: LspPoolKey = (
+            session_id.to_string(),
+            workspace_root.to_path_buf(),
+            spec.language_id.to_string(),
+        );
         if let Some(existing) = self.sessions.lock().unwrap().get(&key).cloned() {
             if existing.is_healthy() {
                 return Ok(existing);
@@ -353,6 +419,20 @@ impl LspPool {
         character: u32,
         query: Option<&str>,
     ) -> Result<Value, String> {
+        self.query_scoped("default", workspace_root, path, action, line, character, query)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn query_scoped(
+        &self,
+        session_id: &str,
+        workspace_root: &Path,
+        path: &Path,
+        action: &str,
+        line: u32,
+        character: u32,
+        query: Option<&str>,
+    ) -> Result<Value, String> {
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
@@ -361,7 +441,7 @@ impl LspPool {
         let Some(spec) = detect_lsp_server(&ext) else {
             return Err(format!("no LSP server mapping for '.{ext}'"));
         };
-        let session = self.get_or_spawn(workspace_root, &spec)?;
+        let session = self.get_or_spawn(session_id, workspace_root, &spec)?;
         let res = (|| -> Result<Value, String> {
             if action == "workspace_symbols" {
                 return session.request("workspace/symbol", json!({"query": query.unwrap_or("")}));
@@ -374,6 +454,10 @@ impl LspPool {
                 ),
                 "definition" => session.request(
                     "textDocument/definition",
+                    json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}),
+                ),
+                "implementation" => session.request(
+                    "textDocument/implementation",
                     json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}}),
                 ),
                 "references" => session.request(
@@ -390,7 +474,10 @@ impl LspPool {
                 ),
                 "diagnostics" => {
                     if session.supports_pull_diagnostics.load(Ordering::SeqCst) {
-                        session.request("textDocument/diagnostic", json!({"textDocument": {"uri": uri}}))
+                        session.request(
+                            "textDocument/diagnostic",
+                            json!({"textDocument": {"uri": uri}}),
+                        )
                     } else {
                         // Brief settle wait for push `publishDiagnostics` notification
                         std::thread::sleep(Duration::from_millis(250));
@@ -409,86 +496,15 @@ impl LspPool {
         })();
 
         if res.is_err() && !session.is_healthy() {
-            let key = (workspace_root.to_path_buf(), spec.language_id.to_string());
+            let key: LspPoolKey = (
+                session_id.to_string(),
+                workspace_root.to_path_buf(),
+                spec.language_id.to_string(),
+            );
             self.sessions.lock().unwrap().remove(&key);
         }
         res
     }
-
-    pub fn fallback_diagnostics(&self, workspace_root: &Path, path: &Path) -> Vec<Value> {
-        let ext = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        match ext.as_str() {
-            "py" => run_python_ast_check(path),
-            "json" => run_json_syntax_check(path),
-            "rs" => run_rust_quick_check(workspace_root),
-            _ => Vec::new(),
-        }
-    }
-}
-
-/// Pure read-only Python AST syntax check (NEVER creates `__pycache__/*.pyc`!).
-fn run_python_ast_check(path: &Path) -> Vec<Value> {
-    let Ok(out) = Command::new("python3")
-        .args([
-            "-B",
-            "-c",
-            "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read(), filename=sys.argv[1])",
-        ])
-        .arg(path)
-        .output()
-    else {
-        return Vec::new();
-    };
-    if out.status.success() {
-        return Vec::new();
-    }
-    vec![json!({
-        "severity": "error",
-        "source": "python_ast",
-        "message": String::from_utf8_lossy(&out.stderr).trim()
-    })]
-}
-
-fn run_json_syntax_check(path: &Path) -> Vec<Value> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    match serde_json::from_str::<Value>(&raw) {
-        Ok(_) => Vec::new(),
-        Err(e) => vec![json!({
-            "severity": "error",
-            "source": "json",
-            "line": e.line(),
-            "column": e.column(),
-            "message": e.to_string()
-        })],
-    }
-}
-
-fn run_rust_quick_check(workspace_root: &Path) -> Vec<Value> {
-    if !workspace_root.join("Cargo.toml").exists() {
-        return Vec::new();
-    }
-    let Ok(out) = Command::new("cargo")
-        .args(["check", "--message-format=short", "--quiet"])
-        .current_dir(workspace_root)
-        .output()
-    else {
-        return Vec::new();
-    };
-    if out.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| l.contains("error"))
-        .take(20)
-        .map(|l| json!({"severity": "error", "source": "cargo", "message": l}))
-        .collect()
 }
 
 pub struct LspDiagnosticsTool;
@@ -498,13 +514,13 @@ impl ToolHandler for LspDiagnosticsTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "lsp".into(),
-                description: "Query Language Server Protocol (diagnostics, definition, references, hover, document_symbols, workspace_symbols) with automatic read-only syntax fallback.".into(),
+                description: "Query Language Server Protocol (diagnostics, definition, implementation, references, hover, document_symbols, workspace_symbols). Spawns external LSP servers under Process permission admission.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["diagnostics", "definition", "references", "hover", "document_symbols", "workspace_symbols"],
+                            "enum": ["diagnostics", "definition", "implementation", "references", "hover", "document_symbols", "workspace_symbols"],
                             "description": "Default 'diagnostics'"
                         },
                         "path": { "type": "string" },
@@ -516,8 +532,8 @@ impl ToolHandler for LspDiagnosticsTool {
                 }),
             },
             tier: ToolTier::Deferred,
-            domain: CapabilityDomain::FilesRead,
-            read_only: true,
+            domain: CapabilityDomain::Process,
+            read_only: false,
         }
     }
 
@@ -534,10 +550,15 @@ impl ToolHandler for LspDiagnosticsTool {
         let query = args.get("query").and_then(|v| v.as_str());
         let path = resolve_path(&ctx.workspace_root, raw_path);
 
-        match ctx
-            .lsp
-            .query(&ctx.workspace_root, &path, action, line, character, query)
-        {
+        match ctx.lsp.query_scoped(
+            &ctx.session_id,
+            &ctx.workspace_root,
+            &path,
+            action,
+            line,
+            character,
+            query,
+        ) {
             Ok(result) => ToolExecutionResult::ok_structured(
                 json!({
                     "backend": "lsp",
@@ -547,21 +568,15 @@ impl ToolHandler for LspDiagnosticsTool {
                 }),
                 format!("LSP {action} succeeded for {}", path.display()),
             ),
-            Err(lsp_err) if action == "diagnostics" => {
-                let diags = ctx.lsp.fallback_diagnostics(&ctx.workspace_root, &path);
-                let count = diags.len();
-                ToolExecutionResult::ok_structured(
-                    json!({
-                        "backend": "fallback_syntax",
-                        "lsp_note": lsp_err,
-                        "path": path.display().to_string(),
-                        "count": count,
-                        "diagnostics": diags
-                    }),
-                    format!("Fallback diagnostics ({count}) for {}", path.display()),
-                )
-            }
-            Err(e) => ToolExecutionResult::err_structured("lsp_unavailable", e, None),
+            Err(e) => ToolExecutionResult::err_structured(
+                "lsp_unavailable",
+                format!("LSP server unavailable for '{}': {e}", path.display()),
+                Some(json!({
+                    "action": action,
+                    "path": path.display().to_string(),
+                    "reason": e
+                })),
+            ),
         }
     }
 }

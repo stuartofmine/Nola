@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use nola_types::{
-    HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig, ModelStopReason,
-    ModelStreamDelta, ModelToolCall, NormalizedModelResponse, StructuredModelRequest, TokenUsage,
+    GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
+    ModelStopReason, ModelStreamDelta, ModelToolCall, NormalizedModelResponse,
+    StructuredModelRequest, TokenUsage,
 };
 use serde_json::{json, Value};
 
@@ -76,6 +77,16 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
         &self,
         route: &ModelRouteConfig,
         req: &StructuredModelRequest,
+        stream: bool,
+    ) -> Result<BuiltHttpRequest, LlmError> {
+        self.build_request_with_params(route, req, &GenerationParams::default(), stream)
+    }
+
+    fn build_request_with_params(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        params: &GenerationParams,
         stream: bool,
     ) -> Result<BuiltHttpRequest, LlmError> {
         let all_media = collect_request_media(req);
@@ -193,6 +204,18 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
             if let Some(tp) = route.top_p {
                 body.insert("top_p".into(), json!(tp));
             }
+            if let Some(seed) = params.seed {
+                body.insert("seed".into(), json!(seed));
+            }
+            if let Some(tk) = params.top_k {
+                body.insert("top_k".into(), json!(tk));
+            }
+            if let Some(rp) = params.repetition_penalty {
+                body.insert("repetition_penalty".into(), json!(rp));
+            }
+        }
+        if !params.stop.is_empty() {
+            body.insert("stop".into(), json!(params.stop));
         }
         if let Some(effort) = route.reasoning_effort.as_deref().filter(|s| !s.is_empty()) {
             if route.capabilities.reasoning {
@@ -506,10 +529,18 @@ pub(crate) fn parse_openai_usage(v: Option<&Value>) -> TokenUsage {
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|x| x.as_u64())
         .unwrap_or(0);
+    let reasoning_tokens = u
+        .get("completion_tokens_details")
+        .or_else(|| u.get("output_tokens_details"))
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
     TokenUsage {
         input_tokens,
         output_tokens,
         cache_read_tokens,
         cache_write_tokens: 0,
+        reasoning_tokens,
+        usage_reported: true,
     }
 }

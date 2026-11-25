@@ -22,23 +22,39 @@
         cancelV2Turn,
         compactV2Conversation,
         createV2Conversation,
+        emptyV2TokenUsage,
+        formatPermissionSummary,
         getV2Conversation,
+        getV2ConversationConfiguration,
         hasConfiguredChatModel,
         listV2Conversations,
+        listV2Experts,
         listV2ModelChoices,
         loadV2Messages,
+        loadV2MessagesWithUsage,
+        mergeV2TokenUsage,
+        normalizeV2PermissionProfile,
+        normalizeV2ReasoningEffort,
+        patchV2ConversationConfiguration,
         respondV2Permission,
         respondV2UserInput,
         streamV2ChatMessage,
         submitV2UiInteraction,
         truncateV2Conversation,
         type V2Attachment,
+        type V2Expert,
         type V2Message,
         type V2ModelChoice,
+        type V2PermissionProfile,
         type V2PermissionPrompt,
+        type V2PermissionScope,
+        type V2ReasoningEffort,
+        type V2TokenUsage,
+        type V2UiActionPayload,
         type V2UserQuestion,
     } from '../lib/v2Chat';
     import ChatConversationManager from '../components/ChatConversationManager.svelte';
+    import ConversationInspector from '../components/ConversationInspector.svelte';
     import WorkspaceListNavigation from '../components/WorkspaceListNavigation.svelte';
     import WorkspaceResourceNavigation from '../components/WorkspaceResourceNavigation.svelte';
     import ConversationContentTabsView from '../components/ConversationContentTabs.svelte';
@@ -47,14 +63,19 @@
     import PrototypeIcon from '../components/PrototypeIcon.svelte';
     import Surface from '../vendor/a2ui-svelte/render/Surface.svelte';
 
+    const NEW_DRAFT_KEY = '__new__';
+
     let viewportWidth = $state(typeof window === 'undefined' ? 1280 : window.innerWidth);
     let sidebarOpen = $state(true);
+    let inspectorOpen = $state(false);
     let listCategory = $state<'conversations' | 'resources'>('conversations');
     let conversationManager = $state<ChatConversationManager>();
 
     let active = $state<ChatConversation | null>(null);
     let messages = $state<V2Message[]>([]);
+    let sessionUsage = $state<V2TokenUsage>(emptyV2TokenUsage());
     let draft = $state('');
+    const conversationDrafts = new Map<string, string>();
     let attachments = $state<V2Attachment[]>([]);
     let loading = $state(false);
     let streaming = $state(false);
@@ -67,14 +88,54 @@
     let composerEl = $state<HTMLTextAreaElement>();
     let fileInputEl = $state<HTMLInputElement>();
 
+    // Smart scroll anchor
+    let isPinnedToBottom = $state(true);
+
+    // Model, strict 2-mode permission, and reasoning effort
     let modelChoices = $state<V2ModelChoice[]>([]);
     let selectedModelId = $state('');
-    let permissionProfile = $state<'cautious' | 'accept_edits' | 'allow_all'>('accept_edits');
+    let permissionProfile = $state<V2PermissionProfile>('cautious');
+    let permissionSaving = $state(false);
+    let reasoningEffort = $state<V2ReasoningEffort>('automatic');
 
+    // Interactive prompts & submitting lock
     let pendingPermission = $state<V2PermissionPrompt | null>(null);
+    let permissionSubmitting = $state(false);
     let pendingQuestion = $state<V2UserQuestion | null>(null);
     let questionAnswerDraft = $state('');
-    let copiedMessageId = $state('');
+
+    // Inline Edit & Resend confirmation
+    let confirmEditIndex = $state<number | null>(null);
+
+    // Per-message cancellable 1800ms copy feedback
+    let copiedMessageIds = $state<Record<string, boolean>>({});
+    const copyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    // @ Expert mention picker
+    let availableExperts = $state<V2Expert[]>([]);
+    let expertsLoading = $state(false);
+    let expertsLoaded = $state(false);
+    let expertPickerOpen = $state(false);
+    let expertQuery = $state('');
+    let expertTriggerRange = $state<{ start: number; end: number } | null>(null);
+    let expertHighlightIdx = $state(0);
+    let selectedExperts = $state<V2Expert[]>([]);
+
+    const filteredExperts = $derived.by(() => {
+        const q = expertQuery.trim().toLowerCase();
+        const selectedIds = new Set(selectedExperts.map(e => e.id));
+        return availableExperts.filter(exp => {
+            if (selectedIds.has(exp.id)) return false;
+            if (!q) return true;
+            return (
+                exp.name.toLowerCase().includes(q) ||
+                exp.id.toLowerCase().includes(q) ||
+                (exp.description ?? '').toLowerCase().includes(q)
+            );
+        });
+    });
+
+    const permissionSummary = $derived(pendingPermission ? formatPermissionSummary(pendingPermission) : null);
 
     let contentTabs = $state<ConversationContentTabs>(emptyContentTabs());
     const tabViewports = new Map<string, { top: number }>();
@@ -82,6 +143,20 @@
     const managementContentSelected = $derived(selectedContentTab?.kind === 'page');
     const activeTabTitle = $derived(active?.title || t($locale, 'shell.conversations.new'));
     const ownerKey = $derived(active?.conversationId ?? 'workspace');
+
+    function currentDraftKey(conv: ChatConversation | null = active): string {
+        return conv?.conversationId ?? NEW_DRAFT_KEY;
+    }
+
+    function saveDraftForKey(key: string, text: string) {
+        if (text) conversationDrafts.set(key, text);
+        else conversationDrafts.delete(key);
+    }
+
+    function handleDraftInput() {
+        saveDraftForKey(currentDraftKey(), draft);
+        detectExpertMentionTrigger();
+    }
 
     function viewportFor(key: string): { top: number } {
         let entry = tabViewports.get(key);
@@ -104,9 +179,35 @@
         window.history.replaceState(window.history.state, '', url);
     }
 
-    async function scrollToBottom() {
+    function handleTranscriptScroll() {
+        if (!transcriptEl) return;
+        isPinnedToBottom = transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 80;
+    }
+
+    async function scrollToBottom(force = false) {
+        if (!force && !isPinnedToBottom) return;
+        if (force) isPinnedToBottom = true;
         await tick();
         if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    /** Detaches only the browser SSE reader without cancelling the Host run. */
+    function detachStream() {
+        streamController?.abort();
+        streamController = null;
+        pendingPermission = null;
+        permissionSubmitting = false;
+        pendingQuestion = null;
+        streaming = false;
+    }
+
+    /** Explicit user Stop button: aborts SSE reader AND cancels the active Host run. */
+    function cancelActiveRun() {
+        const targetId = active?.conversationId ?? null;
+        detachStream();
+        if (targetId) {
+            void cancelV2Turn(targetId).catch(() => {});
+        }
     }
 
     async function refreshModelChoices() {
@@ -121,15 +222,116 @@
         }
     }
 
+    async function ensureExpertsLoaded(forceRefresh = false) {
+        if (expertsLoading || (expertsLoaded && !forceRefresh)) return;
+        expertsLoading = true;
+        try {
+            availableExperts = await listV2Experts(forceRefresh);
+            expertsLoaded = true;
+        } catch {
+            // Keep graceful empty list if agent-rooms is unavailable.
+        } finally {
+            expertsLoading = false;
+        }
+    }
+
+    function detectExpertMentionTrigger() {
+        if (!composerEl) return;
+        const cursor = composerEl.selectionStart ?? draft.length;
+        const before = draft.slice(0, cursor);
+        const match = before.match(/(?:^|\s)@([^\s@]{0,40})$/);
+        if (match) {
+            const query = match[1];
+            const atPos = cursor - query.length - 1;
+            expertTriggerRange = { start: atPos, end: cursor };
+            expertQuery = query;
+            expertHighlightIdx = 0;
+            expertPickerOpen = true;
+            void ensureExpertsLoaded();
+        } else if (expertTriggerRange !== null) {
+            expertPickerOpen = false;
+            expertTriggerRange = null;
+            expertQuery = '';
+        }
+    }
+
+    function toggleExpertPicker() {
+        if (expertPickerOpen) {
+            expertPickerOpen = false;
+            expertTriggerRange = null;
+            expertQuery = '';
+            return;
+        }
+        expertTriggerRange = null;
+        expertQuery = '';
+        expertHighlightIdx = 0;
+        expertPickerOpen = true;
+        void ensureExpertsLoaded();
+    }
+
+    function selectExpert(expert: V2Expert) {
+        if (!selectedExperts.some(e => e.id === expert.id)) {
+            selectedExperts = [...selectedExperts, expert];
+        }
+        if (expertTriggerRange) {
+            const { start, end } = expertTriggerRange;
+            const before = draft.slice(0, start);
+            const after = draft.slice(end);
+            const cleaned = `${before}${after}`.replace(/  +/g, ' ');
+            draft = cleaned;
+            saveDraftForKey(currentDraftKey(), draft);
+        }
+        expertPickerOpen = false;
+        expertTriggerRange = null;
+        expertQuery = '';
+        expertHighlightIdx = 0;
+        composerEl?.focus();
+    }
+
+    function removeSelectedExpert(id: string) {
+        selectedExperts = selectedExperts.filter(e => e.id !== id);
+    }
+
+    async function handlePermissionModeChange(nextMode: V2PermissionProfile) {
+        const normalized = normalizeV2PermissionProfile(nextMode);
+        permissionProfile = normalized;
+        if (!active) return;
+        const targetId = active.conversationId;
+        permissionSaving = true;
+        try {
+            await patchV2ConversationConfiguration(targetId, { permissionProfile: normalized });
+            if (active?.conversationId === targetId) {
+                statusNotice = streaming
+                    ? t($locale, 'chatPermissionMode.active')
+                    : t($locale, 'chatPermissionMode.saved');
+            }
+        } catch (cause) {
+            if (active?.conversationId === targetId) {
+                error = errorMessage(cause);
+            }
+        } finally {
+            permissionSaving = false;
+        }
+    }
+
     async function openConversation(conv: ChatConversation, preserveTab = false) {
-        if (streaming) stopStreaming();
+        // Persist draft for the outgoing conversation, then detach SSE WITHOUT killing Host runs.
+        saveDraftForKey(currentDraftKey(), draft);
+        if (streaming) detachStream();
         const serial = ++generation;
         active = conv;
+        draft = conversationDrafts.get(conv.conversationId) ?? '';
         error = '';
         statusNotice = '';
         needsModelConfig = false;
         pendingPermission = null;
+        permissionSubmitting = false;
         pendingQuestion = null;
+        confirmEditIndex = null;
+        expertPickerOpen = false;
+        expertTriggerRange = null;
+        isPinnedToBottom = true;
+        sessionUsage = emptyV2TokenUsage();
         if (conv.selectedModelId) selectedModelId = conv.selectedModelId;
         if (!preserveTab) {
             contentTabs = selectContentTab(contentTabs, conversationTabKey);
@@ -139,10 +341,22 @@
         }
         loading = true;
         try {
-            const loaded = await loadV2Messages(conv.conversationId);
+            const [loaded, cfgResult] = await Promise.allSettled([
+                loadV2MessagesWithUsage(conv.conversationId),
+                getV2ConversationConfiguration(conv.conversationId),
+            ]);
             if (serial !== generation) return;
-            messages = loaded;
-            await scrollToBottom();
+            if (loaded.status === 'fulfilled') {
+                messages = loaded.value.messages;
+                sessionUsage = loaded.value.usage;
+            } else {
+                error = errorMessage(loaded.reason);
+            }
+            if (cfgResult.status === 'fulfilled') {
+                permissionProfile = normalizeV2PermissionProfile(cfgResult.value.permissionProfile);
+                reasoningEffort = normalizeV2ReasoningEffort(cfgResult.value.reasoningEffort);
+            }
+            await scrollToBottom(true);
         } catch (cause) {
             if (serial !== generation) return;
             error = errorMessage(cause);
@@ -178,15 +392,6 @@
         return created;
     }
 
-    function stopStreaming() {
-        streamController?.abort();
-        streamController = null;
-        pendingPermission = null;
-        pendingQuestion = null;
-        if (active) void cancelV2Turn(active.conversationId).catch(() => {});
-        streaming = false;
-    }
-
     async function handleFileSelect(event: Event) {
         const input = event.currentTarget as HTMLInputElement;
         const files = input.files;
@@ -214,19 +419,27 @@
         attachments = attachments.filter((_, idx) => idx !== index);
     }
 
-    async function sendPrompt(rawText: string, attached: V2Attachment[] = []) {
+    async function sendPrompt(
+        rawText: string,
+        attached: V2Attachment[] = [],
+        uiAction?: V2UiActionPayload,
+    ) {
         const text = rawText.trim();
-        if ((!text && !attached.length) || streaming) return;
+        if ((!text && !attached.length && !uiAction) || streaming) return;
         error = '';
         statusNotice = '';
         needsModelConfig = false;
+        confirmEditIndex = null;
+        expertPickerOpen = false;
+        expertTriggerRange = null;
 
         // Lightweight slash commands
         if (text === '/compact' && active) {
             try {
                 const res = await compactV2Conversation(active.conversationId);
-                statusNotice = res.summary || 'Context compacted';
+                statusNotice = res.summary || t($locale, 'chatPage.compactionRecord');
                 draft = '';
+                conversationDrafts.delete(active.conversationId);
             } catch (cause) {
                 error = errorMessage(cause);
             }
@@ -234,6 +447,7 @@
         }
         if (text === '/clear') {
             draft = '';
+            conversationDrafts.delete(currentDraftKey());
             const fresh = await createV2Conversation();
             await openConversation(fresh);
             void conversationManager?.refresh();
@@ -260,10 +474,15 @@
 
         const sentText = text;
         const sentAttachments = [...attached];
+        const sentExperts = [...selectedExperts];
         draft = '';
+        conversationDrafts.delete(NEW_DRAFT_KEY);
+        conversationDrafts.delete(conv.conversationId);
         attachments = [];
+        selectedExperts = [];
         streaming = true;
         pendingPermission = null;
+        permissionSubmitting = false;
         pendingQuestion = null;
 
         const userMsg: V2Message = {
@@ -284,7 +503,7 @@
             createdAtMs: Date.now(),
         };
         messages = [...messages, userMsg, assistantMsg];
-        await scrollToBottom();
+        await scrollToBottom(true);
 
         const controller = new AbortController();
         streamController = controller;
@@ -302,11 +521,12 @@
                     onTextDelta: delta => {
                         if (serial !== generation) return;
                         updateAssistant(m => ({ ...m, content: m.content + delta }));
-                        void scrollToBottom();
+                        void scrollToBottom(false);
                     },
                     onReasoningDelta: delta => {
                         if (serial !== generation) return;
                         updateAssistant(m => ({ ...m, reasoning: (m.reasoning ?? '') + delta }));
+                        void scrollToBottom(false);
                     },
                     onToolStarted: (callId, name, args) => {
                         if (serial !== generation) return;
@@ -317,7 +537,7 @@
                                 { callId, name, arguments: args, status: 'running' },
                             ],
                         }));
-                        void scrollToBottom();
+                        void scrollToBottom(false);
                     },
                     onToolFinished: (callId, name, ok, summary) => {
                         if (serial !== generation) return;
@@ -350,23 +570,31 @@
                                 : [...existing, snapshot];
                             return { ...m, uiSurfaces: next };
                         });
-                        void scrollToBottom();
+                        void scrollToBottom(false);
                     },
                     onPermissionRequested: prompt => {
                         if (serial !== generation) return;
                         pendingPermission = prompt;
-                        void scrollToBottom();
+                        permissionSubmitting = false;
+                        void scrollToBottom(false);
                     },
                     onUserQuestion: question => {
                         if (serial !== generation) return;
                         pendingQuestion = question;
                         questionAnswerDraft = '';
-                        void scrollToBottom();
+                        void scrollToBottom(false);
                     },
-                    onTurnCompleted: finalText => {
+                    onCompacted: summary => {
+                        if (serial !== generation) return;
+                        if (summary) statusNotice = summary;
+                    },
+                    onTurnCompleted: (finalText, turnUsage) => {
                         if (serial !== generation) return;
                         if (finalText) {
                             updateAssistant(m => (m.content ? m : { ...m, content: finalText }));
+                        }
+                        if (turnUsage) {
+                            sessionUsage = mergeV2TokenUsage(sessionUsage, turnUsage);
                         }
                     },
                     onError: msg => {
@@ -381,16 +609,22 @@
                 {
                     modelId: selectedModelId || undefined,
                     permissionProfile,
+                    reasoningEffort: reasoningEffort === 'automatic' ? undefined : reasoningEffort,
                     attachments: sentAttachments,
+                    selectedExperts: sentExperts.length ? sentExperts.map(e => e.id) : undefined,
+                    uiAction,
                 },
             );
             if (serial === generation) {
                 void conversationManager?.refresh();
                 // Reload canonical seq numbers in background without flashing UI
-                void loadV2Messages(conv.conversationId)
+                void loadV2MessagesWithUsage(conv.conversationId)
                     .then(canonical => {
-                        if (serial === generation && !streaming && canonical.length) {
-                            messages = canonical;
+                        if (serial === generation && !streaming && canonical.messages.length) {
+                            messages = canonical.messages;
+                            if (canonical.usage.input_tokens > sessionUsage.input_tokens) {
+                                sessionUsage = canonical.usage;
+                            }
                         }
                     })
                     .catch(() => {});
@@ -402,6 +636,8 @@
                 if (msg.includes('no_model_configured')) {
                     needsModelConfig = true;
                     draft = sentText;
+                    saveDraftForKey(conv.conversationId, sentText);
+                    selectedExperts = sentExperts;
                     messages = messages.filter(m => m.id !== userMsg.id && m.id !== assistantId);
                 } else {
                     error = msg;
@@ -412,6 +648,7 @@
             if (serial === generation) {
                 streaming = false;
                 pendingPermission = null;
+                permissionSubmitting = false;
                 pendingQuestion = null;
             }
         }
@@ -421,14 +658,20 @@
         await sendPrompt(draft, attachments);
     }
 
-    async function handlePermissionDecision(allow: boolean) {
+    async function handlePermissionDecision(allow: boolean, scope?: V2PermissionScope) {
         const prompt = pendingPermission;
-        if (!prompt || !active) return;
-        pendingPermission = null;
+        if (!prompt || !active || permissionSubmitting) return;
+        permissionSubmitting = true;
+        error = '';
         try {
-            await respondV2Permission(active.conversationId, prompt.requestId, allow);
+            await respondV2Permission(active.conversationId, prompt.requestId, allow, scope);
+            if (pendingPermission?.requestId === prompt.requestId) {
+                pendingPermission = null;
+            }
         } catch (cause) {
             error = errorMessage(cause);
+        } finally {
+            permissionSubmitting = false;
         }
     }
 
@@ -462,15 +705,24 @@
 
     async function handleSurfaceInteraction(
         interaction: UiInteraction,
+        requestId: string,
+        submittedAtMs: number,
     ): Promise<UiSubmissionOutcome> {
-        if (!active) return { status: 'rejected', message: 'No active conversation' };
-        const result = await submitV2UiInteraction(active.conversationId, interaction);
+        if (!active) return { status: 'rejected', message: t($locale, 'chatPage.noSession') };
+        const result = await submitV2UiInteraction(active.conversationId, interaction, requestId, submittedAtMs);
         if (result.snapshot) {
             replaceSurfaceSnapshot(result.snapshot);
         }
-        if (result.outcome.status === 'committed' && result.actionId && result.summary) {
-            // Stream the agent's follow-up reaction to the submitted A2UI form/action!
-            void sendPrompt(result.summary);
+        if (result.outcome.status === 'committed' && result.actionId) {
+            const summary = result.summary || result.actionId;
+            const uiAction: V2UiActionPayload = {
+                actionId: result.actionId,
+                surfaceId: interaction.identity.surface_id,
+                dataModel: result.dataModel ?? {},
+                summary,
+            };
+            // Stream the agent's follow-up reaction with structured ui_action metadata
+            void sendPrompt(summary, [], uiAction);
         }
         return result.outcome;
     }
@@ -478,38 +730,58 @@
     async function copyMessage(msg: V2Message) {
         try {
             await navigator.clipboard?.writeText(msg.content);
-            copiedMessageId = msg.id;
-            setTimeout(() => {
-                if (copiedMessageId === msg.id) copiedMessageId = '';
-            }, 1500);
+            const prevTimer = copyTimers.get(msg.id);
+            if (prevTimer !== undefined) clearTimeout(prevTimer);
+            copiedMessageIds = { ...copiedMessageIds, [msg.id]: true };
+            const timer = setTimeout(() => {
+                copyTimers.delete(msg.id);
+                const next = { ...copiedMessageIds };
+                delete next[msg.id];
+                copiedMessageIds = next;
+            }, 1800);
+            copyTimers.set(msg.id, timer);
         } catch {
             // Ignore clipboard errors in restricted contexts.
         }
     }
 
-    async function editAndResend(msg: V2Message, index: number) {
+    function requestEditAndResend(index: number) {
         if (streaming || !active) return;
-        if (typeof msg.seq === 'number') {
-            await truncateV2Conversation(active.conversationId, msg.seq);
+        confirmEditIndex = confirmEditIndex === index ? null : index;
+    }
+
+    async function confirmEditAndResend(msg: V2Message, index: number) {
+        if (streaming || !active) return;
+        confirmEditIndex = null;
+        try {
+            if (typeof msg.seq === 'number') {
+                await truncateV2Conversation(active.conversationId, msg.seq);
+            }
+            messages = messages.slice(0, index);
+            draft = msg.content;
+            saveDraftForKey(active.conversationId, draft);
+            await tick();
+            composerEl?.focus();
+        } catch (cause) {
+            error = errorMessage(cause);
         }
-        messages = messages.slice(0, index);
-        draft = msg.content;
-        await tick();
-        composerEl?.focus();
     }
 
     async function regenerateFrom(index: number) {
         if (streaming || !active) return;
-        // Find the preceding user message
         let userIdx = index - 1;
         while (userIdx >= 0 && messages[userIdx].role !== 'user') userIdx--;
         if (userIdx < 0) return;
         const userMsg = messages[userIdx];
-        if (typeof userMsg.seq === 'number') {
-            await truncateV2Conversation(active.conversationId, userMsg.seq);
+        try {
+            if (typeof userMsg.seq === 'number') {
+                await truncateV2Conversation(active.conversationId, userMsg.seq);
+            }
+            messages = messages.slice(0, userIdx);
+            await sendPrompt(userMsg.content, userMsg.attachments ?? []);
+        } catch (cause) {
+            error = errorMessage(cause);
         }
-        messages = messages.slice(0, userIdx);
-        await sendPrompt(userMsg.content, userMsg.attachments ?? []);
     }
 
     async function branchActiveConversation() {
@@ -524,6 +796,34 @@
     }
 
     function onComposerKeydown(event: KeyboardEvent) {
+        if (expertPickerOpen) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                expertPickerOpen = false;
+                expertTriggerRange = null;
+                return;
+            }
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                if (filteredExperts.length > 0) {
+                    expertHighlightIdx = (expertHighlightIdx + 1) % filteredExperts.length;
+                }
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                if (filteredExperts.length > 0) {
+                    expertHighlightIdx = (expertHighlightIdx - 1 + filteredExperts.length) % filteredExperts.length;
+                }
+                return;
+            }
+            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && filteredExperts.length > 0) {
+                event.preventDefault();
+                const target = filteredExperts[expertHighlightIdx] ?? filteredExperts[0];
+                if (target) selectExpert(target);
+                return;
+            }
+        }
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
             event.preventDefault();
             void send();
@@ -573,7 +873,10 @@
 
         return () => {
             window.removeEventListener(workspaceContentNavigationEvent, handleContentNav);
-            streamController?.abort();
+            // Detach SSE reader on unmount WITHOUT killing the Host run!
+            detachStream();
+            for (const timer of copyTimers.values()) clearTimeout(timer);
+            copyTimers.clear();
         };
     });
 </script>
@@ -611,8 +914,12 @@
                         onselect={conv => void openConversation(conv)}
                         onchange={ev => {
                             if (ev.type === 'deleted' && ev.conversationId === active?.conversationId) {
+                                detachStream();
+                                conversationDrafts.delete(ev.conversationId);
                                 active = null;
                                 messages = [];
+                                sessionUsage = emptyV2TokenUsage();
+                                draft = conversationDrafts.get(NEW_DRAFT_KEY) ?? '';
                                 syncUrl(null);
                             } else if ((ev.type === 'renamed' || ev.type === 'refreshed') && ev.conversation && ev.conversationId === active?.conversationId) {
                                 active = ev.conversation;
@@ -681,7 +988,7 @@
                         class="topbar-pill"
                         onclick={() => openManagementTab(`/workspace-review?conversation=${encodeURIComponent(active!.conversationId)}`)}
                     >
-                        Diff
+                        {t($locale, 'chatInspector.review')}
                     </button>
                     <button
                         type="button"
@@ -689,9 +996,21 @@
                         disabled={streaming || !messages.length}
                         onclick={branchActiveConversation}
                     >
-                        Branch
+                        {t($locale, 'chatInspector.branch')}
                     </button>
                 {/if}
+                <button
+                    type="button"
+                    class="topbar-pill inspector-toggle-btn"
+                    class:active={inspectorOpen}
+                    data-testid="inspector-toggle"
+                    aria-expanded={inspectorOpen}
+                    aria-label={t($locale, 'chatPage.details')}
+                    onclick={() => (inspectorOpen = !inspectorOpen)}
+                >
+                    <PrototypeIcon name="overview" size={14} />
+                    <span>{t($locale, 'chatPage.details')}</span>
+                </button>
             </div>
         </header>
 
@@ -702,249 +1021,403 @@
             aria-labelledby={contentTabDomId('tab', ownerKey, conversationTabKey)}
             hidden={managementContentSelected}
         >
-            <div class="transcript" bind:this={transcriptEl}>
-                {#if loading}
-                    <p class="status-note muted" role="status">{t($locale, 'chatPage.loading')}</p>
-                {:else if messages.length === 0}
-                    <div class="empty-state">
-                        <h1>{t($locale, 'chatPage.welcome')}</h1>
-                        <p class="muted">{t($locale, 'chatPage.choose')}</p>
-                    </div>
-                {:else}
-                    <div class="messages-list">
-                        {#each messages as msg, msgIndex (msg.id)}
-                            <article class="message" class:user={msg.role === 'user'} class:assistant={msg.role === 'assistant'} data-message-id={msg.id}>
-                                <div class="message-head">
-                                    <div class="message-role">{msg.role === 'user' ? 'You' : 'Nola'}</div>
-                                    <div class="message-actions">
-                                        <button type="button" class="msg-action" onclick={() => copyMessage(msg)}>
-                                            {copiedMessageId === msg.id ? 'Copied' : 'Copy'}
-                                        </button>
-                                        {#if msg.role === 'user' && !streaming}
-                                            <button type="button" class="msg-action" onclick={() => editAndResend(msg, msgIndex)}>
-                                                Edit
-                                            </button>
-                                        {:else if msg.role === 'assistant' && !streaming}
-                                            <button type="button" class="msg-action" onclick={() => regenerateFrom(msgIndex)}>
-                                                Regenerate
-                                            </button>
+            <div class="chat-stage-columns">
+                <div class="chat-conversation-column">
+                    <div
+                        class="transcript"
+                        bind:this={transcriptEl}
+                        onscroll={handleTranscriptScroll}
+                    >
+                        {#if loading}
+                            <p class="status-note muted" role="status">{t($locale, 'chatPage.loading')}</p>
+                        {:else if messages.length === 0}
+                            <div class="empty-state">
+                                <h1>{t($locale, 'chatPage.welcome')}</h1>
+                                <p class="muted">{t($locale, 'chatPage.choose')}</p>
+                            </div>
+                        {:else}
+                            <div class="messages-list">
+                                {#each messages as msg, msgIndex (msg.id)}
+                                    <article class="message" class:user={msg.role === 'user'} class:assistant={msg.role === 'assistant'} data-message-id={msg.id}>
+                                        <div class="message-head">
+                                            <div class="message-role">{msg.role === 'user' ? t($locale, 'chatInspector.you') : 'Nola'}</div>
+                                            <div class="message-actions">
+                                                <button type="button" class="msg-action" onclick={() => copyMessage(msg)}>
+                                                    {copiedMessageIds[msg.id] ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
+                                                </button>
+                                                {#if msg.role === 'user' && !streaming}
+                                                    <button type="button" class="msg-action" onclick={() => requestEditAndResend(msgIndex)}>
+                                                        {t($locale, 'chatInspector.edit')}
+                                                    </button>
+                                                {:else if msg.role === 'assistant' && !streaming}
+                                                    <button type="button" class="msg-action" onclick={() => regenerateFrom(msgIndex)}>
+                                                        {t($locale, 'chatInspector.regenerate')}
+                                                    </button>
+                                                {/if}
+                                            </div>
+                                        </div>
+
+                                        {#if confirmEditIndex === msgIndex && msg.role === 'user'}
+                                            <div class="inline-confirm" role="alertdialog" aria-label={t($locale, 'chatInspector.editTruncateConfirm')}>
+                                                <span>{t($locale, 'chatInspector.editTruncateConfirm')}</span>
+                                                <div class="inline-confirm-actions">
+                                                    <button
+                                                        type="button"
+                                                        class="primary compact-action"
+                                                        onclick={() => void confirmEditAndResend(msg, msgIndex)}
+                                                    >
+                                                        {t($locale, 'shell.confirm')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="compact-action"
+                                                        onclick={() => (confirmEditIndex = null)}
+                                                    >
+                                                        {t($locale, 'shell.cancel')}
+                                                    </button>
+                                                </div>
+                                            </div>
                                         {/if}
-                                    </div>
-                                </div>
 
-                                {#if msg.attachments?.length}
-                                    <div class="attachment-chips">
-                                        {#each msg.attachments as att}
-                                            <span class="attachment-chip">{att.name}</span>
-                                        {/each}
-                                    </div>
-                                {/if}
+                                        {#if msg.attachments?.length}
+                                            <div class="attachment-chips">
+                                                {#each msg.attachments as att}
+                                                    <span class="attachment-chip">{att.name}</span>
+                                                {/each}
+                                            </div>
+                                        {/if}
 
-                                {#if msg.reasoning}
-                                    <details class="reasoning-box">
-                                        <summary>{t($locale, 'chatPage.thinking')}</summary>
-                                        <pre>{msg.reasoning}</pre>
-                                    </details>
-                                {/if}
-                                {#if msg.toolCalls?.length}
-                                    <div class="tool-calls">
-                                        {#each msg.toolCalls as tc (tc.callId)}
-                                            <details class="tool-card" data-status={tc.status}>
-                                                <summary>
-                                                    <span class="tool-name">{tc.name}</span>
-                                                    <span class="tool-status">
-                                                        {tc.status === 'running'
-                                                            ? t($locale, 'chatPage.toolRunning')
-                                                            : tc.status === 'failed'
-                                                              ? t($locale, 'chatPage.toolFailed')
-                                                              : t($locale, 'chatPage.toolCompleted')}
-                                                    </span>
-                                                </summary>
-                                                {#if tc.summary}<pre class="tool-summary">{tc.summary}</pre>{/if}
+                                        {#if msg.reasoning}
+                                            <details class="reasoning-box">
+                                                <summary>{t($locale, 'chatPage.thinking')}</summary>
+                                                <pre>{msg.reasoning}</pre>
                                             </details>
-                                        {/each}
-                                    </div>
-                                {/if}
-
-                                {#if msg.uiSurfaces?.length}
-                                    <div class="ui-surfaces">
-                                        {#each msg.uiSurfaces as snap (snap.identity.surface_id + ':' + snap.identity.generation)}
-                                            <Surface
-                                                snapshot={snap}
-                                                oninteraction={input => handleSurfaceInteraction(input)}
-                                                onrefresh={async () => {
-                                                    if (active) messages = await loadV2Messages(active.conversationId);
-                                                }}
-                                            />
-                                        {/each}
-                                    </div>
-                                {/if}
-
-                                <div class="message-body">
-                                    {#if msg.role === 'assistant'}
-                                        {#if msg.content}
-                                            <Markdown source={msg.content} />
-                                        {:else if streaming}
-                                            <p class="muted">{t($locale, 'chatPage.working')}</p>
                                         {/if}
+                                        {#if msg.toolCalls?.length}
+                                            <div class="tool-calls">
+                                                {#each msg.toolCalls as tc (tc.callId)}
+                                                    <details class="tool-card" data-status={tc.status}>
+                                                        <summary>
+                                                            <span class="tool-name">{tc.name}</span>
+                                                            <span class="tool-status">
+                                                                {tc.status === 'running'
+                                                                    ? t($locale, 'chatPage.toolRunning')
+                                                                    : tc.status === 'failed'
+                                                                      ? t($locale, 'chatPage.toolFailed')
+                                                                      : t($locale, 'chatPage.toolCompleted')}
+                                                            </span>
+                                                        </summary>
+                                                        {#if tc.summary}<pre class="tool-summary">{tc.summary}</pre>{/if}
+                                                    </details>
+                                                {/each}
+                                            </div>
+                                        {/if}
+
+                                        {#if msg.uiSurfaces?.length}
+                                            <div class="ui-surfaces">
+                                                {#each msg.uiSurfaces as snap (snap.identity.surface_id + ':' + snap.identity.generation)}
+                                                    <Surface
+                                                        snapshot={snap}
+                                                        oninteraction={(input, requestId, submittedAtMs) =>
+                                                            handleSurfaceInteraction(input, requestId, submittedAtMs)}
+                                                        onrefresh={async () => {
+                                                            if (active) messages = await loadV2Messages(active.conversationId);
+                                                        }}
+                                                    />
+                                                {/each}
+                                            </div>
+                                        {/if}
+
+                                        <div class="message-body">
+                                            {#if msg.role === 'assistant'}
+                                                {#if msg.content}
+                                                    <Markdown source={msg.content} />
+                                                {:else if streaming}
+                                                    <p class="muted">{t($locale, 'chatPage.working')}</p>
+                                                {/if}
+                                            {:else}
+                                                <p class="user-text">{msg.content}</p>
+                                            {/if}
+                                        </div>
+                                    </article>
+                                {/each}
+
+                                {#if pendingPermission && permissionSummary}
+                                    <div class="interactive-card permission-card" role="region" aria-label={t($locale, 'chatPermission.title')}>
+                                        <header class="interactive-head">
+                                            <div class="permission-title-row">
+                                                <strong>{t($locale, 'chatPermission.title')}</strong>
+                                                <code class="permission-tool-badge">{pendingPermission.tool}</code>
+                                            </div>
+                                            <p class="permission-headline">{permissionSummary.headline}</p>
+                                            {#if permissionSummary.target}
+                                                <code class="permission-target">{permissionSummary.target}</code>
+                                            {/if}
+                                            {#if pendingPermission.reason}
+                                                <span class="muted permission-reason">{pendingPermission.reason}</span>
+                                            {/if}
+                                        </header>
+                                        <details class="permission-raw-details">
+                                            <summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
+                                            <pre class="interactive-args">{JSON.stringify(pendingPermission.arguments, null, 2)}</pre>
+                                        </details>
+                                        {#if permissionSubmitting}
+                                            <p class="muted permission-status" role="status">{t($locale, 'chatPermission.submitting')}</p>
+                                        {/if}
+                                        <div class="interactive-actions">
+                                            <button
+                                                type="button"
+                                                class="primary"
+                                                disabled={permissionSubmitting}
+                                                onclick={() => void handlePermissionDecision(true, 'once')}
+                                            >
+                                                {t($locale, 'chatPermission.allowOnce')}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={permissionSubmitting}
+                                                onclick={() => void handlePermissionDecision(true, 'session')}
+                                            >
+                                                {t($locale, 'chatPermission.allowConversation')}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="danger"
+                                                disabled={permissionSubmitting}
+                                                onclick={() => void handlePermissionDecision(false)}
+                                            >
+                                                {t($locale, 'chatPermission.deny')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                {/if}
+
+                                {#if pendingQuestion}
+                                    <div class="interactive-card question-card" role="region" aria-label={t($locale, 'chatPage.stateWaitingInput')}>
+                                        <header class="interactive-head">
+                                            <strong>{pendingQuestion.question}</strong>
+                                        </header>
+                                        {#if pendingQuestion.options.length}
+                                            <div class="question-options">
+                                                {#each pendingQuestion.options as opt}
+                                                    <button type="button" class="topbar-pill" onclick={() => handleQuestionAnswer(opt)}>
+                                                        {opt}
+                                                    </button>
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                        <form
+                                            class="question-form"
+                                            onsubmit={e => {
+                                                e.preventDefault();
+                                                if (questionAnswerDraft.trim()) void handleQuestionAnswer(questionAnswerDraft.trim());
+                                            }}
+                                        >
+                                            <input
+                                                type="text"
+                                                bind:value={questionAnswerDraft}
+                                                placeholder={t($locale, 'chatPage.placeholder')}
+                                                aria-label={t($locale, 'chatPage.stateWaitingInput')}
+                                            />
+                                            <button type="submit" class="primary" disabled={!questionAnswerDraft.trim()}>
+                                                {t($locale, 'chatPage.send')}
+                                            </button>
+                                        </form>
+                                    </div>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+
+                    {#if !isPinnedToBottom && messages.length > 0}
+                        <div class="scroll-anchor-bar">
+                            <button
+                                type="button"
+                                class="scroll-latest-btn"
+                                onclick={() => void scrollToBottom(true)}
+                            >
+                                ↓ {t($locale, 'chatPage.latest')}
+                            </button>
+                        </div>
+                    {/if}
+
+                    <footer class="composer-wrap">
+                        {#if needsModelConfig}
+                            <div class="notice" role="status">
+                                <a
+                                    href="/models"
+                                    onclick={e => {
+                                        e.preventDefault();
+                                        openManagementTab('/models');
+                                    }}
+                                >{t($locale, 'chatSession.configureModel')}</a>
+                            </div>
+                        {/if}
+                        {#if statusNotice}
+                            <p class="notice" role="status">{statusNotice}</p>
+                        {/if}
+                        {#if error}
+                            <p class="notice error" role="alert">{error}</p>
+                        {/if}
+                        {#if attachments.length || selectedExperts.length}
+                            <div class="attachment-chips">
+                                {#each selectedExperts as exp (exp.id)}
+                                    <span class="attachment-chip expert-chip">
+                                        @{exp.name}
+                                        <button
+                                            type="button"
+                                            class="chip-remove"
+                                            aria-label={t($locale, 'chatInspector.clearExperts')}
+                                            onclick={() => removeSelectedExpert(exp.id)}
+                                        >×</button>
+                                    </span>
+                                {/each}
+                                {#each attachments as att, idx}
+                                    <span class="attachment-chip">
+                                        {att.name}
+                                        <button type="button" class="chip-remove" aria-label={t($locale, 'shell.cancel')} onclick={() => removeAttachment(idx)}>×</button>
+                                    </span>
+                                {/each}
+                            </div>
+                        {/if}
+
+                        <div class="composer-toolbar">
+                            <input
+                                bind:this={fileInputEl}
+                                type="file"
+                                multiple
+                                hidden
+                                onchange={handleFileSelect}
+                            />
+                            <button
+                                type="button"
+                                class="toolbar-btn"
+                                disabled={streaming}
+                                onclick={() => fileInputEl?.click()}
+                            >
+                                {t($locale, 'chatInspector.attach')}
+                            </button>
+                            <button
+                                type="button"
+                                class="toolbar-btn"
+                                class:active={expertPickerOpen}
+                                disabled={streaming}
+                                aria-expanded={expertPickerOpen}
+                                aria-label={t($locale, 'chatInspector.mentionExpert')}
+                                onclick={toggleExpertPicker}
+                            >
+                                @ {t($locale, 'rooms.experts')}
+                            </button>
+                            {#if modelChoices.length}
+                                <select
+                                    class="toolbar-select"
+                                    aria-label={t($locale, 'chatSession.model')}
+                                    bind:value={selectedModelId}
+                                    disabled={streaming}
+                                >
+                                    {#each modelChoices as choice (choice.id)}
+                                        <option value={choice.id}>{choice.displayName}</option>
+                                    {/each}
+                                </select>
+                            {/if}
+                            <select
+                                class="toolbar-select"
+                                aria-label={t($locale, 'chatSession.permission')}
+                                value={permissionProfile}
+                                disabled={permissionSaving}
+                                onchange={e => void handlePermissionModeChange(e.currentTarget.value as V2PermissionProfile)}
+                            >
+                                <option value="cautious">{t($locale, 'chatSession.cautious')}</option>
+                                <option value="allow_all">{t($locale, 'chatSession.allowAll')}</option>
+                            </select>
+                            <select
+                                class="toolbar-select"
+                                aria-label={t($locale, 'chatSession.reasoning')}
+                                bind:value={reasoningEffort}
+                                disabled={streaming}
+                            >
+                                <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
+                                <option value="none">{t($locale, 'chatSession.none')}</option>
+                                <option value="low">{t($locale, 'chatSession.low')}</option>
+                                <option value="medium">{t($locale, 'chatSession.medium')}</option>
+                                <option value="high">{t($locale, 'chatSession.high')}</option>
+                            </select>
+                        </div>
+
+                        <div class="composer-anchor">
+                            {#if expertPickerOpen}
+                                <div class="expert-popup" role="listbox" aria-label={t($locale, 'rooms.experts')}>
+                                    {#if expertsLoading}
+                                        <p class="expert-popup-empty">{t($locale, 'rooms.loading')}</p>
+                                    {:else if filteredExperts.length === 0}
+                                        <p class="expert-popup-empty">{t($locale, 'rooms.noExperts')}</p>
                                     {:else}
-                                        <p class="user-text">{msg.content}</p>
+                                        {#each filteredExperts as exp, idx (exp.id)}
+                                            <button
+                                                type="button"
+                                                role="option"
+                                                class="expert-option"
+                                                class:highlighted={idx === expertHighlightIdx}
+                                                aria-selected={idx === expertHighlightIdx}
+                                                onclick={() => selectExpert(exp)}
+                                            >
+                                                <span class="expert-option-name">@{exp.name}</span>
+                                                {#if exp.description}
+                                                    <small class="muted">{exp.description}</small>
+                                                {/if}
+                                            </button>
+                                        {/each}
                                     {/if}
                                 </div>
-                            </article>
-                        {/each}
+                            {/if}
 
-                        {#if pendingPermission}
-                            <div class="interactive-card permission-card" role="region" aria-label="Tool approval required">
-                                <header class="interactive-head">
-                                    <strong>Approval Required: <code>{pendingPermission.tool}</code></strong>
-                                    <span class="muted">{pendingPermission.reason}</span>
-                                </header>
-                                <pre class="interactive-args">{JSON.stringify(pendingPermission.arguments, null, 2)}</pre>
-                                <div class="interactive-actions">
-                                    <button type="button" class="primary" onclick={() => handlePermissionDecision(true)}>
-                                        Approve
-                                    </button>
-                                    <button type="button" class="danger" onclick={() => handlePermissionDecision(false)}>
-                                        Deny
-                                    </button>
+                            <form
+                                class="composer-box"
+                                onsubmit={event => {
+                                    event.preventDefault();
+                                    void send();
+                                }}
+                            >
+                                <textarea
+                                    id="chat-composer"
+                                    bind:this={composerEl}
+                                    bind:value={draft}
+                                    rows="2"
+                                    placeholder={t($locale, 'chatPage.placeholder')}
+                                    disabled={loading}
+                                    oninput={handleDraftInput}
+                                    onkeydown={onComposerKeydown}
+                                ></textarea>
+                                <div class="composer-actions">
+                                    {#if streaming}
+                                        <button type="button" class="danger" onclick={cancelActiveRun}>
+                                            {t($locale, 'chatPage.stop')}
+                                        </button>
+                                    {:else}
+                                        <button type="submit" class="primary" disabled={(!draft.trim() && !attachments.length) || loading}>
+                                            {t($locale, 'chatPage.send')}
+                                        </button>
+                                    {/if}
                                 </div>
-                            </div>
-                        {/if}
+                            </form>
+                        </div>
+                    </footer>
+                </div>
 
-                        {#if pendingQuestion}
-                            <div class="interactive-card question-card" role="region" aria-label="Agent question">
-                                <header class="interactive-head">
-                                    <strong>{pendingQuestion.question}</strong>
-                                </header>
-                                {#if pendingQuestion.options.length}
-                                    <div class="question-options">
-                                        {#each pendingQuestion.options as opt}
-                                            <button type="button" class="topbar-pill" onclick={() => handleQuestionAnswer(opt)}>
-                                                {opt}
-                                            </button>
-                                        {/each}
-                                    </div>
-                                {/if}
-                                <form
-                                    class="question-form"
-                                    onsubmit={e => {
-                                        e.preventDefault();
-                                        if (questionAnswerDraft.trim()) void handleQuestionAnswer(questionAnswerDraft.trim());
-                                    }}
-                                >
-                                    <input
-                                        type="text"
-                                        bind:value={questionAnswerDraft}
-                                        placeholder="Type your response..."
-                                        aria-label="Response to agent question"
-                                    />
-                                    <button type="submit" class="primary" disabled={!questionAnswerDraft.trim()}>
-                                        Submit
-                                    </button>
-                                </form>
-                            </div>
-                        {/if}
-                    </div>
+                {#if inspectorOpen}
+                    <ConversationInspector
+                        conversationId={active?.conversationId ?? null}
+                        {messages}
+                        usage={sessionUsage}
+                        {streaming}
+                        onclose={() => (inspectorOpen = false)}
+                        onopenPage={openManagementTab}
+                        oncompacted={summary => {
+                            statusNotice = summary;
+                        }}
+                    />
                 {/if}
             </div>
-
-            <footer class="composer-wrap">
-                {#if needsModelConfig}
-                    <div class="notice" role="status">
-                        <a
-                            href="/models"
-                            onclick={e => {
-                                e.preventDefault();
-                                openManagementTab('/models');
-                            }}
-                        >{t($locale, 'chatSession.configureModel')}</a>
-                    </div>
-                {/if}
-                {#if statusNotice}
-                    <p class="notice" role="status">{statusNotice}</p>
-                {/if}
-                {#if error}
-                    <p class="notice error" role="alert">{error}</p>
-                {/if}
-                {#if attachments.length}
-                    <div class="attachment-chips">
-                        {#each attachments as att, idx}
-                            <span class="attachment-chip">
-                                {att.name}
-                                <button type="button" class="chip-remove" aria-label="Remove attachment" onclick={() => removeAttachment(idx)}>×</button>
-                            </span>
-                        {/each}
-                    </div>
-                {/if}
-                <div class="composer-toolbar">
-                    <input
-                        bind:this={fileInputEl}
-                        type="file"
-                        multiple
-                        hidden
-                        onchange={handleFileSelect}
-                    />
-                    <button
-                        type="button"
-                        class="toolbar-btn"
-                        disabled={streaming}
-                        onclick={() => fileInputEl?.click()}
-                    >
-                        Attach
-                    </button>
-                    {#if modelChoices.length}
-                        <select
-                            class="toolbar-select"
-                            aria-label="Model"
-                            bind:value={selectedModelId}
-                            disabled={streaming}
-                        >
-                            {#each modelChoices as choice (choice.id)}
-                                <option value={choice.id}>{choice.displayName}</option>
-                            {/each}
-                        </select>
-                    {/if}
-                    <select
-                        class="toolbar-select"
-                        aria-label="Permission mode"
-                        bind:value={permissionProfile}
-                        disabled={streaming}
-                    >
-                        <option value="cautious">Cautious (Ask)</option>
-                        <option value="accept_edits">Accept Edits</option>
-                        <option value="allow_all">Allow All</option>
-                    </select>
-                </div>
-                <form
-                    class="composer-box"
-                    onsubmit={event => {
-                        event.preventDefault();
-                        void send();
-                    }}
-                >
-                    <textarea
-                        id="chat-composer"
-                        bind:this={composerEl}
-                        bind:value={draft}
-                        rows="2"
-                        placeholder={t($locale, 'chatPage.placeholder')}
-                        disabled={loading}
-                        onkeydown={onComposerKeydown}
-                    ></textarea>
-                    <div class="composer-actions">
-                        {#if streaming}
-                            <button type="button" class="danger" onclick={stopStreaming}>
-                                {t($locale, 'chatPage.stop')}
-                            </button>
-                        {:else}
-                            <button type="submit" class="primary" disabled={(!draft.trim() && !attachments.length) || loading}>
-                                {t($locale, 'chatPage.send')}
-                            </button>
-                        {/if}
-                    </div>
-                </form>
-            </footer>
         </div>
 
         {#each contentTabs.items as tab (tab.key)}
@@ -1075,6 +1548,7 @@
         width: auto;
         max-width: 220px;
         min-height: 30px;
+        min-width: 0;
         padding: 4px 10px;
         border: 1px solid var(--border);
         border-radius: 7px;
@@ -1082,6 +1556,16 @@
         color: var(--content);
         font-size: 12px;
         cursor: pointer;
+    }
+    .inspector-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .inspector-toggle-btn.active,
+    .toolbar-btn.active {
+        border-color: var(--primary);
+        background: var(--accent-subtle);
     }
     .topbar-pill:hover:not(:disabled),
     .toolbar-btn:hover:not(:disabled) {
@@ -1097,6 +1581,20 @@
     .management-panel[hidden] {
         display: none;
     }
+    .chat-stage-columns {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: row;
+    }
+    .chat-conversation-column {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+    }
     .management-panel {
         flex: 1;
         min-height: 0;
@@ -1108,6 +1606,21 @@
         min-height: 0;
         overflow-y: auto;
         padding: 24px 20px;
+    }
+    .scroll-anchor-bar {
+        display: flex;
+        justify-content: center;
+        padding: 0 20px 6px;
+    }
+    .scroll-latest-btn {
+        min-height: 28px;
+        padding: 3px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--content);
+        box-shadow: var(--glass-pill-shadow);
     }
     .empty-state {
         max-width: 680px;
@@ -1156,6 +1669,8 @@
     }
     .msg-action {
         padding: 2px 8px;
+        min-height: 26px;
+        min-width: 0;
         border: 1px solid transparent;
         border-radius: 6px;
         background: transparent;
@@ -1167,13 +1682,38 @@
         color: var(--content);
         border-color: var(--border);
     }
+    .inline-confirm {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--warning);
+        background: var(--panel);
+        font-size: 12px;
+    }
+    .inline-confirm-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .compact-action {
+        min-height: 28px;
+        min-width: 0;
+        padding: 3px 10px;
+        font-size: 12px;
+        border-radius: 6px;
+    }
     .user-text {
         margin: 0;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
     }
     .reasoning-box,
-    .tool-card {
+    .tool-card,
+    .permission-raw-details {
         border: 1px solid var(--border);
         border-radius: 8px;
         padding: 6px 10px;
@@ -1181,13 +1721,15 @@
         font-size: 13px;
     }
     .reasoning-box summary,
-    .tool-card summary {
+    .tool-card summary,
+    .permission-raw-details summary {
         cursor: pointer;
         color: var(--muted);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+        font-size: 12px;
     }
     .reasoning-box pre,
     .tool-summary,
@@ -1205,7 +1747,7 @@
         gap: 8px;
     }
     .tool-name {
-        font-family: var(--font-mono, monospace);
+        font-family: var(--font-code, monospace);
         color: var(--content);
     }
     .interactive-card {
@@ -1220,7 +1762,40 @@
     .interactive-head {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 6px;
+    }
+    .permission-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .permission-tool-badge {
+        padding: 2px 7px;
+        border-radius: 6px;
+        background: var(--canvas);
+        border: 1px solid var(--border);
+        font-size: 12px;
+    }
+    .permission-headline {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .permission-target {
+        display: block;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--canvas);
+        border: 1px solid var(--border);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+    }
+    .permission-reason,
+    .permission-status {
+        margin: 0;
+        font-size: 12px;
     }
     .interactive-actions,
     .question-options,
@@ -1255,12 +1830,18 @@
         background: var(--panel);
         font-size: 12px;
     }
+    .expert-chip {
+        border-color: var(--info);
+        color: var(--content);
+    }
     .chip-remove {
         border: 0;
         background: transparent;
         color: var(--muted);
         cursor: pointer;
         padding: 0 2px;
+        min-width: 0;
+        min-height: 0;
     }
     .composer-wrap {
         max-width: 820px;
@@ -1276,6 +1857,55 @@
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
+    }
+    .composer-anchor {
+        position: relative;
+    }
+    .expert-popup {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: calc(100% + 6px);
+        max-height: 220px;
+        overflow-y: auto;
+        padding: 6px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--surface-elevated);
+        box-shadow: var(--dialog-shadow);
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .expert-popup-empty {
+        margin: 0;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--muted);
+    }
+    .expert-option {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        width: 100%;
+        min-height: 32px;
+        padding: 6px 10px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+    }
+    .expert-option:hover,
+    .expert-option.highlighted {
+        background: var(--accent-subtle);
+        border-color: var(--border);
+    }
+    .expert-option-name {
+        font-size: 13px;
+        font-weight: 600;
     }
     .composer-box {
         display: flex;

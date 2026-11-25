@@ -5,7 +5,7 @@
 pub mod oauth;
 pub mod transport;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use nola_store::Vault;
@@ -66,6 +66,7 @@ pub struct McpToolInfo {
 pub struct McpManager {
     connections: Mutex<BTreeMap<String, (String, Arc<McpConnection>)>>,
     connect_locks: Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
+    disconnected: Mutex<BTreeSet<String>>,
     oauth: Option<Arc<McpOAuthManager>>,
 }
 
@@ -74,6 +75,7 @@ impl McpManager {
         Self {
             connections: Mutex::new(BTreeMap::new()),
             connect_locks: Mutex::new(BTreeMap::new()),
+            disconnected: Mutex::new(BTreeSet::new()),
             oauth: vault.map(|v| Arc::new(McpOAuthManager::new(v))),
         }
     }
@@ -84,6 +86,34 @@ impl McpManager {
 
     pub fn evict(&self, server_id: &str) {
         self.connections.lock().unwrap().remove(server_id);
+    }
+
+    /// Explicitly disconnect an MCP server and mark it disconnected so tool calls
+    /// do NOT silently auto-reconnect until `connect()` is called explicitly.
+    pub fn disconnect(&self, server_id: &str) {
+        self.disconnected
+            .lock()
+            .unwrap()
+            .insert(server_id.to_string());
+        self.connections.lock().unwrap().remove(server_id);
+    }
+
+    /// Returns true if `server_id` currently has a healthy active connection and
+    /// has not been explicitly disconnected.
+    pub fn is_connected(&self, server_id: &str) -> bool {
+        if self.disconnected.lock().unwrap().contains(server_id) {
+            return false;
+        }
+        self.connections
+            .lock()
+            .unwrap()
+            .get(server_id)
+            .map(|(_, c)| c.is_healthy())
+            .unwrap_or(false)
+    }
+
+    fn is_explicitly_disconnected(&self, server_id: &str) -> bool {
+        self.disconnected.lock().unwrap().contains(server_id)
     }
 
     /// Connect (or reuse healthy pooled connection matching `connection_digest`) to an MCP server.
@@ -97,6 +127,7 @@ impl McpManager {
             )
         };
         let _guard = srv_lock.lock().unwrap();
+        self.disconnected.lock().unwrap().remove(&cfg.id);
 
         let digest = connection_digest(cfg);
         {
@@ -186,6 +217,16 @@ impl ToolHandler for McpToolAdapter {
     }
 
     fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        if self.manager.is_explicitly_disconnected(&self.config.id) {
+            return ToolExecutionResult::err_structured(
+                "mcp_disconnected",
+                format!(
+                    "MCP server '{}' was explicitly disconnected; reconnect before invoking tools",
+                    self.config.id
+                ),
+                None,
+            );
+        }
         let conn = match self.manager.connect(&self.config) {
             Ok(c) => c,
             Err(e) => return ToolExecutionResult::err_structured("mcp_connect_error", e.to_string(), None),
@@ -243,5 +284,43 @@ mod tests {
         cfg.transport = McpTransport::ServerSentEvents;
         let d_sse = connection_digest(&cfg);
         assert_ne!(d_http, d_sse, "transport change must invalidate pooled connection digest");
+    }
+
+    #[test]
+    fn explicit_disconnect_prevents_silent_auto_reconnect_in_tool_adapter() {
+        let mgr = Arc::new(McpManager::new(None));
+        let cfg = McpServerConfig {
+            id: "srv1".into(),
+            name: "Srv1".into(),
+            transport: McpTransport::Stdio,
+            enabled: true,
+            command: Some("/nonexistent/mcp-bin".into()),
+            args: vec![],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            oauth_client_id: None,
+            oauth_scopes: vec![],
+        };
+        assert!(!mgr.is_connected("srv1"));
+        mgr.disconnect("srv1");
+        assert!(!mgr.is_connected("srv1"));
+
+        let adapter = McpToolAdapter {
+            manager: Arc::clone(&mgr),
+            config: cfg,
+            info: McpToolInfo {
+                server_id: "srv1".into(),
+                original_name: "ping".into(),
+                qualified_name: "mcp_srv1_ping".into(),
+                description: "Ping".into(),
+                input_schema: json!({"type": "object"}),
+            },
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path());
+        let res = adapter.execute(&ctx, json!({}));
+        assert!(res.is_error);
+        assert!(res.payload.to_model_string().contains("mcp_disconnected"));
     }
 }

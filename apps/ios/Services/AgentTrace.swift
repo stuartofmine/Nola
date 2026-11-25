@@ -669,9 +669,91 @@ nonisolated public enum AgentTraceAdapter {
         case .delegatedPermissionRequest:
             return []
         case .externalSessionStarted,
-             .v2TextDelta, .v2ReasoningDelta, .v2ToolStarted, .v2ToolFinished,
-             .v2UiSurface, .v2PermissionRequested, .v2UserQuestion, .v2TurnCompleted:
+             .v2TextDelta, .v2ReasoningDelta, .v2TurnCompleted:
             return []
+        case .v2SessionStarted(let sessionId):
+            return [context.makeEvent(
+                kind: .runStarted,
+                status: .running,
+                payload: .init(summary: sessionId.isEmpty ? "session_started" : sessionId)
+            )]
+        case .v2ToolStarted(let callID, let name):
+            let span = callID.isEmpty ? UUID().uuidString : callID
+            return [context.makeEvent(
+                kind: .toolStarted,
+                status: .running,
+                spanId: span,
+                payload: .init(summary: name, toolName: name, callId: span)
+            )]
+        case .v2ToolFinished(let callID, let name, let isError, let summary):
+            let span = callID.isEmpty ? UUID().uuidString : callID
+            return [context.makeEvent(
+                kind: .toolCompleted,
+                status: isError ? .failed : .succeeded,
+                spanId: span,
+                payload: .init(summary: summary.isEmpty ? name : summary, toolName: name, callId: span)
+            )]
+        case .v2PermissionRequested(let requestID, let tool, let reason):
+            let span = requestID.isEmpty ? UUID().uuidString : requestID
+            return [context.makeEvent(
+                kind: .toolPermissionRequested,
+                status: .waiting,
+                spanId: span,
+                payload: .init(
+                    summary: reason.isEmpty ? tool : reason,
+                    toolName: tool,
+                    callId: span,
+                    permissionRequestId: span
+                )
+            )]
+        case .v2UserQuestion(let requestID, let question, let options):
+            let span = requestID.isEmpty ? UUID().uuidString : requestID
+            return [context.makeEvent(
+                kind: .phaseChanged,
+                status: .waiting,
+                spanId: span,
+                payload: .init(
+                    phase: "awaiting_user_input",
+                    summary: question,
+                    detail: options.isEmpty ? nil : options.joined(separator: ", "),
+                    callId: span
+                )
+            )]
+        case .v2UiSurface(let snapshot):
+            var surfaceID = "ui_surface"
+            var summary = "ui_surface"
+            if case .object(let root) = snapshot {
+                if case .object(let identity) = root["identity"],
+                   case .string(let sid) = identity["surface_id"],
+                   !sid.isEmpty {
+                    surfaceID = sid
+                }
+                if case .string(let s) = root["summary"], !s.isEmpty {
+                    summary = s
+                } else if case .string(let p) = root["phase"], !p.isEmpty {
+                    summary = p
+                }
+            }
+            return [context.makeEvent(
+                kind: .toolProgress,
+                status: .running,
+                spanId: surfaceID,
+                payload: .init(
+                    summary: summary,
+                    toolName: "render_ui_surface",
+                    callId: surfaceID,
+                    result: snapshot
+                )
+            )]
+        case .v2Compacted(let summary):
+            return [context.makeEvent(
+                kind: .contextCompacted,
+                status: .running,
+                payload: .init(
+                    phase: "compacting",
+                    summary: summary.isEmpty ? "context_compacted" : summary
+                )
+            )]
         case .trace(let trace):
             context.adopt(trace)
             return [trace]

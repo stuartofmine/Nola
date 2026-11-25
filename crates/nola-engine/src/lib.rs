@@ -24,10 +24,13 @@ pub use compaction::{compact_history, compact_history_force, CompactionReport};
 pub use hooks::HookRunner;
 pub use loop_guard::{semantic_observation_arguments, LoopGuard};
 pub use loop_runner::{
-    AgentEngine, AgentError, AgentEvent, AgentRunConfig, AgentRunResult, HttpModelCaller,
-    ModelCaller,
+    compact_session_now, load_session_usage, workspace_memory_namespace, AgentEngine, AgentError,
+    AgentEvent, AgentRunConfig, AgentRunResult, HttpModelCaller, ModelCaller,
 };
 pub use middleware::{ApprovalCallback, MiddlewareOutcome, ToolExecutionMiddleware};
-pub use planning::{register_planning_tools, PlanningState, TodoItem, UserInputCallback};
-pub use policy::EffectivePolicy;
+pub use planning::{
+    load_session_plan, load_session_todos, register_planning_tools, PlanningState, TodoItem,
+    UserInputCallback,
+};
+pub use policy::{is_external_send, is_sensitive_path, EffectivePolicy};
 pub use subagents::{register_subagent_tools, SubagentManager, SubagentTaskSnapshot, TaskStatus};

@@ -251,7 +251,8 @@ impl ToolHandler for MoveFileTool {
                     "type": "object",
                     "properties": {
                         "source": { "type": "string" },
-                        "destination": { "type": "string" }
+                        "destination": { "type": "string" },
+                        "overwrite": { "type": "boolean", "description": "Allow replacing an existing destination file (default false)" }
                     },
                     "required": ["source", "destination"]
                 }),
@@ -269,6 +270,10 @@ impl ToolHandler for MoveFileTool {
         let Some(dst_raw) = args.get("destination").and_then(|v| v.as_str()) else {
             return ToolExecutionResult::err_structured("missing_param", "missing 'destination'", None);
         };
+        let overwrite = args
+            .get("overwrite")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let src = resolve_path(&ctx.workspace_root, src_raw);
         let dst = resolve_path(&ctx.workspace_root, dst_raw);
         if ctx.permission_profile != nola_types::PermissionProfile::AllowAll
@@ -285,6 +290,19 @@ impl ToolHandler for MoveFileTool {
             return ToolExecutionResult::ok_structured(
                 json!({"source": src.display().to_string(), "destination": dst.display().to_string(), "unchanged": true}),
                 "Source and destination are identical",
+            );
+        }
+        if !overwrite && dst.symlink_metadata().is_ok() {
+            return ToolExecutionResult::err_structured(
+                "destination_exists",
+                format!(
+                    "destination '{}' already exists; set overwrite=true to replace it",
+                    dst.display()
+                ),
+                Some(json!({
+                    "source": src.display().to_string(),
+                    "destination": dst.display().to_string()
+                })),
             );
         }
         let bytes = match fs::read(&src) {

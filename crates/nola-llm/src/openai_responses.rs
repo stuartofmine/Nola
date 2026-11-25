@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use nola_types::{
-    HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig, ModelStopReason,
-    ModelStreamDelta, ModelToolCall, NormalizedModelResponse, ProviderContinuation,
-    StructuredModelRequest, TokenUsage,
+    GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
+    ModelStopReason, ModelStreamDelta, ModelToolCall, NormalizedModelResponse,
+    ProviderContinuation, StructuredModelRequest, TokenUsage,
 };
 use serde_json::{json, Value};
 
@@ -60,6 +60,7 @@ pub(crate) fn build_responses_body(
     protocol: ModelProtocol,
     route: &ModelRouteConfig,
     req: &StructuredModelRequest,
+    params: &GenerationParams,
     stream: bool,
     force_store_false: bool,
 ) -> Result<Value, LlmError> {
@@ -122,12 +123,20 @@ pub(crate) fn build_responses_body(
                         }));
                     }
                     for tc in tool_calls {
-                        input.push(json!({
-                            "type": "function_call",
-                            "call_id": tc.call_id,
-                            "name": tc.name,
-                            "arguments": serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into()),
-                        }));
+                        let mut fc = serde_json::Map::new();
+                        fc.insert("type".into(), Value::String("function_call".into()));
+                        fc.insert("call_id".into(), Value::String(tc.call_id.clone()));
+                        fc.insert("name".into(), Value::String(tc.name.clone()));
+                        if protocol == ModelProtocol::SiwcResponses {
+                            fc.insert("namespace".into(), Value::String("nola".into()));
+                        }
+                        fc.insert(
+                            "arguments".into(),
+                            Value::String(
+                                serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into()),
+                            ),
+                        );
+                        input.push(Value::Object(fc));
                     }
                 }
             }
@@ -186,10 +195,28 @@ pub(crate) fn build_responses_body(
         if let Some(tp) = route.top_p {
             body.insert("top_p".into(), json!(tp));
         }
+        if let Some(seed) = params.seed {
+            body.insert("seed".into(), json!(seed));
+        }
     }
-    if let Some(effort) = route.reasoning_effort.as_deref().filter(|s| !s.is_empty()) {
+    if !params.stop.is_empty() {
+        body.insert("stop".into(), json!(params.stop));
+    }
+    if let Some(effort) = route
+        .reasoning_effort
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if route.capabilities.reasoning {
-            body.insert("reasoning".into(), json!({"effort": effort}));
+            let mut r_obj = serde_json::Map::new();
+            r_obj.insert("effort".into(), Value::String(effort.to_string()));
+            if route.capabilities.supports_reasoning_summary
+                && !effort.eq_ignore_ascii_case("none")
+            {
+                r_obj.insert("summary".into(), Value::String("auto".into()));
+            }
+            body.insert("reasoning".into(), Value::Object(r_obj));
         }
     }
     if let Some(cache_key) = route.prompt_cache_key.as_deref().filter(|s| !s.is_empty()) {
@@ -506,7 +533,24 @@ impl ProviderWireAdapter for OpenAiResponsesAdapter {
         req: &StructuredModelRequest,
         stream: bool,
     ) -> Result<BuiltHttpRequest, LlmError> {
-        let body = build_responses_body(ModelProtocol::OpenAiResponses, route, req, stream, false)?;
+        self.build_request_with_params(route, req, &GenerationParams::default(), stream)
+    }
+
+    fn build_request_with_params(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        params: &GenerationParams,
+        stream: bool,
+    ) -> Result<BuiltHttpRequest, LlmError> {
+        let body = build_responses_body(
+            ModelProtocol::OpenAiResponses,
+            route,
+            req,
+            params,
+            stream,
+            false,
+        )?;
         let mut headers = BTreeMap::new();
         headers.insert("content-type".into(), "application/json".into());
         if !route.api_key.trim().is_empty() {

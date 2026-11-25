@@ -52,6 +52,26 @@ pub fn register_planning_tools(
     }));
 }
 
+/// Load the persisted structured todos for a specific session.
+pub fn load_session_todos(store: &Store, session_id: &str) -> Value {
+    let key = format!("todos:{session_id}");
+    store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| json!({"session_id": session_id, "todos": []}))
+}
+
+/// Load the persisted proposed plan for a specific session.
+pub fn load_session_plan(store: &Store, session_id: &str) -> Value {
+    let key = format!("plan:{session_id}");
+    store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .unwrap_or(Value::Null)
+}
+
 struct UpdateTodosTool {
     store: Store,
     state: Arc<PlanningState>,
@@ -88,7 +108,7 @@ impl ToolHandler for UpdateTodosTool {
         }
     }
 
-    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         let Some(arr) = args.get("todos").and_then(|v| v.as_array()) else {
             return ToolExecutionResult::err_structured("missing_param", "missing 'todos' array", None);
         };
@@ -114,8 +134,13 @@ impl ToolHandler for UpdateTodosTool {
             })
             .collect();
         *self.state.todos.lock().unwrap() = items.clone();
-        let val = json!({"updated_at_ms": now_ms(), "todos": items});
-        let _ = self.store.set_kv("latest_agent_todos", &val);
+        let val = json!({
+            "session_id": ctx.session_id,
+            "updated_at_ms": now_ms(),
+            "todos": items,
+        });
+        let key = format!("todos:{}", ctx.session_id);
+        let _ = self.store.set_kv(&key, &val);
         ToolExecutionResult::ok_structured(val, format!("Updated {} todo item(s)", items.len()))
     }
 }
@@ -146,12 +171,18 @@ impl ToolHandler for ProposePlanTool {
         }
     }
 
-    fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+    fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("Plan");
         let md = args.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
         *self.state.latest_plan.lock().unwrap() = Some(md.to_string());
-        let val = json!({"title": title, "markdown": md, "updated_at_ms": now_ms()});
-        let _ = self.store.set_kv("latest_agent_plan", &val);
+        let val = json!({
+            "session_id": ctx.session_id,
+            "title": title,
+            "markdown": md,
+            "updated_at_ms": now_ms(),
+        });
+        let key = format!("plan:{}", ctx.session_id);
+        let _ = self.store.set_kv(&key, &val);
         ToolExecutionResult::ok_structured(val, format!("Proposed plan: {title}"))
     }
 }

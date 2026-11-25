@@ -5,13 +5,14 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, CStr, CString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use nola_llm::PrivacyRedactor;
-use nola_modules::{check_for_update, ModulesSuite};
-use nola_store::{Store, PROTOCOL_VERSION};
+use nola_mcp::McpManager;
+use nola_modules::{check_for_update, download_update_package, ModulesSuite};
+use nola_store::{Store, Vault, PROTOCOL_VERSION};
 use nola_types::{estimate_text_tokens, new_id, now_ms, MemoryItem};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -34,6 +35,7 @@ fn set_last_open_error(err: Option<String>) {
 struct AppInner {
     store: Store,
     suite: ModulesSuite,
+    mcp: Arc<McpManager>,
 }
 
 /// Reference-counted opaque handle representing an opened Nola v2 Store + ModulesSuite across C-ABI.
@@ -192,8 +194,12 @@ pub unsafe extern "C" fn nola_core_application_open(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     let suite = ModulesSuite::new(store.clone(), ws, None);
+    let vault = Vault::open(crate::config::default_vault_path(&db_path))
+        .ok()
+        .map(Arc::new);
+    let mcp = Arc::new(McpManager::new(vault));
     Box::into_raw(Box::new(NolaCoreApplication {
-        inner: Arc::new(AppInner { store, suite }),
+        inner: Arc::new(AppInner { store, suite, mcp }),
     }))
 }
 
@@ -312,16 +318,37 @@ pub unsafe extern "C" fn nola_core_application_attest_resend_host_policy(
     config_len: usize,
 ) -> *mut c_char {
     if app.is_null() {
-        return to_owned_c_string(json!({"ok": false, "error": "null application"}).to_string());
+        return to_owned_c_string(
+            json!({"ok": false, "error": {"code": "null_application", "message": "null application handle"}})
+                .to_string(),
+        );
     }
-    let target = unsafe { parse_json_slice(target_ptr, target_len) }.unwrap_or_else(|| json!({}));
+    if target_ptr.is_null() || target_len == 0 {
+        return to_owned_c_string(
+            json!({"ok": false, "error": {"code": "invalid_argument", "message": "target must not be empty"}})
+                .to_string(),
+        );
+    }
+    let target_slice = unsafe { std::slice::from_raw_parts(target_ptr, target_len) };
+    let target_str = match std::str::from_utf8(target_slice) {
+        Ok(s) if !s.trim().is_empty() => s.trim(),
+        _ => {
+            return to_owned_c_string(
+                json!({"ok": false, "error": {"code": "invalid_argument", "message": "target must be non-empty UTF-8"}})
+                    .to_string(),
+            );
+        }
+    };
     let config = unsafe { parse_json_slice(config_ptr, config_len) }.unwrap_or_else(|| json!({}));
-    let digest = sha256_hex(format!("{target}{config}").as_bytes());
+    let digest = sha256_hex(format!("{target_str}:{config}").as_bytes());
     to_owned_c_string(
         json!({
             "ok": true,
-            "attested": true,
-            "policy_digest": digest
+            "result": {
+                "attested": true,
+                "target": target_str,
+                "policy_digest": digest
+            }
         })
         .to_string(),
     )
@@ -603,7 +630,7 @@ pub unsafe extern "C" fn nola_core_application_intelligence_clear(
     true
 }
 
-/// Stateless personal intelligence recall fallback for hosts querying without an open handle.
+/// Stateless personal intelligence recall scoring provided items/memories by token overlap & recency.
 ///
 /// # Safety
 /// `json_ptr` must point to `json_len` readable UTF-8 bytes.
@@ -612,8 +639,112 @@ pub unsafe extern "C" fn nola_core_intelligence_recall(
     json_ptr: *const u8,
     json_len: usize,
 ) -> *mut c_char {
-    let _req = unsafe { parse_json_slice(json_ptr, json_len) };
-    to_owned_c_string(json!({"ok": true, "context": "", "items": []}).to_string())
+    let Some(req) = (unsafe { parse_json_slice(json_ptr, json_len) }) else {
+        return to_owned_c_string(json!({"ok": true, "context": "", "items": []}).to_string());
+    };
+    let query = req
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let limit = req
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 200) as usize;
+    let raw_items: Vec<Value> = req
+        .get("items")
+        .or_else(|| req.get("memories"))
+        .or_else(|| req.get("records"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let query_tokens: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| s.chars().count() >= 2)
+        .collect();
+
+    let mut scored: Vec<(usize, i64, Value)> = Vec::new();
+    for item in raw_items {
+        let title = item
+            .get("title")
+            .or_else(|| item.get("summary"))
+            .or_else(|| item.get("kind"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let body = item
+            .get("content")
+            .or_else(|| item.get("statement"))
+            .or_else(|| item.get("text"))
+            .and_then(|v| v.as_str())
+            .or_else(|| item.as_str())
+            .unwrap_or("");
+        let tags_text = item
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let haystack = format!("{title} {body} {tags_text}").to_ascii_lowercase();
+        let score = if query_tokens.is_empty() {
+            1usize
+        } else {
+            query_tokens
+                .iter()
+                .filter(|tok| haystack.contains(tok.as_str()))
+                .count()
+        };
+        if score == 0 {
+            continue;
+        }
+        let recency = item
+            .get("updated_at_ms")
+            .or_else(|| item.get("created_at_ms"))
+            .or_else(|| item.get("timestamp_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        scored.push((score, recency, item));
+    }
+
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    scored.truncate(limit);
+
+    let items: Vec<Value> = scored.into_iter().map(|(_, _, v)| v).collect();
+    let context = items
+        .iter()
+        .filter_map(|item| {
+            if let Some(s) = item.as_str() {
+                return Some(format!("- {s}"));
+            }
+            let title = item
+                .get("title")
+                .or_else(|| item.get("summary"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = item
+                .get("content")
+                .or_else(|| item.get("statement"))
+                .or_else(|| item.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if title.is_empty() && content.is_empty() {
+                None
+            } else if title.is_empty() {
+                Some(format!("- {content}"))
+            } else {
+                Some(format!("- {title}: {content}"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    to_owned_c_string(json!({"ok": true, "context": context, "items": items}).to_string())
 }
 
 /// Deterministic context compaction planner for mobile/macOS hosts.
@@ -1341,7 +1472,8 @@ pub unsafe extern "C" fn nola_core_tool_policy_resolve(
     )
 }
 
-/// Fail-closed check whether an MCP tool invocation is permitted under mobile tool policy.
+/// Fail-closed check whether an MCP tool invocation is permitted under mobile/macOS tool policy.
+/// Accepts BOTH nested `{"policy": {...}, "descriptor": {...}}` (macOS) AND flat top-level fields.
 ///
 /// # Safety
 /// `json_ptr` must point to `json_len` readable UTF-8 bytes.
@@ -1353,19 +1485,125 @@ pub unsafe extern "C" fn nola_core_tool_policy_mcp_allowed(
     let Some(req) = (unsafe { parse_json_slice(json_ptr, json_len) }) else {
         return false;
     };
-    let explicit_enabled = req.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-    let denied = req.get("denied").and_then(|v| v.as_bool()).unwrap_or(false);
-    let has_server_or_tool = req
-        .get("server_id")
-        .or_else(|| req.get("tool_id"))
-        .or_else(|| req.get("tool_name"))
+
+    let policy = req.get("policy");
+    let desc = req.get("descriptor");
+
+    let target_id = desc
+        .and_then(|d| {
+            d.get("tool_id")
+                .or_else(|| d.get("id"))
+                .or_else(|| d.get("tool_name"))
+                .or_else(|| d.get("name"))
+                .or_else(|| d.get("server_id"))
+        })
+        .or_else(|| {
+            req.get("server_id")
+                .or_else(|| req.get("tool_id"))
+                .or_else(|| req.get("tool_name"))
+                .or_else(|| req.get("id"))
+        })
         .and_then(|v| v.as_str())
-        .is_some_and(|s| !s.trim().is_empty());
-    let auth_ok = req
-        .get("authorization")
-        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let Some(tool_id) = target_id else {
+        return false;
+    };
+
+    let denied = policy
+        .and_then(|p| p.get("denied").and_then(|v| v.as_bool()))
+        .or_else(|| desc.and_then(|d| d.get("denied").and_then(|v| v.as_bool())))
+        .or_else(|| req.get("denied").and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+    if denied {
+        return false;
+    }
+
+    let auth_ok = policy
+        .and_then(|p| p.get("authorization").and_then(|v| v.as_str()))
+        .or_else(|| desc.and_then(|d| d.get("authorization").and_then(|v| v.as_str())))
+        .or_else(|| req.get("authorization").and_then(|v| v.as_str()))
         .is_none_or(|a| a == "granted" || a == "not_required");
-    explicit_enabled && !denied && has_server_or_tool && auth_ok
+    if !auth_ok {
+        return false;
+    }
+
+    // Case 1: Explicit boolean `enabled` in `policy` or top-level `req`
+    if let Some(enabled) = policy
+        .and_then(|p| p.get("enabled").and_then(|v| v.as_bool()))
+        .or_else(|| req.get("enabled").and_then(|v| v.as_bool()))
+    {
+        if !enabled {
+            return false;
+        }
+        if desc
+            .and_then(|d| d.get("enabled").and_then(|v| v.as_bool()))
+            == Some(false)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    // Case 2: Full macOS `ToolPolicyInput` object inside `policy` (`user_policy` / `runtime`)
+    if let Some(p) = policy {
+        if p.get("user_policy").is_some() || p.get("runtime").is_some() {
+            if desc
+                .and_then(|d| d.get("enabled").and_then(|v| v.as_bool()))
+                == Some(false)
+            {
+                return false;
+            }
+            let now_ms_val = p.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+            if let Some(exp) = p.pointer("/runtime/expires_at_ms").and_then(|v| v.as_i64()) {
+                if exp <= now_ms_val {
+                    return false;
+                }
+            }
+            let deny_hit = |ptr: &str| -> bool {
+                p.pointer(ptr)
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|arr| arr.iter().any(|x| x.as_str() == Some(tool_id)))
+            };
+            if deny_hit("/user_policy/deny_tools") || deny_hit("/conversation/deny_tools") {
+                return false;
+            }
+            let (default_cap, _, default_risk) = infer_tool_metadata(tool_id);
+            let capability = desc
+                .and_then(|d| d.get("capability").and_then(|v| v.as_str()))
+                .unwrap_or(default_cap);
+            if p.pointer("/user_policy/deny_capabilities")
+                .and_then(|v| v.as_array())
+                .is_some_and(|arr| arr.iter().any(|c| c.as_str() == Some(capability)))
+            {
+                return false;
+            }
+            let max_risk = p
+                .pointer("/user_policy/max_risk")
+                .and_then(|v| v.as_str())
+                .unwrap_or("high");
+            let risk = desc
+                .and_then(|d| d.get("risk").and_then(|v| v.as_str()))
+                .unwrap_or(default_risk);
+            if risk_rank(risk) > risk_rank(max_risk) {
+                return false;
+            }
+            if let Some(cap_auth) = p
+                .pointer("/runtime/authorizations")
+                .and_then(|v| v.as_object())
+                .and_then(|m| m.get(capability))
+                .and_then(|v| v.as_str())
+            {
+                if cap_auth != "granted" && cap_auth != "not_required" {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Deterministically compose stable cacheable prefix + dynamic suffix with SHA-256 digests.
@@ -1632,9 +1870,9 @@ pub unsafe extern "C" fn nola_core_child_pump_poll(
     _wait_ms: u32,
 ) -> *mut c_char {
     if pump.is_null() || unsafe { &*pump }.closed.load(Ordering::Acquire) {
-        return to_owned_c_string(json!({"kind": "closed"}).to_string());
+        return to_owned_c_string(json!({"ok": true, "result": {"kind": "closed"}}).to_string());
     }
-    to_owned_c_string(json!({"kind": "idle"}).to_string())
+    to_owned_c_string(json!({"ok": true, "result": {"kind": "idle"}}).to_string())
 }
 
 /// Deliver a host response back to an embedded child pump.
@@ -1647,8 +1885,13 @@ pub unsafe extern "C" fn nola_core_child_pump_respond(
     _json_ptr: *const u8,
     _json_len: usize,
 ) -> *mut c_char {
-    let ok = !pump.is_null() && !unsafe { &*pump }.closed.load(Ordering::Acquire);
-    to_owned_c_string(json!({"ok": ok}).to_string())
+    if pump.is_null() || unsafe { &*pump }.closed.load(Ordering::Acquire) {
+        return to_owned_c_string(
+            json!({"ok": false, "error": {"code": "closed", "message": "child pump is closed"}})
+                .to_string(),
+        );
+    }
+    to_owned_c_string(json!({"ok": true, "result": {"committed": true}}).to_string())
 }
 
 /// Signal an embedded child pump to close.
@@ -1673,26 +1916,37 @@ pub unsafe extern "C" fn nola_core_child_pump_free(pump: *mut NolaCoreChildPump)
     }
 }
 
-/// Dispatch mobile MCP host management commands backed by `Store::list_mcp_servers`.
+/// Dispatch mobile MCP host management commands backed by `Store` & `McpManager`.
+/// Always wraps success in `{"ok": true, "result": ...}` matching Android/iOS contracts.
+/// Allows `app.is_null()` when operation is `"cancel"`.
 ///
 /// # Safety
-/// `app` must be valid; `json_ptr` must point to `json_len` readable UTF-8 bytes.
+/// `app` may be null for `"cancel"`, otherwise must be valid; `json_ptr` must point to `json_len` readable UTF-8 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn nola_core_mobile_mcp_host(
     app: *mut NolaCoreApplication,
     json_ptr: *const u8,
     json_len: usize,
 ) -> *mut c_char {
-    if app.is_null() {
-        return to_owned_c_string(json!({"ok": false, "error": "null application"}).to_string());
-    }
-    let app_ref = unsafe { &*app };
     let req = unsafe { parse_json_slice(json_ptr, json_len) }.unwrap_or_else(|| json!({}));
     let op = req
         .get("operation")
         .or_else(|| req.get("type"))
         .and_then(|v| v.as_str())
         .unwrap_or("list");
+
+    if op == "cancel" {
+        return to_owned_c_string(json!({"ok": true, "result": {"cancelled": true}}).to_string());
+    }
+
+    if app.is_null() {
+        return to_owned_c_string(
+            json!({"ok": false, "error": {"code": "null_application", "message": "null application handle"}})
+                .to_string(),
+        );
+    }
+    let app_ref = unsafe { &*app };
+
     match op {
         "list" | "list_servers" => {
             let servers = app_ref
@@ -1700,13 +1954,139 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
                 .store
                 .list_mcp_servers()
                 .unwrap_or_default();
-            to_owned_c_string(json!({"ok": true, "servers": servers}).to_string())
+            to_owned_c_string(json!({"ok": true, "result": {"servers": servers}}).to_string())
         }
-        _ => to_owned_c_string(json!({"ok": true, "tools": []}).to_string()),
+        "list_tools" => {
+            let servers = app_ref
+                .inner
+                .store
+                .list_mcp_servers()
+                .unwrap_or_default();
+            let target_id = req
+                .get("server_id")
+                .or_else(|| req.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let mut tools = Vec::new();
+            let candidates: Vec<_> = match target_id {
+                Some(sid) => servers.into_iter().filter(|s| s.id == sid).collect(),
+                None => servers.into_iter().filter(|s| s.enabled).collect(),
+            };
+            if let Some(sid) = target_id {
+                if candidates.is_empty() {
+                    return to_owned_c_string(
+                        json!({"ok": false, "error": {"code": "not_found", "message": format!("MCP server '{sid}' not found")}})
+                            .to_string(),
+                    );
+                }
+            }
+            for srv in candidates {
+                match app_ref.inner.mcp.connect(&srv).and_then(|c| c.list_tools()) {
+                    Ok(raw_tools) => {
+                        for mut t in raw_tools {
+                            if let Some(obj) = t.as_object_mut() {
+                                obj.insert("server_id".into(), json!(srv.id));
+                            }
+                            tools.push(t);
+                        }
+                    }
+                    Err(e) if target_id.is_some() => {
+                        return to_owned_c_string(
+                            json!({"ok": false, "error": {"code": "mcp_error", "message": e.to_string()}})
+                                .to_string(),
+                        );
+                    }
+                    Err(_) => {}
+                }
+            }
+            to_owned_c_string(json!({"ok": true, "result": {"tools": tools}}).to_string())
+        }
+        "call_tool" => {
+            let Some(server_id) = req
+                .get("server_id")
+                .or_else(|| req.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "invalid_argument", "message": "missing 'server_id'"}})
+                        .to_string(),
+                );
+            };
+            let Some(tool_name) = req
+                .get("tool_name")
+                .or_else(|| req.get("name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "invalid_argument", "message": "missing 'tool_name'"}})
+                        .to_string(),
+                );
+            };
+            let arguments = req
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let servers = app_ref
+                .inner
+                .store
+                .list_mcp_servers()
+                .unwrap_or_default();
+            let Some(srv) = servers.into_iter().find(|s| s.id == server_id) else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "not_found", "message": format!("MCP server '{server_id}' not found")}})
+                        .to_string(),
+                );
+            };
+            match app_ref
+                .inner
+                .mcp
+                .connect(&srv)
+                .and_then(|c| c.call_tool(tool_name, arguments))
+            {
+                Ok(res) => to_owned_c_string(json!({"ok": true, "result": res}).to_string()),
+                Err(e) => to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "mcp_call_error", "message": e.to_string()}})
+                        .to_string(),
+                ),
+            }
+        }
+        "disconnect" => {
+            if let Some(sid) = req
+                .get("server_id")
+                .or_else(|| req.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                app_ref.inner.mcp.disconnect(sid);
+                return to_owned_c_string(
+                    json!({"ok": true, "result": {"disconnected": true, "server_id": sid}})
+                        .to_string(),
+                );
+            }
+            let servers = app_ref
+                .inner
+                .store
+                .list_mcp_servers()
+                .unwrap_or_default();
+            for srv in &servers {
+                app_ref.inner.mcp.disconnect(&srv.id);
+            }
+            to_owned_c_string(
+                json!({"ok": true, "result": {"disconnected": true, "count": servers.len()}})
+                    .to_string(),
+            )
+        }
+        other => to_owned_c_string(
+            json!({"ok": false, "error": {"code": "unsupported_operation", "message": format!("unsupported mobile MCP operation '{other}'")}})
+                .to_string(),
+        ),
     }
 }
 
-/// Inspect/discover skill packages under a mobile skills root directory.
+/// Prepare a GitHub skill package descriptor under a mobile skills root directory.
+/// Matches `IOSGitHubSkillPackages.swift` (`{"ok": true, "value": ...}`).
 ///
 /// # Safety
 /// `root_path` and `request_json` must be valid NUL-terminated C strings.
@@ -1721,8 +2101,33 @@ pub unsafe extern "C" fn nola_mobile_github_skill_package_json(
     let Ok(root_str) = unsafe { CStr::from_ptr(root_path) }.to_str() else {
         return to_owned_c_string(json!({"ok": false, "error": "invalid root path"}).to_string());
     };
-    let skills = nola_modules::skills::discover_skills(std::path::Path::new(root_str), None);
-    to_owned_c_string(json!({"ok": true, "skills": skills}).to_string())
+    let Ok(req_str) = unsafe { CStr::from_ptr(request_json) }.to_str() else {
+        return to_owned_c_string(json!({"ok": false, "error": "invalid request UTF-8"}).to_string());
+    };
+    let req: Value = match serde_json::from_str(req_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return to_owned_c_string(
+                json!({"ok": false, "error": format!("invalid request JSON: {e}")}).to_string(),
+            );
+        }
+    };
+    let skills_dir = req
+        .get("skills_dir")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(root_str));
+    let query_or_url = req
+        .get("url")
+        .or_else(|| req.get("query"))
+        .or_else(|| req.get("repo"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir) {
+        Ok(pkg) => to_owned_c_string(json!({"ok": true, "value": pkg}).to_string()),
+        Err(err) => to_owned_c_string(json!({"ok": false, "error": err}).to_string()),
+    }
 }
 
 /// Redact high-confidence secrets/tokens (and an optional active credential) in a JSON payload
@@ -1794,10 +2199,10 @@ pub unsafe extern "C" fn nola_core_software_update_json(
         Ok(v) => v,
         Err(e) => return err_json("invalid_json", format!("invalid json: {e}")),
     };
-    let target = req
+    let req_target = req
         .get("target")
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+        .filter(|s| !s.trim().is_empty());
     let channel = req
         .get("channel")
         .and_then(|v| v.as_str())
@@ -1820,20 +2225,61 @@ pub unsafe extern "C" fn nola_core_software_update_json(
         .and_then(|v| v.as_str())
         .unwrap_or("status");
 
-    if manifest_url.is_empty() {
-        let status = match operation {
-            "check" => "up_to_date",
-            _ => "idle",
+    if operation == "download" {
+        let Some(url) = req
+            .get("url")
+            .or_else(|| req.get("download_url"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+        else {
+            return err_json("invalid_request", "missing download 'url'".into());
         };
+        let dest_dir = req
+            .get("dest_dir")
+            .or_else(|| req.get("destination_dir"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let expected_sha256 = req
+            .get("sha256")
+            .or_else(|| req.get("expected_sha256"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+        return match download_update_package(url, expected_sha256, Path::new(&dest_dir)) {
+            Ok(info) => to_owned_c_string(
+                json!({
+                    "ok": true,
+                    "value": {
+                        "status": "downloaded",
+                        "path": info["path"],
+                        "sha256": info["sha256"],
+                        "bytes": info["bytes"],
+                        "target": info["target"]
+                    },
+                    "error": Value::Null
+                })
+                .to_string(),
+            ),
+            Err(err) => err_json("update_download_failed", err),
+        };
+    }
+
+    if operation != "check" && manifest_url.is_empty() {
+        let effective_target = std::env::var("NOLA_UPDATE_TARGET")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| req_target.map(ToString::to_string))
+            .unwrap_or_else(nola_modules::current_update_target);
         return to_owned_c_string(
             json!({
                 "ok": true,
                 "value": {
-                    "status": status,
+                    "status": "idle",
                     "current_version": current_version,
                     "current_build": current_build,
                     "channel": channel,
-                    "target": target,
+                    "target": effective_target,
                     "release": Value::Null
                 },
                 "error": Value::Null
@@ -1844,10 +2290,15 @@ pub unsafe extern "C" fn nola_core_software_update_json(
 
     match check_for_update(manifest_url, current_version) {
         Ok(update) => {
-            let status = if update.update_available {
-                "update_available"
+            let effective_target = if std::env::var("NOLA_UPDATE_TARGET")
+                .ok()
+                .is_some_and(|s| !s.trim().is_empty())
+            {
+                update.target.clone()
             } else {
-                "up_to_date"
+                req_target
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| update.target.clone())
             };
             let release = match (update.update_available, update.latest) {
                 (true, Some(rel)) => json!({
@@ -1869,11 +2320,11 @@ pub unsafe extern "C" fn nola_core_software_update_json(
                 json!({
                     "ok": true,
                     "value": {
-                        "status": status,
+                        "status": update.status,
                         "current_version": current_version,
                         "current_build": current_build,
                         "channel": channel,
-                        "target": target,
+                        "target": effective_target,
                         "release": release
                     },
                     "error": Value::Null
@@ -2092,16 +2543,103 @@ mod tests {
         assert_eq!(snap_val["memories"].as_array().unwrap().len(), 1);
         assert_eq!(snap_val["outcomes"].as_array().unwrap().len(), 1);
 
-        // 8. Software update contract matches AppleSoftwareUpdateClient
+        // 8. Software update contract matches AppleSoftwareUpdateClient (truthful unconfigured!)
         let su_req = json!({"operation": "check", "target": "ios"}).to_string();
         let su_ptr = unsafe { nola_core_software_update_json(su_req.as_ptr(), su_req.len()) };
         let su_val: Value =
             serde_json::from_str(unsafe { CStr::from_ptr(su_ptr) }.to_str().unwrap()).unwrap();
         unsafe { nola_core_free_c_string(su_ptr) };
         assert_eq!(su_val["ok"], true);
-        assert_eq!(su_val["value"]["status"], "up_to_date");
+        assert_eq!(su_val["value"]["status"], "unconfigured");
         assert_eq!(su_val["value"]["target"], "ios");
         assert!(nola_core_application_last_open_error().is_null());
+
+        // 9. Nested macOS MCP policy check, mobile MCP cancel with null app, attest result envelope,
+        //    child pump result envelope, stateless intelligence recall, and GitHub skill package
+        let mac_mcp = json!({
+            "policy": {"enabled": true, "denied": false, "authorization": "granted"},
+            "descriptor": {"server_id": "docs", "tool_name": "search_docs"}
+        })
+        .to_string();
+        assert!(unsafe { nola_core_tool_policy_mcp_allowed(mac_mcp.as_ptr(), mac_mcp.len()) });
+
+        let cancel_req = json!({"type": "cancel"}).to_string();
+        let cancel_ptr = unsafe {
+            nola_core_mobile_mcp_host(std::ptr::null_mut(), cancel_req.as_ptr(), cancel_req.len())
+        };
+        let cancel_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(cancel_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(cancel_ptr) };
+        assert_eq!(cancel_val["ok"], true);
+        assert_eq!(cancel_val["result"]["cancelled"], true);
+
+        let target_bytes = b"resend-target-1";
+        let cfg_bytes = b"{}";
+        let att_ptr = unsafe {
+            nola_core_application_attest_resend_host_policy(
+                app,
+                target_bytes.as_ptr(),
+                target_bytes.len(),
+                cfg_bytes.as_ptr(),
+                cfg_bytes.len(),
+            )
+        };
+        let att_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(att_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(att_ptr) };
+        assert_eq!(att_val["ok"], true);
+        assert_eq!(att_val["result"]["attested"], true);
+        assert_eq!(att_val["result"]["policy_digest"].as_str().unwrap().len(), 64);
+
+        let pump = unsafe {
+            nola_core_child_pump_start(app, std::ptr::null(), 0, std::ptr::null_mut())
+        };
+        assert!(!pump.is_null());
+        let poll_ptr = unsafe { nola_core_child_pump_poll(pump, 10) };
+        let poll_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(poll_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(poll_ptr) };
+        assert_eq!(poll_val["ok"], true);
+        assert_eq!(poll_val["result"]["kind"], "idle");
+        let resp_ptr = unsafe { nola_core_child_pump_respond(pump, b"{}".as_ptr(), 2) };
+        let resp_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(resp_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(resp_ptr) };
+        assert_eq!(resp_val["ok"], true);
+        assert_eq!(resp_val["result"]["committed"], true);
+        unsafe {
+            nola_core_child_pump_close(pump);
+            nola_core_child_pump_free(pump);
+        }
+
+        let recall_req = json!({
+            "query": "Rust memory safety",
+            "limit": 1,
+            "items": [
+                {"title": "Cooking", "content": "Pasta recipe", "updated_at_ms": 100},
+                {"title": "Systems", "content": "Rust ensures memory safety", "updated_at_ms": 200}
+            ]
+        })
+        .to_string();
+        let recall_ptr =
+            unsafe { nola_core_intelligence_recall(recall_req.as_ptr(), recall_req.len()) };
+        let recall_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(recall_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(recall_ptr) };
+        assert_eq!(recall_val["items"].as_array().unwrap().len(), 1);
+        assert!(recall_val["context"].as_str().unwrap().contains("Rust"));
+
+        let root_c = CString::new(dir.path().to_str().unwrap()).unwrap();
+        let pkg_req_c =
+            CString::new(r#"{"url":"https://github.com/acme/nola-skills/blob/main/audit/SKILL.md"}"#)
+                .unwrap();
+        let pkg_ptr =
+            unsafe { nola_mobile_github_skill_package_json(root_c.as_ptr(), pkg_req_c.as_ptr()) };
+        let pkg_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(pkg_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(pkg_ptr) };
+        assert_eq!(pkg_val["ok"], true);
+        assert_eq!(pkg_val["value"]["name"], "audit");
 
         // Retain + free safety
         let retained = unsafe { nola_core_mobile_mcp_retain(app) };

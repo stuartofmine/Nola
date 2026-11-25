@@ -3,6 +3,9 @@
 //! - Strict URL scheme validation (`http`/`https` only — blocks `file://`, `localhost.evil.com`)
 //! - Full RFC 6455 fragmented WebSocket frame reassembly + PING/PONG + CLOSE + leftover upgrade buffer
 //! - Passes CDP payload over `stdin` (never leaking secrets in `/proc/cmdline`!) with finite timeout
+//! - Scrubs sensitive env vars (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `ANTHROPIC_*`, `OPENAI_*`, `AWS_*`)
+//!   before spawning the Python CDP helper subprocess
+//! - Supports `target="attached"` routing through a shared `NativeBrowserBridge`
 //! - Checks child liveness via `try_wait()`, surfaces JS `exceptionDetails` & `{ok:false}` as errors
 //! - Bounded `NativeBrowserBridge` queue.
 
@@ -29,6 +32,28 @@ use crate::{ToolContext, ToolHandler};
 
 const MAX_BRIDGE_ITEMS: usize = 256;
 
+/// Returns true iff an environment variable name looks like a secret/credential
+/// that should be scrubbed before spawning external helper subprocesses.
+pub(crate) fn is_sensitive_env_key(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    upper.ends_with("_API_KEY")
+        || upper.ends_with("_TOKEN")
+        || upper.ends_with("_SECRET")
+        || upper.starts_with("ANTHROPIC_")
+        || upper.starts_with("OPENAI_")
+        || upper.starts_with("AWS_")
+}
+
+fn scrub_sensitive_env(cmd: &mut Command) {
+    for (k, _) in std::env::vars_os() {
+        if let Some(s) = k.to_str() {
+            if is_sensitive_env_key(s) {
+                cmd.env_remove(s);
+            }
+        }
+    }
+}
+
 /// Queue backing the Chrome native-messaging host (`/api/native-browser/host/poll` & `/result`).
 #[derive(Default)]
 pub struct NativeBrowserBridge {
@@ -53,6 +78,24 @@ impl NativeBrowserBridge {
         }
         q.push_back(envelope);
         id
+    }
+
+    /// Alias for `enqueue` that also waits up to `timeout` for the attached browser host to reply.
+    pub fn queue_command(&self, command: Value, timeout: Duration) -> Result<Value, String> {
+        let id = self.enqueue(command);
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(res) = self.take_result(&id) {
+                return Ok(res);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "attached browser bridge timed out after {}ms waiting for command {id}",
+                    timeout.as_millis()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     pub fn poll_next(&self) -> Option<Value> {
@@ -120,6 +163,19 @@ pub struct BrowserManager {
 }
 
 impl BrowserManager {
+    /// Construct a `BrowserManager` sharing an externally-owned `NativeBrowserBridge`
+    /// (e.g. shared with `web_server.rs` so `target="attached"` routes to the live bridge).
+    pub fn with_native_bridge(bridge: Arc<NativeBrowserBridge>) -> Self {
+        Self {
+            session: Mutex::new(None),
+            native_bridge: bridge,
+        }
+    }
+
+    pub fn native_bridge(&self) -> &Arc<NativeBrowserBridge> {
+        &self.native_bridge
+    }
+
     pub fn status(&self) -> Value {
         let mut g = self.session.lock().unwrap();
         if let Some(s) = g.as_mut() {
@@ -367,12 +423,27 @@ elif op == "click":
     js = f"(()=>{{const e=document.querySelector({sel});if(!e)return {{ok:false,error:'selector not found'}};e.scrollIntoView();e.click();return {{ok:true,tag:e.tagName}};}})()"
     r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
     out = r.get("result", {}).get("value", {})
-elif op == "type_text":
+elif op in ("type_text", "type"):
     sel = json.dumps(params.get("selector", ""))
     txt = json.dumps(params.get("text", ""))
     js = f"(()=>{{const e=document.querySelector({sel});if(!e)return {{ok:false,error:'selector not found'}};e.focus();e.value={txt};e.dispatchEvent(new Event('input',{{bubbles:true}}));e.dispatchEvent(new Event('change',{{bubbles:true}}));return {{ok:true}};}})()"
     r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
     out = r.get("result", {}).get("value", {})
+elif op == "eval":
+    expr = params.get("expression") or params.get("script") or ""
+    r = cdp("Runtime.evaluate", expression=expr, returnByValue=True)
+    out = {"ok": True, "value": r.get("result", {}).get("value")}
+elif op == "scroll":
+    dy = int(params.get("delta_y", 0))
+    dx = int(params.get("delta_x", 0))
+    js = f"(()=>{{window.scrollBy({dx},{dy});return {{ok:true,scrollX:window.scrollX,scrollY:window.scrollY}};}})()"
+    r = cdp("Runtime.evaluate", expression=js, returnByValue=True)
+    out = r.get("result", {}).get("value", {})
+elif op == "press_key":
+    key = params.get("key", "")
+    cdp("Input.dispatchKeyEvent", type="keyDown", key=key)
+    cdp("Input.dispatchKeyEvent", type="keyUp", key=key)
+    out = {"ok": True, "key": key}
 elif op == "screenshot":
     r = cdp("Page.captureScreenshot", format="png")
     raw = base64.b64decode(r["data"])
@@ -387,12 +458,14 @@ print(json.dumps(out))
             "params": params,
             "screenshot_out": screenshot_out.map(|p| p.display().to_string())
         });
-        let mut child = Command::new("python3")
-            .arg("-c")
+        let mut cmd = Command::new("python3");
+        cmd.arg("-c")
             .arg(py)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        scrub_sensitive_env(&mut cmd);
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn cdp helper: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -481,17 +554,27 @@ impl ToolHandler for BrowserTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "browser".into(),
-                description: "Automate a local Chromium browser via CDP (action: start|status|navigate|snapshot|click|type_text|screenshot|tabs|stop).".into(),
+                description: "Automate a managed Chromium CDP browser or attached Chrome extension bridge (action: start|status|navigate|snapshot|click|type_text|type|eval|scroll|press_key|screenshot|tabs|stop; target: managed|attached).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["start", "status", "navigate", "snapshot", "click", "type_text", "screenshot", "tabs", "stop"]
+                            "enum": ["start", "status", "navigate", "snapshot", "click", "type_text", "type", "eval", "scroll", "press_key", "screenshot", "tabs", "stop"]
+                        },
+                        "target": {
+                            "type": "string",
+                            "enum": ["managed", "attached"],
+                            "description": "Execution target: 'managed' local Chromium CDP (default) or 'attached' native browser extension bridge"
                         },
                         "url": { "type": "string" },
                         "selector": { "type": "string" },
                         "text": { "type": "string" },
+                        "expression": { "type": "string", "description": "JavaScript expression for action=eval" },
+                        "delta_y": { "type": "integer", "description": "Vertical scroll delta in pixels for action=scroll" },
+                        "delta_x": { "type": "integer", "description": "Optional horizontal scroll delta in pixels for action=scroll" },
+                        "key": { "type": "string", "description": "Key name for action=press_key (e.g. 'Enter', 'Escape', 'Tab')" },
+                        "timeout_ms": { "type": "integer", "description": "Wait timeout in ms for target=attached (default 15000)" },
                         "headless": { "type": "boolean", "description": "Default true" }
                     },
                     "required": ["action"]
@@ -504,20 +587,115 @@ impl ToolHandler for BrowserTool {
     }
 
     fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
-        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("status");
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("managed");
+
+        if action == "navigate" {
+            let Some(u) = args.get("url").and_then(|v| v.as_str()) else {
+                return ToolExecutionResult::err_structured(
+                    "missing_param",
+                    "browser navigate requires 'url'",
+                    None,
+                );
+            };
+            if let Err(e) = validate_browser_url(u, ctx.network_allowed) {
+                return ToolExecutionResult::err_structured("browser_url_blocked", e, None);
+            }
+        }
+
+        if target == "attached"
+            && matches!(
+                action,
+                "navigate"
+                    | "click"
+                    | "type"
+                    | "type_text"
+                    | "eval"
+                    | "screenshot"
+                    | "snapshot"
+                    | "scroll"
+                    | "press_key"
+            )
+        {
+            let timeout_ms = args
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(15_000)
+                .clamp(100, 30_000);
+            let mut cmd = args.clone();
+            if let Some(obj) = cmd.as_object_mut() {
+                obj.insert("action".into(), Value::String(action.to_string()));
+                obj.insert("target".into(), Value::String("attached".into()));
+            }
+            return match ctx
+                .browser
+                .native_bridge()
+                .queue_command(cmd, Duration::from_millis(timeout_ms))
+            {
+                Ok(v) => {
+                    if v.get("ok") == Some(&Value::Bool(false)) {
+                        let msg = v
+                            .get("error")
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("attached browser action failed")
+                            .to_string();
+                        ToolExecutionResult::err_structured("browser_action_failed", msg, Some(v))
+                    } else {
+                        let mut res = ToolExecutionResult::ok_structured(
+                            v.clone(),
+                            format!("Attached browser {action} completed"),
+                        );
+                        if action == "screenshot" {
+                            if let Some(b64) = v
+                                .get("image_base64")
+                                .or_else(|| v.get("data"))
+                                .and_then(|s| s.as_str())
+                            {
+                                if let Ok(bytes) = B64.decode(b64) {
+                                    res = res.with_media(vec![MediaAttachment {
+                                        mime_type: "image/png".into(),
+                                        filename: "attached_browser_screenshot.png".into(),
+                                        sha256: sha256_hex(&bytes),
+                                        raw_bytes_len: bytes.len(),
+                                        bytes_base64: b64.to_string(),
+                                    }]);
+                                }
+                            }
+                        }
+                        res
+                    }
+                }
+                Err(e) => ToolExecutionResult::err_structured("attached_browser_error", e, None),
+            };
+        }
+
         match action {
             "status" => ToolExecutionResult::ok_structured(
                 ctx.browser.status(),
                 "Checked browser automation status",
             ),
             "start" => {
-                let headless = args.get("headless").and_then(|v| v.as_bool()).unwrap_or(true);
+                let headless = args
+                    .get("headless")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
                 match ctx.browser.start(headless) {
-                    Ok(v) => ToolExecutionResult::ok_structured(v, "Started managed Chromium CDP session"),
+                    Ok(v) => ToolExecutionResult::ok_structured(
+                        v,
+                        "Started managed Chromium CDP session",
+                    ),
                     Err(e) => ToolExecutionResult::err_structured("browser_start_error", e, None),
                 }
             }
-            "stop" => ToolExecutionResult::ok_structured(ctx.browser.stop(), "Stopped managed browser"),
+            "stop" => {
+                ToolExecutionResult::ok_structured(ctx.browser.stop(), "Stopped managed browser")
+            }
             "tabs" => match ctx.browser.list_tabs() {
                 Ok(tabs) => {
                     let count = tabs.len();
@@ -528,14 +706,19 @@ impl ToolHandler for BrowserTool {
                 }
                 Err(e) => ToolExecutionResult::err_structured("browser_error", e, None),
             },
-            "navigate" | "snapshot" | "click" | "type_text" => {
-                if action == "navigate" {
-                    let Some(u) = args.get("url").and_then(|v| v.as_str()) else {
-                        return ToolExecutionResult::err_structured("missing_param", "browser navigate requires 'url'", None);
-                    };
-                    if let Err(e) = validate_browser_url(u, ctx.network_allowed) {
-                        return ToolExecutionResult::err_structured("browser_url_blocked", e, None);
-                    }
+            "navigate" | "snapshot" | "click" | "type_text" | "type" | "eval" | "scroll"
+            | "press_key" => {
+                if action == "press_key"
+                    && args
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .is_none_or(|s| s.is_empty())
+                {
+                    return ToolExecutionResult::err_structured(
+                        "missing_param",
+                        "browser press_key requires non-empty 'key'",
+                        None,
+                    );
                 }
                 match ctx.browser.run_cdp_python_script(action, &args, None) {
                     Ok(v) => {
@@ -545,20 +728,28 @@ impl ToolHandler for BrowserTool {
                                 .and_then(|e| e.as_str())
                                 .unwrap_or("browser action failed")
                                 .to_string();
-                            ToolExecutionResult::err_structured("browser_action_failed", msg, Some(v))
+                            ToolExecutionResult::err_structured(
+                                "browser_action_failed",
+                                msg,
+                                Some(v),
+                            )
                         } else {
-                            ToolExecutionResult::ok_structured(v, format!("Browser {action} completed"))
+                            ToolExecutionResult::ok_structured(
+                                v,
+                                format!("Browser {action} completed"),
+                            )
                         }
                     }
                     Err(e) => ToolExecutionResult::err_structured("browser_action_error", e, None),
                 }
             }
             "screenshot" => {
-                let out_path = std::env::temp_dir().join(format!(
-                    "nola-browser-shot-{}.png",
-                    new_id()
-                ));
-                match ctx.browser.run_cdp_python_script("screenshot", &args, Some(&out_path)) {
+                let out_path =
+                    std::env::temp_dir().join(format!("nola-browser-shot-{}.png", new_id()));
+                match ctx
+                    .browser
+                    .run_cdp_python_script("screenshot", &args, Some(&out_path))
+                {
                     Ok(v) => {
                         let mut media = Vec::new();
                         if let Ok(bytes) = fs::read(&out_path) {
@@ -576,7 +767,9 @@ impl ToolHandler for BrowserTool {
                         )
                         .with_media(media)
                     }
-                    Err(e) => ToolExecutionResult::err_structured("browser_screenshot_error", e, None),
+                    Err(e) => {
+                        ToolExecutionResult::err_structured("browser_screenshot_error", e, None)
+                    }
                 }
             }
             other => ToolExecutionResult::err_structured(

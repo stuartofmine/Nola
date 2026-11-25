@@ -14,6 +14,7 @@
 
 pub mod a2ui;
 pub mod automations_messaging;
+pub mod code_memory;
 pub mod data_sources;
 pub mod goal_worker;
 pub mod goals_sops;
@@ -24,11 +25,27 @@ pub mod scheduler;
 pub mod skills;
 pub mod updater;
 
+pub use automations_messaging::{
+    build_outbound_webhook_payload, parse_inbound_webhook_payload, verify_inbound_webhook_token,
+};
+pub use data_sources::{
+    list_data_source_usage, record_data_source_usage, test_data_source_connection,
+};
 pub use goal_worker::GoalWorker;
+pub use local_models_plugins::{
+    list_desktop_plugin_pages, list_harness_plugins, probe_engine_status, probe_hardware,
+    recommend_local_models, LocalModelProcessManager,
+};
 pub use memory::MemoryWorker;
-pub use rooms_peers::{parse_expert_mentions, RoomRuntime};
-pub use scheduler::{cron_matches, AutomationScheduler};
-pub use updater::{check_for_update, is_newer_version, verify_artifact_sha256, UpdateCheckResult, UpdateManifest};
+pub use rooms_peers::{built_in_role_templates, parse_expert_mentions, RoomRuntime};
+pub use scheduler::{
+    automation_stats_summary, cron_matches, spawn_background_scheduler, AutomationScheduler,
+};
+pub use skills::prepare_github_skill_package;
+pub use updater::{
+    check_for_update, current_update_target, download_update_package, is_newer_version,
+    verify_artifact_sha256, UpdateCheckResult, UpdateManifest,
+};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,6 +99,7 @@ impl ModulesSuite {
         a2ui::register_tools(self, registry);
         skills::register_tools(self, registry);
         memory::register_tools(self, registry);
+        code_memory::register_tools(self, registry);
         goals_sops::register_tools(self, registry);
         rooms_peers::register_tools(self, registry);
         data_sources::register_tools(self, registry);

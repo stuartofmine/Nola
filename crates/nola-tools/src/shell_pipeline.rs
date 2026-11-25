@@ -7,10 +7,11 @@
 //! - `validation_snapshot` ignoring `.git`, `__pycache__`, `target`, `node_modules`, `.venv`.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::fs;
-use std::io::Read;
-use std::path::Path;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -29,18 +30,88 @@ use crate::{ToolContext, ToolHandler};
 const MAX_CAPTURED_BYTES: usize = 256 * 1024;
 const FOREGROUND_HEAD_BYTES: usize = 64 * 1024;
 const FOREGROUND_TAIL_BYTES: usize = 192 * 1024;
+const MAX_SPOOL_BYTES: usize = 32 * 1024 * 1024;
+static SPOOL_SEQ: AtomicU64 = AtomicU64::new(1);
 
-/// Head+Tail bounded pipe accumulator so huge build/test logs NEVER lose the final traceback!
+/// Head+Tail bounded pipe accumulator + full-output spool file when output exceeds 256 KiB
+/// so huge build/test logs NEVER permanently destroy middle bytes before `OutputStore` sees them!
 #[derive(Default)]
 struct HeadTailCapture {
     head: Vec<u8>,
     tail: VecDeque<u8>,
     total_bytes: usize,
+    spool_path: Option<PathBuf>,
+    spool_file: Option<File>,
+    spool_written: usize,
+    spool_failed: bool,
+}
+
+impl Drop for HeadTailCapture {
+    fn drop(&mut self) {
+        let _ = self.spool_file.take();
+        if let Some(p) = self.spool_path.take() {
+            let _ = fs::remove_file(p);
+        }
+    }
 }
 
 impl HeadTailCapture {
+    fn ensure_spool(&mut self) {
+        if self.spool_file.is_some() || self.spool_path.is_some() || self.spool_failed {
+            return;
+        }
+        let seq = SPOOL_SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "nola-bash-spool-{}-{seq}.tmp",
+            std::process::id()
+        ));
+        match File::create(&path) {
+            Ok(mut file) => {
+                let mut written = 0usize;
+                if file.write_all(&self.head).is_ok() {
+                    written += self.head.len();
+                }
+                let (s1, s2) = self.tail.as_slices();
+                if !s1.is_empty() && file.write_all(s1).is_ok() {
+                    written += s1.len();
+                }
+                if !s2.is_empty() && file.write_all(s2).is_ok() {
+                    written += s2.len();
+                }
+                self.spool_written = written;
+                self.spool_path = Some(path);
+                self.spool_file = Some(file);
+            }
+            Err(_) => {
+                self.spool_failed = true;
+            }
+        }
+    }
+
     fn push(&mut self, data: &[u8]) {
+        let prev_total = self.total_bytes;
         self.total_bytes = self.total_bytes.saturating_add(data.len());
+
+        // Start spooling full output to disk as soon as we cross the 256 KiB inline threshold
+        if self.spool_file.is_none() && self.total_bytes > MAX_CAPTURED_BYTES {
+            self.ensure_spool();
+            // Flush current data chunk if ensure_spool only wrote prior head+tail
+            if let Some(f) = self.spool_file.as_mut() {
+                let rem = MAX_SPOOL_BYTES.saturating_sub(self.spool_written);
+                let to_write = data.len().min(rem);
+                if to_write > 0 && f.write_all(&data[..to_write]).is_ok() {
+                    self.spool_written += to_write;
+                }
+            }
+        } else if let Some(f) = self.spool_file.as_mut() {
+            let rem = MAX_SPOOL_BYTES.saturating_sub(self.spool_written);
+            let to_write = data.len().min(rem);
+            if to_write > 0 && f.write_all(&data[..to_write]).is_ok() {
+                self.spool_written += to_write;
+            }
+        }
+        let _ = prev_total;
+
         let head_rem = FOREGROUND_HEAD_BYTES.saturating_sub(self.head.len());
         let to_head = data.len().min(head_rem);
         if to_head > 0 {
@@ -53,7 +124,8 @@ impl HeadTailCapture {
                 self.tail
                     .extend(&rest[rest.len() - FOREGROUND_TAIL_BYTES..]);
             } else {
-                let overflow = (self.tail.len() + rest.len()).saturating_sub(FOREGROUND_TAIL_BYTES);
+                let overflow =
+                    (self.tail.len() + rest.len()).saturating_sub(FOREGROUND_TAIL_BYTES);
                 if overflow > 0 {
                     self.tail.drain(..overflow);
                 }
@@ -62,23 +134,35 @@ impl HeadTailCapture {
         }
     }
 
-    fn into_string_and_omitted(self) -> (String, usize) {
+    fn into_preview_and_full(mut self) -> (String, usize, Option<String>) {
         let kept = self.head.len() + self.tail.len();
         let omitted = self.total_bytes.saturating_sub(kept);
         let head_s = strip_ansi(&String::from_utf8_lossy(&self.head));
-        if self.tail.is_empty() {
-            return (head_s, 0);
-        }
-        let tail_vec: Vec<u8> = self.tail.into_iter().collect();
-        let tail_s = strip_ansi(&String::from_utf8_lossy(&tail_vec));
-        if omitted == 0 {
-            (format!("{head_s}{tail_s}"), 0)
+        let preview = if self.tail.is_empty() {
+            head_s
         } else {
-            (
-                format!("{head_s}\n... [{omitted} bytes omitted in middle] ...\n{tail_s}"),
-                omitted,
-            )
-        }
+            let tail_vec: Vec<u8> = std::mem::take(&mut self.tail).into_iter().collect();
+            let tail_s = strip_ansi(&String::from_utf8_lossy(&tail_vec));
+            if omitted == 0 {
+                format!("{head_s}{tail_s}")
+            } else {
+                format!("{head_s}\n... [{omitted} bytes omitted in middle] ...\n{tail_s}")
+            }
+        };
+
+        let full_text = if let Some(mut f) = self.spool_file.take() {
+            let _ = f.flush();
+            drop(f);
+            self.spool_path.as_ref().and_then(|p| {
+                fs::read(p)
+                    .ok()
+                    .map(|raw| strip_ansi(&String::from_utf8_lossy(&raw)))
+            })
+        } else {
+            None
+        };
+        // `Drop` cleans up `self.spool_path`.
+        (preview, omitted, full_text)
     }
 }
 
@@ -151,6 +235,15 @@ fn kill_process_group(child: &mut Child) {
         if pgid > 0 {
             unsafe {
                 libc::kill(-pgid, libc::SIGTERM);
+            }
+            let grace_deadline = Instant::now() + Duration::from_millis(150);
+            while Instant::now() < grace_deadline {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+            unsafe {
                 libc::kill(-pgid, libc::SIGKILL);
             }
         }
@@ -286,7 +379,7 @@ impl ShellExecutionPipeline {
         let (stderr_chunk, err_cursor) = read_incremental(&job.stderr, &job.stderr_cursor);
         let exit_code = *job.exit_code.lock().unwrap();
 
-        Ok(json!({
+        let mut res = json!({
             "job_id": job_id,
             "running": exit_code.is_none(),
             "exit_code": exit_code,
@@ -294,7 +387,11 @@ impl ShellExecutionPipeline {
             "stderr": stderr_chunk,
             "stdout_cursor": out_cursor,
             "stderr_cursor": err_cursor,
-        }))
+        });
+        if stop {
+            res["local_stop"] = json!(true);
+        }
+        Ok(res)
     }
 }
 
@@ -510,10 +607,41 @@ impl ToolHandler for BashTool {
         }
         let duration_ms = started.elapsed().as_millis() as u64;
 
-        let (stdout, stdout_omitted) =
-            std::mem::take(&mut *out_buf.lock().unwrap()).into_string_and_omitted();
-        let (stderr, stderr_omitted) =
-            std::mem::take(&mut *err_buf.lock().unwrap()).into_string_and_omitted();
+        let (stdout, stdout_omitted, stdout_full) =
+            std::mem::take(&mut *out_buf.lock().unwrap()).into_preview_and_full();
+        let (stderr, stderr_omitted, stderr_full) =
+            std::mem::take(&mut *err_buf.lock().unwrap()).into_preview_and_full();
+
+        // Preserve full stdout/stderr in session-scoped OutputStore when output exceeded 256 KiB!
+        let mut full_output_id: Option<String> = None;
+        let mut full_output_available: Option<bool> = None;
+        let mut full_output_error: Option<String> = None;
+        if stdout_full.is_some() || stderr_full.is_some() || stdout_omitted > 0 || stderr_omitted > 0
+        {
+            let full_out = stdout_full.as_deref().unwrap_or(&stdout);
+            let full_err = stderr_full.as_deref().unwrap_or(&stderr);
+            let mut sections = Vec::new();
+            if !full_out.is_empty() {
+                sections.push(format!("=== stdout ===\n{full_out}"));
+            }
+            if !full_err.is_empty() {
+                sections.push(format!("=== stderr ===\n{full_err}"));
+            }
+            let combined = sections.join("\n\n");
+            match ctx
+                .output_store
+                .save_scoped(&ctx.session_id, "bash", &combined)
+            {
+                Ok(meta) => {
+                    full_output_id = Some(meta.output_id);
+                    full_output_available = Some(true);
+                }
+                Err(e) => {
+                    full_output_available = Some(false);
+                    full_output_error = Some(e);
+                }
+            }
+        }
 
         // Compute authoritative VersionTransitions for declared output_artifacts
         let mut effects = Vec::new();
@@ -559,8 +687,20 @@ impl ToolHandler for BashTool {
             "stderr": stderr,
             "effects": effects
         });
+        if timed_out {
+            data["local_stop"] = json!(true);
+        }
         if stdout_omitted > 0 || stderr_omitted > 0 {
             data["omitted_bytes"] = json!({"stdout": stdout_omitted, "stderr": stderr_omitted});
+        }
+        if let Some(id) = full_output_id {
+            data["full_output_id"] = json!(id);
+        }
+        if let Some(avail) = full_output_available {
+            data["full_output_available"] = json!(avail);
+        }
+        if let Some(err) = full_output_error {
+            data["spill_error"] = json!(err);
         }
         let summary = if timed_out {
             format!("Shell command timed out after {timeout_secs}s")

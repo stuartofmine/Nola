@@ -7,10 +7,11 @@ use serde_json::Value;
 use crate::CapabilityDomain;
 
 /// User-selectable permission profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionProfile {
     /// Ask before writes, process execution, or network egress.
+    #[default]
     Cautious,
     /// Auto-allow workspace-scoped file edits; still guard shell & outside-workspace writes.
     AcceptEdits,
@@ -19,12 +20,40 @@ pub enum PermissionProfile {
 }
 
 impl PermissionProfile {
+    /// Legacy/lenient parser accepting aliases (preserved for transitional callers).
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "cautious" | "ask" | "default" => Some(Self::Cautious),
             "accept_edits" | "accept-edits" => Some(Self::AcceptEdits),
             "allow_all" | "allow-all" | "yolo" => Some(Self::AllowAll),
             _ => None,
+        }
+    }
+
+    /// Strict canonical parser accepting ONLY `"cautious"` and `"allow_all"`.
+    /// Rejects unknown strings, case/punctuation variants, and legacy aliases.
+    pub fn parse_strict(raw: &str) -> Result<Self, String> {
+        match raw.trim() {
+            "cautious" => Ok(Self::Cautious),
+            "allow_all" => Ok(Self::AllowAll),
+            other => Err(format!(
+                "invalid permission profile '{other}': expected strictly 'cautious' or 'allow_all'"
+            )),
+        }
+    }
+
+    /// Returns true if this profile is one of the two strict canonical profiles.
+    pub fn is_strict_canonical(self) -> bool {
+        matches!(self, Self::Cautious | Self::AllowAll)
+    }
+
+    /// Returns the strict canonical wire name (`"cautious"` or `"allow_all"`).
+    /// Non-canonical `AcceptEdits` conservatively maps to `"cautious"`.
+    pub fn as_canonical_str(self) -> &'static str {
+        match self {
+            Self::Cautious => "cautious",
+            Self::AllowAll => "allow_all",
+            Self::AcceptEdits => "cautious",
         }
     }
 }
@@ -110,4 +139,48 @@ pub enum HookDecision {
     Block { reason: String },
     ModifyInput { input: Value },
     InjectContext { text: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_profile_default_and_strict_parser() {
+        assert_eq!(PermissionProfile::default(), PermissionProfile::Cautious);
+        assert_eq!(
+            PermissionProfile::parse_strict("cautious").unwrap(),
+            PermissionProfile::Cautious
+        );
+        assert_eq!(
+            PermissionProfile::parse_strict("allow_all").unwrap(),
+            PermissionProfile::AllowAll
+        );
+        for rejected in [
+            "",
+            "ask",
+            "default",
+            "accept_edits",
+            "accept-edits",
+            "allow-all",
+            "yolo",
+            "CAUTIOUS",
+            "ALLOW_ALL",
+            "unknown",
+        ] {
+            assert!(
+                PermissionProfile::parse_strict(rejected).is_err(),
+                "parse_strict must reject '{rejected}'"
+            );
+        }
+        assert!(PermissionProfile::Cautious.is_strict_canonical());
+        assert!(PermissionProfile::AllowAll.is_strict_canonical());
+        assert!(!PermissionProfile::AcceptEdits.is_strict_canonical());
+        assert_eq!(PermissionProfile::Cautious.as_canonical_str(), "cautious");
+        assert_eq!(PermissionProfile::AllowAll.as_canonical_str(), "allow_all");
+        assert_eq!(
+            PermissionProfile::AcceptEdits.as_canonical_str(),
+            "cautious"
+        );
+    }
 }

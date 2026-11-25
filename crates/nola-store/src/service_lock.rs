@@ -129,11 +129,14 @@ impl ServiceLock {
             }
         }
         let lock_path = PathBuf::from(format!("{}.lock", db_path.display()));
-        let lock_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&lock_path)?;
+        let mut open_opts = OpenOptions::new();
+        open_opts.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            open_opts.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+        }
+        let lock_file = open_opts.open(&lock_path)?;
 
         #[cfg(unix)]
         {
@@ -213,5 +216,30 @@ mod tests {
 
         drop(guard);
         assert!(read_discovery(&db).unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn service_lock_rejects_symlink_and_enforces_0600_mode() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("nola.db");
+        let sock = default_socket_path(&db);
+
+        // Normal lock file must be created with mode 0600
+        let guard = ServiceLock::acquire(&db, &sock).unwrap();
+        let lock_path = PathBuf::from(format!("{}.lock", db.display()));
+        let mode = fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        drop(guard);
+
+        // Replace lock path with a symlink -> must fail due to O_NOFOLLOW
+        fs::remove_file(&lock_path).unwrap();
+        let victim = dir.path().join("victim.txt");
+        fs::write(&victim, b"secret").unwrap();
+        symlink(&victim, &lock_path).unwrap();
+        let err = ServiceLock::acquire(&db, &sock).err().unwrap();
+        assert!(matches!(err, StoreError::Io(_)));
     }
 }

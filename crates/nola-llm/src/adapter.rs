@@ -6,14 +6,15 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use nola_types::{
-    MediaAttachment, ModelCapabilities, ModelProtocol, ModelRouteConfig, ModelStopReason,
-    ModelStreamDelta, ModelToolCall, NormalizedModelResponse, ProviderContinuation,
-    RuntimeReminder, StructuredModelRequest, TokenUsage,
+    GenerationParams, MediaAttachment, ModelCapabilities, ModelProtocol, ModelRouteConfig,
+    ModelStopReason, ModelStreamDelta, ModelToolCall, NormalizedModelResponse,
+    ProviderContinuation, RuntimeReminder, StructuredModelRequest, TokenUsage,
 };
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::anthropic::AnthropicMessagesAdapter;
+use crate::gemini::GeminiAdapter;
 use crate::openai_chat::OpenAiChatAdapter;
 use crate::openai_responses::OpenAiResponsesAdapter;
 use crate::siwc::SiwcResponsesAdapter;
@@ -56,6 +57,11 @@ impl ProtocolMediaLimits {
     };
 
     pub const OPENAI: Self = Self {
+        max_bytes_per_item: 20 * 1024 * 1024,
+        max_items_per_request: 80,
+    };
+
+    pub const GEMINI: Self = Self {
         max_bytes_per_item: 20 * 1024 * 1024,
         max_items_per_request: 80,
     };
@@ -106,7 +112,7 @@ impl ProtocolMediaLimits {
     }
 }
 
-/// Uniform wire adapter implemented by all 4 supported LLM protocols.
+/// Uniform wire adapter implemented by all supported LLM protocols.
 pub trait ProviderWireAdapter: Send + Sync {
     fn protocol(&self) -> ModelProtocol;
     fn media_limits(&self) -> ProtocolMediaLimits;
@@ -116,6 +122,15 @@ pub trait ProviderWireAdapter: Send + Sync {
         req: &StructuredModelRequest,
         stream: bool,
     ) -> Result<BuiltHttpRequest, LlmError>;
+    fn build_request_with_params(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        _params: &GenerationParams,
+        stream: bool,
+    ) -> Result<BuiltHttpRequest, LlmError> {
+        self.build_request(route, req, stream)
+    }
     fn decode_response(
         &self,
         route: &ModelRouteConfig,
@@ -136,6 +151,7 @@ pub fn adapter_for(protocol: ModelProtocol) -> Box<dyn ProviderWireAdapter> {
         ModelProtocol::OpenAiResponses => Box::new(OpenAiResponsesAdapter),
         ModelProtocol::AnthropicMessages => Box::new(AnthropicMessagesAdapter),
         ModelProtocol::SiwcResponses => Box::new(SiwcResponsesAdapter),
+        ModelProtocol::Gemini => Box::new(GeminiAdapter),
     }
 }
 

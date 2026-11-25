@@ -22,6 +22,12 @@ use crate::ModulesSuite;
 pub const KIND_UI_SURFACE: &str = "ui_surface";
 pub const DEFAULT_CATALOG_ID: &str = "nola.a2ui.basic.v1";
 
+pub const MAX_ACTIVE_SURFACES_PER_CONVERSATION: usize = 8;
+pub const MAX_NODES_PER_SURFACE: usize = 1_000;
+pub const MAX_SURFACE_PAYLOAD_BYTES: usize = 1024 * 1024;
+pub const MAX_SUMMARY_BYTES: usize = 4_096;
+pub const MAX_INTERACTION_PAYLOAD_BYTES: usize = 64 * 1024;
+
 const SUPPORTED_COMPONENTS: &[&str] = &[
     "Text",
     "Row",
@@ -317,6 +323,9 @@ fn apply_edits_to_model(
                 let node = nodes
                     .get(instance_id)
                     .ok_or_else(|| format!("unknown UI node '{instance_id}'"))?;
+                if node.props.get("disabled") == Some(&Value::Bool(true)) {
+                    return Err(format!("UI node '{instance_id}' is disabled"));
+                }
                 let pointer = node
                     .bindings
                     .get(binding)
@@ -330,6 +339,9 @@ fn apply_edits_to_model(
                 let node = nodes
                     .get(instance_id)
                     .ok_or_else(|| format!("unknown UI node '{instance_id}'"))?;
+                if node.props.get("disabled") == Some(&Value::Bool(true)) {
+                    return Err(format!("UI node '{instance_id}' is disabled"));
+                }
                 let pointer = node
                     .bindings
                     .get(binding)
@@ -547,11 +559,49 @@ pub fn upsert_ui_surface(
     raw_nodes: BTreeMap<String, UiNodeSnapshot>,
     data_model: Value,
 ) -> Result<UiSnapshot, String> {
+    if summary.len() > MAX_SUMMARY_BYTES {
+        return Err(format!(
+            "UI surface summary exceeds {} byte budget ({} bytes)",
+            MAX_SUMMARY_BYTES,
+            summary.len()
+        ));
+    }
+    if raw_nodes.len() > MAX_NODES_PER_SURFACE {
+        return Err(format!(
+            "UI surface exceeds max {} nodes ({} provided)",
+            MAX_NODES_PER_SURFACE,
+            raw_nodes.len()
+        ));
+    }
+
     let key = surface_storage_key(&owner.conversation_id, surface_id);
     let existing: Option<StoredUiSurface> = store
         .get_module_record(KIND_UI_SURFACE, &key)
         .map_err(|e| e.to_string())?;
+
+    let needs_new_active_slot = match &existing {
+        None => true,
+        Some(prev) => prev.current.phase == "deleted",
+    };
+    if needs_new_active_slot {
+        let active_count = list_conversation_surfaces(store, &owner.conversation_id)
+            .into_iter()
+            .filter(|s| s.phase != "deleted")
+            .count();
+        if active_count >= MAX_ACTIVE_SURFACES_PER_CONVERSATION {
+            return Err(format!(
+                "conversation '{}' already has the maximum {} active UI surfaces",
+                owner.conversation_id, MAX_ACTIVE_SURFACES_PER_CONVERSATION
+            ));
+        }
+    }
+
     let (generation, revision, mut revisions) = match existing {
+        Some(prev) if prev.current.phase == "deleted" => (
+            prev.current.identity.generation.saturating_add(1),
+            1,
+            BTreeMap::new(),
+        ),
         Some(prev) => (
             prev.current.identity.generation,
             prev.current.revision + 1,
@@ -576,6 +626,20 @@ pub fn upsert_ui_surface(
         nodes: projected,
         summary: summary.to_string(),
     };
+
+    let payload_size = serde_json::to_vec(&json!({
+        "snapshot": &snapshot,
+        "data_model": &data_model
+    }))
+    .map(|v| v.len())
+    .unwrap_or(0);
+    if payload_size > MAX_SURFACE_PAYLOAD_BYTES {
+        return Err(format!(
+            "UI surface serialized payload exceeds {} byte budget ({} bytes)",
+            MAX_SURFACE_PAYLOAD_BYTES, payload_size
+        ));
+    }
+
     revisions.insert(revision, to_read_only_snapshot(&snapshot));
 
     let stored = StoredUiSurface {
@@ -686,6 +750,16 @@ pub fn commit_ui_interaction(
     store: &Store,
     interaction: &UiInteraction,
 ) -> Result<CommittedInteraction, String> {
+    let interaction_bytes = serde_json::to_vec(interaction)
+        .map(|v| v.len())
+        .unwrap_or(0);
+    if interaction_bytes > MAX_INTERACTION_PAYLOAD_BYTES {
+        return Err(format!(
+            "UI interaction payload exceeds {} byte budget ({} bytes)",
+            MAX_INTERACTION_PAYLOAD_BYTES, interaction_bytes
+        ));
+    }
+
     let key = surface_storage_key(
         &interaction.identity.owner.conversation_id,
         &interaction.identity.surface_id,
@@ -694,6 +768,15 @@ pub fn commit_ui_interaction(
         .get_module_record::<StoredUiSurface>(KIND_UI_SURFACE, &key)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "UI surface not found".to_string())?;
+    if stored.current.phase == "deleted" {
+        return Err("cannot interact with a deleted UI surface".into());
+    }
+    if stored.current.identity.generation != interaction.identity.generation {
+        return Err(format!(
+            "generation conflict: expected {}, actual {}",
+            interaction.identity.generation, stored.current.identity.generation
+        ));
+    }
     if stored.current.revision != interaction.expected_surface_revision {
         return Err(format!(
             "revision conflict: expected {}, actual {}",
@@ -1059,5 +1142,134 @@ mod tests {
         // Delete surface
         let deleted = delete_ui_surface(&store, "conv-1", "deploy_form").unwrap().unwrap();
         assert_eq!(deleted.phase, "deleted");
+    }
+
+    fn test_owner(conv_id: &str) -> UiSurfaceOwner {
+        UiSurfaceOwner {
+            authority_id: "host-1".into(),
+            conversation_id: conv_id.into(),
+            participant_id: "assistant".into(),
+            context_id: "conversation".into(),
+            originating_run_id: "run-1".into(),
+            message_id: "msg-1".into(),
+            part_id: "part-1".into(),
+        }
+    }
+
+    #[test]
+    fn a2ui_enforces_generation_bump_disabled_edits_and_budgets() {
+        let store = Store::open_in_memory().unwrap();
+        let (_, nodes) = build_nodes_from_spec(&json!({
+            "root_id": "locked",
+            "components": [
+                { "id": "locked", "component": "TextField", "label": "Locked", "bind": "/val", "disabled": true }
+            ]
+        }))
+        .unwrap();
+
+        // 1. Create -> delete -> recreate bumps generation and resets revision to 1
+        let s1 = upsert_ui_surface(
+            &store,
+            test_owner("conv-g"),
+            "panel",
+            "First generation",
+            Some("locked".into()),
+            nodes.clone(),
+            json!({"val": "initial"}),
+        )
+        .unwrap();
+        assert_eq!(s1.identity.generation, 1);
+        assert_eq!(s1.revision, 1);
+
+        // Disabled node rejects edits
+        let disabled_err = commit_ui_interaction(
+            &store,
+            &UiInteraction {
+                identity: s1.identity.clone(),
+                expected_surface_revision: 1,
+                edits: vec![UiEdit::Set {
+                    instance_id: "locked".into(),
+                    binding: "value".into(),
+                    value: json!("hacked"),
+                }],
+                action: None,
+            },
+        )
+        .unwrap_err();
+        assert!(disabled_err.contains("disabled"));
+
+        // Delete & recreate
+        let del = delete_ui_surface(&store, "conv-g", "panel").unwrap().unwrap();
+        assert_eq!(del.phase, "deleted");
+
+        let s2 = upsert_ui_surface(
+            &store,
+            test_owner("conv-g"),
+            "panel",
+            "Second generation",
+            Some("locked".into()),
+            nodes.clone(),
+            json!({"val": "fresh"}),
+        )
+        .unwrap();
+        assert_eq!(s2.identity.generation, 2);
+        assert_eq!(s2.revision, 1);
+        assert_eq!(s2.phase, "ready");
+
+        // 2. Summary budget enforced (> 4096 bytes)
+        let huge_summary = "x".repeat(MAX_SUMMARY_BYTES + 1);
+        let summary_err = upsert_ui_surface(
+            &store,
+            test_owner("conv-g"),
+            "panel",
+            &huge_summary,
+            Some("locked".into()),
+            nodes.clone(),
+            json!({}),
+        )
+        .unwrap_err();
+        assert!(summary_err.contains("summary"));
+
+        // 3. Max 8 active surfaces per conversation enforced
+        for i in 0..MAX_ACTIVE_SURFACES_PER_CONVERSATION {
+            upsert_ui_surface(
+                &store,
+                test_owner("conv-limit"),
+                &format!("surf-{i}"),
+                "ok",
+                Some("locked".into()),
+                nodes.clone(),
+                json!({}),
+            )
+            .unwrap();
+        }
+        let limit_err = upsert_ui_surface(
+            &store,
+            test_owner("conv-limit"),
+            "surf-overflow",
+            "ok",
+            Some("locked".into()),
+            nodes.clone(),
+            json!({}),
+        )
+        .unwrap_err();
+        assert!(limit_err.contains("maximum 8"));
+
+        // 4. Interaction payload budget (> 64 KiB)
+        let huge_interaction_err = commit_ui_interaction(
+            &store,
+            &UiInteraction {
+                identity: s2.identity.clone(),
+                expected_surface_revision: 1,
+                edits: vec![UiEdit::Set {
+                    instance_id: "locked".into(),
+                    binding: "value".into(),
+                    value: json!("a".repeat(MAX_INTERACTION_PAYLOAD_BYTES + 100)),
+                }],
+                action: None,
+            },
+        )
+        .unwrap_err();
+        assert!(huge_interaction_err.contains("budget"));
     }
 }

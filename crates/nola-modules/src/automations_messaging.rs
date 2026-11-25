@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Scheduled Automations & External Messaging Channels module.
+//! Scheduled Automations & External Messaging Channels module (Slack, Discord, Telegram, Generic Webhooks).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +15,136 @@ use crate::ModulesSuite;
 
 pub const KIND_AUTOMATION: &str = "automation";
 pub const KIND_MESSAGING: &str = "messaging_channel";
+
+/// Constant-time, fail-closed inbound webhook token verification.
+/// Returns `false` whenever `expected_secret` is blank/whitespace-only or differs from `provided`.
+pub fn verify_inbound_webhook_token(expected_secret: &str, provided: &str) -> bool {
+    let expected = expected_secret.trim();
+    if expected.is_empty() || provided.is_empty() {
+        return false;
+    }
+    let a = expected.as_bytes();
+    let b = provided.as_bytes();
+    let max_len = a.len().max(b.len());
+    let mut diff: u8 = if a.len() == b.len() { 0 } else { 1 };
+    for i in 0..max_len {
+        let ba = a.get(i).copied().unwrap_or(0);
+        let bb = b.get(i).copied().unwrap_or(0);
+        diff |= ba ^ bb;
+    }
+    diff == 0
+}
+
+/// Build an outbound webhook JSON payload formatted for Slack, Discord, Telegram, or generic webhooks.
+pub fn build_outbound_webhook_payload(kind: &str, text: &str, chat_id: Option<&str>) -> Value {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "slack" => json!({ "text": text }),
+        "discord" => json!({ "content": text }),
+        "telegram" => json!({
+            "chat_id": chat_id.unwrap_or(""),
+            "text": text
+        }),
+        _ => json!({ "text": text, "content": text }),
+    }
+}
+
+/// Parse an inbound webhook payload from Slack, Discord, Telegram, or generic JSON webhook into a normalized object.
+pub fn parse_inbound_webhook_payload(kind: &str, payload: &Value) -> Result<Value, String> {
+    let norm_kind = kind.trim().to_ascii_lowercase();
+    let (text, chat_id, sender) = match norm_kind.as_str() {
+        "slack" => {
+            let txt = payload
+                .get("text")
+                .or_else(|| payload.pointer("/event/text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ch = payload
+                .get("channel")
+                .or_else(|| payload.pointer("/event/channel"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let user = payload
+                .get("user_name")
+                .or_else(|| payload.get("user"))
+                .or_else(|| payload.pointer("/event/user"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            (txt.to_string(), ch, user)
+        }
+        "discord" => {
+            let txt = payload
+                .get("content")
+                .or_else(|| payload.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ch = payload
+                .get("channel_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let user = payload
+                .pointer("/author/username")
+                .or_else(|| payload.get("username"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            (txt.to_string(), ch, user)
+        }
+        "telegram" => {
+            let txt = payload
+                .get("text")
+                .or_else(|| payload.pointer("/message/text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ch = payload
+                .get("chat_id")
+                .or_else(|| payload.pointer("/message/chat/id"))
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .filter(|s| !s.is_empty());
+            let user = payload
+                .pointer("/message/from/username")
+                .or_else(|| payload.get("from"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            (txt.to_string(), ch, user)
+        }
+        _ => {
+            let txt = payload
+                .get("text")
+                .or_else(|| payload.get("content"))
+                .or_else(|| payload.get("message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ch = payload
+                .get("chat_id")
+                .or_else(|| payload.get("channel"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let user = payload
+                .get("sender")
+                .or_else(|| payload.get("user"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            (txt.to_string(), ch, user)
+        }
+    };
+
+    if text.trim().is_empty() {
+        return Err(format!(
+            "inbound '{norm_kind}' webhook payload missing text/content"
+        ));
+    }
+
+    Ok(json!({
+        "kind": if norm_kind.is_empty() { "webhook" } else { norm_kind.as_str() },
+        "text": text,
+        "chat_id": chat_id,
+        "sender": sender,
+        "raw": payload
+    }))
+}
 
 pub fn register_tools(suite: &Arc<ModulesSuite>, registry: &mut ToolRegistry) {
     registry.register(Arc::new(AutomationManageTool {
@@ -131,7 +261,7 @@ impl ToolHandler for MessagingManageTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "messaging_manage".into(),
-                description: "Configure, list, or send notifications through Messaging Channels (webhook/Slack/Telegram).".into(),
+                description: "Configure, list, or send notifications through Messaging Channels (webhook/Slack/Discord/Telegram).".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -140,6 +270,7 @@ impl ToolHandler for MessagingManageTool {
                         "name": { "type": "string" },
                         "kind": { "type": "string" },
                         "endpoint": { "type": "string" },
+                        "chat_id": { "type": "string" },
                         "text": { "type": "string" }
                     },
                     "required": ["action"]
@@ -208,6 +339,7 @@ impl ToolHandler for MessagingManageTool {
                     return ToolExecutionResult::err_structured("missing_param", "missing 'id'", None);
                 };
                 let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let chat_id = args.get("chat_id").and_then(|v| v.as_str());
                 let Ok(Some(ch)) = self.suite.get_record::<MessagingChannel>(KIND_MESSAGING, id) else {
                     return ToolExecutionResult::err_structured("not_found", format!("channel '{id}' not found"), None);
                 };
@@ -225,14 +357,15 @@ impl ToolHandler for MessagingManageTool {
                             return ToolExecutionResult::err_structured("ssrf_blocked", e, None);
                         }
                     };
+                let body = build_outbound_webhook_payload(&ch.kind, text, chat_id);
                 let client = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .redirect(reqwest::redirect::Policy::none())
                     .resolve_to_addrs(&host, &addrs)
                     .build();
-                match client.and_then(|c| c.post(parsed).json(&json!({"text": text})).send()) {
+                match client.and_then(|c| c.post(parsed).json(&body).send()) {
                     Ok(resp) if resp.status().is_success() => ToolExecutionResult::ok_structured(
-                        json!({"channel": ch.name, "status": resp.status().as_u16()}),
+                        json!({"channel": ch.name, "kind": ch.kind, "status": resp.status().as_u16()}),
                         format!("Delivered message to '{}'", ch.name),
                     ),
                     Ok(resp) => ToolExecutionResult::err_structured(
@@ -261,5 +394,46 @@ impl ToolHandler for MessagingManageTool {
                 None,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_token_verification_is_fail_closed_and_payloads_normalize() {
+        // Fail-closed on empty/whitespace secret
+        assert!(!verify_inbound_webhook_token("", ""));
+        assert!(!verify_inbound_webhook_token("   ", "anything"));
+        assert!(!verify_inbound_webhook_token("secret-123", ""));
+        assert!(!verify_inbound_webhook_token("secret-123", "secret-124"));
+        assert!(!verify_inbound_webhook_token("secret-123", "secret-1234"));
+        assert!(verify_inbound_webhook_token("secret-123", "secret-123"));
+
+        assert_eq!(
+            build_outbound_webhook_payload("slack", "deploy ok", None),
+            json!({"text": "deploy ok"})
+        );
+        assert_eq!(
+            build_outbound_webhook_payload("discord", "deploy ok", None),
+            json!({"content": "deploy ok"})
+        );
+        assert_eq!(
+            build_outbound_webhook_payload("telegram", "deploy ok", Some("9988")),
+            json!({"chat_id": "9988", "text": "deploy ok"})
+        );
+
+        let parsed_tg = parse_inbound_webhook_payload(
+            "telegram",
+            &json!({"chat_id": 12345, "text": "status?"}),
+        )
+        .unwrap();
+        assert_eq!(parsed_tg["chat_id"], "12345");
+        assert_eq!(parsed_tg["text"], "status?");
+
+        let parsed_dc =
+            parse_inbound_webhook_payload("discord", &json!({"content": "hello bot"})).unwrap();
+        assert_eq!(parsed_dc["text"], "hello bot");
     }
 }

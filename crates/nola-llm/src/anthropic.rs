@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use nola_types::{
-    HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig, ModelStopReason,
-    ModelStreamDelta, ModelToolCall, NormalizedModelResponse, ProviderContinuation,
-    StructuredModelRequest, TokenUsage,
+    GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
+    ModelStopReason, ModelStreamDelta, ModelToolCall, NormalizedModelResponse,
+    ProviderContinuation, StructuredModelRequest, TokenUsage,
 };
 use serde_json::{json, Value};
 
@@ -103,6 +103,16 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         req: &StructuredModelRequest,
         stream: bool,
     ) -> Result<BuiltHttpRequest, LlmError> {
+        self.build_request_with_params(route, req, &GenerationParams::default(), stream)
+    }
+
+    fn build_request_with_params(
+        &self,
+        route: &ModelRouteConfig,
+        req: &StructuredModelRequest,
+        params: &GenerationParams,
+        stream: bool,
+    ) -> Result<BuiltHttpRequest, LlmError> {
         let all_media = collect_request_media(req);
         self.media_limits()
             .validate_all(&all_media, &route.capabilities)?;
@@ -171,16 +181,18 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         tr_content.push(json!({"type": "text", "text": text}));
                     }
                     tr_content.extend(media_blocks(media));
-                    if tr_content.is_empty() {
-                        tr_content.push(json!({"type": "text", "text": "(empty)"}));
-                    }
+                    let content_val = if tr_content.is_empty() {
+                        Value::String(String::new())
+                    } else {
+                        Value::Array(tr_content)
+                    };
                     push_or_merge_user(
                         &mut messages,
                         vec![json!({
                             "type": "tool_result",
                             "tool_use_id": call_id,
                             "is_error": is_error,
-                            "content": tr_content
+                            "content": content_val
                         })],
                     );
                 }
@@ -210,6 +222,27 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
             );
         }
 
+        // Attach a message-level ephemeral cache breakpoint on the last cacheable
+        // user/tool_result content block (in addition to system & tools breakpoints).
+        if let Some(last_user) = messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+        {
+            if let Some(blocks) = last_user.get_mut("content").and_then(|v| v.as_array_mut()) {
+                if let Some(block) = blocks.iter_mut().rev().find(|b| {
+                    matches!(
+                        b.get("type").and_then(|t| t.as_str()),
+                        Some("text" | "tool_result" | "image" | "document")
+                    )
+                }) {
+                    if let Some(obj) = block.as_object_mut() {
+                        obj.insert("cache_control".into(), json!({"type": "ephemeral"}));
+                    }
+                }
+            }
+        }
+
         let mut body = serde_json::Map::new();
         body.insert("model".into(), Value::String(route.model.clone()));
         body.insert("max_tokens".into(), json!(req.max_output_tokens));
@@ -219,22 +252,54 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         }
         body.insert("messages".into(), Value::Array(messages));
 
-        let thinking_enabled = route.capabilities.reasoning
-            && route.reasoning_effort.as_deref().is_some_and(|e| !e.is_empty())
-            && req.max_output_tokens > 2_048;
-        if thinking_enabled {
-            let budget = (req.max_output_tokens / 2).clamp(1_024, 16_384);
-            body.insert(
-                "thinking".into(),
-                json!({"type": "enabled", "budget_tokens": budget}),
-            );
-        } else if route.capabilities.sampling_parameters {
+        // Canonical Anthropic reasoning wire contract:
+        // - effort == "none" -> thinking: {"type": "disabled"} (no output_config)
+        // - explicit thinking budget (params.thinking_budget or "budget:<N>") -> thinking: {"type": "enabled", "budget_tokens": N}
+        // - effort in low|medium|high|max -> output_config: {"effort": effort} (NEVER converted to budget_tokens)
+        let effort_norm = route
+            .reasoning_effort
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        let explicit_budget = params.thinking_budget.or_else(|| {
+            effort_norm
+                .as_deref()
+                .and_then(|e| e.strip_prefix("budget:"))
+                .and_then(|n| n.trim().parse::<usize>().ok())
+        });
+
+        let mut explicit_thinking_enabled = false;
+        if effort_norm.as_deref() == Some("none") {
+            body.insert("thinking".into(), json!({"type": "disabled"}));
+        } else if let Some(budget) = explicit_budget {
+            if route.capabilities.reasoning && budget > 0 {
+                body.insert(
+                    "thinking".into(),
+                    json!({"type": "enabled", "budget_tokens": budget}),
+                );
+                explicit_thinking_enabled = true;
+            }
+        } else if let Some(effort) = effort_norm.as_deref() {
+            if route.capabilities.reasoning
+                && matches!(effort, "low" | "medium" | "high" | "max")
+            {
+                body.insert("output_config".into(), json!({"effort": effort}));
+            }
+        }
+
+        if !explicit_thinking_enabled && route.capabilities.sampling_parameters {
             // Claude 4.x rejects requests specifying both temperature and top_p simultaneously.
             if let Some(t) = route.temperature {
                 body.insert("temperature".into(), json!(t));
             } else if let Some(tp) = route.top_p {
                 body.insert("top_p".into(), json!(tp));
             }
+            if let Some(tk) = params.top_k {
+                body.insert("top_k".into(), json!(tk));
+            }
+        }
+        if !params.stop.is_empty() {
+            body.insert("stop_sequences".into(), json!(params.stop));
         }
         if route.capabilities.tool_calls && !req.prefix_stable_tools.is_empty() {
             let mut tools: Vec<Value> = req
@@ -413,6 +478,9 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         usage.input_tokens = u.input_tokens;
                         usage.cache_read_tokens = u.cache_read_tokens;
                         usage.cache_write_tokens = u.cache_write_tokens;
+                        if u.usage_reported {
+                            usage.usage_reported = true;
+                        }
                     }
                 }
                 "content_block_start" => {
@@ -493,6 +561,9 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         let parsed = parse_anthropic_usage(Some(u));
                         if parsed.output_tokens > 0 {
                             usage.output_tokens = parsed.output_tokens;
+                        }
+                        if parsed.usage_reported {
+                            usage.usage_reported = true;
                         }
                     }
                 }
@@ -583,5 +654,7 @@ fn parse_anthropic_usage(v: Option<&Value>) -> TokenUsage {
             .get("cache_creation_input_tokens")
             .and_then(|x| x.as_u64())
             .unwrap_or(0),
+        reasoning_tokens: 0,
+        usage_reported: true,
     }
 }

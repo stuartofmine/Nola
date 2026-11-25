@@ -478,6 +478,26 @@ nonisolated struct MacRemoteUserInputRequest: Identifiable, Hashable, Sendable {
     var question: String { questions.map(\.prompt).joined(separator: "\n") }
     var isOpen: Bool { state == "open" }
 
+    init(
+        id: String,
+        conversationID: String,
+        runID: String,
+        sessionID: String,
+        revision: UInt64,
+        schemaDigest: String,
+        state: String,
+        questions: [MacRemoteUserInputQuestion]
+    ) {
+        self.id = id
+        self.conversationID = conversationID
+        self.runID = runID
+        self.sessionID = sessionID
+        self.revision = revision
+        self.schemaDigest = schemaDigest
+        self.state = state
+        self.questions = questions
+    }
+
     init?(object: [String: Any]) {
         guard let conversationID = object["conversation_id"] as? String, !conversationID.isEmpty,
               let runID = object["run_id"] as? String, !runID.isEmpty,
@@ -519,6 +539,19 @@ nonisolated struct MacRemoteUserInputRequest: Identifiable, Hashable, Sendable {
     }
 }
 
+nonisolated enum MacV2StreamEvent: Sendable, Equatable {
+    case sessionStarted(sessionID: String, model: String)
+    case textDelta(String)
+    case reasoningDelta(String)
+    case toolStarted(callID: String, name: String)
+    case toolFinished(callID: String, name: String, isError: Bool, summary: String)
+    case compacted(summary: String)
+    case uiSurface(snapshotJSON: String)
+    case permissionRequested(requestID: String, tool: String, reason: String, argumentsJSON: String)
+    case userQuestion(requestID: String, question: String, options: [String])
+    case turnCompleted(sessionID: String, finalText: String)
+}
+
 nonisolated struct MacLocalAgentEvent: Sendable {
     enum Kind: Sendable, Equatable {
         case toolStarted
@@ -554,6 +587,7 @@ nonisolated struct MacLocalAgentEvent: Sendable {
     let contextPromptLimit: Int?
     let artifactURLs: [URL]
     let trace: MacAgentTraceEnvelope?
+    let v2Event: MacV2StreamEvent?
     private(set) var canonicalRunID: String? = nil
     private(set) var remoteSubmissionIntent: MacRemoteSubmissionIntent? = nil
     private(set) var validatedCoreSessionID: String? = nil
@@ -582,7 +616,8 @@ nonisolated struct MacLocalAgentEvent: Sendable {
         contextWindowTokens: Int? = nil,
         contextPromptLimit: Int? = nil,
         artifactURLs: [URL] = [],
-        trace: MacAgentTraceEnvelope? = nil
+        trace: MacAgentTraceEnvelope? = nil,
+        v2Event: MacV2StreamEvent? = nil
     ) {
         self.kind = kind
         self.text = text
@@ -606,6 +641,7 @@ nonisolated struct MacLocalAgentEvent: Sendable {
         self.contextPromptLimit = contextPromptLimit
         self.artifactURLs = artifactURLs
         self.trace = trace
+        self.v2Event = v2Event
     }
 
     func bindingCanonicalRun(_ runID: String?) -> Self {

@@ -200,10 +200,16 @@ impl ToolHandler for CodeMemorySummaryTool {
         }
     }
 
-    fn execute(&self, _ctx: &ToolContext, _args: Value) -> ToolExecutionResult {
+    fn execute(&self, ctx: &ToolContext, _args: Value) -> ToolExecutionResult {
+        let root = if ctx.workspace_root.exists() {
+            &ctx.workspace_root
+        } else {
+            &self.suite.workspace_root
+        };
+        let index_stats = crate::code_memory::index_workspace(&self.suite.store, root, false).ok();
         let head = Command::new("git")
             .args(["rev-parse", "--short", "HEAD"])
-            .current_dir(&self.suite.workspace_root)
+            .current_dir(root)
             .output()
             .ok()
             .filter(|o| o.status.success())
@@ -211,19 +217,30 @@ impl ToolHandler for CodeMemorySummaryTool {
             .unwrap_or_else(|| "none".into());
         let log = Command::new("git")
             .args(["log", "--oneline", "-n", "10"])
-            .current_dir(&self.suite.workspace_root)
+            .current_dir(root)
             .output()
             .ok()
             .filter(|o| o.status.success())
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
+        let (total_files, total_symbols, duration_ms) = index_stats
+            .as_ref()
+            .map(|s| (s.total_files, s.total_symbols, s.duration_ms))
+            .unwrap_or((0, 0, 0));
+        let summary_content = if log.is_empty() {
+            format!("Indexed {total_files} source file(s) with {total_symbols} symbol(s) in {duration_ms}ms.")
+        } else {
+            format!(
+                "Indexed {total_files} source file(s) with {total_symbols} symbol(s) in {duration_ms}ms.\nRecent commits:\n{log}"
+            )
+        };
         let ts = now_ms();
         let item = MemoryItem {
             id: format!("code_memory:{head}"),
             namespace: "code_memory".into(),
             title: format!("Repository snapshot @ {head}"),
-            content: log.clone(),
-            tags: vec!["git".into(), "code_memory".into()],
+            content: summary_content,
+            tags: vec!["git".into(), "code_memory".into(), "symbols".into()],
             created_at_ms: ts,
             updated_at_ms: ts,
         };
@@ -231,8 +248,16 @@ impl ToolHandler for CodeMemorySummaryTool {
             return ToolExecutionResult::err_structured("memory_error", e.to_string(), None);
         }
         ToolExecutionResult::ok_structured(
-            json!({"head": head, "recent_commits": log}),
-            format!("Indexed Code-Memory snapshot @ {head}"),
+            json!({
+                "head": head,
+                "recent_commits": log,
+                "total_files": total_files,
+                "total_symbols": total_symbols,
+                "duration_ms": duration_ms
+            }),
+            format!(
+                "Indexed Code-Memory snapshot @ {head} ({total_files} files, {total_symbols} symbols)"
+            ),
         )
     }
 }

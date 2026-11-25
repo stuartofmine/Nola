@@ -22,7 +22,12 @@ pub enum ModelProtocol {
     AnthropicMessages,
     #[serde(rename = "siwc_responses", alias = "siwc", alias = "chatgpt")]
     SiwcResponses,
+    #[serde(rename = "gemini", alias = "google_gemini", alias = "google")]
+    Gemini,
 }
+
+/// Alias for `ModelProtocol` used by callers referring to wire protocol contracts.
+pub type WireProtocol = ModelProtocol;
 
 impl ModelProtocol {
     pub fn as_str(self) -> &'static str {
@@ -31,6 +36,7 @@ impl ModelProtocol {
             Self::OpenAiResponses => "responses",
             Self::AnthropicMessages => "anthropic",
             Self::SiwcResponses => "siwc_responses",
+            Self::Gemini => "gemini",
         }
     }
 
@@ -42,6 +48,7 @@ impl ModelProtocol {
             "responses" | "openai_responses" | "open_ai_responses" => Some(Self::OpenAiResponses),
             "anthropic" | "anthropic_messages" => Some(Self::AnthropicMessages),
             "siwc_responses" | "siwc" | "chatgpt" => Some(Self::SiwcResponses),
+            "gemini" | "google_gemini" | "google" => Some(Self::Gemini),
             _ => None,
         }
     }
@@ -61,6 +68,12 @@ pub struct ModelCapabilities {
     pub reasoning: bool,
     #[serde(default = "default_true", alias = "sampling_parameters")]
     pub sampling_parameters: bool,
+    #[serde(default, alias = "stream_reasoning")]
+    pub stream_reasoning: bool,
+    #[serde(default, alias = "supported_reasoning_levels")]
+    pub supported_reasoning_levels: Vec<String>,
+    #[serde(default, alias = "supports_reasoning_summary")]
+    pub supports_reasoning_summary: bool,
 }
 
 fn default_true() -> bool {
@@ -75,7 +88,63 @@ impl Default for ModelCapabilities {
             native_pdf_input: false,
             reasoning: false,
             sampling_parameters: true,
+            stream_reasoning: false,
+            supported_reasoning_levels: Vec::new(),
+            supports_reasoning_summary: false,
         }
+    }
+}
+
+/// 3-state deterministic seed override:
+/// - `Inherit`: retain inherited/route seed
+/// - `Clear`: explicitly unset any inherited seed
+/// - `Value(v)`: force a specific integer seed
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "mode", content = "value", rename_all = "snake_case")]
+pub enum SeedOverride {
+    #[default]
+    Inherit,
+    Clear,
+    Value(i64),
+}
+
+impl SeedOverride {
+    pub fn resolve(self, inherited: Option<i64>) -> Option<i64> {
+        match self {
+            Self::Inherit => inherited,
+            Self::Clear => None,
+            Self::Value(v) => Some(v),
+        }
+    }
+}
+
+/// Optional generation parameters forwarded to compatible LLM wire adapters.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop: Vec<String>,
+    #[serde(default, alias = "top_k", skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+    #[serde(
+        default,
+        alias = "repetition_penalty",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub repetition_penalty: Option<f32>,
+    #[serde(
+        default,
+        alias = "thinking_budget",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thinking_budget: Option<usize>,
+}
+
+impl GenerationParams {
+    pub fn apply_seed_override(&mut self, override_seed: SeedOverride) {
+        self.seed = override_seed.resolve(self.seed);
     }
 }
 
@@ -213,6 +282,10 @@ pub struct TokenUsage {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+    #[serde(default)]
+    pub usage_reported: bool,
 }
 
 impl TokenUsage {
@@ -221,6 +294,28 @@ impl TokenUsage {
             return 0;
         }
         ((self.cache_read_tokens.saturating_mul(10_000)) / self.input_tokens).min(10_000) as u32
+    }
+
+    /// Normalized prompt-cache hit rate in basis points (`0..=10_000`).
+    /// Returns `None` when the provider did not report usage (`!self.usage_reported`).
+    /// When `input_excludes_cache` is true (e.g. Anthropic Messages API, where
+    /// `input_tokens` only counts uncached tokens), divides `cache_read_tokens` by
+    /// `input_tokens + cache_read_tokens + cache_write_tokens`.
+    pub fn cache_hit_rate_bps_normalized(&self, input_excludes_cache: bool) -> Option<u32> {
+        if !self.usage_reported {
+            return None;
+        }
+        let denom = if input_excludes_cache {
+            self.input_tokens
+                .saturating_add(self.cache_read_tokens)
+                .saturating_add(self.cache_write_tokens)
+        } else {
+            self.input_tokens
+        };
+        if denom == 0 {
+            return Some(0);
+        }
+        Some(((self.cache_read_tokens.saturating_mul(10_000)) / denom).min(10_000) as u32)
     }
 }
 
@@ -245,4 +340,67 @@ pub enum ModelStreamDelta {
     Reasoning(String),
     ToolCallStart { call_id: String, name: String },
     ToolCallArgsDelta { call_id: String, delta: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_usage_normalized_cache_hit_rate_and_unreported_flag() {
+        let unreported = TokenUsage::default();
+        assert!(!unreported.usage_reported);
+        assert_eq!(unreported.cache_hit_rate_bps_normalized(false), None);
+        assert_eq!(unreported.cache_hit_rate_bps_normalized(true), None);
+
+        // Anthropic: input_tokens (100) excludes cache_read (800) and cache_write (100) -> 800 / 1000 = 8000 bps
+        let anth = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 800,
+            cache_write_tokens: 100,
+            reasoning_tokens: 0,
+            usage_reported: true,
+        };
+        assert_eq!(anth.cache_hit_rate_bps_normalized(true), Some(8_000));
+
+        // OpenAI: input_tokens (1000) includes cache_read (750) -> 750 / 1000 = 7500 bps
+        let oai = TokenUsage {
+            input_tokens: 1_000,
+            output_tokens: 50,
+            cache_read_tokens: 750,
+            cache_write_tokens: 0,
+            reasoning_tokens: 20,
+            usage_reported: true,
+        };
+        assert_eq!(oai.cache_hit_rate_bps_normalized(false), Some(7_500));
+    }
+
+    #[test]
+    fn seed_override_and_generation_params_and_gemini_protocol() {
+        let mut params = GenerationParams {
+            seed: Some(42),
+            stop: vec!["END".into()],
+            top_k: Some(40),
+            repetition_penalty: Some(1.1),
+            thinking_budget: None,
+        };
+        params.apply_seed_override(SeedOverride::Inherit);
+        assert_eq!(params.seed, Some(42));
+        params.apply_seed_override(SeedOverride::Clear);
+        assert_eq!(params.seed, None);
+        params.apply_seed_override(SeedOverride::Value(99));
+        assert_eq!(params.seed, Some(99));
+
+        assert_eq!(WireProtocol::parse("gemini"), Some(ModelProtocol::Gemini));
+        assert_eq!(ModelProtocol::Gemini.as_str(), "gemini");
+
+        let caps: ModelCapabilities = serde_json::from_str(
+            r#"{"reasoning":true,"stream_reasoning":true,"supported_reasoning_levels":["low","high"],"supportsReasoningSummary":true}"#,
+        )
+        .unwrap();
+        assert!(caps.stream_reasoning);
+        assert!(caps.supports_reasoning_summary);
+        assert_eq!(caps.supported_reasoning_levels, vec!["low", "high"]);
+    }
 }

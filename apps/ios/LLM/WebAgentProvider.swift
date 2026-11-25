@@ -518,10 +518,12 @@ public enum WebAgentStreamEvent {
     case delegatedPermissionRequest(HostAgentPermissionRequest)
     case deviceToolRequest(HostDeviceToolRequest, trace: AgentTraceEvent)
     case externalSessionStarted(backendID: String, sessionID: String)
+    case v2SessionStarted(sessionId: String)
     case v2TextDelta(String)
     case v2ReasoningDelta(String)
     case v2ToolStarted(callID: String, name: String)
     case v2ToolFinished(callID: String, name: String, isError: Bool, summary: String)
+    case v2Compacted(summary: String)
     case v2UiSurface(AgentCoreJSONValue)
     case v2PermissionRequested(requestID: String, tool: String, reason: String)
     case v2UserQuestion(requestID: String, question: String, options: [String])
@@ -2228,7 +2230,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         do {
             let result: Response = try await pairedReadRequest(Request(expected_host_id: source, input: input),
-                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/events", responseByteLimit: 2 * 1024 * 1024,
+                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/ui-interactions", responseByteLimit: 2 * 1024 * 1024,
                 requestByteLimit: 128 * 1024)
             switch result.status {
             case "committed":
@@ -2392,6 +2394,23 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw NolaError.llm(.invalidResponse(reason: "User input response failed (\(http.statusCode))"))
         }
+    }
+
+    @discardableResult
+    public func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> [String: Any] {
+        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationId)/ui-interactions"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: interaction)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        Self.applyMobileAuth(to: &req, token: config.token)
+        let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
+        defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw NolaError.llm(.invalidResponse(reason: "UI interaction submission failed (\(http.statusCode))"))
+        }
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     public func v2TruncateConversation(conversationID: String, fromSeq: Int64) async throws {
@@ -3093,6 +3112,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         if let type = object["type"] as? String {
             switch type {
+            case "session_started":
+                return .v2SessionStarted(sessionId: object["session_id"] as? String ?? "")
             case "text_delta":
                 return .v2TextDelta(object["delta"] as? String ?? "")
             case "reasoning_delta":
@@ -3109,6 +3130,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                     isError: (object["is_error"] as? Bool) ?? false,
                     summary: object["summary"] as? String ?? ""
                 )
+            case "compacted":
+                return .v2Compacted(summary: object["summary"] as? String ?? "")
             case "ui_surface":
                 if let snap = object["snapshot"], let val = coreJSONValue(from: snap) {
                     return .v2UiSurface(val)

@@ -14,9 +14,13 @@ nola-llm = { workspace = true }
 nola-tools = { workspace = true }
 nola-engine = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
+ignore = { workspace = true }
+regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]

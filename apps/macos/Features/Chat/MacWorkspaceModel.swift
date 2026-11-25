@@ -642,6 +642,9 @@ final class MacWorkspaceModel {
     @ObservationIgnored private var pendingPermissionQueue: [PendingPermissionQueueEntry] = []
     private var userInputWaitsByConversation: [String: [MacRemoteUserInputRequest]] = [:]
     private var deferredUserInputWaitIDs: Set<String> = []
+    @ObservationIgnored private var v2UserInputRequestIDs: Set<String> = []
+    private(set) var v2UISurfacesByConversation: [String: [String]] = [:]
+    private(set) var v2SessionIDByConversation: [String: String] = [:]
     @ObservationIgnored private var userInputWaitReadRevisions: [String: UInt64] = [:]
     @ObservationIgnored private var userInputSubmissionIntents: [String: MacUserInputSubmissionIntent] = [:]
     private var userInputWaitLoadErrors: [String: String] = [:]
@@ -5824,9 +5827,44 @@ final class MacWorkspaceModel {
     }
 
     func resolveUserInput(request: MacRemoteUserInputRequest, answers: [MacUserInputAnswer], decline: Bool = false) {
-        guard request.isOpen, !resolvingUserInputWaitIDs.contains(request.id),
-              let databaseURL = canonicalRepository?.databaseURL else { return }
+        guard request.isOpen, !resolvingUserInputWaitIDs.contains(request.id) else { return }
         let conversationID = request.conversationID
+        if v2UserInputRequestIDs.contains(request.id) {
+            resolvingUserInputWaitIDs.insert(request.id)
+            let answerText: String? = decline ? nil : {
+                let first = answers.first
+                if let text = first?.text, !text.isEmpty { return text }
+                if let optID = first?.optionID,
+                   let label = request.questions.flatMap(\.options).first(where: { $0.id == optID })?.label {
+                    return label
+                }
+                return first?.optionID
+            }()
+            Task {
+                defer { resolvingUserInputWaitIDs.remove(request.id) }
+                do {
+                    try await remoteHost.v2RespondUserInput(
+                        conversationID: conversationID,
+                        requestID: request.id,
+                        answer: answerText
+                    )
+                    v2UserInputRequestIDs.remove(request.id)
+                    var waits = userInputWaitsByConversation[conversationID, default: []]
+                    waits.removeAll { $0.id == request.id }
+                    userInputWaitsByConversation[conversationID] = waits
+                    userInputWaitReadRevisions[conversationID, default: 0] &+= 1
+                } catch {
+                    guard selectedConversationID == conversationID else { return }
+                    updateActivity(
+                        title: request.header,
+                        detail: error.localizedDescription,
+                        state: .failed
+                    )
+                }
+            }
+            return
+        }
+        guard let databaseURL = canonicalRepository?.databaseURL else { return }
         let intent: MacUserInputSubmissionIntent
         if let previous = userInputSubmissionIntents[request.id],
            previous.matches(request: request, answers: answers, decline: decline) {
@@ -7930,6 +7968,46 @@ final class MacWorkspaceModel {
         return MacThinkingActivityFormatter.currentStep(from: combined)
     }
 
+    @discardableResult
+    func submitV2UIInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+        let data = try await remoteHost.v2SubmitUiInteraction(
+            conversationId: conversationId,
+            interaction: interaction
+        )
+        if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let snapshot = root["snapshot"],
+           JSONSerialization.isValidJSONObject(snapshot),
+           let snapshotData = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]),
+           let snapshotJSON = String(data: snapshotData, encoding: .utf8) {
+            upsertV2UISurface(conversationID: conversationId, snapshotJSON: snapshotJSON)
+        }
+        return data
+    }
+
+    private func upsertV2UISurface(conversationID: String, snapshotJSON: String) {
+        var list = v2UISurfacesByConversation[conversationID, default: []]
+        let surfaceID: String? = {
+            guard let data = snapshotJSON.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let identity = root["identity"] as? [String: Any],
+                  let sid = identity["surface_id"] as? String, !sid.isEmpty else { return nil }
+            return sid
+        }()
+        if let surfaceID,
+           let index = list.firstIndex(where: { existing in
+               guard let data = existing.data(using: .utf8),
+                     let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                     let identity = root["identity"] as? [String: Any],
+                     let sid = identity["surface_id"] as? String else { return false }
+               return sid == surfaceID
+           }) {
+            list[index] = snapshotJSON
+        } else {
+            list.append(snapshotJSON)
+        }
+        v2UISurfacesByConversation[conversationID] = list
+    }
+
     func consumeTracedAgentEvent(
         _ event: MacLocalAgentEvent,
         prompt: String,
@@ -7946,6 +8024,99 @@ final class MacWorkspaceModel {
         // Admit traced input before any consumer can change usage, permission,
         // browser, message, or caller result state. Canonical untraced messages
         // keep their own source/receipt checks below.
+        if let v2Event = event.v2Event {
+            guard generationID == activeGenerationID else { return }
+            switch v2Event {
+            case .sessionStarted(let sessionID, _):
+                v2SessionIDByConversation[conversationID] = sessionID.isEmpty ? conversationID : sessionID
+            case .textDelta(let delta):
+                if !delta.isEmpty {
+                    response += delta
+                    let currentResponse = response
+                    mutateRenderedMessage(
+                        conversationID: conversationID,
+                        messageID: assistantMessageID,
+                        createAssistantIfMissing: true
+                    ) { message in
+                        message.text = currentResponse
+                    }
+                }
+            case .reasoningDelta(let delta):
+                if !delta.isEmpty {
+                    recordAssistantThinking(
+                        delta,
+                        replacing: false,
+                        conversationID: conversationID,
+                        messageID: assistantMessageID
+                    )
+                }
+            case .toolStarted(_, let name):
+                recordAssistantTool(
+                    event,
+                    state: .running,
+                    fallbackTitle: name,
+                    conversationID: conversationID,
+                    messageID: assistantMessageID
+                )
+            case .toolFinished(_, let name, _, _):
+                applyCompletedToolEvent(
+                    event,
+                    fallbackTitle: name,
+                    conversationID: conversationID,
+                    messageID: assistantMessageID
+                )
+            case .compacted(let summary):
+                updateActivity(
+                    title: String(localized: "Context compacted"),
+                    detail: summary,
+                    state: .completed
+                )
+            case .uiSurface(let snapshotJSON):
+                upsertV2UISurface(conversationID: conversationID, snapshotJSON: snapshotJSON)
+            case .permissionRequested(_, _, _, _):
+                if let request = event.permissionRequest,
+                   cancellationRequestedGenerationID != generationID {
+                    enqueueOrActivatePermission(PendingPermissionQueueEntry(
+                        request: request,
+                        prompt: prompt,
+                        conversationID: conversationID,
+                        modelID: modelID,
+                        attachmentURLs: permissionAttachmentURLs,
+                        assistantMessageID: assistantMessageID,
+                        generationID: generationID,
+                        usesLocalRuntime: false,
+                        trace: nil,
+                        createdAt: Date()
+                    ))
+                }
+            case .userQuestion(let requestID, _, _):
+                if let userInputRequest = event.userInputRequest,
+                   cancellationRequestedGenerationID != generationID {
+                    v2UserInputRequestIDs.insert(requestID)
+                    var waits = userInputWaitsByConversation[conversationID, default: []]
+                    waits.removeAll { $0.id == userInputRequest.id }
+                    waits.append(userInputRequest)
+                    userInputWaitsByConversation[conversationID] = waits
+                    userInputWaitReadRevisions[conversationID, default: 0] &+= 1
+                }
+            case .turnCompleted(let sessionID, let finalText):
+                if !sessionID.isEmpty {
+                    v2SessionIDByConversation[conversationID] = sessionID
+                }
+                if !finalText.isEmpty {
+                    response = finalText
+                    mutateRenderedMessage(
+                        conversationID: conversationID,
+                        messageID: assistantMessageID,
+                        createAssistantIfMissing: true
+                    ) { message in
+                        message.text = finalText
+                    }
+                }
+                succeeded = true
+            }
+            return
+        }
         var admittedTracePresentation: MacAssistantPresentation?
         if let trace = event.trace {
             guard generationID == activeGenerationID,

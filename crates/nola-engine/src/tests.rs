@@ -199,12 +199,13 @@ fn gate4_multi_turn_kv_prefix_byte_equality_across_all_4_protocols() {
     assert_eq!(&t1_names[..t0_names.len()], &t0_names[..]);
     assert!(t1_names.ends_with(&["code_exec"]));
 
-    // Verify across ALL 4 wire protocols: frozen system prefix is byte-identical across all 3 turns!
+    // Verify across ALL 5 wire protocols: frozen system prefix is byte-identical across all 3 turns!
     for proto in [
         ModelProtocol::OpenAiChat,
         ModelProtocol::OpenAiResponses,
         ModelProtocol::AnthropicMessages,
         ModelProtocol::SiwcResponses,
+        ModelProtocol::Gemini,
     ] {
         let ad = adapter_for(proto);
         let route = mock_route(proto);
@@ -215,6 +216,9 @@ fn gate4_multi_turn_kv_prefix_byte_equality_across_all_4_protocols() {
             ModelProtocol::AnthropicMessages => assert_eq!(w0["system"], w2["system"]),
             ModelProtocol::OpenAiResponses | ModelProtocol::SiwcResponses => {
                 assert_eq!(w0["instructions"], w2["instructions"])
+            }
+            ModelProtocol::Gemini => {
+                assert_eq!(w0["systemInstruction"], w2["systemInstruction"])
             }
         }
     }
@@ -619,19 +623,37 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
         assert_eq!(payload.to_model_value()["exit_code"], 1);
     }
 
-    // 2. Reactive HTTP 400 context-overflow retry inside AgentEngine::run
+    // 2. Reactive HTTP 400 context-overflow retry inside AgentEngine::run (with real LLM summarizer)
     struct OverflowOnceCaller {
-        calls: Mutex<usize>,
+        main_calls: Mutex<usize>,
+        summarizer_calls: Mutex<usize>,
     }
     impl ModelCaller for OverflowOnceCaller {
         fn call(
             &self,
             _route: &ModelRouteConfig,
-            _req: &StructuredModelRequest,
+            req: &StructuredModelRequest,
             _stream: bool,
             _on_delta: &mut dyn FnMut(ModelStreamDelta),
         ) -> Result<NormalizedModelResponse, LlmError> {
-            let mut n = self.calls.lock().unwrap();
+            if req
+                .frozen_system_prefix
+                .first()
+                .is_some_and(|b| b.id == "compaction_summarizer")
+            {
+                *self.summarizer_calls.lock().unwrap() += 1;
+                return Ok(NormalizedModelResponse {
+                    response_id: Some("r_sum".into()),
+                    response_model: Some("mock".into()),
+                    content: "Goal: Initial prompt. Earlier bash output compacted.".into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                });
+            }
+            let mut n = self.main_calls.lock().unwrap();
             *n += 1;
             if *n == 1 {
                 return Err(LlmError::Status {
@@ -649,6 +671,8 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
                 usage: TokenUsage {
                     input_tokens: 1_200,
                     output_tokens: 20,
+                    cache_read_tokens: 900,
+                    usage_reported: true,
                     ..Default::default()
                 },
                 continuation: None,
@@ -695,7 +719,8 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
         )
         .unwrap();
     let caller = Arc::new(OverflowOnceCaller {
-        calls: Mutex::new(0),
+        main_calls: Mutex::new(0),
+        summarizer_calls: Mutex::new(0),
     });
     let engine = AgentEngine::new(
         store,
@@ -738,7 +763,8 @@ fn three_tier_compaction_dedup_reasoning_hard_limit_and_overflow_recovery() {
         )
         .unwrap();
     assert_eq!(res.final_text, "Recovered after compaction!");
-    assert_eq!(*caller.calls.lock().unwrap(), 2);
+    assert_eq!(*caller.main_calls.lock().unwrap(), 2);
+    assert_eq!(*caller.summarizer_calls.lock().unwrap(), 1);
 }
 
 #[test]
@@ -843,4 +869,587 @@ fn empty_reasoning_turn_continues_and_stale_tool_media_is_evicted() {
         })
         .collect();
     assert_eq!(counts, vec![0, 0, 1, 1, 1]);
+}
+
+#[test]
+fn policy_sensitive_path_read_elevation_external_send_and_malformed_settings() {
+    let ws = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_builtin_tools();
+    let read_spec = reg.get("read_file").unwrap().spec();
+    let cautious = EffectivePolicy {
+        profile: PermissionProfile::Cautious,
+        workspace_trusted: true,
+        network_allowed: true,
+        rules: vec![],
+    };
+
+    // Sensitive paths MUST elevate read_file from Allow -> Ask under Cautious
+    for path in [
+        "~/.ssh/id_rsa",
+        ".env",
+        ".env.production",
+        ".aws/credentials",
+        ".gnupg/secring.gpg",
+        "keys/id_ed25519",
+        "certs/server.pem",
+        "certs/private.key",
+        "config/secrets.yaml",
+        "mobile-access-token",
+        "data/vault.enc",
+        "/etc/shadow",
+        "/Users/a/Library/Keychains/login.keychain-db",
+    ] {
+        assert!(
+            crate::is_sensitive_path(path).is_some(),
+            "expected '{path}' to be classified as sensitive"
+        );
+        let dec = cautious.evaluate(&read_spec, &json!({"path": path}), ws.path());
+        assert_eq!(
+            dec.action,
+            PermissionAction::Ask,
+            "read_file on sensitive path '{path}' must Ask under Cautious"
+        );
+        assert!(
+            dec.reason.starts_with("sensitive file read requires confirmation:"),
+            "unexpected reason: {}",
+            dec.reason
+        );
+    }
+
+    // Normal workspace file remains Allowed under Cautious
+    let normal_dec = cautious.evaluate(&read_spec, &json!({"path": "src/main.rs"}), ws.path());
+    assert_eq!(normal_dec.action, PermissionAction::Allow);
+
+    // AllowAll still permits sensitive reads
+    let allow_all = EffectivePolicy {
+        profile: PermissionProfile::AllowAll,
+        workspace_trusted: true,
+        network_allowed: true,
+        rules: vec![],
+    };
+    assert_eq!(
+        allow_all
+            .evaluate(&read_spec, &json!({"path": "~/.ssh/id_rsa"}), ws.path())
+            .action,
+        PermissionAction::Allow
+    );
+
+    // Outbound messaging_manage send/create and Network POST require Ask under Cautious
+    let messaging_spec = nola_types::ToolSpec {
+        schema: nola_types::ToolSchema {
+            name: "messaging_manage".into(),
+            description: "Manage messaging channels".into(),
+            parameters: json!({}),
+        },
+        tier: nola_types::ToolTier::Deferred,
+        domain: nola_types::CapabilityDomain::Network,
+        read_only: false,
+    };
+    let send_dec = cautious.evaluate(
+        &messaging_spec,
+        &json!({"action": "send", "id": "ch1", "endpoint": "https://hooks.example.com/a", "text": "hi"}),
+        ws.path(),
+    );
+    assert_eq!(send_dec.action, PermissionAction::Ask);
+    let create_dec = cautious.evaluate(
+        &messaging_spec,
+        &json!({"action": "create", "endpoint": "https://hooks.example.com/b"}),
+        ws.path(),
+    );
+    assert_eq!(create_dec.action, PermissionAction::Ask);
+
+    // Endpoint resource extraction lets User Deny rule match on `args["endpoint"]`
+    let mut cautious_with_deny = cautious.clone();
+    cautious_with_deny.add_rule(PermissionRule {
+        scope: RuleScope::User,
+        action: PermissionAction::Deny,
+        tool_pattern: "messaging_manage".into(),
+        resource_pattern: Some("*hooks.evil.example*".into()),
+    });
+    let denied_endpoint = cautious_with_deny.evaluate(
+        &messaging_spec,
+        &json!({"action": "send", "endpoint": "https://hooks.evil.example/exfil", "text": "x"}),
+        ws.path(),
+    );
+    assert_eq!(denied_endpoint.action, PermissionAction::Deny);
+
+    // Even a read_only=true Network tool with method=POST must require Ask under Cautious
+    let web_fetch_spec = reg.get("web_fetch").unwrap().spec();
+    let post_dec = cautious.evaluate(
+        &web_fetch_spec,
+        &json!({"url": "https://api.example.com/submit", "method": "POST"}),
+        ws.path(),
+    );
+    assert_eq!(post_dec.action, PermissionAction::Ask);
+
+    // Malformed .nola/settings.json records a warning and NEVER escalates permissions
+    let nola_dir = ws.path().join(".nola");
+    std::fs::create_dir_all(&nola_dir).unwrap();
+    std::fs::write(nola_dir.join("settings.json"), "{ invalid json").unwrap();
+    let (loaded, warnings) =
+        EffectivePolicy::load_with_warnings(ws.path(), None, true, None, true);
+    assert_eq!(loaded.profile, PermissionProfile::Cautious);
+    assert!(
+        warnings.iter().any(|w| w.contains("malformed settings JSON")),
+        "expected malformed settings warning, got {warnings:?}"
+    );
+}
+
+#[test]
+fn planning_todos_and_plans_are_strictly_isolated_per_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let planning = Arc::new(crate::PlanningState::default());
+    let mut reg = ToolRegistry::with_builtin_tools();
+    crate::register_planning_tools(store.clone(), &planning, &mut reg);
+
+    let ctx_a = ToolContext::new(dir.path()).with_session_id("sess_alpha");
+    let ctx_b = ToolContext::new(dir.path()).with_session_id("sess_beta");
+
+    let r1 = reg.execute(
+        "update_agent_todos",
+        &ctx_a,
+        json!({"todos": [{"id": "a1", "title": "Alpha task", "status": "in_progress"}]}),
+    );
+    assert!(!r1.is_error);
+    let r2 = reg.execute(
+        "update_agent_todos",
+        &ctx_b,
+        json!({"todos": [{"id": "b1", "title": "Beta task", "status": "done"}]}),
+    );
+    assert!(!r2.is_error);
+
+    let p1 = reg.execute(
+        "propose_agent_plan",
+        &ctx_a,
+        json!({"title": "Alpha Plan", "markdown": "1. Alpha"}),
+    );
+    assert!(!p1.is_error);
+    let p2 = reg.execute(
+        "propose_agent_plan",
+        &ctx_b,
+        json!({"title": "Beta Plan", "markdown": "1. Beta"}),
+    );
+    assert!(!p2.is_error);
+
+    let todos_a = crate::load_session_todos(&store, "sess_alpha");
+    let todos_b = crate::load_session_todos(&store, "sess_beta");
+    assert_eq!(todos_a["todos"][0]["title"], "Alpha task");
+    assert_eq!(todos_b["todos"][0]["title"], "Beta task");
+
+    let plan_a = crate::load_session_plan(&store, "sess_alpha");
+    let plan_b = crate::load_session_plan(&store, "sess_beta");
+    assert_eq!(plan_a["title"], "Alpha Plan");
+    assert_eq!(plan_b["title"], "Beta Plan");
+
+    // Unknown session returns empty todos and null plan
+    assert_eq!(
+        crate::load_session_todos(&store, "sess_missing")["todos"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(crate::load_session_plan(&store, "sess_missing").is_null());
+}
+
+#[test]
+fn compact_session_now_reduces_persisted_messages_and_appends_marker() {
+    let store = Store::open_in_memory().unwrap();
+    let session_id = "compact_sess_1";
+    let mut history = Vec::new();
+    for i in 0..8 {
+        history.push(HistoryMessage::User {
+            content: format!("User step {i}: investigate module_{i}.rs and fix warnings."),
+            media: vec![],
+        });
+        history.push(HistoryMessage::Assistant {
+            content: format!("Assistant step {i}: checked module_{i}.rs and recorded findings."),
+            reasoning: None,
+            tool_calls: vec![],
+            continuation: None,
+        });
+    }
+    let before_count = history.len();
+    store
+        .set_kv(
+            &format!("session_state:{session_id}"),
+            &json!({
+                "history": history,
+                "policy": {
+                    "profile": "cautious",
+                    "workspace_trusted": true,
+                    "network_allowed": true,
+                    "rules": []
+                },
+                "activated_tools": ["repo_map"],
+                "usage": {
+                    "input_tokens": 2500,
+                    "output_tokens": 400,
+                    "cache_read_tokens": 1500,
+                    "cache_write_tokens": 0,
+                    "reasoning_tokens": 50,
+                    "usage_reported": true
+                }
+            }),
+        )
+        .unwrap();
+
+    let out = crate::compact_session_now(&store, None, None, session_id).unwrap();
+    assert_eq!(out["ok"], true);
+    assert_eq!(out["conversation_id"], session_id);
+    assert_eq!(out["before_messages"], before_count);
+    let after_count = out["after_messages"].as_u64().unwrap() as usize;
+    assert!(
+        after_count < before_count,
+        "expected compacted count ({after_count}) < before ({before_count})"
+    );
+    assert!(!out["summary"].as_str().unwrap_or("").trim().is_empty());
+
+    // Persisted state in KV was updated & cumulative usage preserved
+    let saved = store
+        .get_kv(&format!("session_state:{session_id}"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved["history"].as_array().unwrap().len(), after_count);
+    let usage = crate::load_session_usage(&store, session_id);
+    assert_eq!(usage.input_tokens, 2500);
+    assert_eq!(usage.cache_read_tokens, 1500);
+    assert!(usage.usage_reported);
+
+    // Compaction marker event was appended to session event log
+    let page = store.events_after(session_id, 0, 50).unwrap();
+    match page {
+        nola_store::EventPage::Events(evts) => {
+            let marker = evts
+                .iter()
+                .find(|e| e.kind == "compaction_marker")
+                .expect("expected compaction_marker event");
+            assert_eq!(marker.payload["before_messages"], before_count);
+            assert_eq!(marker.payload["after_messages"], after_count);
+        }
+        other => panic!("unexpected event page: {other:?}"),
+    }
+}
+
+#[test]
+fn mixed_skill_load_batch_is_rejected_and_scoped_memory_and_media_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+
+    // Seed memories across namespaces: current workspace, default, code_memory, and another workspace
+    let ws_ns = crate::workspace_memory_namespace(dir.path());
+    let ts = nola_types::now_ms();
+    store
+        .upsert_memory(&nola_types::MemoryItem {
+            id: "m_ws".into(),
+            namespace: ws_ns.clone(),
+            title: "Workspace deployment note".into(),
+            content: "Use cargo_widget for deployment in this workspace.".into(),
+            tags: vec![ws_ns.clone()],
+            created_at_ms: ts,
+            updated_at_ms: ts,
+        })
+        .unwrap();
+    store
+        .upsert_memory(&nola_types::MemoryItem {
+            id: "m_code".into(),
+            namespace: "code_memory".into(),
+            title: "Code memory cargo_widget".into(),
+            content: "Snapshot of cargo_widget git commits.".into(),
+            tags: vec!["code_memory".into()],
+            created_at_ms: ts,
+            updated_at_ms: ts,
+        })
+        .unwrap();
+    store
+        .upsert_memory(&nola_types::MemoryItem {
+            id: "m_other_ws".into(),
+            namespace: "default".into(),
+            title: "Other workspace cargo_widget".into(),
+            content: "Secret from another workspace cargo_widget.".into(),
+            tags: vec!["ws:0000000000000000".into()],
+            created_at_ms: ts,
+            updated_at_ms: ts,
+        })
+        .unwrap();
+
+    // Register a mock `skill_load` tool so we can test mixed batch rejection + solo success
+    struct MockSkillLoadTool;
+    impl nola_tools::ToolHandler for MockSkillLoadTool {
+        fn spec(&self) -> nola_types::ToolSpec {
+            nola_types::ToolSpec {
+                schema: nola_types::ToolSchema {
+                    name: "skill_load".into(),
+                    description: "Load skill instructions".into(),
+                    parameters: json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+                },
+                tier: nola_types::ToolTier::Core,
+                domain: nola_types::CapabilityDomain::System,
+                read_only: true,
+            }
+        }
+        fn execute(
+            &self,
+            _ctx: &ToolContext,
+            args: serde_json::Value,
+        ) -> nola_types::ToolExecutionResult {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("demo");
+            nola_types::ToolExecutionResult::ok_structured(
+                json!({"name": name, "body": "Follow step 1 then step 2."}),
+                format!("Loaded skill {name}"),
+            )
+        }
+    }
+
+    let mut reg = ToolRegistry::with_builtin_tools();
+    reg.register(Arc::new(MockSkillLoadTool));
+
+    let caller = Arc::new(ScriptedCaller::new(vec![
+        // Turn 1: mixed batch (`skill_load` + `write_file`) MUST be rejected without writing file!
+        NormalizedModelResponse {
+            response_id: Some("r1".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![
+                ModelToolCall {
+                    call_id: "c_skill".into(),
+                    name: "skill_load".into(),
+                    arguments: json!({"name": "deploy"}),
+                },
+                ModelToolCall {
+                    call_id: "c_write".into(),
+                    name: "write_file".into(),
+                    arguments: json!({"path": "should_not_exist.txt", "content": "nope"}),
+                },
+            ],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+                usage_reported: true,
+                ..Default::default()
+            },
+            continuation: None,
+        },
+        // Turn 2: solo `skill_load` succeeds cleanly
+        NormalizedModelResponse {
+            response_id: Some("r2".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "c_skill_solo".into(),
+                name: "skill_load".into(),
+                arguments: json!({"name": "deploy"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage {
+                input_tokens: 150,
+                output_tokens: 15,
+                cache_read_tokens: 80,
+                usage_reported: true,
+                ..Default::default()
+            },
+            continuation: None,
+        },
+        // Turn 3: final answer
+        NormalizedModelResponse {
+            response_id: Some("r3".into()),
+            response_model: Some("mock".into()),
+            content: "Skill loaded cleanly.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage {
+                input_tokens: 200,
+                output_tokens: 10,
+                cache_read_tokens: 120,
+                usage_reported: true,
+                ..Default::default()
+            },
+            continuation: None,
+        },
+    ]));
+
+    let engine = AgentEngine::new(store.clone(), Arc::new(reg), caller.clone());
+    let ctx = ToolContext::new(dir.path());
+    let user_img = nola_types::MediaAttachment {
+        mime_type: "image/png".into(),
+        filename: "diagram.png".into(),
+        bytes_base64: "iVBORw0KGgo=".into(),
+        sha256: "abc123".into(),
+        raw_bytes_len: 8,
+    };
+
+    let res = engine
+        .run_with_media(
+            &ctx,
+            "Help with cargo_widget deployment",
+            vec![user_img.clone()],
+            AgentRunConfig {
+                session_id: Some("sess_hygiene".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![FrozenSystemBlock {
+                    id: "sys".into(),
+                    text: "System".into(),
+                }],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 6,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: true,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+
+    assert_eq!(res.final_text, "Skill loaded cleanly.");
+    assert!(
+        !dir.path().join("should_not_exist.txt").exists(),
+        "mixed skill_load batch must NOT execute write_file"
+    );
+
+    let reqs = caller.captured.lock().unwrap();
+    // Turn 0 user message preserved multimodal attachment
+    match &reqs[0].history[0] {
+        HistoryMessage::User { media, .. } => assert_eq!(media, &vec![user_img]),
+        other => panic!("expected User message, got {other:?}"),
+    }
+    // Scoped memory recall included workspace item, excluded code_memory and other-workspace item
+    let mem_rem = reqs[0]
+        .ephemeral_tail_reminders
+        .iter()
+        .find(|r| r.tag == "recalled_memory")
+        .expect("expected recalled_memory reminder");
+    assert!(mem_rem.text.contains("Workspace deployment note"));
+    assert!(!mem_rem.text.contains("Code memory"));
+    assert!(!mem_rem.text.contains("Other workspace"));
+
+    // Turn 1 history shows both tool calls from mixed batch rejected with mixed_skill_load_batch
+    let tool_errors: Vec<_> = reqs[1]
+        .history
+        .iter()
+        .filter_map(|m| match m {
+            HistoryMessage::Tool {
+                is_error, payload, ..
+            } if *is_error => Some(payload.to_model_value()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_errors.len(), 2);
+    assert!(tool_errors
+        .iter()
+        .all(|v| v["error"] == "mixed_skill_load_batch"));
+
+    // Cumulative usage persisted for Web Inspector
+    let persisted_usage = crate::load_session_usage(&store, "sess_hygiene");
+    assert_eq!(persisted_usage.input_tokens, 450);
+    assert_eq!(persisted_usage.output_tokens, 45);
+    assert_eq!(persisted_usage.cache_read_tokens, 200);
+    assert!(persisted_usage.usage_reported);
+}
+
+#[test]
+fn subagent_safe_stop_and_durable_snapshot_persistence() {
+    struct SlowBlockingCaller {
+        entered: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
+    }
+    impl ModelCaller for SlowBlockingCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            self.entered.store(true, std::sync::atomic::Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1_000);
+            while !self.release.load(std::sync::atomic::Ordering::Relaxed)
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Ok(NormalizedModelResponse {
+                response_id: Some("slow_1".into()),
+                response_model: Some("mock".into()),
+                content: "Finished slowly".into(),
+                reasoning: None,
+                tool_calls: vec![],
+                stop_reason: ModelStopReason::Stop,
+                usage: TokenUsage::default(),
+                continuation: None,
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let entered = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let caller = Arc::new(SlowBlockingCaller {
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    });
+
+    let mgr = Arc::new(crate::SubagentManager::new(store.clone(), caller.clone()));
+    mgr.configure_parent(
+        mock_route(ModelProtocol::OpenAiChat),
+        EffectivePolicy {
+            profile: PermissionProfile::AllowAll,
+            workspace_trusted: true,
+            network_allowed: true,
+            rules: vec![],
+        },
+    );
+    let ctx = ToolContext::new(dir.path());
+    let spawned = mgr
+        .spawn(&ctx, "SlowWorker".into(), String::new(), "Do work".into(), true, 4)
+        .unwrap();
+
+    // Wait until the worker thread is actively inside the slow LLM call
+    let enter_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !entered.load(std::sync::atomic::Ordering::SeqCst)
+        && std::time::Instant::now() < enter_deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(entered.load(std::sync::atomic::Ordering::SeqCst));
+
+    // Stop while worker is still blocked: must NOT prematurely claim Stopped while executing!
+    let stopping = mgr.stop(&spawned.task_id).unwrap();
+    assert_eq!(stopping.status, crate::TaskStatus::Running);
+    assert!(stopping.cancelling);
+    assert!(stopping.ended_at_ms.is_none());
+
+    // Release the worker and wait for it to observe cancellation and seal TaskStatus::Stopped
+    release.store(true, std::sync::atomic::Ordering::SeqCst);
+    let final_snap = mgr.wait(&spawned.task_id, 2_000).unwrap();
+    assert_eq!(final_snap.status, crate::TaskStatus::Stopped);
+    assert!(!final_snap.cancelling);
+    assert!(final_snap.ended_at_ms.is_some());
+
+    // A fresh SubagentManager backed by the same Store can still read/list the durable task!
+    let restarted_mgr = crate::SubagentManager::new(store, caller);
+    let restored = restarted_mgr.read(&spawned.task_id).unwrap();
+    assert_eq!(restored.task_id, spawned.task_id);
+    assert_eq!(restored.status, crate::TaskStatus::Stopped);
+    assert!(restarted_mgr
+        .list()
+        .iter()
+        .any(|t| t.task_id == spawned.task_id));
 }

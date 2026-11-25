@@ -55,11 +55,58 @@ class AgentTraceSession(
         is SseEvent.V2SessionStarted,
         is SseEvent.V2TextDelta,
         is SseEvent.V2ReasoningDelta,
-        is SseEvent.V2Compacted,
-        is SseEvent.V2UiSurface,
-        is SseEvent.V2PermissionRequested,
-        is SseEvent.V2UserQuestion,
         is SseEvent.V2TurnCompleted -> null
+        is SseEvent.V2Compacted -> event(
+            kind = "context.compacted",
+            status = "running",
+            payload = AgentTracePayload(
+                phase = "compacting",
+                summary = source.summary.ifBlank { "context_compacted" },
+            ),
+        )
+        is SseEvent.V2UiSurface -> {
+            val surfaceId = ((source.snapshot["identity"] as? JsonObject)?.get("surface_id") as? JsonPrimitive)?.content
+                ?.takeIf { it.isNotBlank() }
+                ?: "ui_surface"
+            val summary = (source.snapshot["summary"] as? JsonPrimitive)?.content
+                ?.takeIf { it.isNotBlank() }
+                ?: (source.snapshot["phase"] as? JsonPrimitive)?.content
+                ?: "ui_surface"
+            event(
+                kind = "tool.progress",
+                status = "running",
+                spanId = surfaceId,
+                payload = AgentTracePayload(
+                    summary = summary,
+                    toolName = "render_ui_surface",
+                    callId = surfaceId,
+                    result = source.snapshot,
+                ),
+            )
+        }
+        is SseEvent.V2PermissionRequested -> event(
+            kind = "tool.permission.requested",
+            status = "waiting",
+            spanId = source.requestId,
+            payload = AgentTracePayload(
+                summary = source.reason.ifBlank { source.tool },
+                toolName = source.tool,
+                callId = source.requestId,
+                permissionRequestId = source.requestId,
+                arguments = source.arguments as? JsonObject,
+            ),
+        )
+        is SseEvent.V2UserQuestion -> event(
+            kind = "phase.changed",
+            status = "waiting",
+            spanId = source.requestId,
+            payload = AgentTracePayload(
+                phase = "awaiting_user_input",
+                summary = source.question,
+                detail = source.options.takeIf { it.isNotEmpty() }?.joinToString(", "),
+                callId = source.requestId,
+            ),
+        )
         is SseEvent.V2ToolStarted -> event(
             kind = "tool.started",
             spanId = source.callId,

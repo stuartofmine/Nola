@@ -91,7 +91,8 @@ impl ToolHandler for WebFetchTool {
                         "url": { "type": "string" },
                         "max_chars": { "type": "integer", "description": "Maximum response chars (default 20000)" }
                     },
-                    "required": ["url"]
+                    "required": ["url"],
+                    "additionalProperties": false
                 }),
             },
             tier: ToolTier::Deferred,
@@ -101,6 +102,29 @@ impl ToolHandler for WebFetchTool {
     }
 
     fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        const ALLOWED_KEYS: &[&str] = &["url", "max_chars"];
+        let Some(obj) = args.as_object() else {
+            return ToolExecutionResult::err_structured(
+                "invalid_params",
+                "web_fetch arguments must be a JSON object",
+                None,
+            );
+        };
+        let extra: Vec<&str> = obj
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !ALLOWED_KEYS.contains(k))
+            .collect();
+        if !extra.is_empty() {
+            return ToolExecutionResult::err_structured(
+                "undeclared_parameter_rejected",
+                format!(
+                    "security error: undeclared parameter(s) are forbidden in web_fetch: {}",
+                    extra.join(", ")
+                ),
+                Some(json!({"rejected_keys": extra})),
+            );
+        }
         if !ctx.network_allowed {
             return ToolExecutionResult::err_structured(
                 "network_denied",

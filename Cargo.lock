@@ -1402,14 +1402,18 @@ name = "nola-modules"
 version = "2.0.0"
 dependencies = [
  "chrono",
+ "hex",
+ "ignore",
  "nola-engine",
  "nola-llm",
  "nola-store",
  "nola-tools",
  "nola-types",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "url",
 ]

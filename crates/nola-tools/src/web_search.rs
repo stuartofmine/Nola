@@ -24,7 +24,8 @@ impl ToolHandler for WebSearchTool {
                         "query": { "type": "string" },
                         "max_results": { "type": "integer", "description": "Default 8, max 20" }
                     },
-                    "required": ["query"]
+                    "required": ["query"],
+                    "additionalProperties": false
                 }),
             },
             tier: ToolTier::Deferred,
@@ -34,6 +35,29 @@ impl ToolHandler for WebSearchTool {
     }
 
     fn execute(&self, ctx: &ToolContext, args: Value) -> ToolExecutionResult {
+        const ALLOWED_KEYS: &[&str] = &["query", "max_results"];
+        let Some(obj) = args.as_object() else {
+            return ToolExecutionResult::err_structured(
+                "invalid_params",
+                "web_search arguments must be a JSON object",
+                None,
+            );
+        };
+        let extra: Vec<&str> = obj
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !ALLOWED_KEYS.contains(k))
+            .collect();
+        if !extra.is_empty() {
+            return ToolExecutionResult::err_structured(
+                "undeclared_parameter_rejected",
+                format!(
+                    "security error: undeclared parameter(s) are forbidden in web_search: {}",
+                    extra.join(", ")
+                ),
+                Some(json!({"rejected_keys": extra})),
+            );
+        }
         if !ctx.network_allowed {
             return ToolExecutionResult::err_structured(
                 "network_denied",

@@ -22,6 +22,61 @@ use crate::McpError;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const SSE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Explicit allowlist of safe environment variables inherited by stdio MCP child processes.
+/// Prevents parent API keys (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) from leaking.
+const SAFE_STDIO_ENV_ALLOWLIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "SHELL",
+    "TERM",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "XDG_RUNTIME_DIR",
+];
+
+fn is_loopback_url(raw: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let lower = host.trim_end_matches('.').to_ascii_lowercase();
+    if lower == "localhost" || lower.ends_with(".localhost") {
+        return true;
+    }
+    let clean = lower.trim_start_matches('[').trim_end_matches(']');
+    clean
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+fn build_mcp_http_client(
+    url: &str,
+    timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+) -> Result<Client, McpError> {
+    let mut builder = Client::builder().redirect(reqwest::redirect::Policy::none());
+    if let Some(t) = timeout {
+        builder = builder.timeout(t);
+    }
+    if let Some(ct) = connect_timeout {
+        builder = builder.connect_timeout(ct);
+    }
+    if is_loopback_url(url) {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|e| McpError::Transport(e.to_string()))
+}
+
 type PendingMap = Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, McpError>>>>>;
 
 enum TransportBackend {
@@ -88,6 +143,12 @@ impl McpConnection {
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| McpError::Transport("stdio mcp server missing command".into()))?;
                 let mut cmd = Command::new(cmd_name);
+                cmd.env_clear();
+                for key in SAFE_STDIO_ENV_ALLOWLIST {
+                    if let Some(val) = std::env::var_os(key) {
+                        cmd.env(key, val);
+                    }
+                }
                 cmd.args(&cfg.args)
                     .envs(&cfg.env)
                     .stdin(Stdio::piped())
@@ -138,10 +199,7 @@ impl McpConnection {
                     .ok_or_else(|| {
                         McpError::Transport("streamable_http server missing url".into())
                     })?;
-                let client = Client::builder()
-                    .timeout(RPC_TIMEOUT)
-                    .build()
-                    .map_err(|e| McpError::Transport(e.to_string()))?;
+                let client = build_mcp_http_client(&url, Some(RPC_TIMEOUT), None)?;
                 TransportBackend::StreamableHttp(HttpState {
                     client,
                     server_id: cfg.id.clone(),
@@ -157,19 +215,14 @@ impl McpConnection {
                     .clone()
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| McpError::Transport("sse server missing url".into()))?;
-                let client = Client::builder()
-                    .timeout(RPC_TIMEOUT)
-                    .build()
-                    .map_err(|e| McpError::Transport(e.to_string()))?;
+                let client = build_mcp_http_client(&url, Some(RPC_TIMEOUT), None)?;
                 let pending: PendingMap = Arc::new(Mutex::new(BTreeMap::new()));
                 let post_url = Arc::new(Mutex::new(url.clone()));
                 let closed = Arc::new(AtomicBool::new(false));
 
                 let bearer = resolve_bearer(&oauth, &cfg.id)?;
-                let sse_client = Client::builder()
-                    .connect_timeout(Duration::from_secs(10))
-                    .build()
-                    .map_err(|e| McpError::Transport(e.to_string()))?;
+                let sse_client =
+                    build_mcp_http_client(&url, None, Some(Duration::from_secs(10)))?;
                 let hmap = build_headers(
                     &[("accept", "text/event-stream")],
                     &cfg.headers,
@@ -642,5 +695,38 @@ mod tests {
             Err(McpError::Rpc { code: -32602, .. })
         ));
         assert_eq!(rx2.recv().unwrap().unwrap(), json!({"ok": true}));
+    }
+
+    #[test]
+    fn stdio_transport_clears_parent_secrets_and_loopback_helper_works() {
+        assert!(is_loopback_url("http://127.0.0.1:9000/mcp"));
+        assert!(is_loopback_url("http://localhost:9000/mcp"));
+        assert!(is_loopback_url("http://[::1]:9000/mcp"));
+        assert!(!is_loopback_url("https://mcp.example.com/v1"));
+
+        // Verify stdio child process does NOT receive parent API keys while receiving explicit cfg.env
+        std::env::set_var("NOLA_TEST_SECRET_API_KEY", "super-secret-leak-check");
+        let mut custom_env = BTreeMap::new();
+        custom_env.insert("NOLA_EXPLICIT_VAR".into(), "allowed_val".into());
+        let cfg = McpServerConfig {
+            id: "envcheck".into(),
+            name: "EnvCheck".into(),
+            transport: McpTransport::Stdio,
+            enabled: true,
+            command: Some("/bin/sh".into()),
+            args: vec![
+                "-c".into(),
+                r#"read line; printf '{"jsonrpc":"2.0","id":1,"result":{"secret":"%s","explicit":"%s"}}\n' "$NOLA_TEST_SECRET_API_KEY" "$NOLA_EXPLICIT_VAR""#.into(),
+            ],
+            env: custom_env,
+            url: None,
+            headers: BTreeMap::new(),
+            oauth_client_id: None,
+            oauth_scopes: vec![],
+        };
+        let conn = McpConnection::open(&cfg, None).unwrap();
+        let res = conn.request("ping", json!({})).unwrap();
+        assert_eq!(res["secret"], "");
+        assert_eq!(res["explicit"], "allowed_val");
     }
 }

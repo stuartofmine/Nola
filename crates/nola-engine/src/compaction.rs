@@ -199,7 +199,7 @@ fn compact_history_inner(
         candidate.extend(history[split_idx..].iter().cloned());
 
         let after_tier2 = estimate_history_tokens(&candidate);
-        if after_tier2 < after_tier1 {
+        if after_tier2 < after_tier1 || (force && candidate.len() < history.len()) {
             *history = candidate;
             summary_compacted_messages = split_idx;
         }

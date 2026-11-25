@@ -362,3 +362,397 @@ fn optimized_tools_output_store_multiline_edit_diagnostics_grep_and_tool_search(
     );
     assert!(browse.payload.to_model_value()["tools"][0].get("parameters").is_none());
 }
+
+#[test]
+fn lsp_security_protocol_and_no_silent_fallback() {
+    use std::io::Cursor;
+
+    let reg = ToolRegistry::with_builtin_tools();
+    let lsp_spec = reg.get("lsp").unwrap().spec();
+    assert_eq!(lsp_spec.domain, nola_types::CapabilityDomain::Process);
+    assert!(!lsp_spec.read_only);
+    let actions = lsp_spec.schema.parameters["properties"]["action"]["enum"]
+        .as_array()
+        .unwrap();
+    assert!(actions.iter().any(|v| v == "implementation"));
+
+    // Reverse server request policy: allow ONLY workspace/configuration, reject applyEdit/executeCommand/unknown
+    let cfg_reply = crate::lsp::build_reverse_request_reply(json!(1), "workspace/configuration");
+    assert_eq!(cfg_reply["result"], json!([]));
+    assert!(cfg_reply.get("error").is_none());
+
+    for forbidden in [
+        "workspace/applyEdit",
+        "workspace/executeCommand",
+        "window/showDocument",
+        "unknown/customMethod",
+    ] {
+        let reply = crate::lsp::build_reverse_request_reply(json!(7), forbidden);
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["error"]["code"], -32601);
+        assert_eq!(
+            reply["error"]["message"],
+            "client does not allow server-initiated edits or commands"
+        );
+    }
+
+    // Frame validation: duplicate Content-Length rejected, >8 MiB frame rejected, >8 KiB header rejected
+    let dup = b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}";
+    let err = crate::lsp::read_lsp_frame(&mut Cursor::new(&dup[..])).unwrap_err();
+    assert!(err.contains("duplicate Content-Length"), "got: {err}");
+
+    let too_big = format!(
+        "Content-Length: {}\r\n\r\n{{}}",
+        crate::lsp::MAX_LSP_FRAME_BYTES + 1
+    );
+    let err = crate::lsp::read_lsp_frame(&mut Cursor::new(too_big.as_bytes())).unwrap_err();
+    assert!(err.contains("invalid lsp Content-Length"), "got: {err}");
+
+    let huge_hdr = format!(
+        "X-Pad: {}\r\nContent-Length: 2\r\n\r\n{{}}",
+        "a".repeat(crate::lsp::MAX_LSP_HEADER_BYTES + 64)
+    );
+    let err = crate::lsp::read_lsp_frame(&mut Cursor::new(huge_hdr.as_bytes())).unwrap_err();
+    assert!(err.contains("header exceeds"), "got: {err}");
+
+    // Valid frame parses cleanly
+    let valid = b"Content-Length: 15\r\n\r\n{\"jsonrpc\":\"2\"}";
+    let parsed = crate::lsp::read_lsp_frame(&mut Cursor::new(&valid[..])).unwrap();
+    assert_eq!(parsed["jsonrpc"], "2");
+
+    // No silent fallback when LSP server unavailable (e.g. .json or missing LSP binary)
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("broken.json"), "{bad json").unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let res = reg.execute(
+        "lsp",
+        &ctx,
+        json!({"action": "diagnostics", "path": "broken.json"}),
+    );
+    assert!(res.is_error, "LSP unavailability must return error, not silent fallback");
+    assert_eq!(res.payload.to_model_value()["error"], "lsp_unavailable");
+}
+
+#[test]
+fn web_fetch_and_web_search_reject_undeclared_parameters_even_under_allow_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.permission_profile = nola_types::PermissionProfile::AllowAll;
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Schemas must declare additionalProperties: false
+    let wf_spec = reg.get("web_fetch").unwrap().spec();
+    assert_eq!(wf_spec.schema.parameters["additionalProperties"], json!(false));
+    let ws_spec = reg.get("web_search").unwrap().spec();
+    assert_eq!(ws_spec.schema.parameters["additionalProperties"], json!(false));
+
+    for bad_key in ["method", "body", "files", "headers", "data", "form", "upload"] {
+        let mut args = json!({"url": "https://example.com"});
+        args[bad_key] = json!("exfiltrated");
+        let res = reg.execute("web_fetch", &ctx, args);
+        assert!(res.is_error, "web_fetch must reject undeclared key '{bad_key}'");
+        assert_eq!(
+            res.payload.to_model_value()["error"],
+            "undeclared_parameter_rejected"
+        );
+
+        let mut s_args = json!({"query": "rust"});
+        s_args[bad_key] = json!("exfiltrated");
+        let s_res = reg.execute("web_search", &ctx, s_args);
+        assert!(s_res.is_error, "web_search must reject undeclared key '{bad_key}'");
+        assert_eq!(
+            s_res.payload.to_model_value()["error"],
+            "undeclared_parameter_rejected"
+        );
+    }
+}
+
+#[test]
+fn output_store_session_isolation_utf8_byte_slicing_and_spill_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(crate::OutputStore::new(dir.path().join("outputs")));
+    let reg = ToolRegistry::with_builtin_tools();
+
+    let mut ctx_a = ToolContext::new(dir.path()).with_session_id("session-alpha");
+    ctx_a.output_store = std::sync::Arc::clone(&store);
+    let mut ctx_b = ToolContext::new(dir.path()).with_session_id("session-beta");
+    ctx_b.output_store = std::sync::Arc::clone(&store);
+
+    // Multi-byte UTF-8 text: 4 CJK chars (3 bytes each = 12 bytes) + emoji (4 bytes) = 16 bytes
+    let text = "你好世界🚀";
+    let meta = store.save_scoped("session-alpha", "bash", text).unwrap();
+    assert!(meta.path.exists());
+
+    // Cross-session read MUST fail!
+    assert!(store.read_bytes_scoped("session-beta", &meta.output_id, 0, 64).is_err());
+    let cross = reg.execute(
+        "tool_output",
+        &ctx_b,
+        json!({"action": "slice", "output_id": meta.output_id, "offset": 0, "max_bytes": 64}),
+    );
+    assert!(cross.is_error, "session-beta must NOT read session-alpha output");
+
+    // UTF-8 char-boundary slicing across multiple calls reassembles exact original string
+    let mut offset = 0usize;
+    let mut reconstructed = String::new();
+    loop {
+        let s = reg.execute(
+            "tool_output",
+            &ctx_a,
+            json!({"action": "slice", "output_id": meta.output_id, "offset": offset, "max_bytes": 5}),
+        );
+        assert!(!s.is_error, "slice failed: {:?}", s.payload);
+        let v = s.payload.to_model_value();
+        let chunk = v["content"].as_str().unwrap();
+        assert_eq!(v["bytes_returned"].as_u64().unwrap() as usize, chunk.len());
+        assert_eq!(v["size_bytes"].as_u64().unwrap() as usize, text.len());
+        reconstructed.push_str(chunk);
+        offset = v["next_offset"].as_u64().unwrap() as usize;
+        if !v["has_more"].as_bool().unwrap() {
+            break;
+        }
+    }
+    assert_eq!(reconstructed, text);
+
+    // Spill failure explicitly marks full_output_available: false instead of silently returning None
+    let blocker_file = dir.path().join("not_a_dir");
+    std::fs::write(&blocker_file, b"file").unwrap();
+    let bad_store = crate::OutputStore::new(blocker_file);
+    let big = ToolModelPayload::text("x".repeat(5_000));
+    let (notice, _meta) = bad_store
+        .maybe_spill_payload("bash", &big, 512)
+        .expect("spill failure must still return truncation notice");
+    let nv = notice.to_model_value();
+    assert_eq!(nv["full_output_available"], json!(false));
+    assert_eq!(nv["spilled"], json!(false));
+}
+
+#[test]
+fn write_file_expected_sha256_dry_run_mtime_and_read_file_byte_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Create initial file
+    let w1 = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "doc.txt", "content": "你好世界\nline2\n"}),
+    );
+    assert!(!w1.is_error);
+    let file_path = dir.path().join("doc.txt");
+    let orig_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+    let actual_sha = nola_types::sha256_hex("你好世界\nline2\n".as_bytes());
+
+    // Sleep briefly, write identical content -> mtime MUST be preserved!
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let w_same = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "doc.txt", "content": "你好世界\nline2\n"}),
+    );
+    assert!(!w_same.is_error);
+    assert!(!w_same.has_changed_version());
+    let after_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+    assert_eq!(orig_mtime, after_mtime, "identical write_file must preserve mtime");
+
+    // Wrong expected_sha256 -> existing_file_version_mismatch
+    let w_bad = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "doc.txt", "content": "updated", "expected_sha256": "0000deadbeef"}),
+    );
+    assert!(w_bad.is_error);
+    assert_eq!(
+        w_bad.payload.to_model_value()["error"],
+        "existing_file_version_mismatch"
+    );
+
+    // dry_run=true with matching expected_sha256 -> succeeds without mutating file
+    let w_dry = reg.execute(
+        "write_file",
+        &ctx,
+        json!({"path": "doc.txt", "content": "dry content", "expected_sha256": actual_sha, "dry_run": true}),
+    );
+    assert!(!w_dry.is_error);
+    assert_eq!(w_dry.payload.to_model_value()["dry_run"], json!(true));
+    assert_eq!(
+        std::fs::read_to_string(&file_path).unwrap(),
+        "你好世界\nline2\n"
+    );
+
+    // read_file byte-range reading (UTF-8 safe)
+    let rb = reg.execute(
+        "read_file",
+        &ctx,
+        json!({"path": "doc.txt", "start_byte": 0, "max_bytes": 7}),
+    );
+    assert!(!rb.is_error);
+    let rbv = rb.payload.to_model_value();
+    assert_eq!(rbv["content"], "你好");
+    assert_eq!(rbv["next_start_byte"], 6);
+    assert_eq!(rbv["truncated"], true);
+}
+
+#[test]
+fn move_file_overwrite_false_default_and_shell_full_output_preservation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ToolContext::new(dir.path()).with_session_id("sess-move-shell");
+    ctx.sandbox_mode = SandboxMode::Disabled;
+    let reg = ToolRegistry::with_builtin_tools();
+
+    std::fs::write(dir.path().join("a.txt"), "from_a").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "existing_b").unwrap();
+
+    // Default overwrite=false rejects clobbering existing destination
+    let mv_blocked = reg.execute(
+        "move_file",
+        &ctx,
+        json!({"source": "a.txt", "destination": "b.txt"}),
+    );
+    assert!(mv_blocked.is_error);
+    assert_eq!(
+        mv_blocked.payload.to_model_value()["error"],
+        "destination_exists"
+    );
+    assert_eq!(std::fs::read_to_string(dir.path().join("b.txt")).unwrap(), "existing_b");
+
+    // overwrite=true succeeds
+    let mv_ok = reg.execute(
+        "move_file",
+        &ctx,
+        json!({"source": "a.txt", "destination": "b.txt", "overwrite": true}),
+    );
+    assert!(!mv_ok.is_error);
+    assert_eq!(std::fs::read_to_string(dir.path().join("b.txt")).unwrap(), "from_a");
+
+    // Bash >256 KiB output preserves middle bytes via session-scoped OutputStore
+    let big_cmd = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "python3 -c 'print(\"H\"); print(\"a\"*140000); print(\"MIDDLE_SECRET_TOKEN\"); print(\"b\"*140000); print(\"T\")'"}),
+    );
+    assert!(!big_cmd.is_error);
+    let bv = big_cmd.payload.to_model_value();
+    assert_eq!(bv["full_output_available"], json!(true));
+    let full_id = bv["full_output_id"].as_str().expect("expected full_output_id");
+    let found = reg.execute(
+        "tool_output",
+        &ctx,
+        json!({"action": "search", "output_id": full_id, "pattern": "MIDDLE_SECRET_TOKEN"}),
+    );
+    assert!(!found.is_error);
+    assert_eq!(found.payload.to_model_value()["count"], 1);
+
+    // Timeout reports local_stop: true
+    let to = reg.execute(
+        "bash",
+        &ctx,
+        json!({"command": "sleep 5", "timeout_secs": 1}),
+    );
+    assert!(to.is_error);
+    assert_eq!(to.payload.to_model_value()["local_stop"], json!(true));
+}
+
+#[cfg(unix)]
+#[test]
+fn pty_resize_and_non_destructive_offset_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.sandbox_mode = SandboxMode::Disabled;
+    let reg = ToolRegistry::with_builtin_tools();
+
+    let pty = reg.execute(
+        "pty_exec",
+        &ctx,
+        json!({"action": "exec", "command": "cat", "cols": 80, "rows": 24, "yield_ms": 100}),
+    );
+    assert!(!pty.is_error, "pty exec failed: {:?}", pty.payload);
+    let sid = pty.payload.to_model_value()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Resize PTY
+    let rs = reg.execute(
+        "pty_exec",
+        &ctx,
+        json!({"action": "resize", "session_id": sid, "cols": 132, "rows": 40}),
+    );
+    assert!(!rs.is_error, "pty resize failed: {:?}", rs.payload);
+    assert_eq!(rs.payload.to_model_value()["resized"], json!(true));
+    assert_eq!(rs.payload.to_model_value()["cols"], json!(132));
+    assert_eq!(rs.payload.to_model_value()["rows"], json!(40));
+
+    // Write output and read twice from offset=0 non-destructively
+    let wr = reg.execute(
+        "pty_exec",
+        &ctx,
+        json!({"action": "write", "session_id": sid, "input": "alpha_marker\n", "yield_ms": 150}),
+    );
+    assert!(!wr.is_error);
+
+    let r1 = reg.execute(
+        "pty_exec",
+        &ctx,
+        json!({"action": "read", "session_id": sid, "offset": 0, "max_bytes": 4096}),
+    );
+    let r2 = reg.execute(
+        "pty_exec",
+        &ctx,
+        json!({"action": "read", "session_id": sid, "offset": 0, "max_bytes": 4096}),
+    );
+    assert!(!r1.is_error && !r2.is_error);
+    let c1 = r1.payload.to_model_value()["content"].as_str().unwrap().to_string();
+    let c2 = r2.payload.to_model_value()["content"].as_str().unwrap().to_string();
+    assert!(c1.contains("alpha_marker"));
+    assert_eq!(c1, c2, "offset reads must be non-destructive");
+
+    let _ = reg.execute("pty_exec", &ctx, json!({"action": "close", "session_id": sid}));
+}
+
+#[test]
+fn browser_attached_target_routing_and_env_scrubbing() {
+    let dir = tempfile::tempdir().unwrap();
+    let shared_bridge = std::sync::Arc::new(crate::NativeBrowserBridge::default());
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.browser = std::sync::Arc::new(crate::BrowserManager::with_native_bridge(
+        std::sync::Arc::clone(&shared_bridge),
+    ));
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Env scrubbing classifier
+    assert!(crate::browser::is_sensitive_env_key("OPENAI_API_KEY"));
+    assert!(crate::browser::is_sensitive_env_key("ANTHROPIC_API_KEY"));
+    assert!(crate::browser::is_sensitive_env_key("AWS_SECRET_ACCESS_KEY"));
+    assert!(crate::browser::is_sensitive_env_key("GITHUB_TOKEN"));
+    assert!(crate::browser::is_sensitive_env_key("MY_APP_SECRET"));
+    assert!(!crate::browser::is_sensitive_env_key("PATH"));
+
+    // Spawn mock extension host polling the EXACT shared bridge
+    let host_bridge = std::sync::Arc::clone(&shared_bridge);
+    let handle = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if let Some(cmd) = host_bridge.poll_next() {
+                let id = cmd["command_id"].as_str().unwrap().to_string();
+                let action = cmd["action"].as_str().unwrap().to_string();
+                host_bridge.submit_result(
+                    id,
+                    json!({"ok": true, "routed_action": action, "target": "attached"}),
+                );
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+
+    let res = reg.execute(
+        "browser",
+        &ctx,
+        json!({"action": "snapshot", "target": "attached", "timeout_ms": 2000}),
+    );
+    handle.join().unwrap();
+    assert!(!res.is_error, "attached browser call failed: {:?}", res.payload);
+    assert_eq!(res.payload.to_model_value()["routed_action"], "snapshot");
+}

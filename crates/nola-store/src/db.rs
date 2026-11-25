@@ -3,10 +3,11 @@
 //! atomic `VACUUM INTO` backup, and generic typed business-module CRUD.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nola_types::{now_ms, McpServerConfig, MemoryItem, Session, SessionEvent};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -14,6 +15,10 @@ use thiserror::Error;
 
 /// Default maximum retained events per scope before oldest events in that scope are pruned.
 pub const DEFAULT_MAX_EVENTS_PER_SCOPE: i64 = 10_000;
+/// SQLite `PRAGMA application_id` identifying a Nola database ("NOLA" in ASCII).
+pub const NOLA_SQLITE_APPLICATION_ID: u32 = 0x4E4F_4C41;
+/// SQLite `PRAGMA user_version` for Nola v2 schema.
+pub const NOLA_SQLITE_USER_VERSION: u32 = 2;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -47,6 +52,7 @@ pub enum EventPage {
 #[derive(Clone)]
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
+    poisoned: Arc<AtomicBool>,
 }
 
 impl Store {
@@ -68,11 +74,53 @@ impl Store {
     }
 
     fn init(conn: Connection) -> Result<Self, StoreError> {
-        conn.execute_batch(
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+
+        let app_id: u32 = conn.query_row("PRAGMA application_id;", [], |r| {
+            let v: i64 = r.get(0)?;
+            Ok(v as u32)
+        })?;
+        let user_ver: u32 = conn.query_row("PRAGMA user_version;", [], |r| {
+            let v: i64 = r.get(0)?;
+            Ok(v as u32)
+        })?;
+
+        if app_id != 0 && app_id != NOLA_SQLITE_APPLICATION_ID {
+            return Err(StoreError::Other(format!(
+                "refusing to open foreign SQLite database with application_id 0x{app_id:08X} (expected 0x{NOLA_SQLITE_APPLICATION_ID:08X})"
+            )));
+        }
+        if app_id == NOLA_SQLITE_APPLICATION_ID && user_ver > NOLA_SQLITE_USER_VERSION {
+            return Err(StoreError::Other(format!(
+                "database schema user_version {user_ver} is newer than supported version {NOLA_SQLITE_USER_VERSION}"
+            )));
+        }
+        if app_id == 0 {
+            let table_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                [],
+                |r| r.get(0),
+            )?;
+            let has_sessions: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+                [],
+                |r| r.get(0),
+            )?;
+            if table_count > 0 && has_sessions == 0 {
+                return Err(StoreError::Other(
+                    "refusing to open non-Nola SQLite database (missing 'sessions' table and application_id)"
+                        .into(),
+                ));
+            }
+        }
+
+        let schema_batch = format!(
             "PRAGMA busy_timeout = 5000;
              PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
+             PRAGMA synchronous = FULL;
              PRAGMA foreign_keys = ON;
+             PRAGMA application_id = {NOLA_SQLITE_APPLICATION_ID};
+             PRAGMA user_version = {NOLA_SQLITE_USER_VERSION};
 
              CREATE TABLE IF NOT EXISTS sessions (
                  id TEXT PRIMARY KEY,
@@ -137,11 +185,33 @@ impl Store {
                  PRIMARY KEY (kind, id)
              );
              CREATE INDEX IF NOT EXISTS idx_module_records_kind_updated
-                 ON module_records (kind, updated_at_ms DESC);",
-        )?;
+                 ON module_records (kind, updated_at_ms DESC);"
+        );
+        conn.execute_batch(&schema_batch)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            poisoned: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Returns true if a previous transaction commit failed and fenced this store read-only.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::SeqCst)
+    }
+
+    fn check_write_fence(&self) -> Result<(), StoreError> {
+        if self.poisoned.load(Ordering::SeqCst) {
+            return Err(StoreError::Other(
+                "store write fence active: connection poisoned after failed commit (query_only)"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn poison_connection(&self, conn: &Connection) {
+        self.poisoned.store(true, Ordering::SeqCst);
+        let _ = conn.execute_batch("PRAGMA query_only = ON;");
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, StoreError>) -> Result<T, StoreError> {
@@ -152,10 +222,34 @@ impl Store {
         f(&mut guard)
     }
 
+    fn with_write_conn<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.check_write_fence()?;
+        self.with_conn(f)
+    }
+
+    fn run_write_tx<T>(
+        &self,
+        f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.check_write_fence()?;
+        self.with_conn(|conn| {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let out = f(&tx)?;
+            if let Err(e) = tx.commit() {
+                self.poison_connection(conn);
+                return Err(StoreError::Sqlite(e));
+            }
+            Ok(out)
+        })
+    }
+
     // --- Sessions ---
 
     pub fn upsert_session(&self, session: &Session) -> Result<(), StoreError> {
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             conn.execute(
                 "INSERT INTO sessions (id, title, workspace_root, model_connection, model_id, created_at_ms, updated_at_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -227,12 +321,10 @@ impl Store {
     }
 
     pub fn delete_session(&self, id: &str) -> Result<(), StoreError> {
-        self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.run_write_tx(|tx| {
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM events WHERE scope = ?1", params![id])?;
             tx.execute("DELETE FROM event_watermarks WHERE scope = ?1", params![id])?;
-            tx.commit()?;
             Ok(())
         })
     }
@@ -249,8 +341,7 @@ impl Store {
         let cap = max_events_per_scope.max(1);
         let payload_json = serde_json::to_string(&payload)?;
         let ts = now_ms();
-        self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.run_write_tx(|tx| {
             let current_max: i64 = tx
                 .query_row(
                     "SELECT max_seq FROM event_watermarks WHERE scope = ?1",
@@ -282,7 +373,6 @@ impl Store {
                    max_seq = excluded.max_seq",
                 params![scope, min_retained, next_seq],
             )?;
-            tx.commit()?;
             Ok(SessionEvent {
                 scope: scope.to_string(),
                 seq: next_seq,
@@ -295,8 +385,7 @@ impl Store {
 
     /// Delete events at or after `from_seq` within `scope` (for Edit & Resend / Regenerate).
     pub fn truncate_events_from(&self, scope: &str, from_seq: i64) -> Result<usize, StoreError> {
-        self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.run_write_tx(|tx| {
             let deleted = tx.execute(
                 "DELETE FROM events WHERE scope = ?1 AND seq >= ?2",
                 params![scope, from_seq],
@@ -323,7 +412,6 @@ impl Store {
                    max_seq = excluded.max_seq",
                 params![scope, new_min, new_max],
             )?;
-            tx.commit()?;
             Ok(deleted)
         })
     }
@@ -335,7 +423,7 @@ impl Store {
         limit: usize,
     ) -> Result<EventPage, StoreError> {
         self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
             let watermark: Option<(i64, i64)> = tx
                 .query_row(
                     "SELECT min_retained_seq, max_seq FROM event_watermarks WHERE scope = ?1",
@@ -390,8 +478,7 @@ impl Store {
     pub fn upsert_memory(&self, item: &MemoryItem) -> Result<(), StoreError> {
         let tags_json = serde_json::to_string(&item.tags)?;
         let tags_text = item.tags.join(" ");
-        self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.run_write_tx(|tx| {
             tx.execute(
                 "INSERT INTO memory_items (id, namespace, title, content, tags_json, created_at_ms, updated_at_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -417,7 +504,6 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![item.id, item.namespace, item.title, item.content, tags_text],
             )?;
-            tx.commit()?;
             Ok(())
         })
     }
@@ -557,11 +643,9 @@ impl Store {
     }
 
     pub fn delete_memory(&self, id: &str) -> Result<bool, StoreError> {
-        self.with_conn(|conn| {
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        self.run_write_tx(|tx| {
             let n = tx.execute("DELETE FROM memory_items WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM memory_fts WHERE id = ?1", params![id])?;
-            tx.commit()?;
             Ok(n > 0)
         })
     }
@@ -571,7 +655,7 @@ impl Store {
     pub fn set_kv(&self, key: &str, value: &Value) -> Result<(), StoreError> {
         let raw = serde_json::to_string(value)?;
         let ts = now_ms();
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             conn.execute(
                 "INSERT INTO kv (key, value_json, updated_at_ms) VALUES (?1, ?2, ?3)
                  ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms",
@@ -600,7 +684,7 @@ impl Store {
     pub fn upsert_mcp_server(&self, cfg: &McpServerConfig) -> Result<(), StoreError> {
         let raw = serde_json::to_string(cfg)?;
         let ts = now_ms();
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             conn.execute(
                 "INSERT INTO mcp_servers (id, json, updated_at_ms) VALUES (?1, ?2, ?3)
                  ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at_ms = excluded.updated_at_ms",
@@ -623,7 +707,7 @@ impl Store {
     }
 
     pub fn delete_mcp_server(&self, id: &str) -> Result<bool, StoreError> {
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             let n = conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![id])?;
             Ok(n > 0)
         })
@@ -639,7 +723,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let raw = serde_json::to_string(record)?;
         let ts = now_ms();
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             conn.execute(
                 "INSERT INTO module_records (kind, id, json, updated_at_ms) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(kind, id) DO UPDATE SET json = excluded.json, updated_at_ms = excluded.updated_at_ms",
@@ -672,19 +756,30 @@ impl Store {
     pub fn list_module_records<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>, StoreError> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT json FROM module_records WHERE kind = ?1 ORDER BY updated_at_ms DESC",
+                "SELECT id, json FROM module_records WHERE kind = ?1 ORDER BY updated_at_ms DESC",
             )?;
-            let raws = stmt
-                .query_map(params![kind], |r| r.get::<_, String>(0))?
+            let rows = stmt
+                .query_map(params![kind], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
-            raws.into_iter()
-                .map(|s| serde_json::from_str(&s).map_err(StoreError::from))
-                .collect()
+            let mut out = Vec::with_capacity(rows.len());
+            for (id, raw) in rows {
+                match serde_json::from_str::<T>(&raw) {
+                    Ok(rec) => out.push(rec),
+                    Err(e) => {
+                        eprintln!(
+                            "nola-store: skipping incompatible module_record kind='{kind}' id='{id}': {e}"
+                        );
+                    }
+                }
+            }
+            Ok(out)
         })
     }
 
     pub fn delete_module_record(&self, kind: &str, id: &str) -> Result<bool, StoreError> {
-        self.with_conn(|conn| {
+        self.with_write_conn(|conn| {
             let n = conn.execute(
                 "DELETE FROM module_records WHERE kind = ?1 AND id = ?2",
                 params![kind, id],
@@ -693,7 +788,7 @@ impl Store {
         })
     }
 
-    // --- Atomic WAL-Safe Backup ---
+    // --- Atomic WAL-Safe Backup & Validated Restore ---
 
     /// Atomically snapshot the live database (including active WAL frames) using `VACUUM INTO`
     /// into a sibling temp file, then atomically rename over `destination` on success.
@@ -723,6 +818,87 @@ impl Store {
             let _ = std::fs::remove_file(&tmp_dest);
             return Err(StoreError::Io(e));
         }
+        Ok(())
+    }
+
+    /// Validate a backup SQLite file (`PRAGMA integrity_check`, Nola `application_id`, and
+    /// presence of the `sessions` table) before atomically copying & renaming it to `dest_path`.
+    pub fn restore_from_backup(backup_path: &Path, dest_path: &Path) -> Result<(), StoreError> {
+        if !backup_path.is_file() {
+            return Err(StoreError::Other(format!(
+                "backup file does not exist: {}",
+                backup_path.display()
+            )));
+        }
+        if let Some(parent) = dest_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        let mut nonce = [0u8; 8];
+        getrandom::getrandom(&mut nonce)
+            .map_err(|e| StoreError::Other(format!("csprng failed: {e}")))?;
+        let hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+        let tmp_dest = std::path::PathBuf::from(format!("{}.restore.{hex}", dest_path.display()));
+        if let Err(e) = std::fs::copy(backup_path, &tmp_dest) {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(StoreError::Io(e));
+        }
+
+        // Validate the staged copy (SQLite FTS5 `PRAGMA integrity_check` requires a writable
+        // handle to validate virtual-table inverted indices, so validating the staged copy
+        // keeps `backup_path` completely untouched while running full FTS5 integrity checks).
+        let validation: Result<(), StoreError> = (|| {
+            let conn = Connection::open_with_flags(&tmp_dest, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+            let mut stmt = conn.prepare("PRAGMA integrity_check;")?;
+            let results = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            if results.is_empty() || !results.iter().all(|s| s.eq_ignore_ascii_case("ok")) {
+                return Err(StoreError::Other(format!(
+                    "backup integrity_check failed: {}",
+                    results.join("; ")
+                )));
+            }
+            let app_id: u32 = conn.query_row("PRAGMA application_id;", [], |r| {
+                let v: i64 = r.get(0)?;
+                Ok(v as u32)
+            })?;
+            if app_id != 0 && app_id != NOLA_SQLITE_APPLICATION_ID {
+                return Err(StoreError::Other(format!(
+                    "backup has foreign application_id 0x{app_id:08X}"
+                )));
+            }
+            let has_sessions: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_sessions == 0 {
+                return Err(StoreError::Other(
+                    "backup database is missing required 'sessions' table".into(),
+                ));
+            }
+            Ok(())
+        })();
+
+        let _ = std::fs::remove_file(format!("{}-wal", tmp_dest.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", tmp_dest.display()));
+        if let Err(e) = validation {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(e);
+        }
+
+        if let Ok(f) = std::fs::File::open(&tmp_dest) {
+            let _ = f.sync_all();
+        }
+        if let Err(e) = std::fs::rename(&tmp_dest, dest_path) {
+            let _ = std::fs::remove_file(&tmp_dest);
+            return Err(StoreError::Io(e));
+        }
+        // Remove stale WAL/SHM sidecars if any existed for the replaced database file.
+        let _ = std::fs::remove_file(format!("{}-wal", dest_path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", dest_path.display()));
         Ok(())
     }
 }
@@ -818,5 +994,105 @@ mod tests {
         let restored = Store::open(&backup_path).unwrap();
         let restored_goal: GoalRecord = restored.get_module_record("goal", "g1").unwrap().unwrap();
         assert_eq!(restored_goal, goal);
+    }
+
+    #[test]
+    fn sqlite_pragmas_foreign_db_rejection_and_backup_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nola.db");
+        let store = Store::open(&db_path).unwrap();
+        store
+            .with_conn(|conn| {
+                let app_id: i64 = conn.query_row("PRAGMA application_id;", [], |r| r.get(0))?;
+                let user_ver: i64 = conn.query_row("PRAGMA user_version;", [], |r| r.get(0))?;
+                let sync_mode: i64 = conn.query_row("PRAGMA synchronous;", [], |r| r.get(0))?;
+                assert_eq!(app_id as u32, NOLA_SQLITE_APPLICATION_ID);
+                assert_eq!(user_ver as u32, NOLA_SQLITE_USER_VERSION);
+                assert_eq!(sync_mode, 2, "PRAGMA synchronous must be FULL (2)");
+                Ok(())
+            })
+            .unwrap();
+
+        // Reject foreign SQLite database with non-zero foreign application_id
+        let foreign_path = dir.path().join("foreign.db");
+        {
+            let conn = Connection::open(&foreign_path).unwrap();
+            conn.execute_batch("PRAGMA application_id = 0x12345678; CREATE TABLE other (id INT);")
+                .unwrap();
+        }
+        assert!(Store::open(&foreign_path).is_err());
+
+        // Tolerate legacy v2 database with application_id == 0 when sessions table exists
+        let legacy_path = dir.path().join("legacy.db");
+        {
+            let conn = Connection::open(&legacy_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL, model_connection TEXT, model_id TEXT, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);",
+            )
+            .unwrap();
+        }
+        let legacy_store = Store::open(&legacy_path).unwrap();
+        legacy_store
+            .with_conn(|conn| {
+                let app_id: i64 = conn.query_row("PRAGMA application_id;", [], |r| r.get(0))?;
+                assert_eq!(app_id as u32, NOLA_SQLITE_APPLICATION_ID);
+                Ok(())
+            })
+            .unwrap();
+
+        // Backup & validated restore_from_backup
+        let backup_path = dir.path().join("snap.db");
+        let restored_path = dir.path().join("restored.db");
+        store.set_kv("k", &json!({"v": 42})).unwrap();
+        store.backup_to(&backup_path).unwrap();
+        Store::restore_from_backup(&backup_path, &restored_path).unwrap();
+        let reopened = Store::open(&restored_path).unwrap();
+        assert_eq!(reopened.get_kv("k").unwrap(), Some(json!({"v": 42})));
+        // Reject restoring a foreign DB
+        assert!(Store::restore_from_backup(&foreign_path, &restored_path).is_err());
+    }
+
+    #[test]
+    fn list_module_records_skips_corrupt_rows_and_poison_fence_blocks_writes() {
+        let store = Store::open_in_memory().unwrap();
+        let good = GoalRecord {
+            id: "g_ok".into(),
+            title: "Valid".into(),
+            objective: "Keep running".into(),
+            workspace_root: "/tmp".into(),
+            status: GoalStatus::Running,
+            progress_notes: vec![],
+            created_at_ms: 1,
+            updated_at_ms: 2,
+        };
+        store.put_module_record("goal", &good.id, &good).unwrap();
+        // Inject one incompatible/corrupt JSON row under the same kind
+        store
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO module_records (kind, id, json, updated_at_ms) VALUES (?1, ?2, ?3, ?4)",
+                    params!["goal", "g_bad", r#"{"wrong_schema": true}"#, 3i64],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let listed: Vec<GoalRecord> = store.list_module_records("goal").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "g_ok");
+
+        // Trigger connection poison fence and verify subsequent writes fail closed while reads work
+        store
+            .with_conn(|conn| {
+                store.poison_connection(conn);
+                Ok(())
+            })
+            .unwrap();
+        assert!(store.is_poisoned());
+        assert!(store.set_kv("blocked", &json!(1)).is_err());
+        assert!(store.append_event("s", "k", json!({}), 10).is_err());
+        // Reads still succeed under query_only
+        assert_eq!(store.list_module_records::<GoalRecord>("goal").unwrap().len(), 1);
+        assert!(store.events_after("s", 0, 10).is_ok());
     }
 }
