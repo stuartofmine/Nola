@@ -10,13 +10,15 @@ import org.junit.Test
 
 class AndroidAgentPermissionModeTest {
     @Test
-    fun twoCanonicalValuesRejectAliasesAndDefaultToCautious() {
+    fun canonicalValuesRejectAliasesAndDefaultToCautious() {
         assertEquals(
-            listOf("cautious", "allow_all"),
+            listOf("cautious", "accept_edits", "allow_all"),
             AndroidAgentPermissionMode.entries.map(AndroidAgentPermissionMode::wireValue),
         )
         assertEquals(AndroidAgentPermissionMode.Cautious, AndroidAgentPermissionMode.fromWireValue(null))
-        for (value in listOf("safe", "recommended", "unknown", "请搜索当前设置", "moderate", "allowAll", "allow-all")) {
+        assertEquals(AndroidAgentPermissionMode.AcceptEdits, AndroidAgentPermissionMode.fromWireValue("accept_edits"))
+        assertEquals(AndroidAgentPermissionMode.AllowAll, AndroidAgentPermissionMode.fromWireValue("allow_all"))
+        for (value in listOf("safe", "recommended", "unknown", "请搜索当前设置", "moderate", "allowAll", "allow-all", "acceptEdits", "accept-edits")) {
             assertThrows(IllegalArgumentException::class.java) { AndroidAgentPermissionMode.fromWireValue(value) }
         }
     }
@@ -24,10 +26,14 @@ class AndroidAgentPermissionModeTest {
     @Test
     fun modesMapToCoreAuthorityWithoutInspectingUserText() {
         val recommended = requireNotNull(AndroidAgentPermissionMode.Cautious.corePermissionRule())
+        val acceptEdits = requireNotNull(AndroidAgentPermissionMode.AcceptEdits.corePermissionRule())
         val allowAll = requireNotNull(AndroidAgentPermissionMode.AllowAll.corePermissionRule())
 
         assertEquals("allow", recommended["decision"]?.jsonPrimitive?.content)
         assertEquals("product_default", recommended["source"]?.jsonPrimitive?.content)
+        assertEquals("files_write", acceptEdits["capability_pattern"]?.jsonPrimitive?.content)
+        assertEquals("allow", acceptEdits["decision"]?.jsonPrimitive?.content)
+        assertEquals("product_default", acceptEdits["source"]?.jsonPrimitive?.content)
         assertEquals("allow", allowAll["decision"]?.jsonPrimitive?.content)
         assertEquals("invocation_policy", allowAll["source"]?.jsonPrimitive?.content)
     }

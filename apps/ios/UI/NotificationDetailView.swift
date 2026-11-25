@@ -245,7 +245,7 @@ struct NotificationDetailView: View {
                                     HStack(spacing: 8) {
                                         if isProcessing {
                                             ProgressView()
-                                                .tint(.white)
+                                                .tint(DesignTokens.onActionColor)
                                         } else {
                                             Image(systemName: "checkmark")
                                                 .font(.system(size: 14, weight: .bold))
@@ -256,7 +256,8 @@ struct NotificationDetailView: View {
                                     .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .tint(.green)
+                                .tint(DesignTokens.successColor)
+                                .foregroundStyle(DesignTokens.onActionColor)
                                 .controlSize(.large)
                                 .disabled(isProcessing)
                             }
@@ -437,16 +438,16 @@ struct NotificationDetailView: View {
                     HStack(spacing: 12) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 24))
-                            .foregroundColor(.white)
+                            .foregroundStyle(DesignTokens.onActionColor)
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text(L10n.notificationMarkedHandled)
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                                .foregroundColor(.white)
+                                .foregroundStyle(DesignTokens.onActionColor)
                             Text(L10n.notificationCancelled)
                                 .font(.caption)
-                                .foregroundColor(.white.opacity(0.9))
+                                .foregroundStyle(DesignTokens.onActionColor.opacity(0.9))
                         }
                         
                         Spacer()
@@ -462,8 +463,8 @@ struct NotificationDetailView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
-                            .background(Color.white.opacity(0.25))
-                            .foregroundColor(.white)
+                            .background(DesignTokens.onActionColor.opacity(0.2))
+                            .foregroundStyle(DesignTokens.onActionColor)
                             .cornerRadius(DesignTokens.radius_pill)
                         }
                     }
@@ -472,7 +473,7 @@ struct NotificationDetailView: View {
                         RoundedRectangle(cornerRadius: DesignTokens.radius_lg)
                             .fill(
                                 LinearGradient(
-                                    gradient: Gradient(colors: [Color.green, Color.green.opacity(0.85)]),
+                                    gradient: Gradient(colors: [DesignTokens.successColor, DesignTokens.successColor.opacity(0.9)]),
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )

@@ -26,6 +26,8 @@
     let localModels = $state<LocalTestModel[]>([]);
     let selectedLocalId = $state('');
     let selectedRemoteId = $state('');
+    let localTabButton = $state<HTMLButtonElement>();
+    let cloudTabButton = $state<HTMLButtonElement>();
     let activeConversationId: string | null = null;
     let controller: AbortController | null = null;
     let disposed = false;
@@ -60,7 +62,7 @@
             localModels = local.models ?? [];
             if (!selectedLocalId) selectedLocalId = activeLocalTestModel(localModels)?.id ?? installedLocalModels[0]?.id ?? '';
             if (!selectedRemoteId) selectedRemoteId = activeApiTestModel(profiles)?.id ?? availableRemoteProfiles[0]?.id ?? '';
-            if (!installedLocalModels.length && availableRemoteProfiles.length) target = 'cloud';
+            if (!availableRemoteProfiles.length && installedLocalModels.length) target = 'local';
         } catch (cause) {
             if (!disposed) error = errorMessage(cause);
         } finally {
@@ -130,6 +132,17 @@
         totalMs = null;
     }
 
+    function tabKey(event: KeyboardEvent) {
+        if (busy || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next: 'local' | 'cloud' =
+            event.key === 'Home' ? 'local'
+            : event.key === 'End' ? 'cloud'
+            : target === 'local' ? 'cloud' : 'local';
+        target = next;
+        (next === 'local' ? localTabButton : cloudTabButton)?.focus();
+    }
+
     onMount(() => {
         void load();
         return () => {
@@ -162,10 +175,10 @@
         <section class="card setup">
             <h2>{t($locale, 'modelTest.setup')}</h2>
             <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
-                <button type="button" role="tab" aria-selected={target === 'local'} onclick={() => (target = 'local')} disabled={busy}>
+                <button bind:this={localTabButton} type="button" role="tab" aria-selected={target === 'local'} tabindex={target === 'local' ? 0 : -1} onclick={() => (target = 'local')} onkeydown={tabKey} disabled={busy}>
                     {t($locale, 'models.local')}
                 </button>
-                <button type="button" role="tab" aria-selected={target === 'cloud'} onclick={() => (target = 'cloud')} disabled={busy}>
+                <button bind:this={cloudTabButton} type="button" role="tab" aria-selected={target === 'cloud'} tabindex={target === 'cloud' ? 0 : -1} onclick={() => (target = 'cloud')} onkeydown={tabKey} disabled={busy}>
                     {t($locale, 'models.api')}
                 </button>
             </div>

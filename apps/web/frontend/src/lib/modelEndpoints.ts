@@ -31,9 +31,10 @@ export function endpointValidationError(snapshot: EndpointSnapshot, draft: Endpo
     if (!draft.name.trim()) return { code: 'modelValidation.nameRequired' };
     if (new TextEncoder().encode(draft.name.trim()).length > 512) return { code: 'modelValidation.nameLength', params: { maximum: 512 } };
     if (!validEndpointURL(draft.baseURL)) return { code: 'modelValidation.url' };
-    if (!['responses', 'chat_completions', 'anthropic'].includes(draft.wireProtocol)) return { code: 'modelValidation.selectProtocol' };
+    if (!['responses', 'siwc_responses', 'chat_completions', 'anthropic', 'gemini'].includes(draft.wireProtocol)) return { code: 'modelValidation.selectProtocol' };
     for (const model of snapshot.profiles) {
         if (!model.reasoning) continue;
+        if (draft.wireProtocol === 'gemini' && model.reasoning.control === 'automatic') continue;
         const error = reasoningValidationError(model.reasoning, draft.wireProtocol, Number(model.parameters.maxOutputTokens ?? 16384));
         if (error) return { code: 'modelValidation.endpointReasoning', params: { model: model.displayName || model.modelName }, cause: error };
     }
@@ -51,5 +52,11 @@ export function endpointDirty(snapshot: EndpointSnapshot, draft: EndpointDraft) 
 }
 
 export function protocolTitle(protocol: string) {
-    return ({ responses: 'Responses', chat_completions: 'Chat Completions', anthropic: 'Anthropic Messages' } as Record<string, string>)[protocol] ?? protocol;
+    return ({
+        responses: 'Responses',
+        siwc_responses: 'ChatGPT Responses (SIWC)',
+        chat_completions: 'Chat Completions',
+        anthropic: 'Anthropic Messages',
+        gemini: 'Google Gemini',
+    } as Record<string, string>)[protocol] ?? protocol;
 }

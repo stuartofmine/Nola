@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Registros reemplazados</string>
     <string name="chat_permission_mode">Modo de permisos</string>
     <string name="chat_permission_mode_cautious">Prudente</string>
+    <string name="chat_permission_mode_accept_edits">Aceptar cambios</string>
     <string name="chat_permission_mode_allow_all">Permitir todo</string>
     <string name="chat_permission_mode_cautious_detail">Confirma borrados, sobrescrituras, datos sensibles, envíos y conexiones nuevas. Las lecturas normales y los archivos nuevos continúan.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Permite automáticamente ediciones en el espacio de trabajo. Confirma comandos de shell, escrituras externas, envíos y conexiones nuevas.</string>
     <string name="chat_permission_mode_allow_all_detail">Sin confirmaciones de Nola en esta conversación. Siguen vigentes los permisos del sistema.</string>
     <string name="models_inference_test">Probar modelo</string>
     <string name="models_inference_test_hint">Ejecutar una consulta aislada con los parámetros guardados del modelo. No cambia el modelo activo del chat ni la conversación.</string>

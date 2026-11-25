@@ -2,7 +2,12 @@
     import { locale, t } from '../lib/i18n';
     let {onopen, selectedPath = ''}: {onopen: (path: string) => void; selectedPath?: string} = $props();
     const entries = [
-        ['/data-sources', 'shell.nav.data'], ['/models', 'shell.nav.models'], ['/capabilities', 'shell.nav.capabilities'],
+        ['/today', 'chatInspector.today'],
+        ['/activity', 'shell.informationActivity'],
+        ['/automations', 'shell.nav.automation'],
+        ['/data-sources', 'shell.nav.data'],
+        ['/models', 'shell.nav.models'],
+        ['/capabilities', 'shell.nav.capabilities'],
     ];
     const selectedEntry = $derived.by(() => {
         if (!selectedPath) return '';

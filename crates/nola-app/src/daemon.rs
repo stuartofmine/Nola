@@ -325,6 +325,8 @@ fn extract_sub_command<'a>(args: &'a Value) -> (&'a str, &'a Value) {
     if let Some(sub) = args.get("command").or_else(|| args.get("operation")) {
         let op = sub
             .get("type")
+            .or_else(|| sub.get("action"))
+            .or_else(|| sub.get("operation"))
             .or(Some(sub))
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -333,6 +335,25 @@ fn extract_sub_command<'a>(args: &'a Value) -> (&'a str, &'a Value) {
     }
     if let Some(action) = args.get("action").and_then(|v| v.as_str()) {
         return (action, args);
+    }
+    if let Some(ty) = args.get("type").and_then(|v| v.as_str()) {
+        if !matches!(
+            ty,
+            "model"
+                | "skill"
+                | "memory"
+                | "automation"
+                | "mcp"
+                | "data_source"
+                | "agent_room"
+                | "context"
+                | "conversation_plan"
+                | "runtime_task"
+                | "host_expert_template_operation"
+                | "native_expert_host_operation"
+        ) {
+            return (ty, args);
+        }
     }
     ("list", args)
 }
@@ -366,6 +387,9 @@ fn is_read_only_sub_op(op: &str) -> bool {
             | "child_conversations"
             | "child_history"
             | "peer_exchanges"
+            | "submission"
+            | "submissions"
+            | "execution_intent"
             | "resolve_sources"
             | "resolve_for_conversation"
             | "prepare_compaction"
@@ -422,6 +446,18 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "resolve_sync_change"
         | "save_sync_cursor"
         | "apply_remote_sync_page"
+        | "upsert_permission_grant"
+        | "revoke_permission_grant"
+        | "import_conversation_transcript"
+        | "admit_host_output"
+        | "submit_task_guidance"
+        | "request_owned_cancellation"
+        | "begin_archive_restore"
+        | "commit_archive_restore"
+        | "stage_archive_manifest"
+        | "begin_content_upload"
+        | "append_content_chunk"
+        | "seal_content_upload"
         | "backup" => true,
         "automation" => {
             let (op, payload) = extract_sub_command(cmd_args);
@@ -439,6 +475,7 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "data_source"
         | "agent_room"
         | "context"
+        | "runtime_task"
         | "host_expert_template_operation"
         | "native_expert_host_operation" => {
             let (op, _) = extract_sub_command(cmd_args);
@@ -3077,6 +3114,796 @@ pub fn dispatch_command(
                 "execution_backend": "nola-v2"
             }))
         }
+        "upsert_permission_grant" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("global");
+            let grant_src = input.get("grant").unwrap_or(input);
+            let grant_id = grant_src
+                .get("id")
+                .or_else(|| grant_src.get("grant_id"))
+                .or_else(|| input.get("grant_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let mut grant = grant_src.clone();
+            if let Some(obj) = grant.as_object_mut() {
+                obj.insert("id".into(), json!(grant_id));
+                obj.insert("grant_id".into(), json!(grant_id));
+                obj.insert("conversation_id".into(), json!(conv_id));
+                obj.entry("updated_at_ms".to_string()).or_insert_with(|| json!(ts));
+                obj.insert("updated_at_ms".into(), json!(ts));
+                obj.entry("created_at_ms".to_string()).or_insert_with(|| json!(ts));
+            }
+            let key = format!("conv_grants:{conv_id}");
+            let mut grants = store
+                .get_kv(&key)
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            if let Some(existing) = grants.iter_mut().find(|g| {
+                g.get("id")
+                    .or_else(|| g.get("grant_id"))
+                    .and_then(|v| v.as_str())
+                    == Some(grant_id.as_str())
+            }) {
+                *existing = grant.clone();
+            } else {
+                grants.push(grant.clone());
+            }
+            store
+                .set_kv(&key, &Value::Array(grants.clone()))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "grant_id": grant_id,
+                "grant": grant,
+                "grants": grants
+            }))
+        }
+        "revoke_permission_grant" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("global");
+            let grant_id = input
+                .get("grant_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("grant_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str());
+            let tool = input.get("tool").and_then(|v| v.as_str());
+            let key = format!("conv_grants:{conv_id}");
+            let mut grants = store
+                .get_kv(&key)
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            let before = grants.len();
+            grants.retain(|g| {
+                if let Some(gid) = grant_id {
+                    g.get("id")
+                        .or_else(|| g.get("grant_id"))
+                        .and_then(|v| v.as_str())
+                        != Some(gid)
+                } else if let Some(t) = tool {
+                    g.get("tool").and_then(|v| v.as_str()) != Some(t)
+                } else {
+                    true
+                }
+            });
+            let revoked = grants.len() < before;
+            store
+                .set_kv(&key, &Value::Array(grants.clone()))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "grant_id": grant_id,
+                "revoked": revoked,
+                "grants": grants
+            }))
+        }
+        "import_conversation_transcript" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let title = input
+                .get("title")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("Imported Conversation");
+            let ts = now_ms();
+            let sess = match store.get_session(&conv_id).ok().flatten() {
+                Some(mut existing) => {
+                    existing.updated_at_ms = ts;
+                    existing
+                }
+                None => Session {
+                    id: conv_id.clone(),
+                    title: title.to_string(),
+                    workspace_root: input
+                        .get("workspace_root")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| suite.workspace_root.display().to_string()),
+                    model_connection: None,
+                    model_id: None,
+                    created_at_ms: ts,
+                    updated_at_ms: ts,
+                },
+            };
+            store
+                .upsert_session(&sess)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let entries = input
+                .get("messages")
+                .or_else(|| input.get("transcript"))
+                .or_else(|| input.get("entries"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let mut imported_count = 0usize;
+            for entry in entries {
+                let role = entry
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user");
+                let content = entry
+                    .get("content")
+                    .or_else(|| entry.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let kind = if role.eq_ignore_ascii_case("assistant") {
+                    "assistant_message"
+                } else {
+                    "user_message"
+                };
+                let _ = store.append_event(
+                    &conv_id,
+                    kind,
+                    json!({
+                        "role": role,
+                        "content": content,
+                        "imported": true
+                    }),
+                    50_000,
+                );
+                imported_count += 1;
+            }
+            let conv_json = crate::web_api::session_to_conversation_json(store, &sess);
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "imported_count": imported_count,
+                "conversation": conv_json
+            }))
+        }
+        "admit_host_output" => {
+            let input = args.get("input").unwrap_or(args);
+            let output_id = input
+                .get("output_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let run_id = input
+                .get("run_id")
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str());
+            let ts = now_ms();
+            let rec = json!({
+                "output_id": output_id,
+                "conversation_id": conv_id,
+                "run_id": run_id,
+                "output": input.get("output").or_else(|| input.get("content")).cloned().unwrap_or(Value::Null),
+                "admitted_at_ms": ts
+            });
+            store
+                .set_kv(&format!("host_output:{output_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(cid) = conv_id {
+                let _ = store.append_event(cid, "host_output_admitted", rec.clone(), 50_000);
+            }
+            Ok(json!({
+                "ok": true,
+                "admitted": true,
+                "output_id": output_id,
+                "record": rec
+            }))
+        }
+        "load_task_guidance_receipt" => {
+            let key_id = args
+                .get("receipt_id")
+                .or_else(|| args.get("task_id"))
+                .or_else(|| args.get("conversation_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing receipt_id/task_id/conversation_id".into()))?;
+            let found = store
+                .get_kv(&format!("task_guidance_receipt:{key_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "id": key_id,
+                "found": found.is_some(),
+                "receipt": found.unwrap_or(Value::Null)
+            }))
+        }
+        "submit_task_guidance" => {
+            let input = args.get("input").unwrap_or(args);
+            let receipt_id = input
+                .get("receipt_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let task_id = input
+                .get("task_id")
+                .or_else(|| args.get("task_id"))
+                .and_then(|v| v.as_str());
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let guidance = input
+                .get("guidance")
+                .or_else(|| input.get("content"))
+                .or_else(|| input.get("message"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let ts = now_ms();
+            let receipt = json!({
+                "receipt_id": receipt_id,
+                "task_id": task_id,
+                "conversation_id": conv_id,
+                "guidance": guidance,
+                "status": "accepted",
+                "submitted_at_ms": ts
+            });
+            store
+                .set_kv(&format!("task_guidance_receipt:{receipt_id}"), &receipt)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(tid) = task_id {
+                let _ = store.set_kv(&format!("task_guidance_receipt:{tid}"), &receipt);
+            }
+            if let Some(cid) = conv_id {
+                let _ = store.set_kv(&format!("task_guidance_receipt:{cid}"), &receipt);
+            }
+            Ok(json!({
+                "ok": true,
+                "receipt_id": receipt_id,
+                "receipt": receipt
+            }))
+        }
+        "request_owned_cancellation" => {
+            let input = args.get("input").unwrap_or(args);
+            let target_id = input
+                .get("run_id")
+                .or_else(|| input.get("task_id"))
+                .or_else(|| input.get("conversation_id"))
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("run_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let ts = now_ms();
+            let rec = json!({
+                "target_id": target_id,
+                "reason": input.get("reason").cloned().unwrap_or(Value::Null),
+                "requested_at_ms": ts
+            });
+            store
+                .set_kv(&format!("cancel_requested:{target_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let _ = store.set_kv(&format!("owned_cancellation:{target_id}"), &rec);
+            Ok(json!({
+                "ok": true,
+                "cancelled": true,
+                "requested": true,
+                "target_id": target_id,
+                "requested_at_ms": ts
+            }))
+        }
+        "current_run" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let found = if !conv_id.is_empty() {
+                store
+                    .get_kv(&format!("current_run:{conv_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null())
+            } else {
+                None
+            };
+            Ok(json!({
+                "conversation_id": conv_id,
+                "active": found.is_some(),
+                "run": found.unwrap_or(Value::Null)
+            }))
+        }
+        "query_canonical_history" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let after_seq = args.get("after_seq").and_then(|v| v.as_i64());
+            let before_seq = args.get("before_seq").and_then(|v| v.as_i64());
+            let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(200)
+                .clamp(1, 2000) as usize;
+            let (msgs, events) = crate::web_api::reconstruct_v2_messages(store, conv_id);
+            let latest_seq = events
+                .last()
+                .and_then(|e| e.get("seq").and_then(|v| v.as_i64()))
+                .unwrap_or(0);
+            let filtered: Vec<Value> = msgs
+                .into_iter()
+                .filter(|m| {
+                    let sq = m.get("seq").and_then(|v| v.as_i64()).unwrap_or(0);
+                    after_seq.is_none_or(|a| sq > a) && before_seq.is_none_or(|b| sq < b)
+                })
+                .collect();
+            let total = filtered.len();
+            let start = offset.min(total);
+            let end = (start + limit).min(total);
+            let page = filtered[start..end].to_vec();
+            Ok(json!({
+                "conversation_id": conv_id,
+                "messages": page,
+                "total": total,
+                "has_more": end < total,
+                "latest_seq": latest_seq
+            }))
+        }
+        "local_run_context_usage" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let (_, rev) = read_permission_state(store, Some(conv_id));
+            let mut usage = build_context_usage_json(store, conv_id, rev);
+            if let (Some(obj), Some(run_id)) = (
+                usage.as_object_mut(),
+                args.get("run_id").and_then(|v| v.as_str()),
+            ) {
+                obj.insert("run_id".into(), json!(run_id));
+            }
+            Ok(usage)
+        }
+        "read_conversation_tool_sources" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let mcp_servers = store.list_mcp_servers().unwrap_or_default();
+            let data_sources: Vec<Value> = suite
+                .list_records::<Value>("data_source")
+                .unwrap_or_default()
+                .into_iter()
+                .map(|d| crate::web_api::normalize_data_source_record(&d))
+                .collect();
+            let bound = store
+                .get_kv(&format!("conv_data_sources:{conv_id}"))
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| json!([]));
+            Ok(json!({
+                "conversation_id": conv_id,
+                "mcp_servers": mcp_servers,
+                "data_sources": data_sources,
+                "bound_sources": bound
+            }))
+        }
+        "begin_archive_restore" => {
+            let input = args.get("input").unwrap_or(args);
+            let restore_id = input
+                .get("restore_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let rec = json!({
+                "restore_id": restore_id,
+                "archive_id": input.get("archive_id").cloned().unwrap_or(Value::Null),
+                "status": "in_progress",
+                "started_at_ms": ts
+            });
+            store
+                .set_kv(&format!("archive_restore:{restore_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let _ = store.set_kv("archive_restore_active", &json!(restore_id));
+            Ok(json!({
+                "ok": true,
+                "restore_id": restore_id,
+                "status": "in_progress",
+                "restore": rec
+            }))
+        }
+        "commit_archive_restore" => {
+            let input = args.get("input").unwrap_or(args);
+            let restore_id = input
+                .get("restore_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("restore_id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    store
+                        .get_kv("archive_restore_active")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.as_str().map(ToString::to_string))
+                })
+                .ok_or(("invalid_argument", "missing 'restore_id'".into()))?;
+            let cur_rev = store
+                .get_kv("archive_directory_revision")
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
+            let next_rev = cur_rev + 1;
+            let ts = now_ms();
+            let rec = json!({
+                "restore_id": restore_id,
+                "status": "committed",
+                "revision": next_rev,
+                "committed_at_ms": ts
+            });
+            store
+                .set_kv(&format!("archive_restore:{restore_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            store
+                .set_kv("archive_directory_revision", &json!(next_rev))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let _ = store.set_kv("archive_restore_active", &Value::Null);
+            Ok(json!({
+                "ok": true,
+                "restore_id": restore_id,
+                "status": "committed",
+                "revision": next_rev
+            }))
+        }
+        "archive_directory_revision" => {
+            let rev = store
+                .get_kv("archive_directory_revision")
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
+            let epoch = crate::web_api::ensure_source_store_epoch(store);
+            Ok(json!({
+                "revision": rev,
+                "source_store_epoch": epoch
+            }))
+        }
+        "stage_archive_manifest" => {
+            let input = args.get("input").unwrap_or(args);
+            let manifest_id = input
+                .get("manifest_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let rec = json!({
+                "manifest_id": manifest_id,
+                "manifest": input.get("manifest").or_else(|| input.get("entries")).cloned().unwrap_or_else(|| input.clone()),
+                "staged_at_ms": ts
+            });
+            store
+                .set_kv(&format!("archive_manifest:{manifest_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "staged": true,
+                "manifest_id": manifest_id,
+                "manifest": rec
+            }))
+        }
+        "begin_content_upload" => {
+            let input = args.get("input").unwrap_or(args);
+            let upload_id = input
+                .get("upload_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let rec = json!({
+                "upload_id": upload_id,
+                "conversation_id": input.get("conversation_id").cloned().unwrap_or(Value::Null),
+                "filename": input.get("filename").or_else(|| input.get("name")).cloned().unwrap_or(Value::Null),
+                "mime_type": input.get("mime_type").or_else(|| input.get("content_type")).cloned().unwrap_or(Value::Null),
+                "total_bytes": input.get("total_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
+                "bytes_received": 0,
+                "chunk_count": 0,
+                "sealed": false,
+                "created_at_ms": ts,
+                "updated_at_ms": ts
+            });
+            store
+                .set_kv(&format!("content_upload:{upload_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "upload_id": upload_id,
+                "status": "open",
+                "bytes_received": 0,
+                "upload": rec
+            }))
+        }
+        "append_content_chunk" => {
+            let input = args.get("input").unwrap_or(args);
+            let upload_id = input
+                .get("upload_id")
+                .or_else(|| args.get("upload_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'upload_id'".into()))?;
+            let mut upload = store
+                .get_kv(&format!("content_upload:{upload_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("content upload '{upload_id}' not found")))?;
+            if upload.get("sealed").and_then(|v| v.as_bool()) == Some(true) {
+                return Err(("invalid_state", format!("content upload '{upload_id}' is already sealed")));
+            }
+            let cur_chunks = upload
+                .get("chunk_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let chunk_index = input
+                .get("chunk_index")
+                .or_else(|| input.get("index"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(cur_chunks);
+            let data = input
+                .get("data")
+                .or_else(|| input.get("chunk_base64"))
+                .or_else(|| input.get("chunk"))
+                .cloned()
+                .unwrap_or_else(|| json!(""));
+            let chunk_len = input
+                .get("byte_length")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_else(|| {
+                    data.as_str().map(|s| s.len() as u64).unwrap_or(0)
+                });
+            let chunk_rec = json!({
+                "upload_id": upload_id,
+                "chunk_index": chunk_index,
+                "data": data,
+                "byte_length": chunk_len,
+                "appended_at_ms": now_ms()
+            });
+            store
+                .set_kv(&format!("content_upload_chunk:{upload_id}:{chunk_index}"), &chunk_rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let next_bytes = upload
+                .get("bytes_received")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .saturating_add(chunk_len);
+            let next_chunks = cur_chunks.max(chunk_index + 1);
+            if let Some(obj) = upload.as_object_mut() {
+                obj.insert("bytes_received".into(), json!(next_bytes));
+                obj.insert("chunk_count".into(), json!(next_chunks));
+                obj.insert("updated_at_ms".into(), json!(now_ms()));
+            }
+            store
+                .set_kv(&format!("content_upload:{upload_id}"), &upload)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "upload_id": upload_id,
+                "chunk_index": chunk_index,
+                "bytes_received": next_bytes,
+                "chunk_count": next_chunks
+            }))
+        }
+        "seal_content_upload" => {
+            let input = args.get("input").unwrap_or(args);
+            let upload_id = input
+                .get("upload_id")
+                .or_else(|| args.get("upload_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'upload_id'".into()))?;
+            let mut upload = store
+                .get_kv(&format!("content_upload:{upload_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("content upload '{upload_id}' not found")))?;
+            let ts = now_ms();
+            if let Some(obj) = upload.as_object_mut() {
+                obj.insert("sealed".into(), json!(true));
+                obj.insert("sealed_at_ms".into(), json!(ts));
+                obj.insert("updated_at_ms".into(), json!(ts));
+            }
+            store
+                .set_kv(&format!("content_upload:{upload_id}"), &upload)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "upload_id": upload_id,
+                "sealed": true,
+                "bytes_received": upload.get("bytes_received").cloned().unwrap_or(json!(0)),
+                "chunk_count": upload.get("chunk_count").cloned().unwrap_or(json!(0)),
+                "upload": upload
+            }))
+        }
+        "content_upload_progress" => {
+            let upload_id = args
+                .get("upload_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'upload_id'".into()))?;
+            let found = store
+                .get_kv(&format!("content_upload:{upload_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            match found {
+                Some(u) => Ok(json!({
+                    "upload_id": upload_id,
+                    "found": true,
+                    "sealed": u.get("sealed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    "bytes_received": u.get("bytes_received").cloned().unwrap_or(json!(0)),
+                    "total_bytes": u.get("total_bytes").cloned().unwrap_or(json!(0)),
+                    "chunk_count": u.get("chunk_count").cloned().unwrap_or(json!(0)),
+                    "upload": u
+                })),
+                None => Ok(json!({
+                    "upload_id": upload_id,
+                    "found": false,
+                    "sealed": false,
+                    "bytes_received": 0,
+                    "total_bytes": 0,
+                    "chunk_count": 0
+                })),
+            }
+        }
+        "read_content_upload_chunk" => {
+            let upload_id = args
+                .get("upload_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'upload_id'".into()))?;
+            let chunk_index = args
+                .get("chunk_index")
+                .or_else(|| args.get("index"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let found = store
+                .get_kv(&format!("content_upload_chunk:{upload_id}:{chunk_index}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "upload_id": upload_id,
+                "chunk_index": chunk_index,
+                "found": found.is_some(),
+                "chunk": found.unwrap_or(Value::Null)
+            }))
+        }
+        "runtime_task" => {
+            let (op, payload) = extract_sub_command(args);
+            let input = payload.get("input").unwrap_or(payload);
+            match op {
+                "list" => {
+                    let conv_filter = input
+                        .get("conversation_id")
+                        .or_else(|| args.get("conversation_id"))
+                        .and_then(|v| v.as_str());
+                    let mut tasks: Vec<Value> = suite
+                        .list_records("runtime_task")
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    if let Some(cid) = conv_filter {
+                        tasks.retain(|t| {
+                            t.get("conversation_id").and_then(|v| v.as_str()) == Some(cid)
+                        });
+                    }
+                    Ok(json!({"tasks": tasks, "items": tasks}))
+                }
+                "get" | "status" => {
+                    let id = input
+                        .get("task_id")
+                        .or_else(|| input.get("id"))
+                        .or_else(|| args.get("id"))
+                        .and_then(|v| v.as_str())
+                        .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+                    let found = suite
+                        .get_record::<Value>("runtime_task", id)
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    Ok(json!({"task_id": id, "found": found.is_some(), "task": found.unwrap_or(Value::Null)}))
+                }
+                "create" | "upsert" | "start" | "update" | "heartbeat" | "complete" | "cancel" => {
+                    let id = input
+                        .get("task_id")
+                        .or_else(|| input.get("id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(new_id);
+                    let mut rec = suite
+                        .get_record::<Value>("runtime_task", &id)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| json!({"id": id, "task_id": id, "created_at_ms": now_ms()}));
+                    if let (Some(dst), Some(src)) = (rec.as_object_mut(), input.as_object()) {
+                        for (k, v) in src {
+                            if !matches!(k.as_str(), "type" | "action" | "operation" | "command") {
+                                dst.insert(k.clone(), v.clone());
+                            }
+                        }
+                        dst.insert("id".into(), json!(id));
+                        dst.insert("task_id".into(), json!(id));
+                        let status = match op {
+                            "complete" => "completed",
+                            "cancel" => "cancelled",
+                            "start" => "running",
+                            _ => dst
+                                .get("status")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("running"),
+                        }
+                        .to_string();
+                        dst.insert("status".into(), json!(status));
+                        dst.insert("updated_at_ms".into(), json!(now_ms()));
+                    }
+                    suite
+                        .upsert_record("runtime_task", &id, &rec)
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    Ok(json!({"ok": true, "task_id": id, "task": rec}))
+                }
+                "delete" => {
+                    let id = input
+                        .get("task_id")
+                        .or_else(|| input.get("id"))
+                        .or_else(|| args.get("id"))
+                        .and_then(|v| v.as_str())
+                        .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+                    let deleted = suite
+                        .delete_record("runtime_task", id)
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    Ok(json!({"ok": true, "deleted": deleted, "task_id": id}))
+                }
+                other => Err((
+                    "unsupported_command",
+                    format!("unsupported runtime_task operation '{other}'"),
+                )),
+            }
+        }
         "backup" => {
             let dest = args
                 .get("destination")
@@ -4078,13 +4905,15 @@ fn dispatch_domain_command(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            for rec in suite.list_records::<Value>("model_connection").unwrap_or_default() {
-                let rid = rec.get("id").and_then(|v| v.as_str());
-                if !rid.is_some_and(|id| {
-                    list.iter()
-                        .any(|x| x.get("id").and_then(|v| v.as_str()) == Some(id))
-                }) {
-                    list.push(rec);
+            for kind in ["model_connection", "model_account"] {
+                for rec in suite.list_records::<Value>(kind).unwrap_or_default() {
+                    let rid = rec.get("id").and_then(|v| v.as_str());
+                    if !rid.is_some_and(|id| {
+                        list.iter()
+                            .any(|x| x.get("id").and_then(|v| v.as_str()) == Some(id))
+                    }) {
+                        list.push(rec);
+                    }
                 }
             }
             Ok(json!({"connections": list, "accounts": list, "items": list}))
@@ -4100,6 +4929,9 @@ fn dispatch_domain_command(
             if let Ok(Some(rec)) = suite.get_record::<Value>("model_connection", id) {
                 return Ok(rec);
             }
+            if let Ok(Some(rec)) = suite.get_record::<Value>("model_account", id) {
+                return Ok(rec);
+            }
             let cfg = crate::config::load_active_config(store);
             let found = crate::config::redacted_llm_config(&cfg.llm)
                 .get("connections")
@@ -4110,6 +4942,328 @@ fn dispatch_domain_command(
                         .cloned()
                 });
             Ok(found.unwrap_or(Value::Null))
+        }
+        ("model", "save_account") => {
+            let input = payload
+                .get("input")
+                .or_else(|| payload.get("account"))
+                .unwrap_or(payload);
+            let id = input
+                .get("id")
+                .or_else(|| input.get("account_id"))
+                .or_else(|| payload.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            if let Some(secret) = input
+                .get("api_key")
+                .or_else(|| input.get("apiKey"))
+                .or_else(|| input.get("token"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if let Ok(vault) =
+                    nola_store::Vault::open(crate::config::resolve_vault_path_for_store(store))
+                {
+                    let _ = vault.set_secret(&format!("model_account_secret:{id}"), secret);
+                }
+            }
+            let mut rec = input.clone();
+            if let Some(obj) = rec.as_object_mut() {
+                obj.insert("id".into(), json!(id));
+                obj.insert("account_id".into(), json!(id));
+                obj.remove("api_key");
+                obj.remove("apiKey");
+                obj.remove("token");
+                obj.insert("updated_at_ms".into(), json!(now_ms()));
+            }
+            suite
+                .upsert_record("model_account", &id, &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "id": id, "account": rec}))
+        }
+        ("model", "save_connection") => {
+            let input = payload
+                .get("input")
+                .or_else(|| payload.get("connection"))
+                .unwrap_or(payload);
+            let id = input
+                .get("id")
+                .or_else(|| input.get("connection_id"))
+                .or_else(|| payload.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let mut sanitized = input.clone();
+            if let Some(obj) = sanitized.as_object_mut() {
+                obj.insert("id".into(), json!(id));
+                obj.insert("connection_id".into(), json!(id));
+                obj.remove("api_key");
+                obj.remove("apiKey");
+                obj.insert("updated_at_ms".into(), json!(now_ms()));
+            }
+            suite
+                .upsert_record("model_connection", &id, &sanitized)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(ep) = input
+                .get("endpoint")
+                .or_else(|| input.get("base_url"))
+                .or_else(|| input.get("baseURL"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let mut cfg = crate::config::load_active_config(store);
+                let protocol = input
+                    .get("protocol")
+                    .or_else(|| input.get("wire_protocol"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let provider = input
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let api_key = input
+                    .get("api_key")
+                    .or_else(|| input.get("apiKey"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                let models: Vec<crate::config::ModelEntry> = input
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| {
+                                m.as_str()
+                                    .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                                    .map(|mid| crate::config::ModelEntry {
+                                        id: mid.to_string(),
+                                        context_window: None,
+                                        max_output_tokens: None,
+                                        temperature: None,
+                                        top_p: None,
+                                        reasoning_effort: None,
+                                        capabilities: None,
+                                    })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == id) {
+                    existing.endpoint = ep.to_string();
+                    if protocol.is_some() {
+                        existing.protocol = protocol;
+                    }
+                    if provider.is_some() {
+                        existing.provider = provider;
+                    }
+                    if api_key.is_some() {
+                        existing.api_key = api_key;
+                    }
+                    for m in models {
+                        if !existing.models.iter().any(|e| e.id == m.id) {
+                            existing.models.push(m);
+                        }
+                    }
+                } else {
+                    cfg.llm.connections.push(crate::config::ConnectionConfig {
+                        id: id.clone(),
+                        endpoint: ep.to_string(),
+                        protocol,
+                        provider,
+                        api_key,
+                        api_key_env: None,
+                        models,
+                    });
+                }
+                let _ = crate::config::save_applied_config(store, &cfg);
+            }
+            Ok(json!({"ok": true, "id": id, "connection": sanitized}))
+        }
+        ("model", "set_connection_capability_override") => {
+            let input = payload.get("input").unwrap_or(payload);
+            let conn_id = input
+                .get("connection_id")
+                .or_else(|| input.get("connectionId"))
+                .or_else(|| args.get("connection_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'connection_id'".into()))?;
+            let model_id = input
+                .get("model_id")
+                .or_else(|| input.get("modelId"))
+                .or_else(|| args.get("model_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'model_id'".into()))?;
+            let protocol = input
+                .get("protocol")
+                .and_then(|v| v.as_str())
+                .unwrap_or("chat_completions");
+            let caps = input
+                .get("capabilities")
+                .or_else(|| input.get("override"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let kv_key = format!("model_cap_override:{conn_id}:{model_id}");
+            let stored = if caps.is_null() {
+                store
+                    .set_kv(&kv_key, &Value::Null)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                Value::Null
+            } else {
+                let rec = json!({
+                    "connection_id": conn_id,
+                    "model_id": model_id,
+                    "protocol": protocol,
+                    "user_override": caps,
+                    "updated_at_ms": now_ms()
+                });
+                store
+                    .set_kv(&kv_key, &rec)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                rec
+            };
+            Ok(json!({
+                "ok": true,
+                "connection_id": conn_id,
+                "model_id": model_id,
+                "protocol": protocol,
+                "override": stored
+            }))
+        }
+        ("model", "refresh_connection_catalog") => {
+            let input = payload.get("input").unwrap_or(payload);
+            let conn_id = input
+                .get("connection_id")
+                .or_else(|| input.get("connectionId"))
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("connection_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'connection_id'".into()))?;
+            let mut cfg = crate::config::load_active_config(store);
+            let mut models: Vec<String> = Vec::new();
+            if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
+                let mut changed = false;
+                if let Some(incoming) = input.get("models").and_then(|v| v.as_array()) {
+                    for m in incoming {
+                        if let Some(mid) = m
+                            .as_str()
+                            .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                            .filter(|s| !s.trim().is_empty())
+                        {
+                            if !conn.models.iter().any(|e| e.id == mid) {
+                                conn.models.push(crate::config::ModelEntry {
+                                    id: mid.to_string(),
+                                    context_window: None,
+                                    max_output_tokens: None,
+                                    temperature: None,
+                                    top_p: None,
+                                    reasoning_effort: None,
+                                    capabilities: None,
+                                });
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                models = conn.models.iter().map(|m| m.id.clone()).collect();
+                if changed {
+                    let _ = crate::config::save_applied_config(store, &cfg);
+                }
+            } else if let Ok(Some(rec)) = suite.get_record::<Value>("model_connection", conn_id) {
+                if let Some(arr) = rec.get("models").and_then(|v| v.as_array()) {
+                    models = arr
+                        .iter()
+                        .filter_map(|m| {
+                            m.as_str()
+                                .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                                .map(ToString::to_string)
+                        })
+                        .collect();
+                }
+            }
+            let ts = now_ms();
+            let _ = store.set_kv(
+                &format!("model_catalog_refreshed:{conn_id}"),
+                &json!({"connection_id": conn_id, "models": models, "refreshed_at_ms": ts}),
+            );
+            Ok(json!({
+                "ok": true,
+                "connection_id": conn_id,
+                "models": models,
+                "refreshed_at_ms": ts
+            }))
+        }
+        ("model", "configure_connection_models") => {
+            let input = payload.get("input").unwrap_or(payload);
+            let conn_id = input
+                .get("connection_id")
+                .or_else(|| input.get("connectionId"))
+                .or_else(|| args.get("connection_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'connection_id'".into()))?;
+            let enabled_ids: Vec<String> = input
+                .get("enabled_model_ids")
+                .or_else(|| input.get("models"))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(ToString::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let selected_id = input
+                .get("selected_model_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string);
+            let mut cfg = crate::config::load_active_config(store);
+            if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
+                for key in &enabled_ids {
+                    let mid = key.split_once(':').map(|(_, m)| m).unwrap_or(key.as_str());
+                    if !mid.is_empty() && !conn.models.iter().any(|m| m.id == mid) {
+                        conn.models.push(crate::config::ModelEntry {
+                            id: mid.to_string(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        });
+                    }
+                }
+                if let Some(ref sel) = selected_id {
+                    let mid = sel.split_once(':').map(|(_, m)| m).unwrap_or(sel.as_str());
+                    if !mid.is_empty() {
+                        cfg.llm.default_model = Some(crate::config::DefaultModelSelection {
+                            connection: conn_id.to_string(),
+                            model: mid.to_string(),
+                        });
+                    }
+                }
+                let _ = crate::config::save_applied_config(store, &cfg);
+            }
+            let selection = json!({
+                "connection_id": conn_id,
+                "enabled": enabled_ids,
+                "selected_model_id": selected_id,
+                "updated_at_ms": now_ms()
+            });
+            store
+                .set_kv(&format!("model_conn_selections:{conn_id}"), &selection)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "connection_id": conn_id,
+                "enabled_model_ids": enabled_ids,
+                "selected_model_id": selected_id,
+                "selection": selection
+            }))
         }
         ("model", "import_connection") => {
             let input = payload
@@ -5636,7 +6790,7 @@ fn dispatch_automation_run(
     }
 }
 
-fn dispatch_agent_room_command(
+pub(crate) fn dispatch_agent_room_command(
     store: &Store,
     suite: &ModulesSuite,
     args: &Value,
@@ -5923,28 +7077,37 @@ fn dispatch_agent_room_command(
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(serde_json::to_value(room).unwrap_or(Value::Null))
         }
-        "create_room" | "upsert_room" => {
+        "create" | "create_room" | "upsert_room" => {
             let ts = now_ms();
-            let id = payload
+            let id = input
                 .get("id")
+                .or_else(|| payload.get("id"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
             let room = AgentRoom {
                 id: id.clone(),
-                name: payload
+                name: input
                     .get("name")
+                    .or_else(|| input.get("title"))
+                    .or_else(|| payload.get("name"))
+                    .or_else(|| payload.get("title"))
                     .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
                     .unwrap_or("Agent Room")
                     .to_string(),
-                workspace_root: payload
+                workspace_root: input
                     .get("workspace_root")
+                    .or_else(|| payload.get("workspace_root"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| suite.workspace_root.display().to_string()),
-                participant_expert_ids: payload
+                participant_expert_ids: input
                     .get("participant_expert_ids")
+                    .or_else(|| input.get("participantExpertIds"))
+                    .or_else(|| payload.get("participant_expert_ids"))
+                    .or_else(|| payload.get("participantExpertIds"))
                     .and_then(|v| v.as_array())
                     .map(|a| {
                         a.iter()
@@ -5952,8 +7115,9 @@ fn dispatch_agent_room_command(
                             .collect()
                     })
                     .unwrap_or_default(),
-                session_id: payload
+                session_id: input
                     .get("session_id")
+                    .or_else(|| payload.get("session_id"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| format!("room_{id}")),
@@ -5964,6 +7128,424 @@ fn dispatch_agent_room_command(
                 .upsert_record("agent_room", &room.id, &room)
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"ok": true, "room": room}))
+        }
+        "update_room" => {
+            let id = input
+                .get("id")
+                .or_else(|| input.get("room_id"))
+                .or_else(|| input.get("roomId"))
+                .or_else(|| payload.get("id"))
+                .or_else(|| payload.get("room_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing room id".into()))?;
+            let mut room = suite
+                .get_record::<AgentRoom>("agent_room", id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .ok_or(("not_found", format!("room '{id}' not found")))?;
+            if let Some(name) = input
+                .get("name")
+                .or_else(|| input.get("title"))
+                .and_then(|v| v.as_str())
+            {
+                room.name = name.to_string();
+            }
+            if let Some(arr) = input
+                .get("participant_expert_ids")
+                .or_else(|| input.get("participantExpertIds"))
+                .and_then(|v| v.as_array())
+            {
+                room.participant_expert_ids = arr
+                    .iter()
+                    .filter_map(|x| x.as_str().map(ToString::to_string))
+                    .collect();
+            }
+            room.updated_at_ms = now_ms();
+            suite
+                .upsert_record("agent_room", id, &room)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "room": room}))
+        }
+        "submit" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'room_id'".into()))?;
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let rec = json!({
+                "id": sub_id,
+                "submission_id": sub_id,
+                "room_id": room_id,
+                "conversation_id": input.get("conversation_id").cloned().unwrap_or(Value::Null),
+                "content": input.get("content").or_else(|| input.get("message")).or_else(|| input.get("text")).cloned().unwrap_or_else(|| json!("")),
+                "recipient_id": input.get("recipient_id").or_else(|| input.get("expert_id")).or_else(|| input.get("to")).cloned().unwrap_or(Value::Null),
+                "status": "pending",
+                "created_at_ms": ts,
+                "updated_at_ms": ts
+            });
+            suite
+                .upsert_record("agent_room_submission", &sub_id, &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "submission_id": sub_id, "submission": rec}))
+        }
+        "submission" => {
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("submission_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'submission_id'".into()))?;
+            let found = suite
+                .get_record::<Value>("agent_room_submission", sub_id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "submission_id": sub_id,
+                "found": found.is_some(),
+                "submission": found.unwrap_or(Value::Null)
+            }))
+        }
+        "submissions" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str());
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let status_filter = input.get("status").and_then(|v| v.as_str());
+            let list: Vec<Value> = suite
+                .list_records::<Value>("agent_room_submission")
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .into_iter()
+                .filter(|s| {
+                    room_id.is_none_or(|rid| s.get("room_id").and_then(|v| v.as_str()) == Some(rid))
+                        && conv_id.is_none_or(|cid| {
+                            s.get("conversation_id").and_then(|v| v.as_str()) == Some(cid)
+                        })
+                        && status_filter
+                            .is_none_or(|st| s.get("status").and_then(|v| v.as_str()) == Some(st))
+                })
+                .collect();
+            Ok(json!({
+                "room_id": room_id,
+                "submissions": list,
+                "items": list
+            }))
+        }
+        "select_recipient" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sub_id = input
+                .get("submission_id")
+                .and_then(|v| v.as_str());
+            let explicit_recipient = input
+                .get("recipient_id")
+                .or_else(|| input.get("expert_id"))
+                .or_else(|| input.get("agent_id"))
+                .or_else(|| input.get("to"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string);
+            let recipient = explicit_recipient.unwrap_or_else(|| {
+                suite
+                    .get_record::<AgentRoom>("agent_room", room_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.participant_expert_ids.into_iter().next())
+                    .unwrap_or_else(|| "assistant".into())
+            });
+            let ts = now_ms();
+            if !room_id.is_empty() {
+                let _ = store.set_kv(
+                    &format!("room_selected_recipient:{room_id}"),
+                    &json!({"room_id": room_id, "recipient_id": recipient, "updated_at_ms": ts}),
+                );
+            }
+            if let Some(sid) = sub_id {
+                if let Ok(Some(mut sub)) = suite.get_record::<Value>("agent_room_submission", sid) {
+                    if let Some(obj) = sub.as_object_mut() {
+                        obj.insert("recipient_id".into(), json!(recipient));
+                        obj.insert("updated_at_ms".into(), json!(ts));
+                    }
+                    let _ = suite.upsert_record("agent_room_submission", sid, &sub);
+                }
+            }
+            Ok(json!({
+                "ok": true,
+                "room_id": room_id,
+                "submission_id": sub_id,
+                "recipient_id": recipient
+            }))
+        }
+        "prepare_execution" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let exec_id = new_id();
+            let ts = now_ms();
+            let intent = json!({
+                "execution_id": exec_id,
+                "room_id": room_id,
+                "submission_id": sub_id,
+                "recipient_id": input.get("recipient_id").or_else(|| input.get("expert_id")).cloned().unwrap_or(Value::Null),
+                "phase": "prepared",
+                "prepared_at_ms": ts
+            });
+            if !room_id.is_empty() {
+                let _ = store.set_kv(&format!("room_exec_intent:{room_id}"), &intent);
+            }
+            if let Some(ref sid) = sub_id {
+                if let Ok(Some(mut sub)) = suite.get_record::<Value>("agent_room_submission", sid) {
+                    if let Some(obj) = sub.as_object_mut() {
+                        obj.insert("status".into(), json!("prepared"));
+                        obj.insert("execution_id".into(), json!(exec_id));
+                        obj.insert("updated_at_ms".into(), json!(ts));
+                    }
+                    let _ = suite.upsert_record("agent_room_submission", sid, &sub);
+                }
+            }
+            Ok(json!({
+                "ok": true,
+                "ready": true,
+                "execution_id": exec_id,
+                "intent": intent
+            }))
+        }
+        "claim_execution" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let exec_id = input
+                .get("execution_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let mut claimed_sub = Value::Null;
+            if let Some(ref sid) = sub_id {
+                if let Ok(Some(mut sub)) = suite.get_record::<Value>("agent_room_submission", sid) {
+                    if let Some(obj) = sub.as_object_mut() {
+                        obj.insert("status".into(), json!("claimed"));
+                        obj.insert("execution_id".into(), json!(exec_id));
+                        obj.insert("claimed_at_ms".into(), json!(ts));
+                        obj.insert("updated_at_ms".into(), json!(ts));
+                    }
+                    let _ = suite.upsert_record("agent_room_submission", sid, &sub);
+                    claimed_sub = sub;
+                }
+            }
+            let intent = json!({
+                "execution_id": exec_id,
+                "room_id": room_id,
+                "submission_id": sub_id,
+                "phase": "claimed",
+                "claimed_at_ms": ts
+            });
+            if !room_id.is_empty() {
+                let _ = store.set_kv(&format!("room_exec_intent:{room_id}"), &intent);
+            }
+            Ok(json!({
+                "ok": true,
+                "claimed": true,
+                "execution_id": exec_id,
+                "intent": intent,
+                "submission": claimed_sub
+            }))
+        }
+        "execution_intent" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let found = if !room_id.is_empty() {
+                store
+                    .get_kv(&format!("room_exec_intent:{room_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null())
+            } else {
+                None
+            };
+            Ok(json!({
+                "room_id": room_id,
+                "found": found.is_some(),
+                "intent": found.unwrap_or(Value::Null)
+            }))
+        }
+        "cancel_pending" => {
+            let room_id = input
+                .get("room_id")
+                .or_else(|| input.get("roomId"))
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str());
+            let target_sub = input.get("submission_id").and_then(|v| v.as_str());
+            let ts = now_ms();
+            let mut cancelled_count = 0usize;
+            for mut sub in suite
+                .list_records::<Value>("agent_room_submission")
+                .unwrap_or_default()
+            {
+                let matches_room = room_id.is_none_or(|rid| {
+                    sub.get("room_id").and_then(|v| v.as_str()) == Some(rid)
+                });
+                let matches_sub = target_sub.is_none_or(|sid| {
+                    sub.get("submission_id")
+                        .or_else(|| sub.get("id"))
+                        .and_then(|v| v.as_str())
+                        == Some(sid)
+                });
+                let is_pending = matches!(
+                    sub.get("status").and_then(|v| v.as_str()),
+                    Some("pending" | "prepared" | "claimed")
+                );
+                if matches_room && matches_sub && is_pending {
+                    if let Some(sid) = sub
+                        .get("submission_id")
+                        .or_else(|| sub.get("id"))
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                    {
+                        if let Some(obj) = sub.as_object_mut() {
+                            obj.insert("status".into(), json!("cancelled"));
+                            obj.insert("cancelled_at_ms".into(), json!(ts));
+                            obj.insert("updated_at_ms".into(), json!(ts));
+                        }
+                        let _ = suite.upsert_record("agent_room_submission", &sid, &sub);
+                        cancelled_count += 1;
+                    }
+                }
+            }
+            if let Some(rid) = room_id {
+                let _ = store.set_kv(&format!("room_exec_intent:{rid}"), &Value::Null);
+            }
+            Ok(json!({
+                "ok": true,
+                "room_id": room_id,
+                "cancelled_count": cancelled_count
+            }))
+        }
+        "reconcile_execution" => {
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'submission_id'".into()))?;
+            let status = input
+                .get("status")
+                .or_else(|| input.get("outcome"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("completed");
+            let ts = now_ms();
+            let mut sub = suite
+                .get_record::<Value>("agent_room_submission", sub_id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .unwrap_or_else(|| json!({"id": sub_id, "submission_id": sub_id}));
+            let room_id = sub
+                .get("room_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| input.get("room_id").and_then(|v| v.as_str()))
+                .map(ToString::to_string);
+            if let Some(obj) = sub.as_object_mut() {
+                obj.insert("status".into(), json!(status));
+                if let Some(out) = input.get("output").or_else(|| input.get("result")) {
+                    obj.insert("output".into(), out.clone());
+                }
+                if let Some(err) = input.get("error") {
+                    obj.insert("error".into(), err.clone());
+                }
+                obj.insert("reconciled_at_ms".into(), json!(ts));
+                obj.insert("updated_at_ms".into(), json!(ts));
+            }
+            suite
+                .upsert_record("agent_room_submission", sub_id, &sub)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(ref rid) = room_id {
+                if matches!(status, "completed" | "failed" | "cancelled") {
+                    let _ = store.set_kv(&format!("room_exec_intent:{rid}"), &Value::Null);
+                }
+            }
+            Ok(json!({
+                "ok": true,
+                "reconciled": true,
+                "submission_id": sub_id,
+                "submission": sub
+            }))
+        }
+        "fail_submission" => {
+            let sub_id = input
+                .get("submission_id")
+                .or_else(|| input.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'submission_id'".into()))?;
+            let error_msg = input
+                .get("error")
+                .or_else(|| input.get("message"))
+                .or_else(|| input.get("reason"))
+                .cloned()
+                .unwrap_or_else(|| json!("submission failed"));
+            let ts = now_ms();
+            let mut sub = suite
+                .get_record::<Value>("agent_room_submission", sub_id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+                .unwrap_or_else(|| json!({"id": sub_id, "submission_id": sub_id}));
+            let room_id = sub
+                .get("room_id")
+                .and_then(|v| v.as_str())
+                .or_else(|| input.get("room_id").and_then(|v| v.as_str()))
+                .map(ToString::to_string);
+            if let Some(obj) = sub.as_object_mut() {
+                obj.insert("status".into(), json!("failed"));
+                obj.insert("error".into(), error_msg);
+                obj.insert("failed_at_ms".into(), json!(ts));
+                obj.insert("updated_at_ms".into(), json!(ts));
+            }
+            suite
+                .upsert_record("agent_room_submission", sub_id, &sub)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(ref rid) = room_id {
+                let _ = store.set_kv(&format!("room_exec_intent:{rid}"), &Value::Null);
+            }
+            Ok(json!({
+                "ok": true,
+                "failed": true,
+                "submission_id": sub_id,
+                "submission": sub
+            }))
         }
         "delete_room" => {
             let id = payload
@@ -6147,5 +7729,365 @@ fn dispatch_expert_template_command(
             "unsupported_command",
             format!("unsupported expert template operation '{other}'"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_model_agent_room_and_top_level_gap_commands_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // 1. Model domain commands
+        let acct = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({"operation": "save_account", "id": "acct-1", "label": "Work"}),
+        )
+        .unwrap();
+        assert_eq!(acct["ok"], true);
+        assert_eq!(acct["id"], "acct-1");
+
+        let conn = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "operation": "save_connection",
+                "id": "conn-1",
+                "endpoint": "https://example.invalid/v1",
+                "protocol": "siwc_responses",
+                "models": ["gpt-5"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(conn["ok"], true);
+
+        let cap = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "operation": "set_connection_capability_override",
+                "connection_id": "conn-1",
+                "model_id": "gpt-5",
+                "capabilities": {"reasoning": true}
+            }),
+        )
+        .unwrap();
+        assert_eq!(cap["ok"], true);
+
+        let catalog = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "operation": "refresh_connection_catalog",
+                "connection_id": "conn-1",
+                "models": ["gpt-5", "gpt-5-mini"]
+            }),
+        )
+        .unwrap();
+        assert_eq!(catalog["models"].as_array().unwrap().len(), 2);
+
+        let cfg_models = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "operation": "configure_connection_models",
+                "connection_id": "conn-1",
+                "enabled_model_ids": ["conn-1:gpt-5"],
+                "selected_model_id": "conn-1:gpt-5"
+            }),
+        )
+        .unwrap();
+        assert_eq!(cfg_models["ok"], true);
+
+        // 2. Agent room create + submission lifecycle
+        let room = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "create", "id": "room-1", "name": "War Room"}}),
+        )
+        .unwrap();
+        assert_eq!(room["room"]["id"], "room-1");
+
+        let sub = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "submit", "room_id": "room-1", "content": "Review PR"}}),
+        )
+        .unwrap();
+        let sub_id = sub["submission_id"].as_str().unwrap().to_string();
+
+        let got_sub = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "submission", "submission_id": sub_id}}),
+        )
+        .unwrap();
+        assert_eq!(got_sub["found"], true);
+
+        let subs = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "submissions", "room_id": "room-1"}}),
+        )
+        .unwrap();
+        assert_eq!(subs["submissions"].as_array().unwrap().len(), 1);
+
+        let sel = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "select_recipient", "room_id": "room-1", "submission_id": sub_id, "recipient_id": "reviewer"}}),
+        )
+        .unwrap();
+        assert_eq!(sel["recipient_id"], "reviewer");
+
+        let prep = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "prepare_execution", "room_id": "room-1", "submission_id": sub_id}}),
+        )
+        .unwrap();
+        assert_eq!(prep["ready"], true);
+
+        let claimed = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "claim_execution", "room_id": "room-1", "submission_id": sub_id}}),
+        )
+        .unwrap();
+        assert_eq!(claimed["claimed"], true);
+
+        let intent = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "execution_intent", "room_id": "room-1"}}),
+        )
+        .unwrap();
+        assert_eq!(intent["found"], true);
+
+        let reconciled = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "reconcile_execution", "submission_id": sub_id, "status": "completed"}}),
+        )
+        .unwrap();
+        assert_eq!(reconciled["reconciled"], true);
+
+        let sub2 = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "submit", "room_id": "room-1", "content": "Second"}}),
+        )
+        .unwrap();
+        let sub2_id = sub2["submission_id"].as_str().unwrap().to_string();
+        let failed = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "fail_submission", "submission_id": sub2_id, "error": "boom"}}),
+        )
+        .unwrap();
+        assert_eq!(failed["failed"], true);
+
+        let _ = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "submit", "room_id": "room-1", "content": "Third"}}),
+        )
+        .unwrap();
+        let cancelled = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "cancel_pending", "room_id": "room-1"}}),
+        )
+        .unwrap();
+        assert_eq!(cancelled["cancelled_count"], 1);
+
+        // 3. Top-level commands
+        let g = dispatch_command(
+            &store,
+            &suite,
+            "upsert_permission_grant",
+            &json!({"conversation_id": "c1", "grant": {"id": "g1", "tool": "bash"}}),
+        )
+        .unwrap();
+        assert_eq!(g["grants"].as_array().unwrap().len(), 1);
+
+        let rg = dispatch_command(
+            &store,
+            &suite,
+            "revoke_permission_grant",
+            &json!({"conversation_id": "c1", "grant_id": "g1"}),
+        )
+        .unwrap();
+        assert_eq!(rg["revoked"], true);
+
+        let imp = dispatch_command(
+            &store,
+            &suite,
+            "import_conversation_transcript",
+            &json!({"conversation_id": "c1", "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}),
+        )
+        .unwrap();
+        assert_eq!(imp["imported_count"], 2);
+
+        let hist = dispatch_command(
+            &store,
+            &suite,
+            "query_canonical_history",
+            &json!({"conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert_eq!(hist["total"], 2);
+
+        let adm = dispatch_command(
+            &store,
+            &suite,
+            "admit_host_output",
+            &json!({"conversation_id": "c1", "output": "done"}),
+        )
+        .unwrap();
+        assert_eq!(adm["admitted"], true);
+
+        let guid = dispatch_command(
+            &store,
+            &suite,
+            "submit_task_guidance",
+            &json!({"task_id": "t1", "guidance": "focus"}),
+        )
+        .unwrap();
+        assert_eq!(guid["ok"], true);
+        let load_guid = dispatch_command(
+            &store,
+            &suite,
+            "load_task_guidance_receipt",
+            &json!({"task_id": "t1"}),
+        )
+        .unwrap();
+        assert_eq!(load_guid["found"], true);
+
+        let cancel_owned = dispatch_command(
+            &store,
+            &suite,
+            "request_owned_cancellation",
+            &json!({"run_id": "run-1"}),
+        )
+        .unwrap();
+        assert_eq!(cancel_owned["cancelled"], true);
+
+        let cur = dispatch_command(
+            &store,
+            &suite,
+            "current_run",
+            &json!({"conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert_eq!(cur["active"], false);
+
+        let ctx_usage = dispatch_command(
+            &store,
+            &suite,
+            "local_run_context_usage",
+            &json!({"conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert_eq!(ctx_usage["conversation_id"], "c1");
+
+        let sources = dispatch_command(
+            &store,
+            &suite,
+            "read_conversation_tool_sources",
+            &json!({"conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert!(sources["mcp_servers"].is_array());
+
+        let stg = dispatch_command(
+            &store,
+            &suite,
+            "stage_archive_manifest",
+            &json!({"entries": []}),
+        )
+        .unwrap();
+        assert_eq!(stg["staged"], true);
+
+        let beg = dispatch_command(&store, &suite, "begin_archive_restore", &json!({})).unwrap();
+        let rid = beg["restore_id"].as_str().unwrap().to_string();
+        let com = dispatch_command(
+            &store,
+            &suite,
+            "commit_archive_restore",
+            &json!({"restore_id": rid}),
+        )
+        .unwrap();
+        assert_eq!(com["status"], "committed");
+        let rev = dispatch_command(&store, &suite, "archive_directory_revision", &json!({})).unwrap();
+        assert_eq!(rev["revision"], 2);
+
+        let up = dispatch_command(
+            &store,
+            &suite,
+            "begin_content_upload",
+            &json!({"filename": "a.txt", "total_bytes": 5}),
+        )
+        .unwrap();
+        let uid = up["upload_id"].as_str().unwrap().to_string();
+        let app_c = dispatch_command(
+            &store,
+            &suite,
+            "append_content_chunk",
+            &json!({"upload_id": uid, "chunk_index": 0, "data": "hello"}),
+        )
+        .unwrap();
+        assert_eq!(app_c["bytes_received"], 5);
+        let read_c = dispatch_command(
+            &store,
+            &suite,
+            "read_content_upload_chunk",
+            &json!({"upload_id": uid, "chunk_index": 0}),
+        )
+        .unwrap();
+        assert_eq!(read_c["chunk"]["data"], "hello");
+        let seal = dispatch_command(
+            &store,
+            &suite,
+            "seal_content_upload",
+            &json!({"upload_id": uid}),
+        )
+        .unwrap();
+        assert_eq!(seal["sealed"], true);
+        let prog = dispatch_command(
+            &store,
+            &suite,
+            "content_upload_progress",
+            &json!({"upload_id": uid}),
+        )
+        .unwrap();
+        assert_eq!(prog["sealed"], true);
+
+        let rt = dispatch_command(
+            &store,
+            &suite,
+            "runtime_task",
+            &json!({"operation": "start", "task_id": "rt-1", "conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert_eq!(rt["task"]["status"], "running");
+        let rt_list = dispatch_command(
+            &store,
+            &suite,
+            "runtime_task",
+            &json!({"operation": "list", "conversation_id": "c1"}),
+        )
+        .unwrap();
+        assert_eq!(rt_list["tasks"].as_array().unwrap().len(), 1);
     }
 }

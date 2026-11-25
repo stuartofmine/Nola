@@ -1330,6 +1330,7 @@ internal fun ChatScreen(
                     Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
                         when (state.permissionMode) {
                             com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
+                            com.nola.core.AndroidAgentPermissionMode.AcceptEdits -> R.string.chat_permission_mode_accept_edits
                             com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
                         }
                     ))
@@ -3367,11 +3368,61 @@ private fun V2UiSurfaceItem(
                                         val dataModel = kotlinx.serialization.json.buildJsonObject {
                                             fieldValues.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
                                         }
+                                        val existingIdentity = snapshotJson["identity"] as? kotlinx.serialization.json.JsonObject
+                                        val existingOwner = existingIdentity?.get("owner") as? kotlinx.serialization.json.JsonObject
+                                        val resolvedSurfaceId = surfaceId.ifBlank {
+                                            (existingIdentity?.get("surface_id") as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+                                        }
+                                        val generation = (existingIdentity?.get("generation") as? kotlinx.serialization.json.JsonPrimitive)
+                                            ?.content?.toLongOrNull()
+                                            ?: (snapshotJson["generation"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                                            ?: 1L
+                                        val expectedRevision = (snapshotJson["revision"] as? kotlinx.serialization.json.JsonPrimitive)
+                                            ?.content?.toLongOrNull()
+                                            ?: (snapshotJson["expected_surface_revision"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                                            ?: 0L
+                                        val ownerObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("authority_id", existingOwner?.get("authority_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("conversation_id", kotlinx.serialization.json.JsonPrimitive(convId))
+                                            put("participant_id", existingOwner?.get("participant_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("context_id", existingOwner?.get("context_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("originating_run_id", existingOwner?.get("originating_run_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("message_id", existingOwner?.get("message_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("part_id", existingOwner?.get("part_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                        }
+                                        val identityObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("owner", ownerObj)
+                                            put("surface_id", kotlinx.serialization.json.JsonPrimitive(resolvedSurfaceId))
+                                            put("generation", kotlinx.serialization.json.JsonPrimitive(generation))
+                                        }
+                                        val editsArr = kotlinx.serialization.json.buildJsonArray {
+                                            fieldValues.forEach { (k, v) ->
+                                                add(kotlinx.serialization.json.buildJsonObject {
+                                                    put("type", kotlinx.serialization.json.JsonPrimitive("set"))
+                                                    put("instance_id", kotlinx.serialization.json.JsonPrimitive(k))
+                                                    put("binding", kotlinx.serialization.json.JsonPrimitive(k))
+                                                    put("value", kotlinx.serialization.json.JsonPrimitive(v))
+                                                })
+                                            }
+                                        }
+                                        val actionObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("instance_id", kotlinx.serialization.json.JsonPrimitive(id.ifBlank { actionId }))
+                                            put("action_id", kotlinx.serialization.json.JsonPrimitive(actionId))
+                                        }
+                                        val interactionObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("identity", identityObj)
+                                            put("expected_surface_revision", kotlinx.serialization.json.JsonPrimitive(expectedRevision))
+                                            put("edits", editsArr)
+                                            put("action", actionObj)
+                                        }
                                         handler(
                                             convId,
                                             kotlinx.serialization.json.buildJsonObject {
-                                                put("surface_id", kotlinx.serialization.json.JsonPrimitive(surfaceId))
+                                                put("surface_id", kotlinx.serialization.json.JsonPrimitive(resolvedSurfaceId))
                                                 put("action_id", kotlinx.serialization.json.JsonPrimitive(actionId))
+                                                put("identity", identityObj)
+                                                put("expected_surface_revision", kotlinx.serialization.json.JsonPrimitive(expectedRevision))
+                                                put("interaction", interactionObj)
                                                 put("data_model", dataModel)
                                             },
                                         )

@@ -47,10 +47,10 @@
 
 {#if loaded || loading || error}
 <section class="profile-settings" aria-label={t($locale, 'models.api')}>
-    {#if error}<p class="notice error" role="alert">{t($locale, 'connections.catalogLoadFailed')} <button onclick={load} disabled={loading}>{t($locale, 'models.reload')}</button></p>{/if}
+    {#if error}<p class="notice error" role="alert">{t($locale, 'connections.catalogLoadFailed')} <button type="button" onclick={load} disabled={loading}>{t($locale, 'models.reload')}</button></p>{/if}
     {#if loading && !error}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
     {#if loaded}<RemoteProfiles {profiles} {openProfileId} bind:requestedEndpointName reload={load} onSelectionSaved={applySelectionSnapshot} />{/if}
 </section>
 {/if}
-<ModelConnections {profiles} onChanged={load} openConnectionId={profiles.find(profile => profile.id === openProfileId)?.connectionId ?? ''} />
+<ModelConnections {profiles} onChanged={load} hideDuplicateConnections={true} openConnectionId={profiles.find(profile => profile.id === openProfileId)?.connectionId ?? ''} />
 <style>.profile-settings { margin-block: 24px 36px; }</style>

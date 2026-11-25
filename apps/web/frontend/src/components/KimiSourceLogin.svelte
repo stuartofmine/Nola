@@ -90,23 +90,23 @@
     <label>{t($locale, 'sourceAccounts.savedOwner')}<select bind:value={ownerID} disabled={busy} onchange={selectOwner}><option value="">{t($locale, 'sourceAccounts.newKimi')}</option>
         {#each owners as owner (owner.account_id)}<option value={owner.account_id}>{owner.display_name} · {owner.server_id}</option>{/each}
     </select></label>
-    <button disabled={busy} onclick={refreshOwners}>{t($locale, 'sourceAccounts.refreshOwners')}</button>
+    <button type="button" disabled={busy} onclick={refreshOwners}>{t($locale, 'sourceAccounts.refreshOwners')}</button>
     <label>{t($locale, 'sourceAccounts.label')}<input bind:value={name} disabled={busy} /></label>
     <label>{t($locale, 'sourceAccounts.origin')}<input bind:value={origin} placeholder="http://127.0.0.1:58627" disabled={busy} /></label>
     <label>{t($locale, 'sourceAccounts.bearer')}<input type="password" bind:value={bearer} autocomplete="off" disabled={busy} /></label>
     <label class="consent"><input type="checkbox" bind:checked={consent} disabled={busy} />{t($locale, 'sourceAccounts.inspectConsent')}</label>
-    <button disabled={busy || !consent || !origin || !bearer || !name} onclick={connect}>{t($locale, 'sourceAccounts.connectKimi')}</button>
+    <button type="button" disabled={busy || !consent || !origin || !bearer || !name} onclick={connect}>{t($locale, 'sourceAccounts.connectKimi')}</button>
     {#if snapshot}
         <p role="status">{t($locale, 'sourceAccounts.ownerStatus', {origin: snapshot.origin, server: snapshot.server_id})} · {t($locale, sourceAccountStateKey(snapshot.state))} · {t($locale, 'sourceAccounts.disabled')}</p>
         <label>{t($locale, 'sourceAccounts.region')}<select bind:value={region} disabled={busy}><option value="">{t($locale, 'sourceAccounts.serviceRegion')}</option><option value="mainland-cn">{t($locale, 'sourceAccounts.china')}</option><option value="global">{t($locale, 'sourceAccounts.global')}</option></select></label>
         <label class="consent"><input type="checkbox" bind:checked={loginConsent} disabled={busy} />{t($locale, 'sourceAccounts.loginConsent')}</label>
-        <button disabled={busy || !loginConsent || !kimiCanStartLogin(snapshot.state)} onclick={() => request('start')}>{t($locale, 'sourceAccounts.startKimi')}</button>
-        <button disabled={busy} onclick={() => request('status')}>{t($locale, 'sourceAccounts.readState')}</button>
+        <button type="button" disabled={busy || !loginConsent || !kimiCanStartLogin(snapshot.state)} onclick={() => request('start')}>{t($locale, 'sourceAccounts.startKimi')}</button>
+        <button type="button" disabled={busy} onclick={() => request('status')}>{t($locale, 'sourceAccounts.readState')}</button>
         {#if snapshot.verification_url}<a href={snapshot.verification_url} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.continueKimi')}</a><p>{t($locale, 'sourceAccounts.userCode', {code: snapshot.user_code ?? ''})}</p>{/if}
         {#if snapshot.state === 'pending'}
-            <button disabled={!observing && !busy} onclick={stopObserving}>{t($locale, 'sourceAccounts.stopObservation')}</button>
+            <button type="button" disabled={!observing && !busy} onclick={stopObserving}>{t($locale, 'sourceAccounts.stopObservation')}</button>
             <label class="consent"><input type="checkbox" bind:checked={cancelConsent} disabled={busy} />{t($locale, 'sourceAccounts.cancelConsent')}</label>
-            <button disabled={busy || !cancelConsent} onclick={() => request('cancel')}>{t($locale, 'sourceAccounts.cancelProvider')}</button>
+            <button type="button" disabled={busy || !cancelConsent} onclick={() => request('cancel')}>{t($locale, 'sourceAccounts.cancelProvider')}</button>
         {/if}
         {#if snapshot.cancellation_confirmed !== null}<p>{t($locale, 'sourceAccounts.cancelResult', {answer: t($locale, snapshot.cancellation_confirmed ? 'sourceAccounts.yes' : 'sourceAccounts.no')})}</p>{/if}
     {/if}

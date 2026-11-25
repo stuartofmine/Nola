@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">置き換えられたレコード</string>
     <string name="chat_permission_mode">権限モード</string>
     <string name="chat_permission_mode_cautious">慎重</string>
+    <string name="chat_permission_mode_accept_edits">編集を自動許可</string>
     <string name="chat_permission_mode_allow_all">すべて許可</string>
     <string name="chat_permission_mode_cautious_detail">削除、上書き、機密データへのアクセス、外部送信、新規接続を確認します。通常の読み取りと新規作成は続行します。</string>
+    <string name="chat_permission_mode_accept_edits_detail">ワークスペース内のファイル編集を自動許可します。シェルコマンド、ワークスペース外への書き込み、外部送信、新規接続は確認します。</string>
     <string name="chat_permission_mode_allow_all_detail">この会話では Nola の確認を省略します。システム権限は引き続き必要です。</string>
     <string name="models_inference_test">モデルをテスト</string>
     <string name="models_inference_test_hint">このモデルの保存済みパラメータで独立したプロンプトを1回実行します。現在のチャットモデルや会話は変更されません。</string>

@@ -42,7 +42,7 @@
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (saving || uncertain) { event.preventDefault(); event.returnValue = ''; } }} />
 <ConfirmationDialog bind:this={confirmation} />
 <section class="card" aria-labelledby="memory-default-title" aria-busy={loading || saving}>
-    <header><h2 id="memory-default-title">{t($locale, 'settings.memory.title')}</h2><button disabled={loading || saving} onclick={reload}>{t($locale, 'agentAccess.reload')}</button></header>
+    <header><h2 id="memory-default-title">{t($locale, 'settings.memory.title')}</h2><button type="button" disabled={loading || saving} onclick={reload}>{t($locale, 'agentAccess.reload')}</button></header>
     <p class="muted">{t($locale, 'settings.memory.scope')}</p>
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}
     {#if error}<p role="alert" class="error">{t($locale, error)}</p>{/if}

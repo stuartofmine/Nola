@@ -96,12 +96,12 @@
         </select></label>
         <label class="attention"><input type="checkbox" bind:checked={needsResponse} />{t($locale, 'chatInspector.needsResponse')}</label>
     <label class="search">{t($locale, 'activity.search')}<input type="search" bind:this={searchInput} bind:value={query} maxlength="512" placeholder={t($locale, 'activity.canonicalSearch')} /></label>
-    <button onclick={() => load()} disabled={loading}>{t($locale, 'activity.refresh')}</button>
+    <button type="button" onclick={() => load()} disabled={loading}>{t($locale, 'activity.refresh')}</button>
     </div>
     {#if loading}<p role="status">{t($locale, 'shell.pageLoading')}</p>{/if}
-    {#if error}<p role="alert" class="error">{t($locale, error)}</p><div><button onclick={() => load(retryMore)}>{t($locale, 'activity.retry')}</button></div>{/if}
+    {#if error}<p role="alert" class="error">{t($locale, error)}</p><div><button type="button" onclick={() => load(retryMore)}>{t($locale, 'activity.retry')}</button></div>{/if}
     {#each entries as entry (entry.run_id)}
-        <button class="activity-row" onclick={() => showDetail(entry)}>
+        <button type="button" class="activity-row" onclick={() => showDetail(entry)}>
             <div class="row-top">
                 <strong>{entry.title || t($locale, 'chatConversations.untitled')}</strong>
                 <div class="row-pills">
@@ -114,16 +114,16 @@
     {/each}
     {#if !loading && !error && !entries.length}
         <p class="muted" role="status">{t($locale, filtered ? 'activity.no_matches' : 'chatInspector.noActivity')}</p>
-        {#if filtered}<div><button onclick={clearFilters}>{t($locale, 'activity.clear_filters')}</button></div>{/if}
+        {#if filtered}<div><button type="button" onclick={clearFilters}>{t($locale, 'activity.clear_filters')}</button></div>{/if}
     {/if}
-    {#if cursor && !error}<button disabled={loading} onclick={() => load(true)}>{t($locale, 'activity.loadMore')}</button>{/if}
-    {#if !full}<button onclick={() => onopen('/activity')}>{t($locale, 'chatInspector.list.activity')}</button>{/if}
+    {#if cursor && !error}<button type="button" disabled={loading} onclick={() => load(true)}>{t($locale, 'activity.loadMore')}</button>{/if}
+    {#if !full}<button type="button" onclick={() => onopen('/activity')}>{t($locale, 'chatInspector.list.activity')}</button>{/if}
 </div>
 {#if full}<dialog bind:this={dialog} use:ownDialog oncancel={event => {event.preventDefault(); close();}} onclick={event => { if (event.target === dialog) close(); }} onclose={() => { detailController?.abort(); selected = null; }} aria-label={t($locale, 'activity.detail')}>
     <div class="detail">
-        <div class="detail-heading"><h2>{detail?.entry.title || t($locale, 'activity.detail')}</h2><button onclick={close}>{t($locale, 'activity.close')}</button></div>
+        <div class="detail-heading"><h2>{detail?.entry.title || t($locale, 'activity.detail')}</h2><button type="button" onclick={close}>{t($locale, 'activity.close')}</button></div>
         {#if detailLoading}<p role="status">{t($locale, 'activity.loading_detail')}</p>{/if}
-        {#if detailError}<p role="alert" class="error">{t($locale, detailError)}</p>{#if selected}<button onclick={() => {if (selected) void showDetail(selected);}}>{t($locale, 'activity.retry')}</button>{/if}{/if}
+        {#if detailError}<p role="alert" class="error">{t($locale, detailError)}</p>{#if selected}<button type="button" onclick={() => {if (selected) void showDetail(selected);}}>{t($locale, 'activity.retry')}</button>{/if}{/if}
         {#if detail}
             <div class="detail-meta">
                 <span class="status-pill" data-status={detail.entry.status}>{resultStatus(detail.entry.status, $locale)}</span>
@@ -143,7 +143,7 @@
                     </dl>
                 </div>
             </details>
-            {#if detail.source_conversation_id}<button onclick={openSource}>{t($locale, 'activity.openSource')}</button>{:else}<p>{t($locale, 'activity.sourceUnavailable')}</p>{/if}
+            {#if detail.source_conversation_id}<button type="button" onclick={openSource}>{t($locale, 'activity.openSource')}</button>{:else}<p>{t($locale, 'activity.sourceUnavailable')}</p>{/if}
         {/if}
     </div>
 </dialog>{/if}

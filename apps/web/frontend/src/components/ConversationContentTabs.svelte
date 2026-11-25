@@ -51,6 +51,11 @@
         else if (event.key === 'ArrowLeft') next = entries[(index + entries.length - 1) % entries.length].key;
         else if (event.key === 'Home') next = entries[0].key;
         else if (event.key === 'End') next = entries.at(-1)?.key;
+        else if (event.key === 'F2' && key === conversationTabKey && tabsState.selected === conversationTabKey && canRename) {
+            event.preventDefault();
+            await beginRename();
+            return;
+        }
         else if (event.key === 'Delete' && key !== conversationTabKey) {
             event.preventDefault(); await close(key);
             strip.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus(); return;

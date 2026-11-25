@@ -4,6 +4,8 @@
     import { darkAppearance, toggleAppearance } from '../lib/appearance';
     import { ApiError, errorMessage } from '../lib/api';
     import { workspaceContentNavigationEvent, navigateWorkspace } from '../lib/workspaceNavigation';
+    import { workspaceTabCloseEvent } from '../lib/workspacePageLocation';
+    import type { ConfirmationHandle } from '../lib/confirmation';
     import {
         emptyContentTabs,
         managementContentPath,
@@ -55,6 +57,7 @@
         type V2UserQuestion,
     } from '../lib/v2Chat';
     import ChatConversationManager from '../components/ChatConversationManager.svelte';
+    import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import ConversationInspector from '../components/ConversationInspector.svelte';
     import WorkspaceListNavigation from '../components/WorkspaceListNavigation.svelte';
     import WorkspaceResourceNavigation from '../components/WorkspaceResourceNavigation.svelte';
@@ -71,6 +74,8 @@
     let inspectorOpen = $state(false);
     let listCategory = $state<'conversations' | 'resources'>('conversations');
     let conversationManager = $state<ChatConversationManager>();
+    let confirmation = $state<ConfirmationHandle>();
+    let isDragOver = $state(false);
 
     let active = $state<ChatConversation | null>(null);
     let messages = $state<V2Message[]>([]);
@@ -218,8 +223,11 @@
         try {
             const list = await listV2ModelChoices();
             modelChoices = list;
-            if (!selectedModelId) {
+            if (!selectedModelId || !list.some(m => m.id === selectedModelId)) {
                 selectedModelId = list.find(m => m.selected)?.id ?? list[0]?.id ?? '';
+            }
+            if (list.length > 0) {
+                needsModelConfig = false;
             }
         } catch {
             // Optional toolbar metadata.
@@ -416,6 +424,10 @@
         }
     }
 
+    function isModelsTabPath(path: string): boolean {
+        return path === '/models' || path.startsWith('/models?') || path.startsWith('/models#') || path.startsWith('/models/');
+    }
+
     function openManagementTab(path: string) {
         if (viewportWidth <= 760) {
             navigateWorkspace(path);
@@ -430,6 +442,43 @@
             resolved?.titleKey ?? 'shell.settings',
         );
         syncUrl(active?.conversationId ?? null, resolvedPath);
+    }
+
+    function handleSelectContentTab(key: string) {
+        const prevTab = selectedContentTab;
+        contentTabs = selectContentTab(contentTabs, key);
+        const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
+        syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
+        if (key === conversationTabKey && prevTab?.kind === 'page' && isModelsTabPath(prevTab.path)) {
+            void refreshModelChoices();
+        }
+    }
+
+    async function handleCloseContentTab(key: string) {
+        const closingTab = contentTabs.items.find(item => item.key === key);
+        if (closingTab?.kind === 'page' && typeof window !== 'undefined') {
+            const unloadEvent = workspaceTabCloseEvent(key);
+            window.dispatchEvent(unloadEvent);
+            if (unloadEvent.defaultPrevented) {
+                const confirmed = confirmation
+                    ? await confirmation.ask({
+                          title: t($locale, 'shell.confirm'),
+                          description: t($locale, 'shell.navigationDiscard'),
+                          confirmLabel: t($locale, 'shell.confirm'),
+                          destructive: true,
+                      })
+                    : false;
+                if (!confirmed) return;
+            }
+        }
+        const wasModelsTab = closingTab?.kind === 'page' && isModelsTabPath(closingTab.path);
+        contentTabs = closeContentTab(contentTabs, key);
+        tabViewports.delete(key);
+        const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
+        syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
+        if (wasModelsTab && contentTabs.selected === conversationTabKey) {
+            void refreshModelChoices();
+        }
     }
 
     const MAX_NON_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -493,14 +542,13 @@
         sessionUsage = canonical.usage;
     }
 
-    async function handleFileSelect(event: Event) {
-        const input = event.currentTarget as HTMLInputElement;
-        const files = input.files;
-        if (!files?.length) return;
+    async function addAttachmentFiles(files: FileList | File[]) {
+        const list = Array.from(files);
+        if (!list.length) return;
         error = '';
         const next: V2Attachment[] = [...attachments];
         const rejected: string[] = [];
-        for (const file of Array.from(files)) {
+        for (const file of list) {
             if (file.type.startsWith('image/')) {
                 const dataUrl = await new Promise<string>((resolve, reject) => {
                     const reader = new FileReader();
@@ -508,7 +556,7 @@
                     reader.onerror = () => reject(reader.error);
                     reader.readAsDataURL(file);
                 });
-                next.push({ name: file.name, mimeType: file.type, dataUrl });
+                next.push({ name: file.name || 'image', mimeType: file.type, dataUrl });
                 continue;
             }
             if (file.size > MAX_NON_IMAGE_ATTACHMENT_BYTES) {
@@ -548,7 +596,58 @@
         if (rejected.length) {
             error = `${t($locale, 'chatTextAttachment.invalidFile')} (${rejected.join(', ')})`;
         }
+    }
+
+    async function handleFileSelect(event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const files = input.files;
+        if (!files?.length) return;
+        await addAttachmentFiles(files);
         input.value = '';
+    }
+
+    function handleComposerDragOver(event: DragEvent) {
+        if (streaming) return;
+        if (!event.dataTransfer?.types.includes('Files')) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+        isDragOver = true;
+    }
+
+    function handleComposerDragLeave(event: DragEvent) {
+        const current = event.currentTarget as HTMLElement | null;
+        const related = event.relatedTarget as Node | null;
+        if (current && related && current.contains(related)) return;
+        isDragOver = false;
+    }
+
+    async function handleComposerDrop(event: DragEvent) {
+        isDragOver = false;
+        if (streaming) return;
+        const files = event.dataTransfer?.files;
+        if (!files?.length) return;
+        event.preventDefault();
+        await addAttachmentFiles(files);
+    }
+
+    async function handleComposerPaste(event: ClipboardEvent) {
+        if (streaming) return;
+        const items = event.clipboardData?.items;
+        const files: File[] = [];
+        if (items) {
+            for (const item of Array.from(items)) {
+                if (item.kind === 'file') {
+                    const file = item.getAsFile();
+                    if (file) files.push(file);
+                }
+            }
+        }
+        if (!files.length && event.clipboardData?.files?.length) {
+            files.push(...Array.from(event.clipboardData.files));
+        }
+        if (!files.length) return;
+        event.preventDefault();
+        await addAttachmentFiles(files);
     }
 
     function removeAttachment(index: number) {
@@ -1037,7 +1136,11 @@
                 openManagementTab(target.pathname + target.search + target.hash);
             }
         };
+        const handleModelsUpdated = () => {
+            void refreshModelChoices();
+        };
         window.addEventListener(workspaceContentNavigationEvent, handleContentNav);
+        window.addEventListener('nola:models-updated', handleModelsUpdated);
         void refreshModelChoices();
 
         void (async () => {
@@ -1064,6 +1167,7 @@
 
         return () => {
             window.removeEventListener(workspaceContentNavigationEvent, handleContentNav);
+            window.removeEventListener('nola:models-updated', handleModelsUpdated);
             // Detach SSE reader on unmount WITHOUT killing the Host run!
             detachStream();
             for (const timer of copyTimers.values()) clearTimeout(timer);
@@ -1094,12 +1198,23 @@
     }}
 />
 <svelte:head><title>{active?.title || t($locale, 'chatPage.title')} — Nola</title></svelte:head>
+<ConfirmationDialog bind:this={confirmation} />
 
 <div class="chat-shell" class:sidebar-collapsed={!sidebarOpen}>
     <aside class="chat-sidebar" aria-label={t($locale, 'chatInspector.list.conversations')}>
         <div class="sidebar-top">
             <WorkspaceListNavigation category={listCategory} visible={sidebarOpen} collapsed={!sidebarOpen} onchange={setListCategory} />
             <div class="sidebar-tools">
+                <button
+                    type="button"
+                    class="icon-btn sidebar-toggle"
+                    title={t($locale, 'shell.toggleSidebar')}
+                    aria-label={t($locale, 'shell.toggleSidebar')}
+                    aria-expanded={sidebarOpen}
+                    onclick={() => (sidebarOpen = !sidebarOpen)}
+                >
+                    <PrototypeIcon name="sidebar" size={16} />
+                </button>
                 <button
                     type="button"
                     class="icon-btn"
@@ -1144,22 +1259,22 @@
                     />
                 {/if}
             </div>
-
-            <footer class="sidebar-footer">
-                <button
-                    type="button"
-                    class="sidebar-action sidebar-footer-item"
-                    onclick={() => openManagementTab('/settings')}
-                >
-                    <PrototypeIcon name="settings" size={16} />
-                    <span>{t($locale, 'shell.settings')}</span>
-                </button>
-                <a class="sidebar-action sidebar-footer-item" href="/models" onclick={e => { e.preventDefault(); openManagementTab('/models'); }}>
-                    <PrototypeIcon name="models" size={16} />
-                    <span>{t($locale, 'shell.nav.models')}</span>
-                </a>
-            </footer>
         {/if}
+
+        <footer class="sidebar-footer">
+            <button
+                type="button"
+                class="sidebar-action sidebar-footer-item"
+                title={t($locale, 'shell.settings')}
+                aria-label={t($locale, 'shell.settings')}
+                onclick={() => openManagementTab('/settings')}
+            >
+                <PrototypeIcon name="settings" size={16} />
+                {#if sidebarOpen}
+                    <span>{t($locale, 'shell.settings')}</span>
+                {/if}
+            </button>
+        </footer>
     </aside>
 
     <main id="page-main" tabindex="-1" class="chat-main">
@@ -1180,16 +1295,8 @@
                 {ownerKey}
                 conversationId={active?.conversationId ?? null}
                 canRename={!!active && !streaming}
-                onselect={key => {
-                    contentTabs = selectContentTab(contentTabs, key);
-                    const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
-                    syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
-                }}
-                onclose={key => {
-                    contentTabs = closeContentTab(contentTabs, key);
-                    const sel = contentTabs.items.find(item => item.key === contentTabs.selected);
-                    syncUrl(active?.conversationId ?? null, sel?.kind === 'page' ? sel.path : null);
-                }}
+                onselect={handleSelectContentTab}
+                onclose={handleCloseContentTab}
                 onrename={(id, nextTitle) => conversationManager?.renameConversationById(id, nextTitle)}
             />
             {#if isConversationTabActive}
@@ -1207,12 +1314,19 @@
                         </button>
                         <button
                             type="button"
-                            class="topbar-pill branch-btn"
+                            class="topbar-pill topbar-icon-pill branch-btn"
                             title={t($locale, 'chatInspector.branch')}
+                            aria-label={t($locale, 'chatInspector.branch')}
                             disabled={streaming || !messages.length}
                             onclick={branchActiveConversation}
                         >
-                            {t($locale, 'chatInspector.branch')}
+                            <svg class="topbar-svg-icon" aria-hidden="true" viewBox="0 0 16 16">
+                                <circle cx="4.5" cy="3.5" r="1.75" />
+                                <circle cx="4.5" cy="12.5" r="1.75" />
+                                <circle cx="11.5" cy="5.5" r="1.75" />
+                                <path d="M4.5 5.25v5.5M11.5 7.25c0 2.5-2.5 3.5-7 3.5" />
+                            </svg>
+                            <span class="topbar-btn-label">{t($locale, 'chatInspector.branch')}</span>
                         </button>
                     {/if}
                     <button
@@ -1602,6 +1716,10 @@
 
                             <form
                                 class="composer-box"
+                                class:drag-over={isDragOver}
+                                ondragover={handleComposerDragOver}
+                                ondragleave={handleComposerDragLeave}
+                                ondrop={event => void handleComposerDrop(event)}
                                 onsubmit={event => {
                                     event.preventDefault();
                                     void send();
@@ -1617,6 +1735,7 @@
                                     disabled={loading}
                                     oninput={handleDraftInput}
                                     onkeydown={onComposerKeydown}
+                                    onpaste={event => void handleComposerPaste(event)}
                                 ></textarea>
                                 <div class="composer-actions">
                                     {#if streaming}
@@ -1664,7 +1783,7 @@
                 >
                     <WorkspacePageTab
                         path={tab.path}
-                        ownerKey={`${ownerKey}:${tab.key}`}
+                        ownerKey={tab.key}
                         viewport={viewportFor(tab.key)}
                         active={contentTabs.selected === tab.key}
                         onlocation={nextPath => (contentTabs = updatePageContentLocation(contentTabs, tab.key, nextPath))}
@@ -1734,6 +1853,19 @@
         gap: 4px;
         padding-top: 8px;
         border-top: 1px solid var(--border);
+    }
+    .chat-shell.sidebar-collapsed .sidebar-footer {
+        margin-top: auto;
+        width: 100%;
+        align-items: center;
+    }
+    .chat-shell.sidebar-collapsed .sidebar-footer-item {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        padding: 0;
+        justify-content: center;
     }
     .sidebar-footer-item {
         display: flex;
@@ -1822,6 +1954,16 @@
         display: inline-flex;
         align-items: center;
         gap: 5px;
+    }
+    .topbar-svg-icon {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
     }
     .inspector-toggle-btn.active,
     .toolbar-btn.active {
@@ -2207,7 +2349,7 @@
         left: 0;
         right: 0;
         bottom: calc(100% + 6px);
-        max-height: 220px;
+        max-height: 280px;
         overflow-y: auto;
         padding: 6px;
         border-radius: 10px;
@@ -2217,7 +2359,7 @@
         z-index: 20;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 4px;
     }
     .expert-popup-empty {
         margin: 0;
@@ -2229,15 +2371,24 @@
         display: flex;
         flex-direction: column;
         align-items: flex-start;
-        gap: 2px;
+        gap: 3px;
+        flex-shrink: 0;
+        height: auto;
+        min-height: unset;
         width: 100%;
-        min-height: 32px;
-        padding: 6px 10px;
+        padding: 8px 10px;
         border: 1px solid transparent;
-        border-radius: 7px;
+        border-radius: 8px;
         background: transparent;
+        line-height: 1.4;
+        white-space: normal;
         text-align: left;
         cursor: pointer;
+    }
+    .expert-option small {
+        line-height: 1.4;
+        white-space: normal;
+        overflow-wrap: anywhere;
     }
     .expert-option:hover,
     .expert-option.highlighted {
@@ -2257,7 +2408,12 @@
         border-radius: 12px;
         background: var(--composer-bg);
         box-shadow: var(--composer-shadow);
-        transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+        transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-fast) ease;
+    }
+    .composer-box.drag-over {
+        border-color: var(--info);
+        background: color-mix(in srgb, var(--info) 8%, var(--composer-bg));
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 24%, transparent);
     }
     .composer-box:focus-within {
         border-color: var(--composer-focus-border);
@@ -2320,7 +2476,8 @@
         }
     }
     @media (max-width: 760px) {
-        .chat-shell {
+        .chat-shell,
+        .chat-shell.sidebar-collapsed {
             grid-template-columns: minmax(0, 1fr);
         }
         .chat-sidebar {
@@ -2354,10 +2511,23 @@
             align-items: center;
             justify-content: center;
         }
-        .workspace-topbar .branch-btn {
-            min-height: 40px;
-            min-width: 40px;
-            padding: 4px 8px;
+        .composer-wrap {
+            padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+        }
+        .composer-toolbar {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 2px;
+        }
+        .composer-toolbar::-webkit-scrollbar {
+            display: none;
+        }
+        .composer-toolbar > .toolbar-btn,
+        .composer-toolbar > .toolbar-select {
+            flex: 0 0 auto;
+            white-space: nowrap;
         }
         .chip-remove {
             min-width: 36px;

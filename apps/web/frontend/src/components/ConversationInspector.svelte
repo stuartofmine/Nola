@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy } from 'svelte';
-    import { locale, t } from '../lib/i18n';
+    import { locale, t, type Locale } from '../lib/i18n';
     import { errorMessage } from '../lib/api';
     import {
         clearV2ConversationGoal,
@@ -53,6 +53,54 @@
         { id: 'data-sources', labelKey: 'chatInspector.tabDataSources' },
         { id: 'knowledge', labelKey: 'chatInspector.tabKnowledge' },
     ];
+
+    const shortTabLabels: Record<InspectorTab, Record<Locale, string>> = {
+        tasks: {
+            'zh-Hans': '任务',
+            en: 'Tasks',
+            de: 'Aufg.',
+            es: 'Tareas',
+            fr: 'Tâches',
+            ja: 'タスク',
+            ru: 'Задачи',
+        },
+        diff: {
+            'zh-Hans': '差异',
+            en: 'Diff',
+            de: 'Diff',
+            es: 'Diff',
+            fr: 'Diff',
+            ja: '差分',
+            ru: 'Diff',
+        },
+        context: {
+            'zh-Hans': '上下文',
+            en: 'Context',
+            de: 'Kontext',
+            es: 'Contexto',
+            fr: 'Contexte',
+            ja: '文脈',
+            ru: 'Контекст',
+        },
+        'data-sources': {
+            'zh-Hans': '数据源',
+            en: 'Sources',
+            de: 'Quellen',
+            es: 'Fuentes',
+            fr: 'Sources',
+            ja: 'ソース',
+            ru: 'Источн.',
+        },
+        knowledge: {
+            'zh-Hans': '知识',
+            en: 'Knowledge',
+            de: 'Wissen',
+            es: 'Saber',
+            fr: 'Savoir',
+            ja: '知識',
+            ru: 'Знания',
+        },
+    };
 
     function handleTabKeydown(event: KeyboardEvent & { currentTarget: HTMLButtonElement }, index: number) {
         const nextIndex =
@@ -496,23 +544,28 @@
         </div>
     </header>
 
-    <div class="inspector-tabs" role="tablist" aria-label={t($locale, 'chatInspector.panel')}>
-        {#each inspectorTabs as tab, idx (tab.id)}
-            <button
-                type="button"
-                role="tab"
-                id={`inspector-tab-${tab.id}`}
-                aria-controls={`inspector-panel-${tab.id}`}
-                class="inspector-tab"
-                class:active={activeTab === tab.id}
-                aria-selected={activeTab === tab.id}
-                tabindex={activeTab === tab.id ? 0 : -1}
-                onclick={() => (activeTab = tab.id)}
-                onkeydown={event => handleTabKeydown(event, idx)}
-            >
-                {t($locale, tab.labelKey)}
-            </button>
-        {/each}
+    <div class="inspector-tabs-wrap">
+        <div class="inspector-tabs" role="tablist" aria-label={t($locale, 'chatInspector.panel')}>
+            {#each inspectorTabs as tab, idx (tab.id)}
+                {@const fullLabel = t($locale, tab.labelKey)}
+                <button
+                    type="button"
+                    role="tab"
+                    id={`inspector-tab-${tab.id}`}
+                    aria-controls={`inspector-panel-${tab.id}`}
+                    class="inspector-tab"
+                    class:active={activeTab === tab.id}
+                    title={fullLabel}
+                    aria-label={fullLabel}
+                    aria-selected={activeTab === tab.id}
+                    tabindex={activeTab === tab.id ? 0 : -1}
+                    onclick={() => (activeTab = tab.id)}
+                    onkeydown={event => handleTabKeydown(event, idx)}
+                >
+                    {shortTabLabels[tab.id][$locale]}
+                </button>
+            {/each}
+        </div>
     </div>
 
     <div
@@ -861,7 +914,8 @@
         align-items: center;
         gap: 4px;
     }
-    .inspector-icon-btn {
+    .inspector-icon-btn,
+    .inspector-icon-btn:not(:disabled) {
         display: grid;
         place-items: center;
         width: 36px;
@@ -870,14 +924,16 @@
         min-height: 36px;
         padding: 0;
         border: 1px solid transparent;
-        border-radius: 7px;
+        border-radius: 8px;
         background: transparent;
+        box-shadow: none;
         color: var(--muted);
         cursor: pointer;
     }
-    .inspector-icon-btn:hover {
+    .inspector-icon-btn:not(:disabled):hover {
         color: var(--content);
-        background: var(--composer-pill-hover-bg);
+        border-color: var(--border);
+        background: var(--surface);
     }
     .inspector-refresh-icon {
         width: 16px;
@@ -888,39 +944,47 @@
         stroke-linecap: round;
         stroke-linejoin: round;
     }
-    .inspector-tabs {
-        display: flex;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        scrollbar-width: none;
-        gap: 4px;
+    .inspector-tabs-wrap {
         padding: 8px 10px;
         border-bottom: 1px solid var(--border);
         background: var(--canvas);
     }
-    .inspector-tabs::-webkit-scrollbar {
-        display: none;
+    .inspector-tabs {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 2px;
+        padding: 3px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
     }
     .inspector-tab {
-        flex: 0 0 auto;
-        white-space: nowrap;
-        padding: 4px 10px;
-        min-height: 30px;
         min-width: 0;
+        min-height: 28px;
+        padding: 6px 2px;
         border: 1px solid transparent;
-        border-radius: 6px;
+        border-radius: 7px;
         background: transparent;
+        box-shadow: none;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11.5px;
+        line-height: 1.2;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
         cursor: pointer;
     }
-    .inspector-tab:hover {
+    .inspector-tab:not(:disabled):hover {
         color: var(--content);
+        border-color: transparent;
         background: var(--composer-pill-hover-bg);
     }
-    .inspector-tab.active {
-        background: var(--panel);
-        border-color: var(--border);
+    .inspector-tab.active,
+    .inspector-tab.active:not(:disabled):hover {
+        background: var(--glass-pill-bg);
+        border-color: var(--glass-pill-border);
+        box-shadow: var(--glass-pill-shadow);
         color: var(--content);
         font-weight: 600;
     }
@@ -1026,6 +1090,8 @@
         padding: 4px 10px;
         font-size: 12px;
         border-radius: 7px;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
     .task-list,
     .diff-file-list,
@@ -1205,11 +1271,15 @@
         }
     }
     @media (pointer: coarse) {
-        .inspector-icon-btn {
+        .inspector-icon-btn,
+        .inspector-icon-btn:not(:disabled) {
             width: 44px;
             height: 44px;
             min-width: 44px;
             min-height: 44px;
+        }
+        .inspector-tab {
+            min-height: 34px;
         }
     }
     @media (max-width: 760px) {
@@ -1229,11 +1299,15 @@
             z-index: 50;
             box-shadow: var(--dialog-shadow);
         }
-        .inspector-icon-btn {
+        .inspector-icon-btn,
+        .inspector-icon-btn:not(:disabled) {
             width: 44px;
             height: 44px;
             min-width: 44px;
             min-height: 44px;
+        }
+        .inspector-tab {
+            min-height: 34px;
         }
     }
 </style>

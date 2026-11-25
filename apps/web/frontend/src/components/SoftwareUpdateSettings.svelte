@@ -115,7 +115,7 @@
     {#if busy}<p role="status">{t($locale,'softwareUpdate.working')}</p>{/if}
     {#if failure}<p role="alert" class="error">{t($locale,'softwareUpdate.failed')}</p><p class="detail">{failure}</p>{/if}
     {#if downloaded}<p role="status">{t($locale,'softwareUpdate.downloadRequested')}</p>{/if}
-    <div class="actions"><button disabled={busy || downloading} onclick={() => check(true)}>{t($locale,'softwareUpdate.check')}</button></div>
+    <div class="actions"><button type="button" disabled={busy || downloading} onclick={() => check(true)}>{t($locale,'softwareUpdate.check')}</button></div>
     <p class="muted">{t($locale,'softwareUpdate.dataHint')}</p>
 </section>
 <style>.release-heading{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.notes{overflow-wrap:anywhere}.detail{overflow-wrap:anywhere}</style>

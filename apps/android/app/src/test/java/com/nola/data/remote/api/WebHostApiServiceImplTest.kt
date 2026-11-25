@@ -117,28 +117,28 @@ class WebHostApiServiceImplTest {
     @Test
     fun webHostMobileUrlNormalizesCopiedMobileEndpoints() {
         assertEquals(
-            "http://192.168.1.8:5001/api/chat/conversations/c1/messages",
+            "http://192.168.1.8:5001/api/mobile/chat/conversations/c1/messages",
             webHostMobileUrl(
                 "http://192.168.1.8:5001/api/mobile/login",
                 "chat/conversations/c1/messages"
             )
         )
         assertEquals(
-            "http://192.168.1.8:5001/api/agent/settings",
+            "http://192.168.1.8:5001/api/mobile/agent/settings",
             webHostMobileUrl(
                 "192.168.1.8:5001/api/agent/settings?token=copy",
                 "/agent/settings"
             )
         )
         assertEquals(
-            "https://nola.local/api/chat/conversations/c1/messages",
+            "https://nola.local/api/mobile/chat/conversations/c1/messages",
             webHostMobileUrl(
                 "https://nola.local/api",
                 "chat/conversations/c1/messages"
             )
         )
         assertEquals(
-            "https://nola.local/api/agent/settings",
+            "https://nola.local/api/mobile/agent/settings",
             webHostMobileUrl("https://nola.local/v1", "agent/settings")
         )
     }
@@ -179,27 +179,27 @@ class WebHostApiServiceImplTest {
     @Test
     fun webHostMobileUrlPreservesConfiguredOriginIncludingExplicitEmulatorAlias() {
         assertEquals(
-            "http://127.0.0.1:5001/api/agent/settings",
+            "http://127.0.0.1:5001/api/mobile/agent/settings",
             webHostMobileUrl("http://127.0.0.1:5001/api/mobile/login", "agent/settings")
         )
         assertEquals(
-            "http://localhost:5001/api/agent/settings",
+            "http://localhost:5001/api/mobile/agent/settings",
             webHostMobileUrl("localhost:5001", "/agent/settings")
         )
         assertEquals(
-            "http://[::1]:5001/api/agent/settings",
+            "http://[::1]:5001/api/mobile/agent/settings",
             webHostMobileUrl("http://[::1]:5001/api", "agent/settings")
         )
         assertEquals(
-            "HTTP://127.0.0.1:5001/api/agent/settings",
+            "HTTP://127.0.0.1:5001/api/mobile/agent/settings",
             webHostMobileUrl("HTTP://127.0.0.1:5001/api", "agent/settings")
         )
         assertEquals(
-            "http://10.0.2.2:5001/api/agent/settings",
+            "http://10.0.2.2:5001/api/mobile/agent/settings",
             webHostMobileUrl("http://10.0.2.2:5001", "agent/settings")
         )
         assertEquals(
-            "http://127.999.0.1:5001/api/agent/settings",
+            "http://127.999.0.1:5001/api/mobile/agent/settings",
             webHostMobileUrl("http://127.999.0.1:5001/api", "agent/settings")
         )
     }

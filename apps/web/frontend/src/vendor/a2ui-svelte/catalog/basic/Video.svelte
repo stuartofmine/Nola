@@ -25,6 +25,6 @@
 		width: 100%;
 		margin: var(--a2ui-space-leaf);
 		border-radius: var(--a2ui-radius-small);
-		background: #000;
+		background: var(--canvas, #0b0b0c);
 	}
 </style>

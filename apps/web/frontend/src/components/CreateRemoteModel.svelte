@@ -34,6 +34,7 @@
     const providerPresets = [
         { id: 'openai', label: 'OpenAI', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', wireProtocol: 'responses', modelHint: 'gpt-4.1' },
         { id: 'anthropic', label: 'Anthropic', name: 'Anthropic', baseURL: 'https://api.anthropic.com/v1', wireProtocol: 'anthropic', modelHint: 'claude-sonnet-4-20250514' },
+        { id: 'gemini', label: 'Google Gemini', name: 'Google Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta', wireProtocol: 'gemini', modelHint: 'gemini-2.5-pro' },
         { id: 'deepseek', label: 'DeepSeek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', wireProtocol: 'chat_completions', modelHint: 'deepseek-chat' },
         { id: 'openrouter', label: 'OpenRouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', wireProtocol: 'chat_completions', modelHint: 'openai/gpt-4.1' },
         { id: 'ollama', label: 'Ollama', name: 'Ollama', baseURL: 'http://127.0.0.1:11434/v1', wireProtocol: 'chat_completions', modelHint: 'llama3.2' },
@@ -126,7 +127,7 @@
                 <summary>{t($locale, 'remote.advanced')}</summary>
                 <div class="advanced-fields">
                     {#if !endpointId}
-                        <label>{t($locale, 'remote.protocol')}<select bind:value={wireProtocol}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option></select></label>
+                        <label>{t($locale, 'remote.protocol')}<select bind:value={wireProtocol}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option><option value="siwc_responses">ChatGPT Responses (SIWC)</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option></select></label>
                     {/if}
                     <label>{t($locale, 'remote.priority')}<input type="number" bind:value={priority} min="0" max="100" step="1" required /></label>
                     {#if wireProtocol === 'chat_completions'}

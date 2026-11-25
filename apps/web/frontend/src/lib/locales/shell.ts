@@ -130,6 +130,7 @@ const entries: Record<string, Translations> = {
     'a2ui.viewDetails': ['查看详情', 'View details', 'Details anzeigen', 'Ver detalles', 'Voir les détails', '詳細を表示', 'Подробнее'],
     'a2ui.details': ['详情', 'Details', 'Details', 'Detalles', 'Détails', '詳細', 'Подробности'],
     'a2ui.close': ['关闭', 'Close', 'Schließen', 'Cerrar', 'Fermer', '閉じる', 'Закрыть'],
+    'a2ui.unsupportedComponent': ['不支持的组件：{component}', 'Unsupported component: {component}', 'Nicht unterstützte Komponente: {component}', 'Componente no compatible: {component}', 'Composant non pris en charge : {component}', '未対応のコンポーネント：{component}', 'Неподдерживаемый компонент: {component}'],
 };
 
 export const languageNames: Record<Locale, string> = {

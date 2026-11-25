@@ -188,8 +188,10 @@
     <string name="chat_execution_context_section">Execution, host, and context window</string>
     <string name="chat_permission_mode">Permission mode</string>
     <string name="chat_permission_mode_cautious">Cautious</string>
+    <string name="chat_permission_mode_accept_edits">Accept edits</string>
     <string name="chat_permission_mode_allow_all">Allow all</string>
     <string name="chat_permission_mode_cautious_detail">Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.</string>
     <string name="chat_permission_mode_allow_all_detail">No Nola approval prompts in this conversation. System permissions still apply.</string>
     <string name="chat_execution_host_footer">When connected to a Web Host, Android is the input and confirmation surface. The Agent can use host-side file, grep, bash, real Chrome, and desktop computer-use tools; screenshots, mouse, keyboard, clipboard, login, OAuth, credential changes, authorization changes, or deletions require confirmation.</string>
     <string name="chat_steps_count">%1$d steps</string>

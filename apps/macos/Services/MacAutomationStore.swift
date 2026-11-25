@@ -683,7 +683,7 @@ final class MacAutomationStore {
             contextWindowTokens: provider.contextWindowTokens, reasoningConfiguration: provider.reasoning,
             modelParameters: provider.parameters, modelExecutionCapabilities: provider.executionCapabilities,
             wireProtocol: provider.wireProtocol, inputOrigin: "scheduled_action", memoryEnabled: false,
-            permissionMode: claim.executionSpec.permissionProfile == "allow_all" ? .allowAll : .cautious,
+            permissionMode: MacPermissionMode(rawValue: claim.executionSpec.permissionProfile) ?? .cautious,
             databaseURLOverride: canonicalDatabaseURL,
             appEnvironment: appEnvironment, applicationPort: applicationPort)
         request.allowedDirectoryArguments = ["--allow-dir", request.projectURL.standardizedFileURL.path]
@@ -997,7 +997,7 @@ final class MacAutomationStore {
     private static func decodeDefinition(_ record: MacCanonicalAutomation) throws -> MacAutomation {
         guard case .agent(let spec) = record.executionSpec else { throw CocoaError(.coderInvalidValue) }
         guard case .localWorkspace(let workspaceRoot) = spec.executionScope,
-              ["cautious", "allow_all"].contains(spec.permissionProfile), spec.modelSelection == "use_current_default_at_admission",
+              MacPermissionMode(rawValue: spec.permissionProfile) != nil, spec.modelSelection == "use_current_default_at_admission",
               spec.skillRefs.count <= 1, spec.contextRefs.allSatisfy({ ["personal_data", "web_source"].contains($0.kind) }),
               var fields = try JSONSerialization.jsonObject(with: Data(record.metadataJSON.utf8)) as? [String: Any] else {
             throw CocoaError(.coderInvalidValue)
@@ -1027,7 +1027,7 @@ final class MacAutomationStore {
     private static func validateExecutionSpec(_ spec: MacAutomationExecutionSpec, for automation: MacAutomation) throws {
         guard spec.prompt == automation.prompt, !spec.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               spec.executionScope == .localWorkspace(root: automation.workspacePath),
-              ["cautious", "allow_all"].contains(spec.permissionProfile),
+              MacPermissionMode(rawValue: spec.permissionProfile) != nil,
               spec.modelSelection == "use_current_default_at_admission",
               Set(spec.contextRefs).count == spec.contextRefs.count,
               Set(spec.skillRefs).count == spec.skillRefs.count else { throw CocoaError(.coderInvalidValue) }

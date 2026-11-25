@@ -288,6 +288,9 @@
     .automation-dialog footer {flex: none; padding: 12px 20px; border-top: 1px solid var(--border);}
     .automation-dialog footer p {margin: 0 0 8px;}
     .editor-body {min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px;}
+    .schedule-fields { margin: 0; }
+    .schedule-fields legend { margin: 12px 0 6px; padding: 0; font-weight: 600; font-size: 0.9375rem; }
+    .automation-dialog :is(input:not([type='checkbox']), select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--input-border); }
     .skill-picker {border-block: 1px solid var(--border);}
     .skill-picker summary {padding-block: 12px; font-weight: 500;}
     .skill-options {display: grid; gap: 4px; padding-bottom: 8px;}

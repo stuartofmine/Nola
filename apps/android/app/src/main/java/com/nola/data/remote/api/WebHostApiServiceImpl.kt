@@ -75,6 +75,17 @@ class WebHostApiServiceImpl @Inject constructor(
         if (token.isNotBlank()) put("Authorization", "Bearer $token")
     }
 
+    private fun decryptOrParseJsonObject(text: String, token: String): JsonObject {
+        if (token.isNotBlank()) {
+            val decrypted = runCatching {
+                val envelope = json.decodeFromString<EncryptedEnvelope>(text)
+                MobileCrypto.decryptJsonObject(envelope, token)
+            }.getOrNull()
+            if (decrypted != null) return decrypted
+        }
+        return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
+    }
+
     private suspend fun postV2Json(
         hostBaseUrl: String,
         token: String,
@@ -83,9 +94,18 @@ class WebHostApiServiceImpl @Inject constructor(
         pinnedCertificateSha256: String,
     ): JsonObject {
         val url = webHostV2ApiUrl(hostBaseUrl, path)
-        val bodyText = body.toString()
+        val useMobileCrypto = token.isNotBlank()
+        val bodyText = if (useMobileCrypto) {
+            json.encodeToString(MobileCrypto.encryptJsonObject(body, token))
+        } else {
+            body.toString()
+        }
         val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).post(url) {
-            v2Headers(token).forEach { (k, v) -> header(k, v) }
+            header("X-Nola-Client", "android")
+            if (useMobileCrypto) {
+                mobileAuthHeaders(token, "POST", url, body = bodyText).forEach { (k, v) -> header(k, v) }
+                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
             header("Accept", "application/json")
             setBody(TextContent(bodyText, ContentType.Application.Json))
         }
@@ -93,7 +113,7 @@ class WebHostApiServiceImpl @Inject constructor(
         if (response.status.value !in 200..299) {
             error("WebHost v2 rejected $path (${response.status.value}): $text")
         }
-        return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
+        return decryptOrParseJsonObject(text, token)
     }
 
     private suspend fun getV2Json(
@@ -103,15 +123,20 @@ class WebHostApiServiceImpl @Inject constructor(
         pinnedCertificateSha256: String,
     ): JsonObject {
         val url = webHostV2ApiUrl(hostBaseUrl, path)
+        val useMobileCrypto = token.isNotBlank()
         val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).get(url) {
-            v2Headers(token).forEach { (k, v) -> header(k, v) }
+            header("X-Nola-Client", "android")
+            if (useMobileCrypto) {
+                mobileAuthHeaders(token, "GET", url).forEach { (k, v) -> header(k, v) }
+                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
             header("Accept", "application/json")
         }
         val text = response.body<String>()
         if (response.status.value !in 200..299) {
             error("WebHost v2 GET $path failed (${response.status.value}): $text")
         }
-        return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
+        return decryptOrParseJsonObject(text, token)
     }
 
     override suspend fun v2CreateConversation(
@@ -140,7 +165,10 @@ class WebHostApiServiceImpl @Inject constructor(
     ) {
         val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId")
         val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).delete(url) {
-            v2Headers(token).forEach { (k, v) -> header(k, v) }
+            header("X-Nola-Client", "android")
+            if (token.isNotBlank()) {
+                mobileAuthHeaders(token, "DELETE", url).forEach { (k, v) -> header(k, v) }
+            }
             header("Accept", "application/json")
         }
         if (response.status.value !in 200..299 && response.status.value != 404) {
@@ -352,14 +380,24 @@ class WebHostApiServiceImpl @Inject constructor(
         val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$convId/configuration")
         val op = (request["operation"] as? JsonPrimitive)?.content
         if (op == "patch") {
+            val useMobileCrypto = token.isNotBlank()
+            val bodyText = if (useMobileCrypto) {
+                json.encodeToString(MobileCrypto.encryptJsonObject(request, token))
+            } else {
+                request.toString()
+            }
             val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).patch(url) {
-                v2Headers(token).forEach { (k, v) -> header(k, v) }
+                header("X-Nola-Client", "android")
+                if (useMobileCrypto) {
+                    mobileAuthHeaders(token, "PATCH", url, body = bodyText).forEach { (k, v) -> header(k, v) }
+                    header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+                }
                 header("Accept", "application/json")
-                setBody(TextContent(request.toString(), ContentType.Application.Json))
+                setBody(TextContent(bodyText, ContentType.Application.Json))
             }
             val text = response.body<String>()
             if (response.status.value !in 200..299) error("WebHost v2 PATCH configuration failed (${response.status.value})")
-            return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
+            return decryptOrParseJsonObject(text, token)
         }
         return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", pinnedCertificateSha256)
     }
@@ -420,7 +458,19 @@ class WebHostApiServiceImpl @Inject constructor(
         target: String,
         pinnedCertificateSha256: String
     ): String {
-        return webHostControlPlaneUrl(hostBaseUrl, target)
+        val handoffTarget = runCatching {
+            val response = postV2Json(
+                hostBaseUrl = hostBaseUrl,
+                token = token,
+                path = "web-handoff",
+                body = buildJsonObject { put("target", target) },
+                pinnedCertificateSha256 = pinnedCertificateSha256,
+            )
+            (response["url"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                ?: (response["path"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+        return webHostControlPlaneUrl(hostBaseUrl, handoffTarget ?: target)
+            ?: webHostControlPlaneUrl(hostBaseUrl, target)
             ?: error("Web Agent Host returned an invalid management URL")
     }
 
@@ -707,7 +757,7 @@ internal fun isAllowedWebHostTransport(raw: String): Boolean {
 
 internal fun webHostV2ApiUrl(hostBaseUrl: String, path: String): String {
     val base = normalizeWebHostBaseUrl(hostBaseUrl)
-    return "$base/api/${path.trimStart('/')}"
+    return "$base/api/mobile/${path.trimStart('/')}"
 }
 
 internal fun webHostMobileUrl(hostBaseUrl: String, path: String): String =

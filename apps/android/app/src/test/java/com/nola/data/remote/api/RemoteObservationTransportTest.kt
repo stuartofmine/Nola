@@ -119,7 +119,7 @@ class RemoteObservationTransportTest {
             requestClient = client,
         ).toList()
 
-        assertEquals(listOf("/api/chat/conversations/c-42/messages"), seenPaths)
+        assertEquals(listOf("/api/mobile/chat/conversations/c-42/messages"), seenPaths)
         assertEquals(listOf<String?>("Bearer tok"), seenAuth)
         assertEquals(2, events.size)
         assertIs<SseEvent.V2TextDelta>(events[0])
@@ -262,9 +262,9 @@ class RemoteObservationTransportTest {
 
             assertEquals(
                 listOf(
-                    "POST" to "/api/agent/tool-plan/prepare",
-                    "GET" to "/api/chat/conversations/c-1/events",
-                    "POST" to "/api/chat/conversations/c-1/cancel",
+                    "POST" to "/api/mobile/agent/tool-plan/prepare",
+                    "GET" to "/api/mobile/chat/conversations/c-1/events",
+                    "POST" to "/api/mobile/chat/conversations/c-1/cancel",
                 ),
                 requests.toList(),
             )

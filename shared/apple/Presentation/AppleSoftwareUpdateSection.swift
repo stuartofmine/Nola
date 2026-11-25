@@ -91,7 +91,8 @@ struct AppleSoftwareUpdateSection: View {
             Text("softwareUpdate.title").font(.headline)
             if let snapshot {
                 Text("Nola \(snapshot.current_version) (\(snapshot.current_build))").font(.subheadline)
-                Text(String(localized: String.LocalizationValue("softwareUpdate.status." + snapshot.status))).foregroundStyle(.secondary)
+                let normalizedStatus = snapshot.status == "unconfigured" ? "disabled" : snapshot.status
+                Text(String(localized: String.LocalizationValue("softwareUpdate.status." + normalizedStatus))).foregroundStyle(.secondary)
                 if let release = snapshot.release {
                     Text("\(release.version) (\(release.build))").font(.subheadline.weight(.medium))
                     if !release.notes.isEmpty { Text(release.notes).textSelection(.enabled) }
@@ -107,7 +108,7 @@ struct AppleSoftwareUpdateSection: View {
             if busy { ProgressView().controlSize(.small).accessibilityLabel(Text("softwareUpdate.working")) }
             if let failure {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("softwareUpdate.failed").foregroundStyle(.red)
+                    Text("softwareUpdate.failed").foregroundStyle(Color("NolaDanger"))
                     Text(failure).font(.caption).textSelection(.enabled)
                 }.accessibilityElement(children: .combine)
             }

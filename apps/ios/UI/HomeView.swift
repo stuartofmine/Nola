@@ -1020,7 +1020,7 @@ struct CategorizedTodayView: View {
                     Text(String(count))
                         .font(.caption)
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundStyle(DesignTokens.onActionColor)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(

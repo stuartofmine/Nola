@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Заменённые записи</string>
     <string name="chat_permission_mode">Режим разрешений</string>
     <string name="chat_permission_mode_cautious">Осторожный</string>
+    <string name="chat_permission_mode_accept_edits">Принимать правки</string>
     <string name="chat_permission_mode_allow_all">Разрешить всё</string>
     <string name="chat_permission_mode_cautious_detail">Подтверждать удаление, перезапись, доступ к конфиденциальным данным, отправку и новые подключения. Обычное чтение и создание файлов разрешены.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Автоматически разрешать правки файлов в рабочей области. Подтверждать команды оболочки, запись вне рабочей области, отправку и новые подключения.</string>
     <string name="chat_permission_mode_allow_all_detail">Без подтверждений Nola в этой беседе. Системные разрешения остаются в силе.</string>
     <string name="models_inference_test">Тест модели</string>
     <string name="models_inference_test_hint">Выполнить отдельный запрос с сохранёнными параметрами модели. Активная модель чата и разговор не изменятся.</string>

@@ -14,6 +14,8 @@ const entries: Record<string, string[]> = {
     'kind.other': ['其他', 'Other', 'Sonstiges', 'Otro', 'Autre', 'その他', 'Другое'],
     create: ['新建记忆', 'New memory', 'Neue Erinnerung', 'Nueva memoria', 'Nouveau souvenir', '記憶を追加', 'Новая запись'],
     revise: ['修订记忆', 'Revise memory', 'Erinnerung überarbeiten', 'Revisar memoria', 'Réviser le souvenir', '記憶を改訂', 'Изменить запись'],
+    promote: ['提升为全局', 'Promote', 'Hochstufen', 'Promover', 'Promouvoir', 'グローバルへ昇格', 'Сделать глобальной'],
+    promoteFailed: ['无法提升该记忆，请重试。', 'Could not promote this memory. Please retry.', 'Diese Erinnerung konnte nicht hochgestuft werden. Bitte erneut versuchen.', 'No se pudo promover esta memoria. Inténtalo de nuevo.', 'Impossible de promouvoir ce souvenir. Réessayez.', 'この記憶を昇格できませんでした。再試行してください。', 'Не удалось повысить эту запись. Повторите попытку.'],
     content: ['内容', 'Content', 'Inhalt', 'Contenido', 'Contenu', '内容', 'Содержание'],
     summary: ['摘要', 'Summary', 'Zusammenfassung', 'Resumen', 'Résumé', '要約', 'Сводка'],
     scope: ['范围', 'Scope', 'Bereich', 'Ámbito', 'Portée', '範囲', 'Область'],

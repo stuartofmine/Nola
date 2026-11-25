@@ -13,7 +13,7 @@
     import { randomId } from '../lib/randomId';
     import { loadConnections, modelSelectionCommand, type ConnectionInventory, type ConnectionSnapshot, type ImportPlan, type ImportResult } from '../lib/modelConnections';
     import type { RemoteProfile } from '../lib/modelProfiles';
-    let { openConnectionId = '', profiles, onChanged }: { openConnectionId?: string; profiles?: RemoteProfile[]; onChanged?: () => Promise<void> | void } = $props();
+    let { openConnectionId = '', profiles, onChanged, hideDuplicateConnections = false }: { openConnectionId?: string; profiles?: RemoteProfile[]; onChanged?: () => Promise<void> | void; hideDuplicateConnections?: boolean } = $props();
     let confirmation: ConfirmationHandle;
     function importCredentialLabel(status: string) {
         switch (status) {
@@ -113,7 +113,7 @@
     function toggle(snapshot: ConnectionSnapshot, key: string, enabled: boolean) {
         void operation(async () => {
             await api('/api/model-connections', {method: 'POST', body: JSON.stringify(modelSelectionCommand(snapshot, inventory, key, enabled))});
-            if (alive) { await refresh(); await onChanged?.(); }
+            if (alive) { await refresh(); await onChanged?.(); window.dispatchEvent(new CustomEvent('nola:models-updated')); }
         });
     }
     function discover(snapshot: ConnectionSnapshot) {
@@ -162,7 +162,7 @@
         void operation(async () => {
             const value = await api<ImportResult[]>('/api/model-import/commit', {method: 'POST', body: JSON.stringify({plan_id: current.plan_id,
                 selections: selected.map(candidate_id => ({candidate_id, display_name: null, update_existing: updates.includes(candidate_id), enable_models: enableModels}))})});
-            if (alive) { results = value; plan = null; await refresh(); await onChanged?.(); }
+            if (alive) { results = value; plan = null; await refresh(); await onChanged?.(); window.dispatchEvent(new CustomEvent('nola:models-updated')); }
         });
     }
     async function configureGateway(revoke: boolean) {
@@ -186,7 +186,9 @@
 </script>
 
 <ConfirmationDialog bind:this={confirmation} />
-<section class="connections"><div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button type="button" disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
+<section class="connections">
+    {#if !hideDuplicateConnections}
+    <div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button type="button" disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
     {#if loading || busy}<p role="status">{t($locale, busy ? 'rooms.saving' : 'rooms.loading')}</p>{/if}
     {#if discovery}<button type="button" disabled={cancellingDiscovery} onclick={() => void cancelDiscovery()}>{t($locale, 'rooms.cancel')}</button>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, failed)}</p>{/if}
@@ -208,6 +210,10 @@
             {/each}
         </div></details>
     {/each}
+    {:else}
+    {#if busy}<p role="status">{t($locale, 'rooms.saving')}</p>{/if}
+    {#if failed}<p role="alert" class="error">{t($locale, failed)}</p>{/if}
+    {/if}
     <section class="integrations" aria-label={t($locale, 'connections.manage')}><h3>{t($locale, 'connections.manage')}</h3>
     <details><summary>{t($locale, 'connections.import')}</summary>
         <form onsubmit={event => { event.preventDefault(); preview(); }}>

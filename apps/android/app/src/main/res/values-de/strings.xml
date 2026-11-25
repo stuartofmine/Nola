@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Ersetzte Datensätze</string>
     <string name="chat_permission_mode">Berechtigungsmodus</string>
     <string name="chat_permission_mode_cautious">Vorsichtig</string>
+    <string name="chat_permission_mode_accept_edits">Änderungen zulassen</string>
     <string name="chat_permission_mode_allow_all">Alles erlauben</string>
     <string name="chat_permission_mode_cautious_detail">Löschen, Überschreiben, sensible Daten, ausgehende Inhalte und neue Verbindungen bestätigen. Normales Lesen und neue Dateien sind erlaubt.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Dateibearbeitungen im Arbeitsbereich automatisch zulassen. Shell-Befehle, Schreibvorgänge außerhalb, ausgehende Inhalte und neue Verbindungen bestätigen.</string>
     <string name="chat_permission_mode_allow_all_detail">Keine Nola-Bestätigungen in diesem Gespräch. Systemberechtigungen gelten weiterhin.</string>
     <string name="models_inference_test">Modell testen</string>
     <string name="models_inference_test_hint">Eine einzelne Anfrage mit den gespeicherten Parametern dieses Modells ausführen. Das aktive Chatmodell und die Unterhaltung bleiben unverändert.</string>

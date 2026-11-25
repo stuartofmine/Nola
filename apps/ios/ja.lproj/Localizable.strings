@@ -2552,8 +2552,10 @@
 "personal.capabilities.retry" = "再試行";
 "personal.capabilities.invalid_import" = "48,000 文字以内の空でない UTF-8 Skill ファイルを選択してください。";
 "permission.mode.cautious" = "慎重";
+"permission.mode.accept_edits" = "編集を自動許可";
 "permission.mode.allow_all" = "すべて許可";
 "permission.mode.cautious.detail" = "削除、上書き、機密データへのアクセス、外部送信、新規接続を確認します。通常の読み取りと新規作成は続行します。";
+"permission.mode.accept_edits.detail" = "ワークスペース内のファイル編集を自動許可します。シェルコマンド、ワークスペース外への書き込み、外部送信、新規接続は確認します。";
 "permission.mode.allow_all.detail" = "この会話では Nola の確認を省略します。システム権限は引き続き必要です。";
 "chat.compaction.show_sources_format" = "元のコンテキストを表示（%d件）";
 "chat.style.inherit_model" = "モデルの既定値を使用";

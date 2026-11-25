@@ -48,7 +48,7 @@
             {#if !loading && !failed && snapshot}<span class="health-pill healthy"><span class="dot" aria-hidden="true"></span>{t($locale, 'diagnostics.healthy')}</span>
             {:else if !loading && failed}<span class="health-pill unhealthy"><span class="dot" aria-hidden="true"></span>{t($locale, 'diagnostics.failed')}</span>{/if}
         </div>
-        <button disabled={loading} onclick={refresh}>{t($locale, 'models.reload')}</button>
+        <button type="button" disabled={loading} onclick={refresh}>{t($locale, 'models.reload')}</button>
     </header>
     <p class="muted">{t($locale, 'diagnostics.scope')}</p>
     {#if loading}<p role="status">{t($locale, 'diagnostics.checking')}</p>
@@ -63,7 +63,7 @@
             <dt>{t($locale, 'diagnostics.protocol')}</dt><dd>{snapshot.permissionProtocolVersion}</dd>
         </dl>
         <div class="actions">
-            <button disabled={loading || failed} onclick={copy}>{t($locale, 'diagnostics.copy')}</button>
+            <button type="button" disabled={loading || failed} onclick={copy}>{t($locale, 'diagnostics.copy')}</button>
             {#if canOpenLogs}<button type="button" onclick={openLogs}>{t($locale, 'diagnostics.openLogs')}</button>{/if}
         </div>
     {:else if canOpenLogs}

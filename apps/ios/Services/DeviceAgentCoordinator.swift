@@ -2254,6 +2254,13 @@ public actor DeviceAgentCoordinator {
                 "decision": .string("allow"),
                 "source": .string("product_default"),
             ]))
+        case .acceptEdits:
+            rules.append(.object([
+                "capability_pattern": .string("files_write"),
+                "resource_pattern": .string("*"),
+                "decision": .string("allow"),
+                "source": .string("product_default"),
+            ]))
         case .allowAll:
             rules.append(.object([
                 "capability_pattern": .string("*"),

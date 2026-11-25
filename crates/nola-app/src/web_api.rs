@@ -44,6 +44,19 @@ pub fn ensure_host_id(store: &Store) -> String {
     id
 }
 
+/// Load or generate a persistent store epoch identifier stored in KV `"source_store_epoch"`.
+/// Generated once per SQLite store using `new_id()` so paired clients can detect store resets.
+pub(crate) fn ensure_source_store_epoch(store: &Store) -> String {
+    if let Ok(Some(val)) = store.get_kv("source_store_epoch") {
+        if let Some(s) = val.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            return s.to_string();
+        }
+    }
+    let epoch = new_id();
+    let _ = store.set_kv("source_store_epoch", &json!(epoch));
+    epoch
+}
+
 pub fn session_meta_key(id: &str) -> String {
     format!("conv_meta:{id}")
 }
@@ -558,6 +571,7 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         .flatten()
         .unwrap_or_else(|| json!({}));
     let host_id = ensure_host_id(store);
+    let source_store_epoch = ensure_source_store_epoch(store);
     let host_name = saved
         .get("host_name")
         .and_then(|v| v.as_str())
@@ -667,7 +681,7 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         "enabled": worker_saved.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
         "backend_url": worker_saved.get("backend_url").or_else(|| worker_saved.get("url")).and_then(|v| v.as_str()).unwrap_or(""),
         "has_access_token": worker_saved.get("has_access_token").and_then(|v| v.as_bool()).unwrap_or(false),
-        "execution_backend": worker_saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola-v2"),
+        "execution_backend": worker_saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola"),
         "turn_timeout_seconds": worker_saved.get("turn_timeout_seconds").and_then(|v| v.as_i64()).unwrap_or(600).clamp(30, 14400),
         "poll_seconds": worker_saved.get("poll_seconds").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 300),
         "project_root": worker_saved.get("project_root").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| json!(s)).unwrap_or(Value::Null)
@@ -732,10 +746,12 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
     };
 
     json!({
+        "source_store_epoch": source_store_epoch,
         "host_identity": {
             "id": host_id,
             "name": host_name,
             "display_name": host_name,
+            "source_store_epoch": source_store_epoch,
             "permission_protocol_version": 1
         },
         "permission_profile": permission_profile,
@@ -1689,6 +1705,11 @@ mod tests {
         assert_eq!(snap["execution_backends"][0]["capabilities"]["supports_permission_bridge"], true);
         assert_eq!(snap["mcp_servers"][0]["endpoint"], "http://127.0.0.1:9000/mcp");
         assert_eq!(snap["mcp_servers"][0]["url"], "http://127.0.0.1:9000/mcp");
+        let epoch = snap["source_store_epoch"].as_str().unwrap();
+        assert!(!epoch.is_empty());
+        assert_eq!(snap["host_identity"]["source_store_epoch"], epoch);
+        assert_eq!(ensure_source_store_epoch(&store), epoch);
+        assert_eq!(snap["messaging"]["worker"]["execution_backend"], "nola");
     }
 
     #[test]

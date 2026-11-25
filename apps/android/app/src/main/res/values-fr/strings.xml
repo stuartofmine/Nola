@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Enregistrements remplacés</string>
     <string name="chat_permission_mode">Mode d’autorisation</string>
     <string name="chat_permission_mode_cautious">Prudent</string>
+    <string name="chat_permission_mode_accept_edits">Accepter les modifications</string>
     <string name="chat_permission_mode_allow_all">Tout autoriser</string>
     <string name="chat_permission_mode_cautious_detail">Confirmer suppressions, écrasements, accès sensibles, envois et nouvelles connexions. Les lectures ordinaires et créations continuent.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Autoriser automatiquement les modifications dans l’espace de travail. Confirmer les commandes shell, écritures externes, envois et nouvelles connexions.</string>
     <string name="chat_permission_mode_allow_all_detail">Aucune confirmation Nola dans cette conversation. Les autorisations système restent actives.</string>
     <string name="models_inference_test">Tester le modèle</string>
     <string name="models_inference_test_hint">Exécuter une requête isolée avec les paramètres enregistrés de ce modèle. Le modèle actif et la conversation ne sont pas modifiés.</string>

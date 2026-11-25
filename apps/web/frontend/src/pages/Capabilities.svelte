@@ -296,7 +296,7 @@
         <div class="actions">
             {#if mode === 'skills' && isBuiltIn(original) && typeof original.default_content === 'string'}<button type="button" disabled={busy || (!dirty && original.content === original.default_content)} onclick={restore}>{t($locale, 'capability.restore')}</button>{/if}
             {#if selected !== null && (mode !== 'skills' || !isBuiltIn(original))}<button type="button" class="danger" disabled={busy} onclick={remove}>{t($locale, 'capability.delete')}</button>{/if}
-            <button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'capability.cancel')}</button><button class="primary" disabled={busy || (selected !== null && !dirty)}>{t($locale, busy ? 'capability.saving' : 'capability.save')}</button>
+            <button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'capability.cancel')}</button><button type="submit" class="primary" disabled={busy || (selected !== null && !dirty)}>{t($locale, busy ? 'capability.saving' : 'capability.save')}</button>
         </div>
     </form>{/if}
 </dialog>
@@ -318,7 +318,7 @@
         <details><summary>{t($locale, 'capability.coreSettings')}</summary>
             {#each skillReview.current as item}<p>{displayName(item)} · {t($locale, item.enabled === false ? 'capability.disabled' : 'capability.enabled')}</p>{/each}
         </details>
-        <div class="actions"><button disabled={busy} onclick={() => reviewDialog.close()}>{t($locale, 'capability.cancel')}</button>{#if skillReview.pending}<button class="primary" disabled={busy} onclick={confirmSkillReview}>{t($locale, 'capability.useCore')}</button>{/if}</div>
+        <div class="actions"><button type="button" disabled={busy} onclick={() => reviewDialog.close()}>{t($locale, 'capability.cancel')}</button>{#if skillReview.pending}<button type="button" class="primary" disabled={busy} onclick={confirmSkillReview}>{t($locale, 'capability.useCore')}</button>{/if}</div>
     {/if}
 </dialog>
 {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { useProjection, inheritedPresentationOnly } from './context';
+    import { locale, t } from '../../../lib/i18n';
     import Slot from './Slot.svelte';
     import type { Binding, SlotContent } from '../catalog/types';
     import Text from '../catalog/basic/Text.svelte';
@@ -52,6 +53,12 @@
     const actions = $derived.by(() => Object.fromEntries(Object.entries(node?.actions ?? {})
         .map(([name, reference]) => [name, () => context.dispatch(reference)])));
     const validation = $derived({ valid: !node?.validation_errors.length, errors: node?.validation_errors ?? [] });
+    function unsupportedComponentMessage(component: string): string {
+        const key = 'a2ui.unsupportedComponent';
+        const translated = t($locale, key, { component });
+        if (translated === key) return `${component}: Unsupported component`;
+        return translated.includes(component) ? translated : `${component}: ${translated}`;
+    }
 </script>
 {#if node && presentationOnly() && (node.component === 'Button' || node.component === 'Modal')}
     <Slot content={slots[node.component === 'Button' ? 'child' : 'trigger']} presentationOnly />
@@ -63,5 +70,5 @@
             || Object.keys(node.actions).length > 0 && context.actionsDisabled?.() === true
             || ['TextField', 'CheckBox', 'ChoicePicker', 'Slider', 'DateTimeInput'].includes(node.component) && !node.bindings.value} a2ui={{ id: domId }} />
 {:else if node}
-    <p role="status">{node.component}: unsupported renderer component</p>
+    <p role="status">{unsupportedComponentMessage(node.component)}</p>
 {/if}

@@ -2582,8 +2582,10 @@
 "personal.capabilities.retry" = "Réessayer";
 "personal.capabilities.invalid_import" = "Choisissez un fichier Skill UTF-8 non vide contenant au maximum 48 000 caractères.";
 "permission.mode.cautious" = "Prudent";
+"permission.mode.accept_edits" = "Accepter les modifications";
 "permission.mode.allow_all" = "Tout autoriser";
 "permission.mode.cautious.detail" = "Confirmer suppressions, écrasements, accès sensibles, envois et nouvelles connexions. Les lectures ordinaires et créations continuent.";
+"permission.mode.accept_edits.detail" = "Autoriser automatiquement les modifications dans l’espace de travail. Confirmer les commandes shell, écritures externes, envois et nouvelles connexions.";
 "permission.mode.allow_all.detail" = "Aucune confirmation Nola dans cette conversation. Les autorisations système restent actives.";
 "chat.compaction.show_sources_format" = "Afficher le contexte d’origine (%d éléments)";
 "chat.style.inherit_model" = "Utiliser le réglage du modèle";

@@ -41,7 +41,7 @@ use nola_modules::{
 use nola_store::{EventPage, Store, Vault};
 use nola_tools::{BrowserManager, NativeBrowserBridge, SandboxMode, ToolContext, ToolRegistry};
 use nola_types::{
-    new_id, now_ms, sha256_hex, AgentRoom, ExpertPeer, FrozenSystemBlock, HostCapabilities,
+    new_id, now_ms, sha256_hex, ExpertPeer, FrozenSystemBlock, HostCapabilities,
     McpServerConfig, McpTransport, MediaAttachment, MemoryItem, ModelCapabilities,
     PermissionAction, PermissionProfile, PermissionRule, PluginRecord, RuleScope, Session,
 };
@@ -58,10 +58,11 @@ use crate::config::{
 use crate::web_api::{
     build_agent_settings_snapshot, build_dashboard_snapshot, build_model_profiles_response,
     build_workspace_review, canonical_automation_format, conversation_configuration_json,
-    conversation_knowledge_key, ensure_host_id, infer_model_capabilities,
-    load_conversation_knowledge, memory_item_to_record_with_store, memory_meta_key, ms_to_rfc3339,
-    normalize_automation_record, normalize_data_source_record, project_skill_descriptor,
-    reconstruct_v2_messages, session_meta_key, session_to_conversation_json, session_usage_json,
+    conversation_knowledge_key, ensure_host_id, ensure_source_store_epoch,
+    infer_model_capabilities, load_conversation_knowledge, memory_item_to_record_with_store,
+    memory_meta_key, ms_to_rfc3339, normalize_automation_record, normalize_data_source_record,
+    project_skill_descriptor, reconstruct_v2_messages, session_meta_key,
+    session_to_conversation_json, session_usage_json,
 };
 
 const MAX_TRACKED_NONCES: usize = 4_096;
@@ -838,10 +839,12 @@ fn has_expected_host_id(body: &Value) -> bool {
         .is_some_and(|s| !s.trim().is_empty())
 }
 
-fn wrap_paired_result(host_id: &str, body: &Value, result: Value) -> Value {
+fn wrap_paired_result(store: &Store, host_id: &str, body: &Value, result: Value) -> Value {
     if has_expected_host_id(body) {
+        let source_store_epoch = ensure_source_store_epoch(store);
         json!({
             "source_host_id": host_id,
+            "source_store_epoch": source_store_epoch,
             "result": result
         })
     } else {
@@ -1634,7 +1637,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     }
                     plans.insert(manifest_id, plan.clone());
                 }
-                let payload = wrap_paired_result(host_id, &body, plan);
+                let payload = wrap_paired_result(&store, host_id, &body, plan);
                 let _ = respond_api_json(req, 200, &payload, crypto_tok);
             }
             (Method::Post, "/api/agent/tool-plan/read") => {
@@ -1946,7 +1949,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     }
                 }
             }
-            (Method::Post, "/api/harness-plugins") => {
+            (Method::Post, "/api/harness-plugins") | (Method::Post, "/api/harness/plugins") => {
                 let action = body
                     .get("action")
                     .and_then(|v| v.as_str())
@@ -2016,6 +2019,47 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 let _ = respond_api_json(req, 200, &catalog, crypto_tok);
                             }
                         }
+                    }
+                    "toggle" => {
+                        let target = body
+                            .get("id")
+                            .or_else(|| body.get("source"))
+                            .or_else(|| body.get("name"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .unwrap_or("");
+                        let explicit_enabled = body.get("enabled").and_then(|v| v.as_bool());
+                        if !target.is_empty() {
+                            let existing = suite
+                                .list_records::<PluginRecord>("plugin")
+                                .unwrap_or_default();
+                            let mut toggled = false;
+                            for mut rec in existing {
+                                let formatted = format!("{}@{}", rec.name, rec.version);
+                                if rec.id == target
+                                    || rec.name == target
+                                    || rec.entry_path == target
+                                    || formatted == target
+                                {
+                                    rec.enabled = explicit_enabled.unwrap_or(!rec.enabled);
+                                    let _ = suite.upsert_record("plugin", &rec.id, &rec);
+                                    toggled = true;
+                                }
+                            }
+                            if !toggled {
+                                let rec = PluginRecord {
+                                    id: target.to_string(),
+                                    name: target.to_string(),
+                                    version: "local".to_string(),
+                                    entry_path: target.to_string(),
+                                    enabled: explicit_enabled.unwrap_or(false),
+                                    capabilities: vec!["dsh".into(), "web".into()],
+                                };
+                                let _ = suite.upsert_record("plugin", &rec.id, &rec);
+                            }
+                        }
+                        let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        let _ = respond_api_json(req, 200, &catalog, crypto_tok);
                     }
                     "remove" => {
                         let target = body
@@ -2111,6 +2155,28 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 }
             }
             (Method::Post, "/api/chat/conversations") => {
+                if is_conversations_list_read_post(&body) {
+                    let limit = body
+                        .get("limit")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(200)
+                        .clamp(1, 500) as usize;
+                    match store.list_sessions(limit) {
+                        Ok(list) => {
+                            let conversations: Vec<Value> = list
+                                .iter()
+                                .map(|s| session_to_conversation_json(&store, s))
+                                .collect();
+                            let inner = json!({"conversations": conversations, "sessions": list});
+                            let payload = wrap_paired_result(&store, host_id, &body, inner);
+                            let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                        }
+                        Err(e) => {
+                            let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
+                        }
+                    }
+                    return;
+                }
                 let perm_opt = body
                     .get("permissionProfile")
                     .or_else(|| body.get("permission_profile"))
@@ -2168,7 +2234,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 match store.upsert_session(&sess) {
                     Ok(()) => {
                         let conv = session_to_conversation_json(&store, &sess);
-                        let _ = respond_api_json(req, 200, &conv, crypto_tok);
+                        let payload = wrap_paired_result(&store, host_id, &body, conv);
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -2215,22 +2282,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .unwrap_or(0);
                 match store.events_after(&id, after, 500) {
                     Ok(EventPage::Events(ev)) => {
-                        let _ = respond_api_json(req, 200, &json!({"status": "ok", "events": ev}), crypto_tok);
+                        let inner = json!({"status": "ok", "events": ev});
+                        let payload = wrap_paired_result(&store, host_id, &body, inner);
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Ok(EventPage::ResyncRequired {
                         earliest_retained_seq,
                         latest_seq,
                     }) => {
-                        let _ = respond_api_json(
-                            req,
-                            200,
-                            &json!({
-                                "status": "resync_required",
-                                "earliest_retained_seq": earliest_retained_seq,
-                                "latest_seq": latest_seq
-                            }),
-                            crypto_tok,
-                        );
+                        let inner = json!({
+                            "status": "resync_required",
+                            "earliest_retained_seq": earliest_retained_seq,
+                            "latest_seq": latest_seq
+                        });
+                        let payload = wrap_paired_result(&store, host_id, &body, inner);
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -2353,7 +2419,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         "configuration_revision": cfg_rev_val,
                         "parent_message_id": parent_msg_val
                     });
-                    let payload = wrap_paired_result(host_id, &body, frontier);
+                    let payload = wrap_paired_result(&store, host_id, &body, frontier);
                     let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     return;
                 }
@@ -2385,7 +2451,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     },
                                     "state": "inactive"
                                 });
-                                let payload = wrap_paired_result(host_id, &body, perm_cfg);
+                                let payload = wrap_paired_result(&store, host_id, &body, perm_cfg);
                                 let _ = respond_api_json(req, 200, &payload, crypto_tok);
                             } else {
                                 let conv = conversation_configuration_json(&store, &sess);
@@ -2408,7 +2474,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     },
                                     "state": "inactive"
                                 });
-                                let payload = wrap_paired_result(host_id, &body, perm_cfg);
+                                let payload = wrap_paired_result(&store, host_id, &body, perm_cfg);
                                 let _ = respond_api_json(req, 200, &payload, crypto_tok);
                             } else {
                                 let _ = respond_api_json(req, 404, &json!({"error": "conversation_not_found"}), crypto_tok);
@@ -2526,6 +2592,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("cautious");
                             wrap_paired_result(
+                                &store,
                                 host_id,
                                 &body,
                                 json!({
@@ -2578,6 +2645,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 }),
                             );
                             let payload = wrap_paired_result(
+                                &store,
                                 host_id,
                                 &body,
                                 json!({
@@ -3006,7 +3074,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                         "action_id": committed.action_id
                                     }
                                 });
-                                let resp_val = wrap_paired_result(host_id, &body, inner);
+                                let resp_val = wrap_paired_result(&store, host_id, &body, inner);
                                 let _ = respond_api_json(req, 200, &resp_val, crypto_tok);
                             }
                             Err(e) => {
@@ -3093,7 +3161,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let route = resolve_model_route(&cfg).ok();
                 match compact_session_now(&store, llm.as_ref(), route.as_ref(), &conv_id) {
                     Ok(report) => {
-                        let _ = respond_api_json(req, 200, &report, crypto_tok);
+                        let payload = wrap_paired_result(&store, host_id, &body, report);
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e}), crypto_tok);
@@ -3165,6 +3234,55 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let _ = store.set_kv(&format!("conv_data_sources:{conv_id}"), &body);
                 let _ = respond_api_json(req, 200, &json!({"ok": true, "sources": body}), crypto_tok);
             }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/resources") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/resources"),
+                );
+                let resources = collect_conversation_resources(&store, &conv_id);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"conversationId": conv_id, "resources": resources}),
+                    crypto_tok,
+                );
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && p.contains("/resources/") =>
+            {
+                let rest = p.trim_start_matches("/api/chat/conversations/");
+                if let Some((raw_conv, raw_res)) = rest.split_once("/resources/") {
+                    let conv_id = percent_decode_path(raw_conv);
+                    let resource_id = percent_decode_path(raw_res);
+                    let resources = collect_conversation_resources(&store, &conv_id);
+                    if let Some(found) = resources.into_iter().find(|r| {
+                        r.get("id")
+                            .or_else(|| r.get("resource_id"))
+                            .or_else(|| r.get("name"))
+                            .and_then(|v| v.as_str())
+                            == Some(resource_id.as_str())
+                    }) {
+                        let _ = respond_api_json(req, 200, &found, crypto_tok);
+                    } else {
+                        let _ = respond_api_json(
+                            req,
+                            404,
+                            &json!({"error": "resource_not_found", "resource_id": resource_id}),
+                            crypto_tok,
+                        );
+                    }
+                } else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"error": "resource_not_found"}),
+                        crypto_tok,
+                    );
+                }
+            }
             (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/messages") =>
             {
@@ -3172,6 +3290,26 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/messages"),
                 );
+                if is_messages_read_post(&body) {
+                    let (messages, events) = reconstruct_v2_messages(&store, &conv_id);
+                    let latest_seq = events
+                        .last()
+                        .and_then(|e| e.get("seq").and_then(|s| s.as_i64()))
+                        .unwrap_or(0);
+                    let usage = session_usage_json(&store, &conv_id);
+                    let inner = json!({
+                        "conversationId": conv_id,
+                        "messages": messages,
+                        "events": events,
+                        "usage": usage,
+                        "hasMore": false,
+                        "projectionRevision": 1,
+                        "eventSequence": latest_seq
+                    });
+                    let payload = wrap_paired_result(&store, host_id, &body, inner);
+                    let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                    return;
+                }
                 if let Some(perm) = body
                     .get("permissionProfile")
                     .or_else(|| body.get("permission_profile"))
@@ -3236,7 +3374,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     match store.get_session(&id) {
                         Ok(Some(sess)) => {
                             let conv = session_to_conversation_json(&store, &sess);
-                            let _ = respond_api_json(req, 200, &conv, crypto_tok);
+                            let payload = wrap_paired_result(&store, host_id, &body, conv);
+                            let _ = respond_api_json(req, 200, &payload, crypto_tok);
                         }
                         Ok(None) => {
                             let _ = respond_api_json(req, 404, &json!({"error": "conversation_not_found"}), crypto_tok);
@@ -3286,7 +3425,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         match store.upsert_session(&sess) {
                             Ok(()) => {
                                 let conv = session_to_conversation_json(&store, &sess);
-                                let _ = respond_api_json(req, 200, &conv, crypto_tok);
+                                let payload = if method == Method::Post {
+                                    wrap_paired_result(&store, host_id, &body, conv)
+                                } else {
+                                    conv
+                                };
+                                let _ = respond_api_json(req, 200, &payload, crypto_tok);
                             }
                             Err(e) => {
                                 let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -3477,8 +3621,9 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         let ep_enabled = ep.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
                         let rust_proto = match wire_proto.as_str() {
                             "anthropic" => "anthropic",
-                            "responses" | "siwc_responses" => "openai_responses",
-                            "gemini" => "gemini",
+                            "siwc_responses" => "siwc_responses",
+                            "responses" | "openai_responses" => "openai_responses",
+                            "gemini" | "google_gemini" => "gemini",
                             _ => "openai_chat",
                         };
 
@@ -4363,6 +4508,43 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             | (Method::Post, "/api/model-connections/opencode-login/owners") => {
                 let _ = respond_api_json(req, 200, &json!([]), crypto_tok);
             }
+            (Method::Get, "/api/model-connections/source-login/status")
+            | (Method::Post, "/api/model-connections/source-login/start")
+            | (Method::Post, "/api/model-connections/source-login/status")
+            | (Method::Post, "/api/model-connections/source-login/cancel")
+            | (Method::Post, "/api/model-connections/source-accounts/bind")
+            | (Method::Post, "/api/model-connections/source-accounts/refresh")
+            | (Method::Get, "/api/model-connections/kimi-login/status")
+            | (Method::Post, "/api/model-connections/kimi-login/connect")
+            | (Method::Post, "/api/model-connections/kimi-login/start")
+            | (Method::Post, "/api/model-connections/kimi-login/status")
+            | (Method::Post, "/api/model-connections/kimi-login/cancel")
+            | (Method::Get, "/api/model-connections/opencode-login/inspect")
+            | (Method::Get, "/api/model-connections/opencode-login/callback")
+            | (Method::Post, "/api/model-connections/opencode-login/connect")
+            | (Method::Post, "/api/model-connections/opencode-login/inspect")
+            | (Method::Post, "/api/model-connections/opencode-login/authorize")
+            | (Method::Post, "/api/model-connections/opencode-login/callback")
+            | (Method::Post, "/api/model-connections/opencode-login/forget") => {
+                let is_cancel = path.ends_with("/cancel");
+                let is_forget = path.ends_with("/forget");
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": is_cancel || is_forget,
+                        "supported": false,
+                        "status": "unsupported_on_v2_host",
+                        "state": "idle",
+                        "connected": false,
+                        "cancelled": is_cancel,
+                        "forgotten": is_forget,
+                        "accounts": [],
+                        "message": "Interactive source-login OAuth flows are not enabled on the v2 WebHost; configure an API key or import a connection instead."
+                    }),
+                    crypto_tok,
+                );
+            }
             (Method::Post, "/api/model-connections/probe") => {
                 let probe_res = run_real_model_connection_probe(&store, &body);
                 let _ = respond_api_json(req, 200, &probe_res, crypto_tok);
@@ -4702,8 +4884,9 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     if let Some(ref proto) = new_proto {
                         conn.protocol = Some(match proto.as_str() {
                             "anthropic" => "anthropic".into(),
-                            "responses" | "siwc_responses" => "openai_responses".into(),
-                            "gemini" => "gemini".into(),
+                            "siwc_responses" => "siwc_responses".into(),
+                            "responses" | "openai_responses" => "openai_responses".into(),
+                            "gemini" | "google_gemini" => "gemini".into(),
                             _ => "openai_chat".into(),
                         });
                     }
@@ -5067,11 +5250,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             }
             (Method::Get, "/api/memory") => {
                 let q = parse_query_str(query, "q").unwrap_or_default();
-                let items = store.search_memory(&q, None, 2000).unwrap_or_default();
-                let records: Vec<Value> = items
-                    .iter()
-                    .map(|item| memory_item_to_record_with_store(&store, item))
-                    .collect();
+                let raw_items = store.search_memory(&q, None, 2000).unwrap_or_default();
+                let (records, items) = filter_superseded_memories(&store, raw_items);
                 let _ = respond_api_json(
                     req,
                     200,
@@ -5089,9 +5269,88 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let op = body.get("operation").and_then(|v| v.as_str());
                 let prev_id = body
                     .get("id")
+                    .or_else(|| body.pointer("/draft/id"))
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string);
+                if op == Some("promote") {
+                    let Some(target_id) = prev_id else {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"error": "missing_memory_id", "message": "promote requires 'id'"}),
+                            crypto_tok,
+                        );
+                        return;
+                    };
+                    let existing = store
+                        .search_memory("", None, 2000)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|m| m.id == target_id);
+                    let Some(mut item) = existing else {
+                        let _ = respond_api_json(
+                            req,
+                            404,
+                            &json!({"error": "memory_not_found", "id": target_id}),
+                            crypto_tok,
+                        );
+                        return;
+                    };
+                    let existing_kind = item
+                        .namespace
+                        .split_once(':')
+                        .map(|(_, k)| k.to_string())
+                        .filter(|k| !k.is_empty())
+                        .unwrap_or_else(|| {
+                            if item.namespace.is_empty() {
+                                "preference".to_string()
+                            } else {
+                                item.namespace.clone()
+                            }
+                        });
+                    let target_scope = body
+                        .get("scope")
+                        .or_else(|| body.pointer("/draft/scope"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("global");
+                    let target_kind = body
+                        .get("kind")
+                        .or_else(|| body.pointer("/draft/kind"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(&existing_kind);
+                    item.namespace = format!("{target_scope}:{target_kind}");
+                    item.updated_at_ms = ts;
+                    match store.upsert_memory(&item) {
+                        Ok(()) => {
+                            let record = memory_item_to_record_with_store(&store, &item);
+                            let _ = respond_api_json(
+                                req,
+                                200,
+                                &json!({
+                                    "type": "memory_promoted",
+                                    "ok": true,
+                                    "record": record,
+                                    "item": item
+                                }),
+                                crypto_tok,
+                            );
+                        }
+                        Err(e) => {
+                            let _ = respond_api_json(
+                                req,
+                                500,
+                                &json!({"error": e.to_string()}),
+                                crypto_tok,
+                            );
+                        }
+                    }
+                    return;
+                }
                 let src = body.get("draft").unwrap_or(&body);
                 let scope = src.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
                 let kind = src.get("kind").and_then(|v| v.as_str()).unwrap_or("preference");
@@ -6122,6 +6381,73 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
             }
             (Method::Post, p)
+                if p.starts_with("/api/messaging-channels/") && p.ends_with("/test") =>
+            {
+                let id = percent_decode_path(
+                    p.trim_start_matches("/api/messaging-channels/")
+                        .trim_end_matches("/test"),
+                );
+                let Some(ch) = suite
+                    .get_record::<Value>("messaging_channel", &id)
+                    .ok()
+                    .flatten()
+                else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"ok": false, "error": "channel_not_found", "id": id}),
+                        crypto_tok,
+                    );
+                    return;
+                };
+                let norm = normalize_messaging_channel(&store, &ch);
+                let has_secret = norm
+                    .get("has_webhook_secret")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || !resolve_channel_webhook_secret(&store, &ch).trim().is_empty();
+                let has_ref = ["credential_ref", "webhook_secret_ref", "verify_token_ref", "account_id"]
+                    .iter()
+                    .any(|k| {
+                        norm.get(*k)
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| !s.trim().is_empty())
+                    });
+                let has_provider_cfg = norm
+                    .get("provider_config")
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|m| {
+                        m.values().any(|val| {
+                            val.as_str().is_some_and(|s| !s.trim().is_empty())
+                        })
+                    });
+                if has_secret || has_ref || has_provider_cfg {
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "ok": true,
+                            "status": "verified",
+                            "channelId": id,
+                            "testedAt": Utc::now().to_rfc3339()
+                        }),
+                        crypto_tok,
+                    );
+                } else {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({
+                            "ok": false,
+                            "status": "invalid",
+                            "error": "missing_channel_configuration",
+                            "message": "Configure a webhook secret, credential, token, or endpoint URL before testing this messaging channel."
+                        }),
+                        crypto_tok,
+                    );
+                }
+            }
+            (Method::Post, p)
                 if (p.starts_with("/api/messaging-channels/") && p.ends_with("/inbound"))
                     || p.starts_with("/v1/channels/webhook/")
                     || p.starts_with("/api/v1/channels/webhook/") =>
@@ -6262,11 +6588,13 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
                 let experts: Vec<Value> = suite.list_records("expert_peer").unwrap_or_default();
                 let role_templates = built_in_role_templates();
+                let source_store_epoch = ensure_source_store_epoch(&store);
                 let _ = respond_api_json(
                     req,
                     200,
                     &json!({
                         "host_id": host_id,
+                        "source_store_epoch": source_store_epoch,
                         "rooms": rooms,
                         "experts": experts,
                         "roleTemplates": role_templates
@@ -6282,176 +6610,59 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let action = cmd
                     .get("type")
                     .or_else(|| cmd.get("action"))
+                    .or_else(|| cmd.get("operation"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let mut mutated_item: Option<Value> = None;
-                let mut mutation_err: Option<String> = None;
-                match action {
-                    "create_room" => {
-                        let now = now_ms();
-                        let id = cmd
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                            .map(ToString::to_string)
-                            .unwrap_or_else(new_id);
-                        let name = cmd
-                            .get("name")
-                            .or_else(|| cmd.get("title"))
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                            .unwrap_or("Collaboration Room")
-                            .to_string();
-                        let participants: Vec<String> = cmd
-                            .get("participant_expert_ids")
-                            .or_else(|| cmd.get("participantExpertIds"))
-                            .and_then(|v| v.as_array())
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|x| x.as_str().map(ToString::to_string))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let room = AgentRoom {
-                            id: id.clone(),
-                            name,
-                            workspace_root: suite.workspace_root.display().to_string(),
-                            participant_expert_ids: participants,
-                            session_id: format!("room-{id}"),
-                            created_at_ms: now,
-                            updated_at_ms: now,
-                        };
-                        match suite.upsert_record("agent_room", &id, &room) {
-                            Ok(()) => mutated_item = serde_json::to_value(&room).ok(),
-                            Err(e) => mutation_err = Some(e.to_string()),
-                        }
-                    }
-                    "update_room" => {
-                        let id = cmd
-                            .get("id")
-                            .or_else(|| cmd.get("room_id"))
-                            .or_else(|| cmd.get("roomId"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if id.is_empty() {
-                            mutation_err = Some("missing room id".into());
-                        } else if let Ok(Some(mut room)) = suite.get_record::<AgentRoom>("agent_room", id) {
-                            if let Some(name) = cmd.get("name").or_else(|| cmd.get("title")).and_then(|v| v.as_str()) {
-                                room.name = name.to_string();
-                            }
-                            if let Some(arr) = cmd
-                                .get("participant_expert_ids")
-                                .or_else(|| cmd.get("participantExpertIds"))
-                                .and_then(|v| v.as_array())
-                            {
-                                room.participant_expert_ids = arr
-                                    .iter()
-                                    .filter_map(|x| x.as_str().map(ToString::to_string))
-                                    .collect();
-                            }
-                            room.updated_at_ms = now_ms();
-                            match suite.upsert_record("agent_room", id, &room) {
-                                Ok(()) => mutated_item = serde_json::to_value(&room).ok(),
-                                Err(e) => mutation_err = Some(e.to_string()),
-                            }
-                        } else {
-                            mutation_err = Some(format!("room '{id}' not found"));
-                        }
-                    }
-                    "delete_room" => {
-                        let id = cmd
-                            .get("id")
-                            .or_else(|| cmd.get("room_id"))
-                            .or_else(|| cmd.get("roomId"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let _ = suite.delete_record("agent_room", id);
-                    }
-                    "create_expert" => {
-                        let id = cmd
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                            .map(ToString::to_string)
-                            .unwrap_or_else(new_id);
-                        let name = cmd
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                            .unwrap_or("Expert")
-                            .to_string();
-                        let role = cmd
-                            .get("role")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("specialist")
-                            .to_string();
-                        let system_prompt = cmd
-                            .get("system_prompt")
-                            .or_else(|| cmd.get("systemPrompt"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let model_override = cmd
-                            .get("model_override")
-                            .or_else(|| cmd.get("modelOverride"))
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.trim().is_empty())
-                            .map(ToString::to_string);
-                        let allowed_tools: Vec<String> = cmd
-                            .get("allowed_tools")
-                            .or_else(|| cmd.get("allowedTools"))
-                            .and_then(|v| v.as_array())
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|x| x.as_str().map(ToString::to_string))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let expert = ExpertPeer {
-                            id: id.clone(),
-                            name,
-                            role,
-                            system_prompt,
-                            model_override,
-                            allowed_tools,
-                            updated_at_ms: now_ms(),
-                        };
-                        match suite.upsert_record("expert_peer", &id, &expert) {
-                            Ok(()) => mutated_item = serde_json::to_value(&expert).ok(),
-                            Err(e) => mutation_err = Some(e.to_string()),
-                        }
-                    }
-                    "delete_expert" => {
-                        let id = cmd
-                            .get("id")
-                            .or_else(|| cmd.get("expert_id"))
-                            .or_else(|| cmd.get("expertId"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let _ = suite.delete_record("expert_peer", id);
-                    }
-                    _ => {}
-                }
-                if let Some(err) = mutation_err {
-                    let _ = respond_api_json(req, 400, &json!({"ok": false, "error": err}), crypto_tok);
+                let has_explicit_command = body.get("command").is_some_and(|v| v.is_object())
+                    || !action.trim().is_empty();
+                let dispatch_res = if has_explicit_command {
+                    crate::daemon::dispatch_agent_room_command(&store, &suite, &body)
                 } else {
-                    let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
-                    let experts: Vec<Value> = suite.list_records("expert_peer").unwrap_or_default();
-                    let role_templates = built_in_role_templates();
-                    let _ = respond_api_json(
-                        req,
-                        200,
-                        &json!({
-                            "ok": true,
-                            "host_id": host_id,
-                            "rooms": rooms,
-                            "experts": experts,
-                            "roleTemplates": role_templates,
-                            "item": mutated_item,
-                            "requestType": cmd.get("type").cloned().unwrap_or(Value::Null)
-                        }),
-                        crypto_tok,
-                    );
+                    Ok(json!({}))
+                };
+                match dispatch_res {
+                    Err((code, err)) => {
+                        let status = if code == "not_found" { 404 } else { 400 };
+                        let _ = respond_api_json(
+                            req,
+                            status,
+                            &json!({"ok": false, "code": code, "error": err}),
+                            crypto_tok,
+                        );
+                    }
+                    Ok(result) => {
+                        let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
+                        let experts: Vec<Value> = suite.list_records("expert_peer").unwrap_or_default();
+                        let role_templates = built_in_role_templates();
+                        let source_store_epoch = ensure_source_store_epoch(&store);
+                        let mutated_item = result
+                            .get("room")
+                            .or_else(|| result.get("expert"))
+                            .or_else(|| result.get("submission"))
+                            .cloned();
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({
+                                "ok": true,
+                                "host_id": host_id,
+                                "source_store_epoch": source_store_epoch,
+                                "source_matches": true,
+                                "result": result,
+                                "rooms": rooms,
+                                "experts": experts,
+                                "roleTemplates": role_templates,
+                                "item": mutated_item,
+                                "requestType": cmd
+                                    .get("type")
+                                    .or_else(|| cmd.get("action"))
+                                    .or_else(|| cmd.get("operation"))
+                                    .cloned()
+                                    .unwrap_or(Value::Null)
+                            }),
+                            crypto_tok,
+                        );
+                    }
                 }
             }
             (Method::Get, "/api/expert-prompt-templates") => {
@@ -6811,7 +7022,10 @@ fn is_read_only_post(body: &Value) -> bool {
         .or_else(|| obj.get("action"))
         .and_then(|v| v.as_str())
     {
-        if matches!(op.to_ascii_lowercase().as_str(), "read" | "get" | "fetch") {
+        if matches!(
+            op.to_ascii_lowercase().as_str(),
+            "read" | "get" | "fetch" | "list" | "journal" | "query" | "history"
+        ) {
             return true;
         }
     }
@@ -6826,8 +7040,187 @@ fn is_read_only_post(body: &Value) -> bool {
         "knowledge",
         "expectedRevision",
         "expected_revision",
+        "content",
+        "message",
+        "text",
+        "parts",
+        "prompt",
+        "user_message",
+        "attachments",
     ];
     !mutation_keys.iter().any(|k| obj.contains_key(*k))
+}
+
+fn is_conversations_list_read_post(body: &Value) -> bool {
+    let Some(obj) = body.as_object() else {
+        return false;
+    };
+    let explicit_op = obj
+        .get("operation")
+        .or_else(|| obj.get("action"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase());
+    if let Some(ref op) = explicit_op {
+        if matches!(
+            op.as_str(),
+            "read" | "get" | "fetch" | "list" | "journal" | "query"
+        ) {
+            return true;
+        }
+        if matches!(op.as_str(), "create" | "new" | "upsert") {
+            return false;
+        }
+    }
+    let has_query_marker = obj.contains_key("journal")
+        || obj.contains_key("limit")
+        || obj.contains_key("cursor")
+        || obj.contains_key("after_seq")
+        || obj.contains_key("afterSeq");
+    if has_query_marker {
+        return true;
+    }
+    if has_expected_host_id(body) {
+        let has_create_title = obj
+            .get("title")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty());
+        return !has_create_title;
+    }
+    false
+}
+
+fn is_messages_read_post(body: &Value) -> bool {
+    let Some(obj) = body.as_object() else {
+        return true;
+    };
+    if let Some(op) = obj
+        .get("operation")
+        .or_else(|| obj.get("action"))
+        .and_then(|v| v.as_str())
+    {
+        if matches!(
+            op.to_ascii_lowercase().as_str(),
+            "read" | "get" | "fetch" | "list" | "history" | "query"
+        ) {
+            return true;
+        }
+    }
+    let has_text = ["content", "message", "text", "prompt", "user_message"]
+        .iter()
+        .any(|k| {
+            obj.get(*k)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        });
+    let has_parts = obj
+        .get("parts")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
+    let has_attachments = obj
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
+    if has_text || has_parts || has_attachments {
+        return false;
+    }
+    is_read_only_post(body) || has_expected_host_id(body)
+}
+
+fn filter_superseded_memories(store: &Store, items: Vec<MemoryItem>) -> (Vec<Value>, Vec<MemoryItem>) {
+    let projected: Vec<(Value, MemoryItem)> = items
+        .into_iter()
+        .map(|item| {
+            let rec = memory_item_to_record_with_store(store, &item);
+            (rec, item)
+        })
+        .collect();
+    let mut superseded_ids: HashSet<String> = HashSet::new();
+    for (rec, _) in &projected {
+        if let Some(arr) = rec.get("supersedes").and_then(|v| v.as_array()) {
+            for id in arr.iter().filter_map(|v| v.as_str()) {
+                if !id.trim().is_empty() {
+                    superseded_ids.insert(id.to_string());
+                }
+            }
+        }
+    }
+    let mut active_records = Vec::new();
+    let mut active_items = Vec::new();
+    for (rec, item) in projected {
+        if !superseded_ids.contains(&item.id) {
+            active_records.push(rec);
+            active_items.push(item);
+        }
+    }
+    (active_records, active_items)
+}
+
+fn collect_conversation_resources(store: &Store, conv_id: &str) -> Vec<Value> {
+    let mut resources: Vec<Value> = Vec::new();
+    let mut seen_ids: HashSet<String> = HashSet::new();
+
+    if let Ok(Some(Value::Array(saved))) = store.get_kv(&format!("conv_resources:{conv_id}")) {
+        for (idx, mut res) in saved.into_iter().enumerate() {
+            let rid = res
+                .get("id")
+                .or_else(|| res.get("resource_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("kv-res-{idx}"));
+            if seen_ids.insert(rid.clone()) {
+                if let Some(obj) = res.as_object_mut() {
+                    obj.entry("id".to_string()).or_insert_with(|| json!(rid));
+                }
+                resources.push(res);
+            }
+        }
+    }
+
+    if let Ok(EventPage::Events(events)) = store.events_after(conv_id, 0, 2000) {
+        for ev in events {
+            if let Some(attachments) = ev.payload.get("attachments").and_then(|v| v.as_array()) {
+                for (idx, att) in attachments.iter().enumerate() {
+                    let rid = att
+                        .get("id")
+                        .or_else(|| att.get("resource_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("res-{}-{idx}", ev.seq));
+                    if seen_ids.insert(rid.clone()) {
+                        let mut entry = att.clone();
+                        if let Some(obj) = entry.as_object_mut() {
+                            obj.entry("id".to_string()).or_insert_with(|| json!(rid));
+                            obj.entry("conversationId".to_string())
+                                .or_insert_with(|| json!(conv_id));
+                            obj.entry("seq".to_string()).or_insert_with(|| json!(ev.seq));
+                        }
+                        resources.push(entry);
+                    }
+                }
+            }
+            if let Some(res) = ev.payload.get("resource").filter(|v| v.is_object()) {
+                let rid = res
+                    .get("id")
+                    .or_else(|| res.get("resource_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("res-{}", ev.seq));
+                if seen_ids.insert(rid.clone()) {
+                    let mut entry = res.clone();
+                    if let Some(obj) = entry.as_object_mut() {
+                        obj.entry("id".to_string()).or_insert_with(|| json!(rid));
+                        obj.entry("conversationId".to_string())
+                            .or_insert_with(|| json!(conv_id));
+                    }
+                    resources.push(entry);
+                }
+            }
+        }
+    }
+    resources
 }
 
 fn discover_endpoint_models(conn: &ConnectionConfig) -> Vec<String> {
@@ -8348,7 +8741,7 @@ fn load_messaging_worker_snapshot(store: &Store) -> Value {
         "enabled": saved.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
         "backend_url": saved.get("backend_url").or_else(|| saved.get("url")).and_then(|v| v.as_str()).unwrap_or(""),
         "has_access_token": saved.get("has_access_token").and_then(|v| v.as_bool()).unwrap_or(false),
-        "execution_backend": saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola-v2"),
+        "execution_backend": saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola"),
         "turn_timeout_seconds": saved.get("turn_timeout_seconds").and_then(|v| v.as_i64()).unwrap_or(600).clamp(30, 14400),
         "poll_seconds": saved.get("poll_seconds").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 300),
         "project_root": saved.get("project_root").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| json!(s)).unwrap_or(Value::Null)
@@ -10536,5 +10929,117 @@ mod tests {
         let valid_ds = listed.iter().find(|d| d["id"] == "ds-valid-1").unwrap();
         assert_eq!(valid_ds["validationContract"]["validationState"], "verified");
         assert!(valid_ds.get("lastError").is_none());
+    }
+
+    #[test]
+    fn paired_read_post_classification_and_epoch_wrapping() {
+        let store = Store::open_in_memory().unwrap();
+        let epoch1 = ensure_source_store_epoch(&store);
+        let epoch2 = ensure_source_store_epoch(&store);
+        assert!(!epoch1.is_empty());
+        assert_eq!(epoch1, epoch2);
+
+        // Normal Web POST /api/chat/conversations with {} or {title} MUST create
+        assert!(!is_conversations_list_read_post(&json!({})));
+        assert!(!is_conversations_list_read_post(&json!({"title": "Hello"})));
+        assert!(!is_conversations_list_read_post(&json!({"expected_host_id": "h1", "title": "Named"})));
+        assert!(!is_conversations_list_read_post(&json!({"expected_host_id": "h1", "operation": "create"})));
+
+        // Paired read or query POST /api/chat/conversations MUST NOT create
+        assert!(is_conversations_list_read_post(&json!({"expected_host_id": "h1"})));
+        assert!(is_conversations_list_read_post(&json!({"expected_host_id": "h1", "limit": 20})));
+        assert!(is_conversations_list_read_post(&json!({"operation": "list"})));
+        assert!(is_conversations_list_read_post(&json!({"journal": true})));
+        assert!(is_conversations_list_read_post(&json!({"after_seq": 10})));
+
+        // POST /api/chat/conversations/:id/messages read vs turn
+        assert!(is_messages_read_post(&json!({"expected_host_id": "h1"})));
+        assert!(is_messages_read_post(&json!({"expected_host_id": "h1", "content": ""})));
+        assert!(is_messages_read_post(&json!({"operation": "read"})));
+        assert!(!is_messages_read_post(&json!({"content": "hi"})));
+        assert!(!is_messages_read_post(&json!({"expected_host_id": "h1", "content": "hi"})));
+        assert!(!is_messages_read_post(&json!({"parts": [{"type": "text", "text": "hi"}]})));
+
+        // wrap_paired_result includes source_host_id and source_store_epoch
+        let wrapped = wrap_paired_result(
+            &store,
+            "host-abc",
+            &json!({"expected_host_id": "host-abc"}),
+            json!({"ok": true}),
+        );
+        assert_eq!(wrapped["source_host_id"], "host-abc");
+        assert_eq!(wrapped["source_store_epoch"], epoch1);
+        assert_eq!(wrapped["result"]["ok"], true);
+
+        let plain = wrap_paired_result(&store, "host-abc", &json!({}), json!({"ok": true}));
+        assert_eq!(plain, json!({"ok": true}));
+    }
+
+    #[test]
+    fn memory_revise_deduplication_and_resources_and_worker_default() {
+        let store = Store::open_in_memory().unwrap();
+        let old_item = MemoryItem {
+            id: "mem-old".into(),
+            namespace: "project:preference".into(),
+            title: "Old".into(),
+            content: "Old text".into(),
+            tags: vec![],
+            created_at_ms: 100,
+            updated_at_ms: 100,
+        };
+        let new_item = MemoryItem {
+            id: "mem-new".into(),
+            namespace: "project:preference".into(),
+            title: "Revised".into(),
+            content: "Revised text".into(),
+            tags: vec![],
+            created_at_ms: 200,
+            updated_at_ms: 200,
+        };
+        store.upsert_memory(&old_item).unwrap();
+        store.upsert_memory(&new_item).unwrap();
+        store
+            .set_kv(&memory_meta_key("mem-new"), &json!({"supersedes": ["mem-old"]}))
+            .unwrap();
+
+        let raw = store.search_memory("", None, 100).unwrap();
+        assert_eq!(raw.len(), 2);
+        let (records, items) = filter_superseded_memories(&store, raw);
+        assert_eq!(records.len(), 1);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "mem-new");
+
+        // Resources collection on empty conversation returns empty vec (never error)
+        assert!(collect_conversation_resources(&store, "c-empty").is_empty());
+        store
+            .append_event(
+                "c-res",
+                "user_message",
+                json!({"content": "see image", "attachments": [{"id": "att-1", "name": "pic.png"}]}),
+                100,
+            )
+            .unwrap();
+        let resources = collect_conversation_resources(&store, "c-res");
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0]["id"], "att-1");
+
+        // Default messaging worker execution_backend is "nola" (not duplicate "nola-v2")
+        let worker = load_messaging_worker_snapshot(&store);
+        assert_eq!(worker["execution_backend"], "nola");
+    }
+
+    #[test]
+    fn siwc_responses_and_gemini_protocol_mapping_preserved() {
+        let map_proto = |raw: &str| match raw {
+            "anthropic" => "anthropic",
+            "siwc_responses" => "siwc_responses",
+            "responses" | "openai_responses" => "openai_responses",
+            "gemini" | "google_gemini" => "gemini",
+            _ => "openai_chat",
+        };
+        assert_eq!(map_proto("siwc_responses"), "siwc_responses");
+        assert_eq!(map_proto("gemini"), "gemini");
+        assert_eq!(map_proto("google_gemini"), "gemini");
+        assert_eq!(map_proto("responses"), "openai_responses");
     }
 }

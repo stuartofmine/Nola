@@ -2126,7 +2126,75 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
             }
             to_owned_c_string(json!({"ok": true, "result": {"tools": tools}}).to_string())
         }
-        "call_tool" => {
+        "prepare" => {
+            let Some(server_id) = req
+                .get("server_id")
+                .or_else(|| req.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "invalid_argument", "message": "missing 'server_id'"}})
+                        .to_string(),
+                );
+            };
+            let Some(tool_name) = req
+                .get("tool_name")
+                .or_else(|| req.get("name"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "invalid_argument", "message": "missing 'tool_name'"}})
+                        .to_string(),
+                );
+            };
+            let arguments = req
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let servers = app_ref
+                .inner
+                .store
+                .list_mcp_servers()
+                .unwrap_or_default();
+            let Some(srv) = servers.into_iter().find(|s| s.id == server_id) else {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": {"code": "not_found", "message": format!("MCP server '{server_id}' not found")}})
+                        .to_string(),
+                );
+            };
+            let tool_schema = app_ref
+                .inner
+                .mcp
+                .connect(&srv)
+                .and_then(|c| c.list_tools())
+                .ok()
+                .and_then(|tools| {
+                    tools.into_iter().find(|t| {
+                        t.get("name").and_then(|v| v.as_str()) == Some(tool_name)
+                    })
+                });
+            let plan_id = new_id();
+            to_owned_c_string(
+                json!({
+                    "ok": true,
+                    "result": {
+                        "prepared": true,
+                        "plan_id": plan_id,
+                        "server_id": srv.id,
+                        "server_name": srv.name,
+                        "transport": srv.transport,
+                        "enabled": srv.enabled,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "tool_schema": tool_schema
+                    }
+                })
+                .to_string(),
+            )
+        }
+        "call_tool" | "execute" => {
             let Some(server_id) = req
                 .get("server_id")
                 .or_else(|| req.get("id"))
@@ -2968,6 +3036,60 @@ mod tests {
         let out_str = unsafe { CStr::from_ptr(out_ptr) }.to_str().unwrap().to_string();
         unsafe { nola_core_free_c_string(out_ptr) };
         assert!(out_str.contains("\"status\":\"committed\""));
+
+        // Mobile MCP host: prepare + execute on configured server
+        let add_mcp = json!({
+            "request_id": "mcp-add-1",
+            "client_id": "c1",
+            "command": {
+                "type": "mcp",
+                "arguments": {
+                    "operation": "upsert",
+                    "server": {
+                        "id": "srv-1",
+                        "name": "Test MCP",
+                        "transport": "streamable_http",
+                        "url": "http://127.0.0.1:1/mcp",
+                        "enabled": true
+                    }
+                }
+            }
+        })
+        .to_string();
+        let add_ptr = unsafe { nola_core_application_submit(app, add_mcp.as_ptr(), add_mcp.len()) };
+        unsafe { nola_core_free_c_string(add_ptr) };
+
+        let prep_req = json!({
+            "operation": "prepare",
+            "server_id": "srv-1",
+            "tool_name": "echo",
+            "arguments": {"msg": "hello"}
+        })
+        .to_string();
+        let prep_ptr =
+            unsafe { nola_core_mobile_mcp_host(app, prep_req.as_ptr(), prep_req.len()) };
+        let prep_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(prep_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(prep_ptr) };
+        assert_eq!(prep_val["ok"], true);
+        assert_eq!(prep_val["result"]["prepared"], true);
+        assert_eq!(prep_val["result"]["server_id"], "srv-1");
+        assert_eq!(prep_val["result"]["tool_name"], "echo");
+
+        // execute aliases call_tool and returns clean not_found for missing server
+        let exec_req = json!({
+            "operation": "execute",
+            "server_id": "missing-srv",
+            "tool_name": "echo"
+        })
+        .to_string();
+        let exec_ptr =
+            unsafe { nola_core_mobile_mcp_host(app, exec_req.as_ptr(), exec_req.len()) };
+        let exec_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(exec_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(exec_ptr) };
+        assert_eq!(exec_val["ok"], false);
+        assert_eq!(exec_val["error"]["code"], "not_found");
 
         // Prompt composer
         let prompt_in = r#"{"schema_version":1,"fragments":[{"id":"sys","layer":"identity","trust":"host_instruction","cacheable":true,"content":"You are Nola."},{"id":"dyn","layer":"runtime_state","trust":"host_fact","cacheable":false,"content":"Now"}]}"#;

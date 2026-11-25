@@ -225,7 +225,7 @@
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (renameDirty) { event.preventDefault(); event.returnValue = ''; } }} />
 {#if !confirm}<ConfirmationDialog bind:this={confirmation} />{/if}
 {#snippet createEntry()}
-    <button bind:this={createButton} class="new-conversation" aria-label={t($locale, 'shell.conversations.new')} title={t($locale, 'shell.conversations.new')} disabled={navigationDisabled || writing} onclick={() => mutate('create')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg><span>{t($locale, 'shell.conversations.new')}</span></button>
+    <button type="button" bind:this={createButton} class="new-conversation" aria-label={t($locale, 'shell.conversations.new')} title={t($locale, 'shell.conversations.new')} disabled={navigationDisabled || writing} onclick={() => mutate('create')}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg><span>{t($locale, 'shell.conversations.new')}</span></button>
 {/snippet}
 <section class="conversation-manager" class:page-list={layout === 'page'} class:sidebar-list={layout === 'sidebar'} aria-label={t($locale, 'chatInspector.list.conversations')}>
     <header class="list-heading">
@@ -234,7 +234,7 @@
     </header>
     <div class="search-row">
         <label class="conversation-search"><span class="sr-only">{t($locale, 'chatConversations.search')}</span><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="m16 16 5 5"/></svg><input type="search" bind:value={query} placeholder={t($locale, 'chatConversations.search')} title={t($locale, 'chatConversations.localSearch')} /></label>
-        <button class="refresh-list" aria-label={t($locale, 'chatConversations.refresh')} title={t($locale, 'chatConversations.refresh')} disabled={loading || locked} onclick={refresh}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5" /></svg></button>
+        <button type="button" class="refresh-list" aria-label={t($locale, 'chatConversations.refresh')} title={t($locale, 'chatConversations.refresh')} disabled={loading || locked} onclick={refresh}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5" /></svg></button>
     </div>
 
     {#if error || loadError}<p class="error" role="alert">{t($locale, error || loadError)}</p>{/if}
@@ -242,7 +242,7 @@
     <div class="conversation-list" bind:this={listElement}>{#each visible as conversation, index (conversation.conversationId)}
         {#if !query.trim() && (index === 0 || conversationGroup(conversation) !== conversationGroup(visible[index - 1]))}<h3 class="group-title">{conversationGroup(conversation)}</h3>{/if}
         <div class="conversation-row" data-conversation-id={conversation.conversationId}>
-            <button class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
+            <button type="button" class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
                 <span class="sr-only">{t($locale, 'chatConversations.open')} </span>
                 <span class="conversation-heading"><span>{conversation.title || t($locale, 'chatConversations.untitled')}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
@@ -250,22 +250,22 @@
             <details class="row-actions" use:dismissibleDisclosure>
                 <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} title={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
                 <div class="row-action-buttons">
-                    <button disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
-                    <button disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
-                    <button disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('markdown', conversation); }}>{t($locale, 'chatConversations.exportMarkdown')}</button>
-                    <button disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('json', conversation); }}>{t($locale, 'chatConversations.exportJson')}</button>
+                    <button type="button" disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
+                    <button type="button" disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>
+                    <button type="button" disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('markdown', conversation); }}>{t($locale, 'chatConversations.exportMarkdown')}</button>
+                    <button type="button" disabled={rowLocked(conversation)} onclick={event => { const menu = event.currentTarget.closest('details'); if (menu) menu.open = false; void download('json', conversation); }}>{t($locale, 'chatConversations.exportJson')}</button>
                     {#if activeId === conversation.conversationId && showHistoryActions}
                         <div class="history-actions">
-                            <button disabled={branchLocked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
+                            <button type="button" disabled={branchLocked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
                             {#if selectedMessageId}
-                                <button disabled={locked} onclick={() => mutate('truncate')}>{t($locale, 'chatConversations.truncate')}</button>
+                                <button type="button" disabled={locked} onclick={() => mutate('truncate')}>{t($locale, 'chatConversations.truncate')}</button>
                             {/if}
                             {#if selectedMessageId || (busy && canBranchDuringMaintenance)}
                                 <p class="muted">{t($locale, busy && canBranchDuringMaintenance ? 'chatConversations.compactionCopyHint' : 'chatConversations.selectionHint')}</p>
                             {/if}
                         </div>
                     {/if}
-                    <button class="danger" disabled={rowLocked(conversation)} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>
+                    <button type="button" class="danger" disabled={rowLocked(conversation)} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>
                 </div>
             </details>
             {#if editing === conversation.conversationId}

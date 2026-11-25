@@ -21,7 +21,7 @@
     onMount(() => { void refresh(); return () => { disposed = true; controller.abort(); }; });
 </script>
 <section class="card" aria-busy={loading}>
-    <header><h2>{t($locale, 'settings.category.providers')}</h2><button disabled={loading} onclick={refresh}>{t($locale, 'models.reload')}</button></header>
+    <header><h2>{t($locale, 'settings.category.providers')}</h2><button type="button" disabled={loading} onclick={refresh}>{t($locale, 'models.reload')}</button></header>
     <p class="muted">{t($locale, 'settings.providers.detail')}</p>
     {#if loading}<p role="status">{t($locale, 'settings.providers.loading')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'settings.providers.failed')}</p>{/if}

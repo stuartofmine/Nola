@@ -194,6 +194,7 @@
             savedCatalog = copyRemoteCatalog(result.profiles);
             draftCatalog = copyRemoteCatalog(result.profiles);
             onSelectionSaved(result.profiles);
+            window.dispatchEvent(new CustomEvent('nola:models-updated'));
             if (result.credentialCleanupPending) catalogWarning = 'remote.credential_cleanup_pending';
             else selectionNotice = t($locale, 'remote.saved');
         } catch (cause) { selectionError = errorMessage(cause); }
@@ -207,7 +208,7 @@
 
 <svelte:window onbeforeunload={beforeUnload} />
 <ConfirmationDialog bind:this={confirmation} />
-<ModelEndpointEditor bind:this={endpointEditor} onSaved={onSelectionSaved} onBusyChange={value => busy = value}
+<ModelEndpointEditor bind:this={endpointEditor} onSaved={next => { onSelectionSaved(next); window.dispatchEvent(new CustomEvent('nola:models-updated')); }} onBusyChange={value => busy = value}
     onStage={(id, changes) => { selectionNotice = ''; draftCatalog = stageEndpoint(draftCatalog, id, changes); }} />
 <EndpointCredentialEditor bind:this={credentialEditor} onBusyChange={value => busy = value}
     onChanged={endpointID => {

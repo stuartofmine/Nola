@@ -135,6 +135,7 @@ nonisolated public enum AgentCorePermissionDecision: String, Codable, Sendable {
 
 nonisolated public enum IOSPermissionMode: String, CaseIterable, Codable, Identifiable, Sendable {
     case cautious
+    case acceptEdits = "accept_edits"
     case allowAll = "allow_all"
 
     public var id: String { rawValue }
@@ -145,6 +146,7 @@ nonisolated public enum IOSPermissionMode: String, CaseIterable, Codable, Identi
     public var title: String {
         switch self {
         case .cautious: return NSLocalizedString("permission.mode.cautious", value: "Cautious", comment: "Cautious permission mode")
+        case .acceptEdits: return NSLocalizedString("permission.mode.accept_edits", value: "Accept Edits", comment: "Accept edits permission mode")
         case .allowAll: return NSLocalizedString("permission.mode.allow_all", value: "Allow All", comment: "Allow all permission mode")
         }
     }
@@ -152,6 +154,7 @@ nonisolated public enum IOSPermissionMode: String, CaseIterable, Codable, Identi
     public var detail: String {
         switch self {
         case .cautious: return NSLocalizedString("permission.mode.cautious.detail", value: "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.", comment: "Cautious permission mode detail")
+        case .acceptEdits: return NSLocalizedString("permission.mode.accept_edits.detail", value: "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.", comment: "Accept edits permission mode detail")
         case .allowAll: return NSLocalizedString("permission.mode.allow_all.detail", value: "No Nola approval prompts in this conversation. System permissions still apply.", comment: "Allow all permission mode detail")
         }
     }

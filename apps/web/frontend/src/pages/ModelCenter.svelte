@@ -185,6 +185,7 @@
             // Selection can succeed before startup fails. Re-read the durable state for either outcome.
             if (!disposed) {
                 await refresh();
+                window.dispatchEvent(new CustomEvent('nola:models-updated'));
                 busy = '';
             }
         }
@@ -243,6 +244,7 @@
             });
             if (disposed) return;
             dialog.close(); editing = undefined; draft = undefined; await refresh();
+            window.dispatchEvent(new CustomEvent('nola:models-updated'));
         } catch (cause) { if (!disposed) editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
         finally { if (!disposed) busy = ''; }
     }

@@ -14,6 +14,7 @@ const messages: Record<string, Translations> = {
     'plugin.install': ["Install", "安装", "Installieren", "Instalar", "Installer", "インストール", "Установить"],
     'plugin.more': ['More actions for {name}','{name}的更多操作','Weitere Aktionen für {name}','Más acciones para {name}','Autres actions pour {name}','{name}のその他の操作','Другие действия для {name}'],
     'plugin.remove': ["Remove", "移除", "Entfernen", "Quitar", "Retirer", "削除", "Удалить"],
+    'plugin.toggle': ["Enable {name}", "启用 {name}", "{name} aktivieren", "Activar {name}", "Activer {name}", "{name} を有効にする", "Включить {name}"],
     'plugin.refresh': ["Refresh", "刷新", "Aktualisieren", "Actualizar", "Actualiser", "更新", "Обновить"],
     'plugin.empty': ['No plugins yet.','还没有插件。','Noch keine Plugins.','Aún no hay plugins.','Aucune extension pour le moment.','プラグインはまだありません。','Плагинов пока нет.'],
     'plugin.working': ["Contacting Host…", "正在等待 Host…", "Host wird kontaktiert…", "Consultando al Host…", "Connexion à l’hôte…", "Host に接続中…", "Ожидание Host…"],

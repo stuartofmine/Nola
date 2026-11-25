@@ -304,7 +304,7 @@ enum MacAgentOrchestrationService {
         guard case .agent(let submittedSpec) = request.executionSpec,
               submittedSpec.prompt == request.prompt,
               submittedSpec.executionScope == .localWorkspace(root: workspace.path),
-              ["cautious", "allow_all"].contains(submittedSpec.permissionProfile),
+              MacPermissionMode(rawValue: submittedSpec.permissionProfile) != nil,
               submittedSpec.modelSelection == "use_current_default_at_admission",
               submittedSpec.skillRefs == [request.skillID],
               Set(submittedSpec.contextRefs.map { "\($0.kind):\($0.id)" }).count == submittedSpec.contextRefs.count else {

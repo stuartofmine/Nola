@@ -490,6 +490,7 @@ final class MacWorkspaceModel {
         didSet {
             guard selectedConversationID != oldValue else { return }
             isTranscriptSearchVisible = false
+            v2CompactionSummary = nil
             if let selectedConversationID { refreshPermissionDisplayOwner(conversationID: selectedConversationID) }
             parkUnselectedLocalRecovery()
             parkUnselectedRemoteRecovery()
@@ -645,6 +646,11 @@ final class MacWorkspaceModel {
     @ObservationIgnored private var v2UserInputRequestIDs: Set<String> = []
     private(set) var v2UISurfacesByConversation: [String: [String]] = [:]
     private(set) var v2SessionIDByConversation: [String: String] = [:]
+    private(set) var v2CompactionSummary: String?
+
+    func dismissV2CompactionSummary() {
+        v2CompactionSummary = nil
+    }
     @ObservationIgnored private var userInputWaitReadRevisions: [String: UInt64] = [:]
     @ObservationIgnored private var userInputSubmissionIntents: [String: MacUserInputSubmissionIntent] = [:]
     private var userInputWaitLoadErrors: [String: String] = [:]
@@ -3406,6 +3412,9 @@ final class MacWorkspaceModel {
         messagesByConversation[conversation.id] = nil
         v2UISurfacesByConversation.removeValue(forKey: conversation.id)
         v2SessionIDByConversation.removeValue(forKey: conversation.id)
+        if selectedConversationID == conversation.id {
+            v2CompactionSummary = nil
+        }
         presentationOverlays[conversation.id] = nil
         journalMessageReferences[conversation.id] = nil
         permissionProjectionsByConversation[conversation.id] = nil
@@ -8094,6 +8103,9 @@ final class MacWorkspaceModel {
                     messageID: assistantMessageID
                 )
             case .compacted(let summary):
+                if conversationID == selectedConversationID {
+                    v2CompactionSummary = summary
+                }
                 updateActivity(
                     title: String(localized: "Context compacted"),
                     detail: summary,

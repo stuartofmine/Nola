@@ -8,3 +8,6 @@
 "reasoning.effort.high" = "Высокое";
 "reasoning.effort.xhigh" = "Очень высокое";
 "reasoning.effort.max" = "Максимум";
+"reasoning.effort.fast" = "Быстрый";
+"reasoning.effort.balanced" = "Сбалансированный";
+"reasoning.effort.detailed" = "Подробный";

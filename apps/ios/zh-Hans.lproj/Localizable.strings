@@ -2700,8 +2700,10 @@
 
 "chat.permission.guidance" = "指导已记录。工具参数未改变，仍需明确批准。";
 "permission.mode.cautious" = "谨慎";
+"permission.mode.accept_edits" = "自动接受编辑";
 "permission.mode.allow_all" = "全部允许";
 "permission.mode.cautious.detail" = "删除、覆盖、敏感数据访问、外发内容和新连接先确认；普通读取与新建直接执行。";
+"permission.mode.accept_edits.detail" = "工作区内文件编辑自动放行；Shell 命令、工作区外写入、外发内容和新连接仍需确认。";
 "permission.mode.allow_all.detail" = "此会话内无需 Nola 确认，系统权限仍然生效。";
 "chat.compaction.show_sources_format" = "查看原始上下文（%d 项）";
 "model.parameters.invalid_values" = "请检查参数是否处于标注范围内；随机种子必须是整数。";

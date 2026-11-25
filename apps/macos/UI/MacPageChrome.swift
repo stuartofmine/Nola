@@ -1987,6 +1987,7 @@ private struct MacSwitchPressButtonStyle: ButtonStyle {
             ? Color.primary.opacity(0.65)
             : MacDesignColor.switchBorderOff
         let thumbWidth: CGFloat = (isEnabled && isPressed) ? 18 : 16
+        let thumbFill: Color = (colorScheme == .dark && isOn) ? MacDesignColor.onAccent : Color.white
 
         return ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule(style: .circular)
@@ -1999,7 +2000,7 @@ private struct MacSwitchPressButtonStyle: ButtonStyle {
                     )
             }
             Capsule(style: .circular)
-                .fill(Color.white)
+                .fill(thumbFill)
                 .frame(width: thumbWidth, height: 16)
                 .shadow(
                     color: .black.opacity(colorScheme == .dark ? 0.34 : 0.16),

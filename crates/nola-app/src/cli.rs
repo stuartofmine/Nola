@@ -9,19 +9,21 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use nola_engine::{
     register_planning_tools, register_subagent_tools, AgentEngine, AgentEvent, AgentRunConfig,
-    EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller, PlanningState,
-    SubagentManager,
+    ApprovalCallback, EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller,
+    PlanningState, SubagentManager, UserInputCallback,
 };
 use nola_mcp::McpManager;
+use nola_modules::a2ui::register_scoped_tools as register_a2ui_tools;
 use nola_modules::local_models_plugins::{
-    find_binary_on_path, list_desktop_plugin_pages, list_harness_plugins, KIND_PLUGIN,
+    find_binary_on_path, list_desktop_plugin_pages, list_harness_plugins, probe_engine_status,
+    probe_hardware, recommend_local_models, KIND_PLUGIN,
 };
 use nola_modules::skills::{
     discover_skills_detailed, prepare_github_skill_package, set_skill_enabled,
@@ -41,8 +43,8 @@ use serde_json::{json, Value};
 use crate::config::{
     apply_config_file, bind_store_vault_path, build_frozen_system_blocks, connection_has_api_key,
     default_db_path, default_home_dir, default_vault_path, discover_config_path,
-    load_active_config, resolve_model_route, strip_jsonc, AppliedConfig, ConnectionConfig,
-    DefaultModelSelection,
+    load_active_config, read_config_file_safe, resolve_model_route, save_applied_config,
+    strip_jsonc, AppliedConfig, ConnectionConfig, DefaultModelSelection, ModelEntry,
 };
 use crate::tui::TuiLaunchOptions;
 
@@ -117,6 +119,8 @@ fn is_known_subcommand(cmd: &str) -> bool {
             | "init"
             | "config"
             | "model"
+            | "model-import-bridge"
+            | "model-siwc-bridge"
             | "mcp"
             | "skills"
             | "skill"
@@ -257,6 +261,12 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "init" => return handle_init_cmd(&workspace, &opts.positional[1..]),
             "config" => return handle_config_cmd(&store, &workspace, &opts.positional[1..]),
             "model" => return handle_model_cmd(&store, &workspace, &opts.positional[1..]),
+            "model-import-bridge" => {
+                return handle_model_import_bridge_cmd(&store, &opts.positional[1..])
+            }
+            "model-siwc-bridge" => {
+                return handle_model_siwc_bridge_cmd(&store, &db_path, &opts.positional[1..])
+            }
             "mcp" => return handle_mcp_cmd(&store, &db_path, &opts.positional[1..]),
             "skills" | "skill" => return handle_skills_cmd(&store, &suite, &opts.positional[1..]),
             "memory" => return handle_memory_cmd(&store, &opts.positional[1..]),
@@ -621,12 +631,249 @@ fn execute_agent_turn(
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
     let hooks = HookRunner::load(workspace, home.as_deref(), workspace_trusted);
 
+    let session_id = overrides
+        .as_ref()
+        .and_then(|o| o.session_id.clone())
+        .or_else(|| opts.session_id.clone());
+    let resume = overrides
+        .as_ref()
+        .and_then(|o| o.resume)
+        .unwrap_or(opts.resume);
+    let effective_session_id = if opts.host_request_stdin {
+        Some(session_id.clone().unwrap_or_else(new_id))
+    } else {
+        session_id
+    };
+
+    if opts.host_request_stdin {
+        let host_id = crate::web_api::ensure_host_id(store);
+        let a2ui_session = effective_session_id
+            .as_deref()
+            .unwrap_or("default");
+        register_a2ui_tools(suite, &mut registry, &host_id, a2ui_session);
+    }
+
     let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
     subagents.configure_parent(route.clone(), policy.clone());
     subagents.configure_runtime(hooks.clone(), Some(Arc::clone(&cancel)));
     register_subagent_tools(&subagents, &mut registry);
 
     let planning = Arc::new(PlanningState::default());
+    let stdout_lock = Arc::new(Mutex::new(()));
+
+    let approval_cb: Option<ApprovalCallback> = if opts.host_request_stdin {
+        let pending_approvals: Arc<Mutex<BTreeMap<String, mpsc::Sender<bool>>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let pending_user_inputs: Arc<Mutex<BTreeMap<String, mpsc::Sender<Option<String>>>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+        let stdin_closed = Arc::new(AtomicBool::new(false));
+
+        // Spawn background stdin reader routing incoming host decision JSON lines
+        let pa_reader = Arc::clone(&pending_approvals);
+        let pu_reader = Arc::clone(&pending_user_inputs);
+        let closed_reader = Arc::clone(&stdin_closed);
+        let cancel_reader = Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            let stdin = io::stdin();
+            for line_res in stdin.lock().lines() {
+                let Ok(line) = line_res else {
+                    break;
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
+                    continue;
+                };
+                let msg_type = msg
+                    .get("type")
+                    .or_else(|| msg.get("kind"))
+                    .or_else(|| msg.get("operation"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                let req_id = msg
+                    .get("request_id")
+                    .or_else(|| msg.get("requestId"))
+                    .or_else(|| msg.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                match msg_type.as_str() {
+                    "permission_response" | "approval_response" => {
+                        let allow = msg
+                            .get("allow")
+                            .or_else(|| msg.get("approved"))
+                            .and_then(|v| v.as_bool())
+                            .or_else(|| {
+                                msg.get("decision")
+                                    .and_then(|v| v.as_str())
+                                    .map(|d| {
+                                        matches!(
+                                            d.trim().to_ascii_lowercase().as_str(),
+                                            "allow"
+                                                | "approve"
+                                                | "approved"
+                                                | "allow_once"
+                                                | "allow_session"
+                                                | "yes"
+                                        )
+                                    })
+                            })
+                            .unwrap_or(false);
+                        let mut guard = pa_reader.lock().unwrap();
+                        let sender = req_id
+                            .as_deref()
+                            .and_then(|id| guard.remove(id))
+                            .or_else(|| {
+                                if guard.len() == 1 {
+                                    guard.keys().next().cloned().and_then(|k| guard.remove(&k))
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(tx) = sender {
+                            let _ = tx.send(allow);
+                        }
+                    }
+                    "user_input_response" | "user_question_response" => {
+                        let cancelled = msg
+                            .get("cancelled")
+                            .or_else(|| msg.get("canceled"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let answer = if cancelled {
+                            None
+                        } else {
+                            msg.get("answer")
+                                .or_else(|| msg.get("response"))
+                                .or_else(|| msg.get("text"))
+                                .or_else(|| msg.get("value"))
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        };
+                        let mut guard = pu_reader.lock().unwrap();
+                        let sender = req_id
+                            .as_deref()
+                            .and_then(|id| guard.remove(id))
+                            .or_else(|| {
+                                if guard.len() == 1 {
+                                    guard.keys().next().cloned().and_then(|k| guard.remove(&k))
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(tx) = sender {
+                            let _ = tx.send(answer);
+                        }
+                    }
+                    "cancel" => {
+                        cancel_reader.store(true, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+            closed_reader.store(true, Ordering::SeqCst);
+            pa_reader.lock().unwrap().clear();
+            pu_reader.lock().unwrap().clear();
+        });
+
+        let pa_cb = Arc::clone(&pending_approvals);
+        let closed_ap = Arc::clone(&stdin_closed);
+        let cancel_ap = Arc::clone(&cancel);
+        let out_lock_ap = Arc::clone(&stdout_lock);
+        let approval: ApprovalCallback = Arc::new(move |spec, args, reason| {
+            if closed_ap.load(Ordering::SeqCst) || cancel_ap.load(Ordering::SeqCst) {
+                return false;
+            }
+            let req_id = new_id();
+            let (tx, rx) = mpsc::channel::<bool>();
+            pa_cb.lock().unwrap().insert(req_id.clone(), tx);
+            {
+                let _g = out_lock_ap.lock().unwrap();
+                println!(
+                    "{}",
+                    json!({
+                        "type": "permission_request",
+                        "request_id": req_id,
+                        "tool": spec.schema.name,
+                        "reason": reason,
+                        "arguments": args
+                    })
+                );
+                let _ = io::stdout().flush();
+            }
+            let deadline = Instant::now() + Duration::from_secs(300);
+            let decision = loop {
+                if cancel_ap.load(Ordering::SeqCst) || closed_ap.load(Ordering::SeqCst) {
+                    break false;
+                }
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(allow) => break allow,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if Instant::now() >= deadline {
+                            break false;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break false,
+                }
+            };
+            pa_cb.lock().unwrap().remove(&req_id);
+            decision
+        });
+
+        let pu_cb = Arc::clone(&pending_user_inputs);
+        let closed_ui = Arc::clone(&stdin_closed);
+        let cancel_ui = Arc::clone(&cancel);
+        let out_lock_ui = Arc::clone(&stdout_lock);
+        let user_input_cb: UserInputCallback = Arc::new(move |question, options| {
+            if closed_ui.load(Ordering::SeqCst) || cancel_ui.load(Ordering::SeqCst) {
+                return None;
+            }
+            let req_id = new_id();
+            let (tx, rx) = mpsc::channel::<Option<String>>();
+            pu_cb.lock().unwrap().insert(req_id.clone(), tx);
+            {
+                let _g = out_lock_ui.lock().unwrap();
+                println!(
+                    "{}",
+                    json!({
+                        "type": "user_input_request",
+                        "request_id": req_id,
+                        "question": question,
+                        "options": options
+                    })
+                );
+                let _ = io::stdout().flush();
+            }
+            let deadline = Instant::now() + Duration::from_secs(300);
+            let answer = loop {
+                if cancel_ui.load(Ordering::SeqCst) || closed_ui.load(Ordering::SeqCst) {
+                    break None;
+                }
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(ans) => break ans,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if Instant::now() >= deadline {
+                            break None;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+                }
+            };
+            pu_cb.lock().unwrap().remove(&req_id);
+            answer
+        });
+        planning.set_user_input_callback(Some(user_input_cb));
+
+        Some(approval)
+    } else {
+        None
+    };
+
     register_planning_tools(store.clone(), &planning, &mut registry);
 
     if let Ok(servers) = store.list_mcp_servers() {
@@ -711,27 +958,19 @@ fn execute_agent_turn(
         .unwrap_or(0);
     let is_eval = std::env::var("NOLA_BENCHMARK_TOKEN").is_ok();
     let json_mode = opts.json_mode || opts.host_request_stdin;
-    let session_id = overrides
-        .as_ref()
-        .and_then(|o| o.session_id.clone())
-        .or_else(|| opts.session_id.clone());
-    let resume = overrides
-        .as_ref()
-        .and_then(|o| o.resume)
-        .unwrap_or(opts.resume);
 
     let run_cfg = AgentRunConfig {
-        session_id,
+        session_id: effective_session_id,
         resume,
         route,
         frozen_system_blocks: frozen_blocks,
         host_capabilities: HostCapabilities {
-            interactive_user_input: false,
+            interactive_user_input: opts.host_request_stdin,
             network_allowed,
         },
         policy,
         hooks,
-        approval: None,
+        approval: approval_cb,
         max_steps,
         force_tool_set: opts.force_tool_set,
         stream: true,
@@ -741,10 +980,12 @@ fn execute_agent_turn(
         inbox: None,
     };
 
+    let out_lock_ev = Arc::clone(&stdout_lock);
     let res = engine
         .run(&ctx, prompt, run_cfg, |ev| {
             if json_mode {
                 if let Ok(line) = serde_json::to_string(&ev) {
+                    let _g = out_lock_ev.lock().unwrap();
                     println!("{line}");
                     let _ = io::stdout().flush();
                 }
@@ -767,27 +1008,47 @@ fn resolve_route_with_overrides(
     opts: &CliOptions,
     overrides: Option<&HostRunOverrides>,
 ) -> Result<ModelRouteConfig, String> {
-    if let Ok(route) = resolve_model_route(cfg) {
-        return Ok(route);
-    }
-    let endpoint = overrides
+    let ov_endpoint = overrides
         .and_then(|o| o.endpoint.clone())
-        .or_else(|| opts.endpoint.clone());
-    let model = overrides
+        .or_else(|| opts.endpoint.clone())
+        .filter(|s| !s.trim().is_empty());
+    let ov_model = overrides
         .and_then(|o| o.model_id.clone())
-        .or_else(|| opts.model.clone());
-    if let (Some(ep), Some(m)) = (endpoint, model) {
-        let protocol = overrides
-            .and_then(|o| o.protocol.as_deref())
-            .and_then(ModelProtocol::parse)
+        .or_else(|| opts.model.clone())
+        .filter(|s| !s.trim().is_empty());
+    let ov_api_key = overrides.and_then(|o| o.api_key.clone());
+    let ov_protocol = overrides
+        .and_then(|o| o.protocol.as_deref())
+        .and_then(ModelProtocol::parse);
+
+    // Apply explicit overrides BEFORE falling back to cfg.llm.default_model!
+    if let (Some(ep), Some(m)) = (ov_endpoint.clone(), ov_model.clone()) {
+        let matched_conn = cfg
+            .llm
+            .connections
+            .iter()
+            .find(|c| c.endpoint.trim_end_matches('/') == ep.trim_end_matches('/'));
+        let protocol = ov_protocol
+            .or_else(|| {
+                matched_conn
+                    .and_then(|c| c.protocol.as_deref().or(c.provider.as_deref()))
+                    .and_then(ModelProtocol::parse)
+            })
             .unwrap_or(ModelProtocol::OpenAiChat);
-        let api_key = overrides
-            .and_then(|o| o.api_key.clone())
+        let api_key = ov_api_key
+            .or_else(|| matched_conn.and_then(|c| c.api_key.clone()))
+            .or_else(|| {
+                matched_conn
+                    .and_then(|c| c.api_key_env.as_deref())
+                    .and_then(|env_k| std::env::var(env_k).ok())
+            })
             .or_else(|| std::env::var("NOLA_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .unwrap_or_default();
         return Ok(ModelRouteConfig {
-            connection_id: "host".into(),
+            connection_id: matched_conn
+                .map(|c| c.id.clone())
+                .unwrap_or_else(|| "host".into()),
             endpoint: ep,
             protocol,
             model: m,
@@ -801,6 +1062,24 @@ fn resolve_route_with_overrides(
             prompt_cache_key: Some("nola-v2-host".into()),
         });
     }
+
+    if ov_endpoint.is_some() || ov_model.is_some() || ov_api_key.is_some() || ov_protocol.is_some() {
+        let mut route = resolve_model_route(cfg)?;
+        if let Some(ep) = ov_endpoint {
+            route.endpoint = ep;
+        }
+        if let Some(m) = ov_model {
+            route.model = m;
+        }
+        if let Some(k) = ov_api_key {
+            route.api_key = k;
+        }
+        if let Some(p) = ov_protocol {
+            route.protocol = p;
+        }
+        return Ok(route);
+    }
+
     resolve_model_route(cfg)
 }
 
@@ -842,6 +1121,8 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                 "init"
                     | "config"
                     | "model"
+                    | "model-import-bridge"
+                    | "model-siwc-bridge"
                     | "mcp"
                     | "skills"
                     | "skill"
@@ -1464,10 +1745,448 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                 }
             }
         }
+        Some("acquire") => {
+            let mut requested_model: Option<String> = None;
+            let mut requested_engine: Option<String> = None;
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--model" | "-m" => {
+                        i += 1;
+                        if let Some(v) = args.get(i) {
+                            requested_model = Some(v.clone());
+                        }
+                    }
+                    "--engine" => {
+                        i += 1;
+                        if let Some(v) = args.get(i) {
+                            requested_engine = Some(v.clone());
+                        }
+                    }
+                    other if !other.starts_with('-') && requested_model.is_none() => {
+                        requested_model = Some(other.to_string());
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let hardware = probe_hardware();
+            let recommendations = recommend_local_models(&hardware);
+            let engine_names: Vec<&str> = match requested_engine.as_deref() {
+                Some(e) => vec![e],
+                None => vec!["ollama", "llama.cpp", "mlx"],
+            };
+            let engines: Vec<Value> = engine_names
+                .iter()
+                .map(|e| probe_engine_status(e))
+                .collect();
+            let any_installed = engines
+                .iter()
+                .any(|e| e.get("installed").and_then(|v| v.as_bool()) == Some(true));
+            let payload = json!({
+                "ok": true,
+                "status": if any_installed { "ready" } else { "catalog_only" },
+                "requested_model": requested_model,
+                "requested_engine": requested_engine,
+                "hardware": hardware,
+                "recommendations": recommendations,
+                "engines": engines
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into())
+            );
+            Ok(0)
+        }
         Some(other) => Err(format!(
-            "unknown model subcommand '{other}' (expected list|connections|probe|apply-config)"
+            "unknown model subcommand '{other}' (expected list|connections|probe|apply-config|acquire)"
         )),
     }
+}
+
+fn read_optional_stdin_json() -> Option<Value> {
+    if io::stdin().is_terminal() {
+        return None;
+    }
+    let mut buf = String::new();
+    if io::stdin().read_to_string(&mut buf).is_ok() && !buf.trim().is_empty() {
+        serde_json::from_str::<Value>(buf.trim()).ok()
+    } else {
+        None
+    }
+}
+
+fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
+    let stdin_req = read_optional_stdin_json();
+    let mut op = stdin_req
+        .as_ref()
+        .and_then(|v| {
+            v.get("operation")
+                .or_else(|| v.get("type"))
+                .or_else(|| v.get("action"))
+                .and_then(|s| s.as_str())
+        })
+        .map(ToString::to_string);
+    let mut source = stdin_req
+        .as_ref()
+        .and_then(|v| v.get("source").and_then(|s| s.as_str()))
+        .map(ToString::to_string);
+    let mut path_arg = stdin_req
+        .as_ref()
+        .and_then(|v| v.get("path").and_then(|s| s.as_str()))
+        .map(ToString::to_string);
+    let mut plan_id_arg = stdin_req
+        .as_ref()
+        .and_then(|v| v.get("plan_id").and_then(|s| s.as_str()))
+        .map(ToString::to_string);
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--operation" | "--op" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    op = Some(v.clone());
+                }
+            }
+            "--source" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    source = Some(v.clone());
+                }
+            }
+            "--path" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    path_arg = Some(v.clone());
+                }
+            }
+            "--plan-id" => {
+                i += 1;
+                if let Some(v) = args.get(i) {
+                    plan_id_arg = Some(v.clone());
+                }
+            }
+            other if !other.starts_with('-') && op.is_none() => {
+                op = Some(other.to_string());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let operation = op.as_deref().unwrap_or("discover").to_ascii_lowercase();
+    let src_name = source.unwrap_or_else(|| "open_code".to_string());
+
+    let extract_candidates_from_path = |path_str: &str, src: &str| -> Result<Vec<Value>, String> {
+        let p = Path::new(path_str);
+        reject_if_symlink(p)?;
+        let raw = read_config_file_safe(p)?;
+        let parsed: Value =
+            serde_json::from_str(&strip_jsonc(&raw)).unwrap_or_else(|_| json!({}));
+        let mut out = Vec::new();
+        if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
+            for (prov_id, prov_val) in providers {
+                let endpoint = prov_val
+                    .pointer("/options/baseURL")
+                    .or_else(|| prov_val.get("baseURL"))
+                    .or_else(|| prov_val.get("endpoint"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let models: Vec<String> = prov_val
+                    .get("models")
+                    .and_then(|v| v.as_object())
+                    .map(|m| m.keys().cloned().collect())
+                    .unwrap_or_default();
+                out.push(json!({
+                    "id": prov_id,
+                    "source": src,
+                    "endpoint": endpoint,
+                    "models": models,
+                    "has_api_key": prov_val.pointer("/options/apiKey").or_else(|| prov_val.get("apiKey")).and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty())
+                }));
+            }
+        }
+        if let Some(conns) = parsed.pointer("/llm/connections").and_then(|v| v.as_array()) {
+            for c in conns {
+                let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("imported");
+                let endpoint = c.get("endpoint").and_then(|v| v.as_str()).unwrap_or("");
+                let models: Vec<String> = c
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                out.push(json!({
+                    "id": cid,
+                    "source": src,
+                    "endpoint": endpoint,
+                    "protocol": c.get("protocol").cloned().unwrap_or(Value::Null),
+                    "models": models,
+                    "has_api_key": c.get("api_key").and_then(|v| v.as_str()).is_some_and(|s| !s.trim().is_empty())
+                }));
+            }
+        }
+        Ok(out)
+    };
+
+    let response = match operation.as_str() {
+        "plan" => {
+            let candidates = if let Some(ref p) = path_arg {
+                extract_candidates_from_path(p, &src_name)?
+            } else {
+                Vec::new()
+            };
+            let plan_id = new_id();
+            let plan = json!({
+                "ok": true,
+                "operation": "plan",
+                "plan_id": plan_id,
+                "source": src_name,
+                "path": path_arg,
+                "candidates": candidates,
+                "expires_at_ms": nola_types::now_ms().saturating_add(300_000)
+            });
+            let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan);
+            plan
+        }
+        "commit" => {
+            let candidates: Vec<Value> = if let Some(ref pid) = plan_id_arg {
+                store
+                    .get_kv(&format!("model_import_plan:{pid}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("candidates").and_then(|c| c.as_array()).cloned())
+                    .unwrap_or_default()
+            } else {
+                stdin_req
+                    .as_ref()
+                    .and_then(|v| {
+                        v.get("candidates")
+                            .or_else(|| v.get("connections"))
+                            .and_then(|c| c.as_array())
+                            .cloned()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut cfg = load_active_config(store);
+            let mut imported_ids = Vec::new();
+            for cand in &candidates {
+                let cid = cand
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                let ep = cand
+                    .get("endpoint")
+                    .or_else(|| cand.get("base_url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let proto = cand
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let models: Vec<ModelEntry> = cand
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| m.as_str().map(|s| ModelEntry {
+                                id: s.to_string(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            }))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == cid) {
+                    if !ep.is_empty() {
+                        existing.endpoint = ep;
+                    }
+                    if proto.is_some() {
+                        existing.protocol = proto;
+                    }
+                    for m in models {
+                        if !existing.models.iter().any(|e| e.id == m.id) {
+                            existing.models.push(m);
+                        }
+                    }
+                } else if !ep.is_empty() {
+                    cfg.llm.connections.push(ConnectionConfig {
+                        id: cid.clone(),
+                        endpoint: ep,
+                        protocol: proto,
+                        provider: None,
+                        api_key: None,
+                        api_key_env: None,
+                        models,
+                    });
+                }
+                imported_ids.push(cid);
+            }
+            if !imported_ids.is_empty() {
+                save_applied_config(store, &cfg)?;
+            }
+            json!({
+                "ok": true,
+                "operation": "commit",
+                "plan_id": plan_id_arg,
+                "imported": imported_ids.len(),
+                "connection_ids": imported_ids
+            })
+        }
+        _ => {
+            let mut candidates = Vec::new();
+            let mut checked_paths = Vec::new();
+            if let Some(ref p) = path_arg {
+                checked_paths.push(p.clone());
+                if let Ok(found) = extract_candidates_from_path(p, &src_name) {
+                    candidates.extend(found);
+                }
+            } else {
+                let home = default_home_dir();
+                let defaults = [
+                    ("open_code", home.join(".config/opencode/opencode.json")),
+                    ("nola", home.join(".nola/config.jsonc")),
+                ];
+                for (sname, p) in defaults {
+                    if p.is_file() {
+                        let ps = p.display().to_string();
+                        checked_paths.push(ps.clone());
+                        if let Ok(found) = extract_candidates_from_path(&ps, sname) {
+                            candidates.extend(found);
+                        }
+                    }
+                }
+            }
+            json!({
+                "ok": true,
+                "operation": "discover",
+                "source": src_name,
+                "checked_paths": checked_paths,
+                "candidates": candidates
+            })
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".into())
+    );
+    Ok(0)
+}
+
+fn handle_model_siwc_bridge_cmd(
+    store: &Store,
+    db_path: &Path,
+    args: &[String],
+) -> Result<u8, String> {
+    let stdin_req = read_optional_stdin_json();
+    let op = stdin_req
+        .as_ref()
+        .and_then(|v| {
+            v.get("operation")
+                .or_else(|| v.get("type"))
+                .or_else(|| v.get("action"))
+                .and_then(|s| s.as_str())
+        })
+        .or_else(|| args.first().map(String::as_str).filter(|s| !s.starts_with('-')))
+        .unwrap_or("status")
+        .to_ascii_lowercase();
+    let vault = Vault::open(default_vault_path(db_path)).map_err(|e| e.to_string())?;
+
+    let response = match op.as_str() {
+        "save" | "bind" | "connect" => {
+            let req = stdin_req.as_ref();
+            let account_id = req
+                .and_then(|v| {
+                    v.get("account_id")
+                        .or_else(|| v.get("id"))
+                        .and_then(|s| s.as_str())
+                })
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let email = req
+                .and_then(|v| v.get("email").or_else(|| v.get("label")).and_then(|s| s.as_str()))
+                .unwrap_or("")
+                .to_string();
+            if let Some(tok) = req
+                .and_then(|v| {
+                    v.get("access_token")
+                        .or_else(|| v.get("token"))
+                        .and_then(|s| s.as_str())
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                vault
+                    .set_secret("siwc_access_token", tok)
+                    .map_err(|e| e.to_string())?;
+            }
+            let has_token = vault
+                .get_secret("siwc_access_token")
+                .ok()
+                .flatten()
+                .is_some_and(|s| !s.trim().is_empty());
+            let meta = json!({
+                "account_id": account_id,
+                "email": email,
+                "authenticated": has_token,
+                "updated_at_ms": nola_types::now_ms()
+            });
+            let _ = store.set_kv("siwc_account", &meta);
+            json!({
+                "ok": true,
+                "status": if has_token { "connected" } else { "disconnected" },
+                "authenticated": has_token,
+                "account": meta
+            })
+        }
+        "forget" | "logout" | "clear" | "disconnect" => {
+            let _ = vault.delete_secret("siwc_access_token");
+            let _ = store.set_kv("siwc_account", &Value::Null);
+            json!({
+                "ok": true,
+                "status": "disconnected",
+                "authenticated": false,
+                "cleared": true
+            })
+        }
+        _ => {
+            let has_token = vault
+                .get_secret("siwc_access_token")
+                .ok()
+                .flatten()
+                .is_some_and(|s| !s.trim().is_empty());
+            let account = store
+                .get_kv("siwc_account")
+                .ok()
+                .flatten()
+                .filter(|v| !v.is_null());
+            let accounts: Vec<Value> = account.iter().cloned().collect();
+            json!({
+                "ok": true,
+                "status": if has_token { "connected" } else { "disconnected" },
+                "authenticated": has_token,
+                "account": account,
+                "accounts": accounts
+            })
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".into())
+    );
+    Ok(0)
 }
 
 fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, String> {
@@ -2292,4 +3011,81 @@ fn print_help() {
            nola server [--socket <path>] [--parent-pid <pid>]\n  \
            nola tui [--db <path>] [-m <model>] [--permission-profile <profile>] [-y] [--resume]"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_route_with_overrides_prioritizes_explicit_overrides_over_default_model() {
+        let mut cfg = AppliedConfig::default();
+        cfg.llm.connections.push(ConnectionConfig {
+            id: "default-conn".into(),
+            endpoint: "https://api.openai.com/v1".into(),
+            protocol: Some("responses".into()),
+            provider: None,
+            api_key: Some("sk-default".into()),
+            api_key_env: None,
+            models: vec![ModelEntry {
+                id: "gpt-4.1".into(),
+                context_window: None,
+                max_output_tokens: None,
+                temperature: None,
+                top_p: None,
+                reasoning_effort: None,
+                capabilities: None,
+            }],
+        });
+        cfg.llm.default_model = Some(DefaultModelSelection {
+            connection: "default-conn".into(),
+            model: "gpt-4.1".into(),
+        });
+
+        let opts = CliOptions::default();
+        let overrides = HostRunOverrides {
+            session_id: None,
+            resume: None,
+            model_id: Some("local-qwen".into()),
+            endpoint: Some("http://127.0.0.1:8080/v1".into()),
+            api_key: Some("sk-override".into()),
+            protocol: Some("openai_chat".into()),
+            permission_profile: None,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            max_iterations: None,
+            context_window_tokens: None,
+        };
+        let route = resolve_route_with_overrides(&cfg, &opts, Some(&overrides)).unwrap();
+        assert_eq!(route.model, "local-qwen");
+        assert_eq!(route.endpoint, "http://127.0.0.1:8080/v1");
+        assert_eq!(route.api_key, "sk-override");
+        assert_eq!(route.protocol, ModelProtocol::OpenAiChat);
+
+        // Partial override still applies on top of default model
+        let partial = HostRunOverrides {
+            session_id: None,
+            resume: None,
+            model_id: Some("gpt-5".into()),
+            endpoint: None,
+            api_key: None,
+            protocol: Some("gemini".into()),
+            permission_profile: None,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            max_iterations: None,
+            context_window_tokens: None,
+        };
+        let route2 = resolve_route_with_overrides(&cfg, &opts, Some(&partial)).unwrap();
+        assert_eq!(route2.model, "gpt-5");
+        assert_eq!(route2.endpoint, "https://api.openai.com/v1");
+        assert_eq!(route2.protocol, ModelProtocol::Gemini);
+
+        // Without overrides, falls back to cfg.llm.default_model
+        let route3 = resolve_route_with_overrides(&cfg, &opts, None).unwrap();
+        assert_eq!(route3.model, "gpt-4.1");
+        assert_eq!(route3.endpoint, "https://api.openai.com/v1");
+    }
 }

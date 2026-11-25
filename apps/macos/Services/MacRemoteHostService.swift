@@ -636,6 +636,7 @@ nonisolated enum MacPermissionGrantScope: String, Sendable {
 
 nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case cautious
+    case acceptEdits = "accept_edits"
     case allowAll = "allow_all"
 
     var id: String { rawValue }
@@ -643,6 +644,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
     var title: String {
         switch self {
         case .cautious: return String(localized: "Cautious", table: "Permissions")
+        case .acceptEdits: return String(localized: "Accept Edits", table: "Permissions")
         case .allowAll: return String(localized: "Allow All")
         }
     }
@@ -651,6 +653,8 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         switch self {
         case .cautious:
             return String(localized: "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.", table: "Permissions")
+        case .acceptEdits:
+            return String(localized: "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.", table: "Permissions")
         case .allowAll:
             return String(localized: "No Nola approval prompts in this conversation. System permissions still apply.", table: "Permissions")
         }
@@ -660,10 +664,18 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         rawValue
     }
 
+    private var rank: Int {
+        switch self {
+        case .cautious: return 0
+        case .acceptEdits: return 1
+        case .allowAll: return 2
+        }
+    }
+
     /// Recovery keeps the original mode. A more permissive preference for the
     /// next message does not revoke it; a new restriction still blocks resume.
     func permitsResuming(frozen: Self) -> Bool {
-        self == frozen || self == .allowAll
+        rank >= frozen.rank
     }
 
     var networkPolicy: String { self == .allowAll ? "allow" : "ask" }
@@ -673,7 +685,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         guard let value else { return .cautious }
         guard let mode = Self(rawValue: value) else {
             throw DecodingError.dataCorrupted(.init(codingPath: [],
-                debugDescription: "Permission mode must be cautious or allow_all."))
+                debugDescription: "Permission mode must be cautious, accept_edits, or allow_all."))
         }
         return mode
     }
@@ -1733,7 +1745,9 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             let receipt: AppleUIInteractionReceipt<MacCanonicalJSONValue>?
             let message: String?
         }
-        guard let host = target.configuration.expectedHostID else { return .rejected("请重新连接会话的 Host。") }
+        guard let host = target.configuration.expectedHostID else {
+            return .rejected(NSLocalizedString("Please reconnect to the conversation's Host.", comment: "Missing host ID when submitting UI interaction"))
+        }
         do {
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input))
             let response: Response = try await authenticatedRead(["expected_host_id": host, "input": object],
@@ -1745,11 +1759,13 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                       receipt.snapshot.revision > input.interaction.expected_surface_revision,
                       receipt.snapshot.revision - input.interaction.expected_surface_revision == 1,
                       receipt.queued_submission_id == nil || receipt.queued_submission_id == input.submission_id else {
-                    return .unknown("表单提交结果归属或版本不匹配。")
+                    return .unknown(NSLocalizedString("Form submission result ownership or version mismatch.", comment: "UI interaction receipt mismatch error"))
                 }
                 return .committed(receipt)
-            case "rejected", "conflict": return .rejected(response.message ?? "表单已更新，请重新确认。")
-            default: return .unknown(response.message ?? "表单提交结果尚未确认。")
+            case "rejected", "conflict":
+                return .rejected(response.message ?? NSLocalizedString("The form has been updated. Please review and confirm again.", comment: "UI interaction conflict or rejected error"))
+            default:
+                return .unknown(response.message ?? NSLocalizedString("Form submission result could not be confirmed.", comment: "UI interaction unknown status error"))
             }
         } catch { return .unknown(error.localizedDescription) }
     }
@@ -3124,7 +3140,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             parts.removeLast()
         }
         components?.path = parts.isEmpty ? "" : "/" + parts.joined(separator: "/")
-        var url = (components?.url ?? baseURL).appendingPathComponent("api")
+        var url = (components?.url ?? baseURL).appendingPathComponent("api").appendingPathComponent("mobile")
         for component in path.split(separator: "/") {
             url.appendPathComponent(String(component))
         }

@@ -1398,34 +1398,34 @@ struct ChatView: View {
                 .accessibilityIdentifier("chat.v2.compactionBanner")
             }
 
-            if !v2UiSurfaces.isEmpty || pendingV2UserQuestion != nil {
+            if let questionPrompt = pendingV2UserQuestion {
+                IOSV2UserQuestionCard(
+                    prompt: questionPrompt,
+                    onRespond: { requestID, answer in
+                        try await container.chatManager.respondToV2UserQuestion(
+                            requestID: requestID,
+                            answer: answer
+                        )
+                    }
+                )
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.vertical, 4)
+            }
+
+            if !v2UiSurfaces.isEmpty {
                 let activeConvID = container.chatManager.v2SessionID ?? container.chatManager.currentConversationId?.uuidString ?? ""
                 let indexedSurfaces: [(key: String, surface: AgentCoreJSONValue)] = v2UiSurfaces.enumerated().map { index, surface in
                     (key: Self.v2SurfaceKey(for: surface, index: index), surface: surface)
                 }
                 let cardsStack = VStack(alignment: .leading, spacing: 8) {
-                    if !indexedSurfaces.isEmpty {
-                        ForEach(indexedSurfaces, id: \.key) { item in
-                            IOSV2UISurfaceCard(
-                                snapshotValue: item.surface,
-                                conversationID: activeConvID,
-                                onSubmit: { convID, interaction in
-                                    try await container.chatManager.submitV2UIInteraction(
-                                        conversationId: convID,
-                                        interaction: interaction
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    if let questionPrompt = pendingV2UserQuestion {
-                        IOSV2UserQuestionCard(
-                            prompt: questionPrompt,
-                            onRespond: { requestID, answer in
-                                try await container.chatManager.respondToV2UserQuestion(
-                                    requestID: requestID,
-                                    answer: answer
+                    ForEach(indexedSurfaces, id: \.key) { item in
+                        IOSV2UISurfaceCard(
+                            snapshotValue: item.surface,
+                            conversationID: activeConvID,
+                            onSubmit: { convID, interaction in
+                                try await container.chatManager.submitV2UIInteraction(
+                                    conversationId: convID,
+                                    interaction: interaction
                                 )
                             }
                         )
@@ -1447,7 +1447,7 @@ struct ChatView: View {
             if let message = hostPermissionSubmissionError, pendingHostPermissionRequest != nil {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DesignTokens.dangerColor)
                     .accessibilityIdentifier("chat.permission.submission_error")
             }
 
@@ -3580,9 +3580,56 @@ private struct IOSV2UISurfaceCard: View {
                         Task {
                             defer { isSubmitting = false }
                             do {
+                                let existingIdentity: [String: AgentCoreJSONValue] = {
+                                    if case .object(let dict)? = root["identity"] { return dict }
+                                    return [:]
+                                }()
+                                let existingOwner: [String: AgentCoreJSONValue] = {
+                                    if case .object(let dict)? = existingIdentity["owner"] { return dict }
+                                    return [:]
+                                }()
+                                let resolvedSurfaceID = surfaceID.isEmpty
+                                    ? (Self.stringValue(existingIdentity["surface_id"]) ?? "")
+                                    : surfaceID
+                                let generation = Self.intValue(existingIdentity["generation"]) ?? Self.intValue(root["generation"]) ?? 1
+                                let expectedRevision = Self.intValue(root["revision"]) ?? Self.intValue(root["expected_surface_revision"]) ?? 0
+                                let ownerObj: [String: Any] = [
+                                    "authority_id": Self.stringValue(existingOwner["authority_id"]) ?? "",
+                                    "conversation_id": conversationID,
+                                    "participant_id": Self.stringValue(existingOwner["participant_id"]) ?? "",
+                                    "context_id": Self.stringValue(existingOwner["context_id"]) ?? "",
+                                    "originating_run_id": Self.stringValue(existingOwner["originating_run_id"]) ?? "",
+                                    "message_id": Self.stringValue(existingOwner["message_id"]) ?? "",
+                                    "part_id": Self.stringValue(existingOwner["part_id"]) ?? "",
+                                ]
+                                let identityObj: [String: Any] = [
+                                    "owner": ownerObj,
+                                    "surface_id": resolvedSurfaceID,
+                                    "generation": generation,
+                                ]
+                                let edits: [[String: Any]] = fieldValues.map { key, value in
+                                    [
+                                        "type": "set",
+                                        "instance_id": key,
+                                        "binding": key,
+                                        "value": value,
+                                    ]
+                                }
+                                let interactionObj: [String: Any] = [
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "edits": edits,
+                                    "action": [
+                                        "instance_id": id.isEmpty ? actionID : id,
+                                        "action_id": actionID,
+                                    ],
+                                ]
                                 _ = try await onSubmit(conversationID, [
-                                    "surface_id": surfaceID,
+                                    "surface_id": resolvedSurfaceID,
                                     "action_id": actionID,
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "interaction": interactionObj,
                                     "data_model": fieldValues,
                                 ])
                             } catch {
@@ -3611,13 +3658,18 @@ private struct IOSV2UISurfaceCard: View {
                 ProgressView().controlSize(.small)
             }
             if let submissionError {
-                Text(submissionError).font(.caption).foregroundStyle(.red)
+                Text(submissionError).font(.caption).foregroundStyle(DesignTokens.dangerColor)
             }
         }
     }
 
     private static func stringValue(_ value: AgentCoreJSONValue?) -> String? {
         if case .string(let s)? = value { return s }
+        return nil
+    }
+
+    private static func intValue(_ value: AgentCoreJSONValue?) -> Int? {
+        if case .number(let n)? = value { return Int(n) }
         return nil
     }
 }

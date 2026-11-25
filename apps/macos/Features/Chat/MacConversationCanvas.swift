@@ -355,13 +355,21 @@ struct MacConversationCanvas: View {
                             dismiss: { model.dismissPermissionResolutionError() }
                         )
                     }
+                    if let compactionSummary = model.v2CompactionSummary, !compactionSummary.isEmpty {
+                        MacInlineNotice(
+                            message: compactionSummary,
+                            kind: .information,
+                            dismiss: { model.dismissV2CompactionSummary() }
+                        )
+                        .accessibilityIdentifier("chat.v2.compactionBanner")
+                    }
                     if let conversationID = model.selectedConversationID,
                        let v2Surfaces = model.v2UISurfacesByConversation[conversationID],
                        !v2Surfaces.isEmpty {
                         let indexedSurfaces: [(key: String, json: String)] = v2Surfaces.enumerated().map { index, json in
                             (key: MacV2UISurfaceCard.surfaceKey(for: json, index: index), json: json)
                         }
-                        VStack(alignment: .leading, spacing: 8) {
+                        let surfaceStack = VStack(alignment: .leading, spacing: 8) {
                             ForEach(indexedSurfaces, id: \.key) { item in
                                 MacV2UISurfaceCard(
                                     snapshotJSON: item.json,
@@ -375,6 +383,14 @@ struct MacConversationCanvas: View {
                                 )
                             }
                         }
+                        ViewThatFits(in: .vertical) {
+                            surfaceStack
+                            ScrollView {
+                                surfaceStack
+                            }
+                            .frame(maxHeight: 320)
+                        }
+                        .frame(maxHeight: 320)
                         .accessibilityIdentifier("chat.v2.uiSurfaces")
                     }
                     if let request = model.selectedPendingRemotePermission {
@@ -670,6 +686,7 @@ struct MacConversationCanvas: View {
             || model.hasDeferredUserInputWaits
             || model.selectedUserInputWaitError != nil
             || model.canCancelRejectedUIQueue
+            || model.v2CompactionSummary != nil
             || !(model.selectedConversationID.flatMap { model.v2UISurfacesByConversation[$0] } ?? []).isEmpty
             || MacExpertPermissionDock.hasControls(workspace: expertWorkspace, conversationID: model.selectedConversationID)
     }
@@ -785,9 +802,54 @@ private struct MacV2UISurfaceCard: View {
                         Task {
                             defer { isSubmitting = false }
                             do {
+                                let existingIdentity = root["identity"] as? [String: Any]
+                                let existingOwner = existingIdentity?["owner"] as? [String: Any]
+                                let resolvedSurfaceID = surfaceID.isEmpty
+                                    ? ((existingIdentity?["surface_id"] as? String) ?? "")
+                                    : surfaceID
+                                let generation = (existingIdentity?["generation"] as? Int)
+                                    ?? (root["generation"] as? Int)
+                                    ?? 1
+                                let expectedRevision = (root["revision"] as? Int)
+                                    ?? (root["expected_surface_revision"] as? Int)
+                                    ?? 0
+                                let ownerObj: [String: Any] = [
+                                    "authority_id": (existingOwner?["authority_id"] as? String) ?? "",
+                                    "conversation_id": conversationID,
+                                    "participant_id": (existingOwner?["participant_id"] as? String) ?? "",
+                                    "context_id": (existingOwner?["context_id"] as? String) ?? "",
+                                    "originating_run_id": (existingOwner?["originating_run_id"] as? String) ?? "",
+                                    "message_id": (existingOwner?["message_id"] as? String) ?? "",
+                                    "part_id": (existingOwner?["part_id"] as? String) ?? "",
+                                ]
+                                let identityObj: [String: Any] = [
+                                    "owner": ownerObj,
+                                    "surface_id": resolvedSurfaceID,
+                                    "generation": generation,
+                                ]
+                                let edits: [[String: Any]] = fieldValues.map { key, value in
+                                    [
+                                        "type": "set",
+                                        "instance_id": key,
+                                        "binding": key,
+                                        "value": value,
+                                    ]
+                                }
+                                let interactionObj: [String: Any] = [
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "edits": edits,
+                                    "action": [
+                                        "instance_id": id.isEmpty ? actionID : id,
+                                        "action_id": actionID,
+                                    ],
+                                ]
                                 let payloadData = try JSONSerialization.data(withJSONObject: [
-                                    "surface_id": surfaceID,
+                                    "surface_id": resolvedSurfaceID,
                                     "action_id": actionID,
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "interaction": interactionObj,
                                     "data_model": fieldValues,
                                 ])
                                 _ = try await onSubmit(conversationID, payloadData)
