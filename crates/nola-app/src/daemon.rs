@@ -9,11 +9,11 @@
 //! - Persists canonical SHA-256 payload-bound idempotent `request_id` receipts.
 //! - Spawns background automation scheduler and drains gracefully on parent-PID exit / signals.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -42,6 +42,18 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CONCURRENT_DAEMON_CLIENTS: usize = 32;
 
+static WRITE_MUTEX: Mutex<()> = Mutex::new(());
+
+#[cfg(unix)]
+struct ActiveClientGuard(Arc<AtomicUsize>);
+
+#[cfg(unix)]
+impl Drop for ActiveClientGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub fn run_daemon(
     store: Store,
     suite: Arc<ModulesSuite>,
@@ -56,6 +68,7 @@ pub fn run_daemon(
 
     #[cfg(unix)]
     {
+        crate::config::bind_store_vault_path(&store, &crate::config::default_vault_path(db_path))?;
         let mut socket_path = default_socket_path(db_path);
         let mut parent_pid: Option<i32> = None;
         let mut i = 0;
@@ -150,12 +163,12 @@ pub fn run_daemon(
                         active_clients.fetch_sub(1, Ordering::SeqCst);
                         continue;
                     }
+                    let client_guard = ActiveClientGuard(Arc::clone(&active_clients));
                     let store_c = store.clone();
                     let suite_c = Arc::clone(&suite);
-                    let active_c = Arc::clone(&active_clients);
                     let handle = std::thread::spawn(move || {
+                        let _guard = client_guard;
                         handle_client(stream, &store_c, &suite_c);
-                        active_c.fetch_sub(1, Ordering::SeqCst);
                     });
                     client_handles.push(handle);
                 }
@@ -400,6 +413,15 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "prepare_edited_resend"
         | "reconcile_automation_execution"
         | "ack_automation_notification"
+        | "prepare_remote_submission"
+        | "bind_remote_submission_request"
+        | "accept_remote_submission_receipt"
+        | "abandon_prepared_remote_submission"
+        | "adopt_observed_remote_run"
+        | "accept_remote_run_context_usage"
+        | "resolve_sync_change"
+        | "save_sync_cursor"
+        | "apply_remote_sync_page"
         | "backup" => true,
         "automation" => {
             let (op, payload) = extract_sub_command(cmd_args);
@@ -456,6 +478,12 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
         .unwrap_or_else(|| json!({}));
 
     let is_mutation = is_mutating_command(cmd_type, &cmd_args);
+    let _write_guard = if is_mutation {
+        Some(WRITE_MUTEX.lock().unwrap_or_else(|e| e.into_inner()))
+    } else {
+        None
+    };
+
     let payload_digest = if is_mutation && !request_id.is_empty() {
         Some(command_payload_digest(req))
     } else {
@@ -490,8 +518,10 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
         }
     }
 
+    let dispatch_result = dispatch_command(store, suite, cmd_type, &cmd_args);
     let completed_at = Utc::now().to_rfc3339();
-    let resp = match dispatch_command(store, suite, cmd_type, &cmd_args) {
+    let is_transient_storage_error = matches!(&dispatch_result, Err(("storage_error", _)));
+    let resp = match dispatch_result {
         Ok(result) => {
             if is_mutation {
                 let next_rev = store
@@ -534,17 +564,19 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
             "error": {
                 "code": code,
                 "message": msg,
-                "recoverable": false
+                "recoverable": code == "storage_error"
             }
         }),
     };
 
     if let Some(digest) = payload_digest {
-        let wrapped = json!({
-            "payload_digest": digest,
-            "receipt": resp
-        });
-        let _ = store.set_kv(&format!("cmd_receipt:{request_id}"), &wrapped);
+        if !is_transient_storage_error {
+            let wrapped = json!({
+                "payload_digest": digest,
+                "receipt": resp
+            });
+            let _ = store.set_kv(&format!("cmd_receipt:{request_id}"), &wrapped);
+        }
     }
     resp
 }
@@ -613,18 +645,88 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
-            let sess = store
+            let Some(sess) = store
                 .get_session(id)
                 .map_err(|e| ("storage_error", e.to_string()))?
-                .ok_or(("not_found", format!("conversation '{id}' not found")))?;
-            let conv = crate::web_api::session_to_conversation_json(store, &sess);
-            let (messages, events) = crate::web_api::reconstruct_v2_messages(store, id);
-            Ok(json!({
-                "conversation": conv,
-                "messages": messages,
-                "events": events,
-                "has_more": false
-            }))
+            else {
+                return Ok(Value::Null);
+            };
+            let before_ordinal = args.get("before_ordinal").and_then(|v| v.as_i64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.clamp(1, 500) as usize);
+            Ok(build_conversation_projection_response(
+                store,
+                &sess,
+                0,
+                limit,
+                before_ordinal,
+            ))
+        }
+        "load_conversation_projection_page_v1" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let Some(sess) = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+            else {
+                return Ok(Value::Null);
+            };
+            let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.clamp(1, 500) as usize);
+            Ok(build_conversation_projection_response(
+                store, &sess, offset, limit, None,
+            ))
+        }
+        "load_conversation_projection_window_update_v1" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let Some(sess) = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+            else {
+                return Ok(Value::Null);
+            };
+            let after_seq = args
+                .get("after_sequence")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let before_ordinal = args.get("before_ordinal").and_then(|v| v.as_i64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.clamp(1, 500) as usize);
+            let resp =
+                build_conversation_projection_response(store, &sess, 0, limit, before_ordinal);
+            let event_seq = resp
+                .get("event_sequence")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if event_seq <= after_seq {
+                Ok(Value::Null)
+            } else {
+                Ok(resp)
+            }
+        }
+        "load_conversation_settings" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            Ok(load_conversation_settings_str(store, id)
+                .map(Value::String)
+                .unwrap_or(Value::Null))
         }
         "load_session_projection" => {
             let id = args
@@ -662,13 +764,14 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
-            let usage = load_session_usage(store, id);
-            let mut val = serde_json::to_value(&usage).unwrap_or_else(|_| json!({}));
-            if let Some(obj) = val.as_object_mut() {
-                obj.insert("conversation_id".into(), json!(id));
-                obj.insert("usage".into(), serde_json::to_value(&usage).unwrap_or(json!({})));
-            }
-            Ok(val)
+            let rev = store
+                .get_kv(&crate::web_api::session_meta_key(id))
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
+                .unwrap_or(1)
+                .max(1);
+            Ok(build_context_usage_json(store, id, rev))
         }
         "read_permission_configuration" => {
             let id = args
@@ -681,7 +784,9 @@ pub fn dispatch_command(
                 "permission_profile": profile,
                 "permission_mode": profile,
                 "revision": rev,
-                "configuration_revision": rev
+                "configuration_revision": rev,
+                "owner": {"kind": "local"},
+                "state": "inactive"
             }))
         }
         "load_conversation_permission_projection_v1" => {
@@ -782,13 +887,31 @@ pub fn dispatch_command(
             }))
         }
         "list_activity" => {
-            let limit = args
+            let input = args.get("input").unwrap_or(args);
+            let limit = input
                 .get("limit")
+                .or_else(|| args.get("limit"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(50)
                 .clamp(1, 200) as usize;
+            let source_filter = input
+                .get("source")
+                .or_else(|| args.get("source"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let needs_response_filter = input
+                .get("needs_response")
+                .or_else(|| args.get("needs_response"))
+                .and_then(|v| v.as_bool());
+            let query_filter = input
+                .get("query")
+                .or_else(|| args.get("query"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty());
             let sessions = store
-                .list_sessions(limit)
+                .list_sessions(200)
                 .map_err(|e| ("storage_error", e.to_string()))?;
             let mut entries = Vec::new();
             for (idx, s) in sessions.into_iter().enumerate() {
@@ -799,7 +922,8 @@ pub fn dispatch_command(
                     .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
                 let assistant_message_id = last_assistant
                     .and_then(|m| m.get("id").and_then(|v| v.as_str()))
-                    .map(ToString::to_string);
+                    .map(ToString::to_string)
+                    .unwrap_or_default();
                 let last_summary = msgs
                     .last()
                     .and_then(|m| m.get("content").and_then(|v| v.as_str()))
@@ -811,6 +935,23 @@ pub fn dispatch_command(
                     .flatten()
                     .and_then(|v| v.as_array().map(|a| !a.is_empty()))
                     .unwrap_or(false);
+                if let Some(src) = source_filter {
+                    if !src.eq_ignore_ascii_case("conversation") {
+                        continue;
+                    }
+                }
+                if let Some(req_needs) = needs_response_filter {
+                    if open_waits != req_needs {
+                        continue;
+                    }
+                }
+                if let Some(ref q) = query_filter {
+                    let title_match = s.title.to_ascii_lowercase().contains(q);
+                    let summary_match = last_summary.to_ascii_lowercase().contains(q);
+                    if !title_match && !summary_match {
+                        continue;
+                    }
+                }
                 entries.push(json!({
                     "id": s.id,
                     "activity_id": s.id,
@@ -832,6 +973,9 @@ pub fn dispatch_command(
                     "completed_at_ms": s.updated_at_ms,
                     "updated_at_ms": s.updated_at_ms
                 }));
+                if entries.len() >= limit {
+                    break;
+                }
             }
             Ok(json!({
                 "entries": entries,
@@ -863,7 +1007,8 @@ pub fn dispatch_command(
                 .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
             let assistant_message_id = last_assistant
                 .and_then(|m| m.get("id").and_then(|v| v.as_str()))
-                .map(ToString::to_string);
+                .map(ToString::to_string)
+                .unwrap_or_default();
             let result_text = last_assistant
                 .and_then(|m| m.get("content").and_then(|v| v.as_str()))
                 .unwrap_or("")
@@ -945,7 +1090,7 @@ pub fn dispatch_command(
                 .filter(|g| g.status == GoalStatus::Completed && g.updated_at_ms >= start_of_day_ms)
                 .map(|g| json!({"id": g.id, "title": g.title, "status": g.status}))
                 .collect();
-            let mut needs_attention: Vec<Value> = Vec::new();
+            let mut attention_list: Vec<Value> = Vec::new();
             for s in &sessions {
                 let has_wait = store
                     .get_kv(&format!("open_waits:{}", s.id))
@@ -954,7 +1099,7 @@ pub fn dispatch_command(
                     .and_then(|v| v.as_array().map(|a| !a.is_empty()))
                     .unwrap_or(false);
                 if has_wait {
-                    needs_attention.push(json!({
+                    attention_list.push(json!({
                         "conversation_id": s.id,
                         "title": s.title,
                         "reason": "waiting_for_user_input"
@@ -963,7 +1108,7 @@ pub fn dispatch_command(
             }
             for g in &goals {
                 if g.status == GoalStatus::Failed {
-                    needs_attention.push(json!({
+                    attention_list.push(json!({
                         "goal_id": g.id,
                         "title": g.title,
                         "reason": "goal_failed"
@@ -984,7 +1129,8 @@ pub fn dispatch_command(
                 "conversations": conversations,
                 "recent_conversations": conversations,
                 "unrepresented_expert_contexts": [],
-                "needs_attention": needs_attention,
+                "needs_attention": !attention_list.is_empty(),
+                "attention_items": attention_list,
                 "has_more_conversations": false,
                 "next_conversation_offset": Value::Null,
                 "queued_instances": [],
@@ -1204,6 +1350,9 @@ pub fn dispatch_command(
                 .get("supports_reasoning")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            if !supports_reasoning {
+                return Ok(Value::Null);
+            }
             let wire_protocol = args
                 .get("wire_protocol")
                 .and_then(|v| v.as_str())
@@ -1211,41 +1360,56 @@ pub fn dispatch_command(
             let output_limit = args.get("output_limit").and_then(|v| v.as_u64());
             let tier = args.get("tier").and_then(|v| v.as_str());
             let requested = args.get("requested").cloned().unwrap_or(Value::Null);
-            let effective_effort = if !supports_reasoning {
-                Value::Null
-            } else if let Some(t) = tier {
+            let effective_effort = if let Some(t) = tier {
                 json!(t)
             } else if !requested.is_null() {
                 requested
             } else {
                 json!("automatic")
             };
-            let control = if supports_reasoning { "effort" } else { "none" };
+            let control = "effort";
             let selection = json!({
-                "supported": supports_reasoning,
+                "supported": true,
                 "wire_protocol": wire_protocol,
                 "output_limit": output_limit,
+                "kind": control,
                 "control": control,
                 "value": effective_effort
             });
             Ok(json!({
-                "supported": supports_reasoning,
+                "supported": true,
                 "wire_protocol": wire_protocol,
                 "output_limit": output_limit,
+                "kind": control,
                 "control": control,
                 "value": effective_effort,
                 "selection": selection
             }))
         }
+        "resolve_remote_model_profile" => resolve_remote_model_profile(store, suite, args),
         "read_ui_capability" => Ok(json!({
             "supported": true,
             "catalog_id": DEFAULT_CATALOG_ID,
             "catalog_digest": catalog_digest(),
-            "max_surfaces_per_conversation": MAX_ACTIVE_SURFACES_PER_CONVERSATION
+            "max_surfaces_per_conversation": MAX_ACTIVE_SURFACES_PER_CONVERSATION,
+            "model_tool": {
+                "name": "render_ui_surface",
+                "enabled": true
+            }
         })),
         "session_create" | "create_conversation" => {
             let input = args.get("input").unwrap_or(args);
             let ts = now_ms();
+            let created_at_ms = input
+                .get("created_at_ms")
+                .or_else(|| args.get("created_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(ts);
+            let updated_at_ms = input
+                .get("updated_at_ms")
+                .or_else(|| args.get("updated_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(created_at_ms);
             let s = Session {
                 id: input
                     .get("id")
@@ -1282,12 +1446,25 @@ pub fn dispatch_command(
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string),
-                created_at_ms: ts,
-                updated_at_ms: ts,
+                created_at_ms,
+                updated_at_ms,
             };
             store
                 .upsert_session(&s)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(settings_val) = input
+                .get("settings_json")
+                .or_else(|| args.get("settings_json"))
+                .filter(|v| !v.is_null())
+            {
+                let settings_str = settings_val
+                    .as_str()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| settings_val.to_string());
+                store
+                    .set_kv(&format!("conv_settings:{}", s.id), &json!(settings_str))
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+            }
             let conv_json = crate::web_api::session_to_conversation_json(store, &s);
             let mut val = serde_json::to_value(&s).unwrap_or(json!({}));
             if let Some(obj) = val.as_object_mut() {
@@ -1429,15 +1606,59 @@ pub fn dispatch_command(
             meta["configurationRevision"] = json!(next_cfg);
             let _ = store.set_kv(&key, &meta);
 
+            // Merge updated settings into `conv_settings:{id}` so `load_conversation` & `load_conversation_settings` see them.
+            let mut settings_map = load_conversation_settings_str(store, id)
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default();
+            if let Some(sj) = effective.get("settings_json").filter(|v| !v.is_null()) {
+                let parsed = if let Some(s) = sj.as_str() {
+                    serde_json::from_str::<Value>(s).ok()
+                } else {
+                    Some(sj.clone())
+                };
+                if let Some(Value::Object(map)) = parsed {
+                    for (k, v) in map {
+                        settings_map.insert(k, v);
+                    }
+                }
+            }
+            if let Some(eff_obj) = effective.as_object() {
+                for (k, v) in eff_obj {
+                    if !matches!(
+                        k.as_str(),
+                        "type"
+                            | "conversation_id"
+                            | "id"
+                            | "input"
+                            | "expected_revision"
+                            | "patch_json"
+                            | "patch"
+                            | "selection"
+                            | "settings_json"
+                    ) {
+                        settings_map.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            let merged_settings_str =
+                serde_json::to_string(&Value::Object(settings_map)).unwrap_or_else(|_| "{}".into());
+            let _ = store.set_kv(&format!("conv_settings:{id}"), &json!(merged_settings_str));
+
             sess.updated_at_ms = now_ms();
             store
                 .upsert_session(&sess)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            let conv_json = crate::web_api::session_to_conversation_json(store, &sess);
+            let mut conv_json = crate::web_api::session_to_conversation_json(store, &sess);
+            if let Some(obj) = conv_json.as_object_mut() {
+                obj.insert("settings_json".into(), json!(merged_settings_str));
+                obj.insert("configuration_revision".into(), json!(next_cfg));
+            }
             Ok(json!({
                 "status": "committed",
                 "snapshot": conv_json,
                 "configuration_revision": next_cfg,
+                "settings_json": merged_settings_str,
                 "conversation": conv_json
             }))
         }
@@ -2035,6 +2256,7 @@ pub fn dispatch_command(
                 .max(1);
             let conv = crate::web_api::session_to_conversation_json(store, &sess);
             Ok(json!({
+                "id": id,
                 "conversation_id": id,
                 "metadata": meta,
                 "conversation": conv,
@@ -2539,33 +2761,298 @@ pub fn dispatch_command(
             Ok(found.unwrap_or(Value::Null))
         }
         "load_conversation_source_owner" => {
-            let conv_id = args
+            let _conv_id = args
                 .get("conversation_id")
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
-            let host_id = store
-                .get_kv("host_id")
-                .ok()
-                .flatten()
-                .and_then(|v| v.as_str().map(ToString::to_string))
-                .unwrap_or_else(|| "local-host".into());
-            let source_id = conv_id
-                .split_once(':')
-                .map(|(root, _)| root)
-                .unwrap_or(conv_id);
-            let owner_kind = if conv_id.contains(':') {
-                "child_conversation"
-            } else {
-                "root_conversation"
-            };
-            Ok(json!({
+            Ok(json!({"kind": "local"}))
+        }
+        "prepare_remote_submission" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let sub_id = input
+                .get("submission_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let source_host_id = input
+                .get("source_host_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("local-host");
+            let client_id = input
+                .get("client_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("local-client");
+            let user_message_id = input
+                .get("user_message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&sub_id);
+            let assistant_message_id = input
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{sub_id}:assistant"));
+            let identity = json!({
+                "source_host_id": source_host_id,
+                "client_id": client_id,
                 "conversation_id": conv_id,
-                "source_conversation_id": source_id,
-                "owner_kind": owner_kind,
-                "host_id": host_id
+                "submission_id": sub_id,
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id
+            });
+            let intent = json!({
+                "identity": identity,
+                "request_digest": Value::Null,
+                "phase": "prepared",
+                "created_at_ms": input.get("created_at_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms)
+            });
+            store
+                .set_kv(&format!("remote_sub_intent:{conv_id}"), &intent)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(intent)
+        }
+        "bind_remote_submission_request" => {
+            let input = args.get("input").unwrap_or(args);
+            let identity = input
+                .get("identity")
+                .or_else(|| args.get("identity"))
+                .cloned()
+                .ok_or(("invalid_argument", "missing 'identity'".into()))?;
+            let request = input
+                .get("request")
+                .or_else(|| args.get("request"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let conv_id = identity
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing identity.conversation_id".into()))?;
+            let sub_id = identity
+                .get("submission_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let digest = sha256_hex(canonical_json_value(&request).to_string().as_bytes());
+            store
+                .set_kv(&format!("remote_sub_req:{conv_id}:{sub_id}"), &request)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            store
+                .set_kv(&format!("remote_sub_req_digest:{conv_id}:{digest}"), &request)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let intent = json!({
+                "identity": identity,
+                "request_digest": digest,
+                "phase": "bound"
+            });
+            store
+                .set_kv(&format!("remote_sub_intent:{conv_id}"), &intent)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(intent)
+        }
+        "read_remote_submission_intent" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let found = store
+                .get_kv(&format!("remote_sub_intent:{conv_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "read_remote_submission_request" => {
+            let input = args.get("input").unwrap_or(args);
+            let identity = input.get("identity").or_else(|| args.get("identity"));
+            let conv_id = identity
+                .and_then(|i| i.get("conversation_id"))
+                .or_else(|| input.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let sub_id = identity
+                .and_then(|i| i.get("submission_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let digest = input
+                .get("request_digest")
+                .or_else(|| args.get("request_digest"))
+                .and_then(|v| v.as_str());
+            if let Some(d) = digest {
+                if let Ok(Some(req)) = store.get_kv(&format!("remote_sub_req_digest:{conv_id}:{d}")) {
+                    return Ok(req);
+                }
+            }
+            let found = store
+                .get_kv(&format!("remote_sub_req:{conv_id}:{sub_id}"))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "accept_remote_submission_receipt" => {
+            let input = args.get("input").unwrap_or(args);
+            let receipt = input
+                .get("receipt")
+                .or_else(|| args.get("receipt"))
+                .cloned()
+                .ok_or(("invalid_argument", "missing 'receipt'".into()))?;
+            let identity = receipt
+                .get("identity")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let conv_id = identity
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing receipt.identity.conversation_id".into()))?;
+            let sub_id = identity
+                .get("submission_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let phase = receipt
+                .get("phase")
+                .and_then(|v| v.as_str())
+                .unwrap_or("accepted");
+            let digest = receipt.get("request_digest").cloned().unwrap_or(Value::Null);
+            let intent = json!({
+                "identity": identity,
+                "request_digest": digest,
+                "phase": phase
+            });
+            store
+                .set_kv(&format!("remote_sub_receipt:{conv_id}:{sub_id}"), &receipt)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            store
+                .set_kv(&format!("remote_sub_intent:{conv_id}"), &intent)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(intent)
+        }
+        "abandon_prepared_remote_submission" => {
+            let input = args.get("input").unwrap_or(args);
+            let identity = input
+                .get("identity")
+                .or_else(|| args.get("identity"))
+                .cloned()
+                .ok_or(("invalid_argument", "missing 'identity'".into()))?;
+            let conv_id = identity
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing identity.conversation_id".into()))?;
+            let intent = json!({
+                "identity": identity,
+                "request_digest": Value::Null,
+                "phase": "abandoned"
+            });
+            store
+                .set_kv(&format!("remote_sub_intent:{conv_id}"), &Value::Null)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(intent)
+        }
+        "adopt_observed_remote_run" => {
+            let input = args.get("input").unwrap_or(args);
+            let receipt = input
+                .get("receipt")
+                .or_else(|| args.get("receipt"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let conv_id = receipt
+                .get("identity")
+                .and_then(|i| i.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let sub_id = receipt
+                .get("identity")
+                .and_then(|i| i.get("submission_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            store
+                .set_kv(&format!("observed_remote_run:{conv_id}:{sub_id}"), &receipt)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "adopted": true,
+                "receipt": receipt
             }))
         }
+        "inspect_run_recovery" => {
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let run_id = args
+                .get("expected_run_id")
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let assistant_message_id = args
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let intent = store
+                .get_kv(&format!("remote_sub_intent:{conv_id}"))
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null);
+            Ok(json!({
+                "conversation_id": conv_id,
+                "run_id": run_id,
+                "assistant_message_id": assistant_message_id,
+                "recoverable": false,
+                "state": "idle",
+                "pending_intent": intent
+            }))
+        }
+        "accept_remote_run_context_usage" => {
+            let input = args.get("input").unwrap_or(args);
+            let source_host_id = input
+                .get("source_host_id")
+                .or_else(|| args.get("source_host_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("remote");
+            let record = input
+                .get("record")
+                .or_else(|| args.get("record"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let conv_id = record
+                .get("identity")
+                .and_then(|i| i.get("conversation_id"))
+                .or_else(|| input.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let run_id = record
+                .get("identity")
+                .and_then(|i| i.get("run_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            store
+                .set_kv(
+                    &format!("remote_run_ctx_usage:{conv_id}:{run_id}"),
+                    &json!({
+                        "source_host_id": source_host_id,
+                        "record": record,
+                        "accepted_at_ms": now_ms()
+                    }),
+                )
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "accepted": true}))
+        }
+        "pending_sync_changes" => Ok(json!([])),
+        "resolve_sync_change" => Ok(json!(true)),
+        "get_sync_cursor" => Ok(Value::Null),
+        "save_sync_cursor" => Ok(json!(true)),
+        "apply_remote_sync_page" => {
+            let input = args.get("input").unwrap_or(args);
+            let next_cursor = input
+                .get("next_cursor")
+                .or_else(|| args.get("next_cursor"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            Ok(json!({"applied": 0, "skipped": 0, "cursor": next_cursor}))
+        }
+        "peek_agent_command" => Ok(Value::Null),
         "load_run_identity" => {
             let run_id = args
                 .get("run_id")
@@ -2874,13 +3361,488 @@ fn read_permission_state(store: &Store, conv_id: Option<&str>) -> (String, i64) 
     (perm, rev)
 }
 
+fn load_conversation_settings_str(store: &Store, id: &str) -> Option<String> {
+    store
+        .get_kv(&format!("conv_settings:{id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| match v {
+            Value::Null => None,
+            Value::String(s) => Some(s),
+            other => Some(other.to_string()),
+        })
+}
+
+fn build_context_usage_json(store: &Store, conv_id: &str, rev: i64) -> Value {
+    let usage = load_session_usage(store, conv_id);
+    let cfg = crate::config::load_active_config(store);
+    let context_window_tokens = crate::config::resolve_model_route(&cfg)
+        .map(|r| r.context_window as u64)
+        .unwrap_or(128_000)
+        .max(1);
+    let used_tokens = usage.input_tokens;
+    let prompt_token_limit = context_window_tokens;
+    let usage_percent =
+        ((used_tokens as f64 / context_window_tokens as f64) * 100.0).min(100.0);
+    let estimated = !usage.usage_reported;
+    let usage_val = serde_json::to_value(&usage).unwrap_or_else(|_| json!({}));
+    let mut val = usage_val.clone();
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("conversation_id".into(), json!(conv_id));
+        obj.insert("usage".into(), usage_val);
+        obj.insert("used_tokens".into(), json!(used_tokens));
+        obj.insert(
+            "context_window_tokens".into(),
+            json!(context_window_tokens),
+        );
+        obj.insert("prompt_token_limit".into(), json!(prompt_token_limit));
+        obj.insert("usage_percent".into(), json!(usage_percent));
+        obj.insert("usage_is_estimated".into(), json!(estimated));
+        obj.insert("estimated".into(), json!(estimated));
+        obj.insert("measured_at_revision".into(), json!(rev.max(1)));
+    }
+    val
+}
+
+fn build_conversation_projection_response(
+    store: &Store,
+    sess: &Session,
+    offset: usize,
+    limit: Option<usize>,
+    before_ordinal: Option<i64>,
+) -> Value {
+    let conv = crate::web_api::session_to_conversation_json(store, sess);
+    let revision = conv
+        .get("revision")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .max(1);
+    let configuration_revision = conv
+        .get("configurationRevision")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .max(1);
+    let settings_json = load_conversation_settings_str(store, &sess.id);
+    let (raw_messages, events) = crate::web_api::reconstruct_v2_messages(store, &sess.id);
+    let total_message_count = raw_messages.len() as i64;
+    let event_sequence = events
+        .last()
+        .and_then(|e| e.get("seq").and_then(|v| v.as_i64()))
+        .unwrap_or(0);
+
+    let (sliced, has_more, next_before_ordinal): (Vec<Value>, bool, Option<i64>) =
+        if let Some(before) = before_ordinal {
+            let cap = (before.max(0) as usize).min(raw_messages.len());
+            let lim = limit.unwrap_or(raw_messages.len());
+            let start = cap.saturating_sub(lim);
+            let slice = raw_messages[start..cap].to_vec();
+            let more = start > 0;
+            let next_ord = if more { Some(start as i64) } else { None };
+            (slice, more, next_ord)
+        } else if let Some(lim) = limit {
+            let start = offset.min(raw_messages.len());
+            let end = (start + lim).min(raw_messages.len());
+            let slice = raw_messages[start..end].to_vec();
+            let more = end < raw_messages.len();
+            let next_ord = if more { Some(end as i64) } else { None };
+            (slice, more, next_ord)
+        } else {
+            let start = offset.min(raw_messages.len());
+            (raw_messages[start..].to_vec(), false, None)
+        };
+
+    let canonical_messages: Vec<Value> = sliced
+        .into_iter()
+        .enumerate()
+        .map(|(idx, mut m)| {
+            let msg_id = m
+                .get("id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("msg-{}", idx + 1));
+            let role = m
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("assistant")
+                .to_string();
+            let content = m
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let created_at_ms = m
+                .get("createdAtMs")
+                .or_else(|| m.get("created_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(sess.created_at_ms);
+            let part_id = format!("{msg_id}:text");
+            if let Some(obj) = m.as_object_mut() {
+                obj.insert("id".into(), json!(msg_id));
+                obj.insert("message_id".into(), json!(msg_id));
+                obj.insert("role".into(), json!(role));
+                obj.insert("state".into(), json!("final"));
+                obj.insert("revision".into(), json!(1));
+                obj.insert("created_at_ms".into(), json!(created_at_ms));
+                obj.insert(
+                    "parts".into(),
+                    json!([{
+                        "kind": "text",
+                        "part_id": part_id,
+                        "revision": 1,
+                        "markdown": content,
+                        "is_final": true
+                    }]),
+                );
+            }
+            m
+        })
+        .collect();
+
+    let committed_message_ids: Vec<String> = canonical_messages
+        .iter()
+        .filter_map(|m| m.get("message_id").and_then(|v| v.as_str()).map(ToString::to_string))
+        .collect();
+    let context_usage = build_context_usage_json(store, &sess.id, revision);
+    let surface = json!({
+        "revision": revision,
+        "committed_message_ids": committed_message_ids,
+        "live_message_id": Value::Null,
+        "current_activity_part_id": Value::Null,
+        "archived_activity_part_ids": [],
+        "show_assistant_placeholder": false
+    });
+    let projection = json!({
+        "contract_version": 1,
+        "conversation_id": sess.id,
+        "id": sess.id,
+        "title": sess.title,
+        "revision": revision,
+        "configuration_revision": configuration_revision,
+        "execution_ownership": {"kind": "user"},
+        "active_run": Value::Null,
+        "messages": canonical_messages,
+        "context_usage": context_usage,
+        "surface": surface
+    });
+
+    json!({
+        "contract_version": 1,
+        "conversation_id": sess.id,
+        "id": sess.id,
+        "title": sess.title,
+        "revision": revision,
+        "configuration_revision": configuration_revision,
+        "created_at_ms": sess.created_at_ms,
+        "updated_at_ms": sess.updated_at_ms,
+        "settings_json": settings_json,
+        "execution_ownership": {"kind": "user"},
+        "active_run": Value::Null,
+        "context_usage": context_usage,
+        "surface": surface,
+        "conversation": conv,
+        "messages": canonical_messages,
+        "events": events,
+        "has_more": has_more,
+        "projection": projection,
+        "event_sequence": event_sequence,
+        "total_message_count": total_message_count,
+        "before_ordinal": next_before_ordinal,
+        "assistant_journal_heads": {}
+    })
+}
+
+fn resolve_remote_model_profile(
+    store: &Store,
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let input = args.get("input").unwrap_or(args);
+    let profile_id = input
+        .get("profile_id")
+        .or_else(|| input.get("id"))
+        .or_else(|| args.get("profile_id"))
+        .or_else(|| args.get("id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or(("invalid_argument", "missing 'profile_id'".into()))?;
+
+    if let Ok(Some(rec)) = suite.get_record::<Value>("model", profile_id) {
+        let source_val: Value = rec
+            .get("source_json")
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str(s).ok())
+            .or_else(|| rec.get("source").cloned())
+            .unwrap_or_else(|| json!({}));
+        let params_val: Value = rec
+            .get("parameters_json")
+            .and_then(|v| v.as_str())
+            .and_then(|s| serde_json::from_str(s).ok())
+            .or_else(|| rec.get("parameters").cloned())
+            .unwrap_or_else(|| json!({}));
+        let credential_ref = source_val
+            .get("credentialRef")
+            .or_else(|| source_val.get("credential_ref"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string);
+        let provider = rec
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("openai");
+        let model_name = rec
+            .get("model_name")
+            .or_else(|| rec.get("model"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(profile_id);
+        let endpoint = source_val
+            .get("endpoint")
+            .or_else(|| source_val.get("baseURL"))
+            .or_else(|| rec.get("endpoint"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let wire_protocol = source_val
+            .get("wire_protocol")
+            .or_else(|| source_val.get("protocol"))
+            .or_else(|| rec.get("protocol"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("chat_completions");
+        let revision = rec.get("revision").and_then(|v| v.as_u64()).unwrap_or(1);
+        let resolved = json!({
+            "profile_id": profile_id,
+            "id": profile_id,
+            "provider": provider,
+            "model_name": model_name,
+            "endpoint": endpoint,
+            "wire_protocol": wire_protocol,
+            "parameters": params_val,
+            "revision": revision
+        });
+        return Ok(json!({
+            "profile_id": profile_id,
+            "id": profile_id,
+            "provider": provider,
+            "model_name": model_name,
+            "endpoint": endpoint,
+            "wire_protocol": wire_protocol,
+            "revision": revision,
+            "credential_ref": credential_ref,
+            "credential_required": credential_ref.is_some(),
+            "resolved": resolved,
+            "profile": rec
+        }));
+    }
+
+    let cfg = crate::config::load_active_config(store);
+    for conn in &cfg.llm.connections {
+        for m in &conn.models {
+            let full_id = format!("{}:{}", conn.id, m.id);
+            if m.id == profile_id || full_id == profile_id {
+                let wire_protocol = conn
+                    .protocol
+                    .as_deref()
+                    .or(conn.provider.as_deref())
+                    .unwrap_or("chat_completions");
+                let provider = conn.provider.as_deref().unwrap_or(&conn.id);
+                let params = json!({
+                    "context_window": m.context_window,
+                    "max_output_tokens": m.max_output_tokens,
+                    "temperature": m.temperature,
+                    "top_p": m.top_p,
+                    "reasoning_effort": m.reasoning_effort
+                });
+                let resolved = json!({
+                    "profile_id": profile_id,
+                    "id": profile_id,
+                    "connection_id": conn.id,
+                    "provider": provider,
+                    "model_name": m.id,
+                    "endpoint": conn.endpoint,
+                    "wire_protocol": wire_protocol,
+                    "parameters": params,
+                    "revision": 1
+                });
+                return Ok(json!({
+                    "profile_id": profile_id,
+                    "id": profile_id,
+                    "connection_id": conn.id,
+                    "provider": provider,
+                    "model_name": m.id,
+                    "endpoint": conn.endpoint,
+                    "wire_protocol": wire_protocol,
+                    "revision": 1,
+                    "credential_ref": Value::Null,
+                    "credential_required": false,
+                    "resolved": resolved
+                }));
+            }
+        }
+    }
+
+    Err((
+        "not_found",
+        format!("remote model profile '{profile_id}' not found"),
+    ))
+}
+
+fn canonical_skill_editor_envelope(raw: &Value, fallback_id: Option<&str>, fallback_rev: u64) -> Value {
+    let rec = raw.get("record").unwrap_or(raw);
+    let ts = now_ms();
+    let id = rec
+        .get("id")
+        .or_else(|| rec.get("name"))
+        .or_else(|| raw.get("id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or(fallback_id)
+        .unwrap_or("skill")
+        .to_string();
+    let path_str = rec.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let raw_source = rec
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if path_str.starts_with("builtin://") {
+            "built_in"
+        } else {
+            "user"
+        });
+    let source = match raw_source {
+        "builtin" | "built_in" => "built_in",
+        "user" => "user",
+        _ => {
+            if path_str.starts_with("builtin://") {
+                "built_in"
+            } else {
+                "user"
+            }
+        }
+    };
+    let display_name = rec
+        .get("display_name")
+        .or_else(|| rec.get("name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&id)
+        .to_string();
+    let summary = rec
+        .get("summary")
+        .or_else(|| rec.get("description"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let category = rec
+        .get("category")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("general")
+        .to_string();
+    let instructions_ref = rec
+        .get("instructions_ref")
+        .or_else(|| rec.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let instructions_text = rec
+        .get("instructions_text")
+        .or_else(|| rec.get("body"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let required_tools = rec
+        .get("required_tools")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let version = rec
+        .get("version")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("1.0.0")
+        .to_string();
+    let enabled = rec
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let updated_at_ms = rec
+        .get("updated_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(ts);
+    let created_at_ms = rec
+        .get("created_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(updated_at_ms);
+    let revision = raw
+        .get("revision")
+        .or_else(|| rec.get("revision"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(fallback_rev)
+        .max(1);
+
+    json!({
+        "record": {
+            "id": id,
+            "source": source,
+            "display_name": display_name,
+            "summary": summary,
+            "category": category,
+            "instructions_ref": instructions_ref,
+            "instructions_text": instructions_text,
+            "required_tools": required_tools,
+            "version": version,
+            "enabled": enabled,
+            "created_at_ms": created_at_ms,
+            "updated_at_ms": updated_at_ms
+        },
+        "revision": revision
+    })
+}
+
+fn canonical_memory_envelope(item: &MemoryItem) -> Value {
+    let ns = if item.namespace.trim().is_empty() {
+        "default"
+    } else {
+        item.namespace.as_str()
+    };
+    let (scope, kind) = ns
+        .split_once(':')
+        .unwrap_or(("global", if ns == "default" { "preference" } else { ns }));
+    json!({
+        "record": {
+            "id": item.id,
+            "owner": {"kind": "local_profile", "id": "default"},
+            "namespace": {"kind": "user", "name": ns},
+            "scope": scope,
+            "kind": kind,
+            "title": item.title,
+            "content": item.content,
+            "tags": item.tags,
+            "confidence": 1.0,
+            "supersedes": [],
+            "retention": {"mode": "permanent"},
+            "provenance": {"kind": "explicit_user", "source": "user", "item_ids": []}
+        },
+        "created_at_ms": item.created_at_ms,
+        "updated_at_ms": item.updated_at_ms
+    })
+}
+
 fn parse_memory_item(payload: &Value) -> MemoryItem {
-    let rec = payload.get("record").unwrap_or(payload);
+    let input = payload.get("input").unwrap_or(payload);
+    let rec = input.get("record").unwrap_or(input);
     let ts = now_ms();
     let namespace = rec
         .get("namespace")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+        .and_then(|v| {
+            v.as_str().map(ToString::to_string).or_else(|| {
+                v.as_object().and_then(|obj| {
+                    obj.get("name")
+                        .and_then(|n| n.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| obj.get("kind").and_then(|k| k.as_str()))
+                        .map(ToString::to_string)
+                })
+            })
+        })
         .unwrap_or_else(|| {
             let scope = rec.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
             let kind = rec.get("kind").and_then(|v| v.as_str()).unwrap_or("default");
@@ -2893,6 +3855,7 @@ fn parse_memory_item(payload: &Value) -> MemoryItem {
     MemoryItem {
         id: rec
             .get("id")
+            .or_else(|| input.get("id"))
             .or_else(|| payload.get("id"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
@@ -2902,6 +3865,7 @@ fn parse_memory_item(payload: &Value) -> MemoryItem {
         title: rec
             .get("title")
             .or_else(|| rec.get("summary"))
+            .or_else(|| rec.get("kind"))
             .and_then(|v| v.as_str())
             .unwrap_or("Memory")
             .to_string(),
@@ -2919,8 +3883,17 @@ fn parse_memory_item(payload: &Value) -> MemoryItem {
                     .collect()
             })
             .unwrap_or_default(),
-        created_at_ms: ts,
-        updated_at_ms: ts,
+        created_at_ms: input
+            .get("created_at_ms")
+            .or_else(|| rec.get("created_at_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(ts),
+        updated_at_ms: input
+            .get("updated_at_ms")
+            .or_else(|| input.get("proposed_at_ms"))
+            .or_else(|| rec.get("updated_at_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(ts),
     }
 }
 
@@ -3187,7 +4160,7 @@ fn dispatch_domain_command(
             let found = store
                 .get_kv(&format!("model_runtime:{id}"))
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(found.unwrap_or_else(|| json!({"status": "idle", "running": []})))
+            Ok(found.unwrap_or(Value::Null))
         }
         ("model", "upsert_profile") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3240,32 +4213,56 @@ fn dispatch_domain_command(
                 .get_record::<Value>("model", id)
                 .map_err(|e| ("storage_error", e.to_string()))?
                 .unwrap_or_else(|| json!({"id": id}));
-            let params = input.get("parameters").cloned().unwrap_or_else(|| {
-                let mut m = serde_json::Map::new();
-                for k in [
-                    "temperature",
-                    "top_p",
-                    "topP",
-                    "max_output_tokens",
-                    "maxOutputTokens",
-                    "context_window",
-                    "maxContextLength",
-                    "reasoning_effort",
-                ] {
-                    if let Some(v) = input.get(k) {
-                        m.insert(k.to_string(), v.clone());
-                    }
+            let (params, params_json_str) = if let Some(pj) = input
+                .get("parameters_json")
+                .or_else(|| payload.get("parameters_json"))
+            {
+                if let Some(s) = pj.as_str() {
+                    let parsed = serde_json::from_str::<Value>(s).unwrap_or_else(|_| json!({}));
+                    (parsed, s.to_string())
+                } else {
+                    let s = serde_json::to_string(pj).unwrap_or_else(|_| "{}".into());
+                    (pj.clone(), s)
                 }
-                Value::Object(m)
-            });
+            } else {
+                let p = input.get("parameters").cloned().unwrap_or_else(|| {
+                    let mut m = serde_json::Map::new();
+                    for k in [
+                        "temperature",
+                        "top_p",
+                        "topP",
+                        "max_output_tokens",
+                        "maxOutputTokens",
+                        "context_window",
+                        "maxContextLength",
+                        "reasoning_effort",
+                    ] {
+                        if let Some(v) = input.get(k) {
+                            m.insert(k.to_string(), v.clone());
+                        }
+                    }
+                    Value::Object(m)
+                });
+                let s = serde_json::to_string(&p).unwrap_or_else(|_| "{}".into());
+                (p, s)
+            };
+            let next_rev = rec.get("revision").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("parameters".into(), params);
+                obj.insert("parameters_json".into(), json!(params_json_str));
+                obj.insert("revision".into(), json!(next_rev));
                 obj.insert("updated_at_ms".into(), json!(now_ms()));
             }
             suite
                 .upsert_record("model", id, &rec)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "id": id, "profile": rec}))
+            Ok(json!({
+                "ok": true,
+                "id": id,
+                "revision": next_rev,
+                "parameters_json": params_json_str,
+                "profile": rec
+            }))
         }
         ("model", "reset_parameters") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3283,8 +4280,12 @@ fn dispatch_domain_command(
                             .get_record::<Value>("model", id)
                             .map_err(|e| ("storage_error", e.to_string()))?
                             .unwrap_or_else(|| json!({"id": id}));
+                        let next_rev =
+                            rec.get("revision").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
                         if let Some(obj) = rec.as_object_mut() {
                             obj.insert("parameters".into(), json!({}));
+                            obj.insert("parameters_json".into(), json!("{}"));
+                            obj.insert("revision".into(), json!(next_rev));
                             obj.insert("updated_at_ms".into(), json!(now_ms()));
                         }
                         suite
@@ -3308,14 +4309,23 @@ fn dispatch_domain_command(
                 .get_record::<Value>("model", id)
                 .map_err(|e| ("storage_error", e.to_string()))?
                 .unwrap_or_else(|| json!({"id": id}));
+            let next_rev = rec.get("revision").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("parameters".into(), json!({}));
+                obj.insert("parameters_json".into(), json!("{}"));
+                obj.insert("revision".into(), json!(next_rev));
                 obj.insert("updated_at_ms".into(), json!(now_ms()));
             }
             suite
                 .upsert_record("model", id, &rec)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "id": id, "profile": rec}))
+            Ok(json!({
+                "ok": true,
+                "id": id,
+                "revision": next_rev,
+                "parameters_json": "{}",
+                "profile": rec
+            }))
         }
         ("model", "replace_profiles") => {
             let profiles = payload
@@ -3352,7 +4362,7 @@ fn dispatch_domain_command(
 
         // --- Skill Domain ---
         ("skill", "list" | "list_editors") => {
-            let mut items = nola_modules::skills::discover_skills_detailed(
+            let mut raw_items = nola_modules::skills::discover_skills_detailed(
                 Some(store),
                 &suite.workspace_root,
                 suite.user_home.as_deref(),
@@ -3363,15 +4373,19 @@ fn dispatch_domain_command(
                     .or_else(|| user_skill.get("name"))
                     .and_then(|v| v.as_str());
                 let exists = sid.is_some_and(|id| {
-                    items.iter().any(|x| {
+                    raw_items.iter().any(|x| {
                         x.get("id").and_then(|v| v.as_str()) == Some(id)
                             || x.get("name").and_then(|v| v.as_str()) == Some(id)
                     })
                 });
                 if !exists {
-                    items.push(user_skill);
+                    raw_items.push(user_skill);
                 }
             }
+            let items: Vec<Value> = raw_items
+                .iter()
+                .map(|raw| canonical_skill_editor_envelope(raw, None, 1))
+                .collect();
             Ok(json!({"kind": "skill", "items": items, "skills": items}))
         }
         ("skill", "get" | "get_editor") => {
@@ -3383,7 +4397,7 @@ fn dispatch_domain_command(
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'id'".into()))?;
             if let Ok(Some(rec)) = suite.get_record::<Value>("skill", id) {
-                return Ok(rec);
+                return Ok(canonical_skill_editor_envelope(&rec, Some(id), 1));
             }
             let detailed = nola_modules::skills::discover_skills_detailed(
                 Some(store),
@@ -3398,7 +4412,9 @@ fn dispatch_domain_command(
                         .and_then(|v| v.as_str())
                         .is_some_and(|n| n.eq_ignore_ascii_case(id))
             });
-            Ok(found.unwrap_or(Value::Null))
+            Ok(found
+                .map(|raw| canonical_skill_editor_envelope(&raw, Some(id), 1))
+                .unwrap_or(Value::Null))
         }
         ("skill", "upsert" | "create_user" | "configure_user") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3415,36 +4431,56 @@ fn dispatch_domain_command(
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
-            let prev_rev = suite
-                .get_record::<Value>("skill", &id)
-                .ok()
-                .flatten()
+            let prev = suite.get_record::<Value>("skill", &id).ok().flatten();
+            let prev_rev = prev
+                .as_ref()
                 .and_then(|v| v.get("revision").and_then(|r| r.as_u64()))
                 .unwrap_or(0);
             let next_rev = prev_rev + 1;
-            let mut stored = record.clone();
-            if let Some(obj) = stored.as_object_mut() {
+            let ts = now_ms();
+            let mut merged = record.clone();
+            if let Some(obj) = merged.as_object_mut() {
                 obj.insert("id".into(), json!(id));
+                if let Some(src) = obj.get("source").and_then(|v| v.as_str()) {
+                    if src == "builtin" {
+                        obj.insert("source".into(), json!("built_in"));
+                    }
+                }
+                if !obj.contains_key("created_at_ms") {
+                    let prev_created = prev
+                        .as_ref()
+                        .and_then(|v| v.get("created_at_ms").and_then(|c| c.as_i64()))
+                        .unwrap_or(ts);
+                    obj.insert("created_at_ms".into(), json!(prev_created));
+                }
                 obj.insert("revision".into(), json!(next_rev));
-                obj.insert("updated_at_ms".into(), json!(now_ms()));
+                obj.insert("updated_at_ms".into(), json!(ts));
             }
-            if let Some(enabled) = stored.get("enabled").and_then(|v| v.as_bool()) {
-                let skill_name = stored
-                    .get("name")
-                    .or_else(|| stored.get("display_name"))
+            let envelope = canonical_skill_editor_envelope(&merged, Some(&id), next_rev);
+            let canonical_rec = envelope.get("record").cloned().unwrap_or(merged.clone());
+            if let Some(enabled) = canonical_rec.get("enabled").and_then(|v| v.as_bool()) {
+                let skill_name = canonical_rec
+                    .get("display_name")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&id);
-                let _ = nola_modules::skills::set_skill_enabled(store, skill_name, enabled);
+                let _ = nola_modules::skills::set_skill_enabled(store, &id, enabled);
+                if skill_name != id {
+                    let _ = nola_modules::skills::set_skill_enabled(store, skill_name, enabled);
+                }
+            }
+            let mut to_store = canonical_rec.clone();
+            if let Some(obj) = to_store.as_object_mut() {
+                obj.insert("revision".into(), json!(next_rev));
             }
             suite
-                .upsert_record("skill", &id, &stored)
+                .upsert_record("skill", &id, &to_store)
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({
                 "ok": true,
                 "id": id,
                 "revision": next_rev,
-                "record": stored,
-                "skill": stored
+                "record": canonical_rec,
+                "skill": canonical_rec
             }))
         }
         ("skill", "synchronize_built_ins") => {
@@ -3547,17 +4583,52 @@ fn dispatch_domain_command(
                 .ok_or(("invalid_argument", "missing boolean 'enabled'".into()))?;
             nola_modules::skills::set_skill_enabled(store, id, enabled)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            let mut next_rev = 1u64;
-            if let Ok(Some(mut rec)) = suite.get_record::<Value>("skill", id) {
-                next_rev = rec.get("revision").and_then(|r| r.as_u64()).unwrap_or(0) + 1;
-                if let Some(obj) = rec.as_object_mut() {
-                    obj.insert("enabled".into(), json!(enabled));
-                    obj.insert("revision".into(), json!(next_rev));
-                    obj.insert("updated_at_ms".into(), json!(now_ms()));
-                }
-                let _ = suite.upsert_record("skill", id, &rec);
+            let base = if let Ok(Some(rec)) = suite.get_record::<Value>("skill", id) {
+                rec
+            } else {
+                let detailed = nola_modules::skills::discover_skills_detailed(
+                    Some(store),
+                    &suite.workspace_root,
+                    suite.user_home.as_deref(),
+                );
+                detailed
+                    .into_iter()
+                    .find(|s| {
+                        s.get("name")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|n| n.eq_ignore_ascii_case(id))
+                            || s.get("id")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|n| n.eq_ignore_ascii_case(id))
+                    })
+                    .unwrap_or_else(|| json!({"id": id, "source": "user"}))
+            };
+            let next_rev = base
+                .get("revision")
+                .and_then(|r| r.as_u64())
+                .unwrap_or(0)
+                + 1;
+            let mut updated = base;
+            if let Some(obj) = updated.as_object_mut() {
+                obj.insert("id".into(), json!(id));
+                obj.insert("enabled".into(), json!(enabled));
+                obj.insert("revision".into(), json!(next_rev));
+                obj.insert("updated_at_ms".into(), json!(now_ms()));
             }
-            Ok(json!({"ok": true, "id": id, "enabled": enabled, "revision": next_rev}))
+            let envelope = canonical_skill_editor_envelope(&updated, Some(id), next_rev);
+            let canonical_rec = envelope.get("record").cloned().unwrap_or(updated.clone());
+            let mut to_store = canonical_rec.clone();
+            if let Some(obj) = to_store.as_object_mut() {
+                obj.insert("revision".into(), json!(next_rev));
+            }
+            let _ = suite.upsert_record("skill", id, &to_store);
+            Ok(json!({
+                "ok": true,
+                "id": id,
+                "enabled": enabled,
+                "revision": next_rev,
+                "record": canonical_rec
+            }))
         }
         ("skill", "delete_user_checked" | "delete_user" | "delete") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3575,28 +4646,29 @@ fn dispatch_domain_command(
 
         // --- Memory Domain ---
         ("memory", "list" | "recall" | "search" | "query") => {
-            let q = payload
+            let input = payload.get("input").unwrap_or(payload);
+            let q = input
                 .get("query")
+                .or_else(|| payload.get("query"))
                 .or_else(|| args.get("query"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let ns = payload
+            let ns = input
                 .get("namespace")
+                .or_else(|| payload.get("namespace"))
                 .or_else(|| args.get("namespace"))
                 .and_then(|v| v.as_str());
-            let limit = payload
+            let limit = input
                 .get("limit")
+                .or_else(|| payload.get("limit"))
                 .or_else(|| args.get("limit"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(100) as usize;
             let items = store
                 .search_memory(q, ns, limit)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            let records: Vec<Value> = items
-                .iter()
-                .map(crate::web_api::memory_item_to_record)
-                .collect();
-            Ok(json!({"items": items, "records": records}))
+            let records: Vec<Value> = items.iter().map(canonical_memory_envelope).collect();
+            Ok(json!({"items": items, "records": records, "memories": records}))
         }
         ("memory", "get") => {
             let id = payload
@@ -3610,7 +4682,7 @@ fn dispatch_domain_command(
             let found = items
                 .into_iter()
                 .find(|m| m.id == id)
-                .map(|m| crate::web_api::memory_item_to_record(&m));
+                .map(|m| canonical_memory_envelope(&m));
             Ok(found.unwrap_or(Value::Null))
         }
         ("memory", "commit" | "save" | "upsert" | "update_if_revision") => {
@@ -3618,7 +4690,7 @@ fn dispatch_domain_command(
             store
                 .upsert_memory(&item)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(crate::web_api::memory_item_to_record(&item))
+            Ok(canonical_memory_envelope(&item))
         }
         ("memory", "replace") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3631,21 +4703,33 @@ fn dispatch_domain_command(
                 .or_else(|| payload.get("items"))
                 .and_then(|v| v.as_array())
             {
-                let mut records = Vec::new();
-                for entry in arr {
-                    let item = parse_memory_item(entry);
-                    store
-                        .upsert_memory(&item)
-                        .map_err(|e| ("storage_error", e.to_string()))?;
-                    records.push(crate::web_api::memory_item_to_record(&item));
+                let parsed_items: Vec<MemoryItem> = arr.iter().map(parse_memory_item).collect();
+                let incoming_ids: HashSet<&str> =
+                    parsed_items.iter().map(|m| m.id.as_str()).collect();
+                let existing = store
+                    .search_memory("", None, 10_000)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                for old in existing {
+                    if !incoming_ids.contains(old.id.as_str()) {
+                        store
+                            .delete_memory(&old.id)
+                            .map_err(|e| ("storage_error", e.to_string()))?;
+                    }
                 }
-                return Ok(json!({"ok": true, "records": records}));
+                let mut records = Vec::with_capacity(parsed_items.len());
+                for item in &parsed_items {
+                    store
+                        .upsert_memory(item)
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    records.push(canonical_memory_envelope(item));
+                }
+                return Ok(Value::Array(records));
             }
             let item = parse_memory_item(input);
             store
                 .upsert_memory(&item)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(crate::web_api::memory_item_to_record(&item))
+            Ok(Value::Array(vec![canonical_memory_envelope(&item)]))
         }
         ("memory", "delete") => {
             let id = payload
@@ -3702,6 +4786,16 @@ fn dispatch_domain_command(
                 .and_then(|r| r.as_u64())
                 .unwrap_or(0)
                 + 1;
+            let ts = now_ms();
+            let created_at_ms = prev_meta
+                .get("created_at_ms")
+                .and_then(|v| v.as_i64())
+                .or_else(|| input.get("created_at_ms").and_then(|v| v.as_i64()))
+                .unwrap_or(ts);
+            let updated_at_ms = input
+                .get("updated_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(ts);
             let display_name = input
                 .get("display_name")
                 .or_else(|| input.get("name"))
@@ -3729,14 +4823,16 @@ fn dispatch_domain_command(
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                 })
-                .unwrap_or_else(|| serde_json::to_string(&cfg).unwrap_or_else(|_| "{}".into()));
+                .unwrap_or_else(|| "{}".into());
             let _ = store.set_kv(
                 &format!("mcp_meta:{}", cfg.id),
                 &json!({
                     "display_name": display_name,
+                    "enabled": cfg.enabled,
                     "configuration_json": configuration_json,
                     "revision": next_rev,
-                    "updated_at_ms": now_ms()
+                    "created_at_ms": created_at_ms,
+                    "updated_at_ms": updated_at_ms
                 }),
             );
             let enriched = enrich_mcp_server_json(store, &cfg);
@@ -3744,8 +4840,11 @@ fn dispatch_domain_command(
                 "ok": true,
                 "id": cfg.id,
                 "display_name": display_name,
+                "enabled": cfg.enabled,
                 "configuration_json": configuration_json,
                 "revision": next_rev,
+                "created_at_ms": created_at_ms,
+                "updated_at_ms": updated_at_ms,
                 "server": enriched
             }))
         }
@@ -3910,20 +5009,18 @@ fn dispatch_domain_command(
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
             let ds_id = input
-                .get("data_source_id")
+                .get("source_id")
+                .or_else(|| input.get("data_source_id"))
                 .or_else(|| input.get("id"))
+                .or_else(|| args.get("source_id"))
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
-                .ok_or(("invalid_argument", "missing 'data_source_id'".into()))?;
+                .ok_or(("invalid_argument", "missing 'source_id'".into()))?;
             let val = store
                 .get_kv(&format!("ds_override:{conv_id}:{ds_id}"))
                 .map_err(|e| ("storage_error", e.to_string()))?
-                .unwrap_or(Value::Null);
-            Ok(json!({
-                "conversation_id": conv_id,
-                "data_source_id": ds_id,
-                "override": val
-            }))
+                .unwrap_or_else(|| json!("inherit"));
+            Ok(val)
         }
         ("data_source", "set_conversation_override") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3933,40 +5030,52 @@ fn dispatch_domain_command(
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
             let ds_id = input
-                .get("data_source_id")
+                .get("source_id")
+                .or_else(|| input.get("data_source_id"))
                 .or_else(|| input.get("id"))
+                .or_else(|| args.get("source_id"))
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
-                .ok_or(("invalid_argument", "missing 'data_source_id'".into()))?;
+                .ok_or(("invalid_argument", "missing 'source_id'".into()))?;
             let override_val = input
-                .get("override")
+                .get("value")
+                .or_else(|| input.get("override"))
                 .or_else(|| input.get("enabled"))
                 .cloned()
-                .unwrap_or(Value::Null);
+                .unwrap_or_else(|| json!("inherit"));
             let key = format!("ds_override:{conv_id}:{ds_id}");
             store
                 .set_kv(&key, &override_val)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({
-                "ok": true,
-                "conversation_id": conv_id,
-                "data_source_id": ds_id,
-                "override": override_val
-            }))
+            Ok(json!(true))
         }
         ("data_source", "record_usage") => {
             let input = payload.get("input").unwrap_or(payload);
-            let id = input
-                .get("data_source_id")
+            let source_id = input
+                .get("source_id")
+                .or_else(|| input.get("data_source_id"))
                 .or_else(|| input.get("id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
-            let ts = now_ms();
-            let _ = store.set_kv(
-                &format!("ds_usage:{id}"),
-                &json!({"data_source_id": id, "recorded_at_ms": ts, "details": input}),
-            );
-            Ok(json!({"ok": true, "id": id, "recorded_at_ms": ts}))
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let summary = input
+                .get("summary")
+                .or_else(|| input.get("purpose"))
+                .or_else(|| input.get("source_title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("DataSource used");
+            let mut recorded = nola_modules::data_sources::record_data_source_usage(
+                store, conv_id, source_id, summary,
+            )
+            .map_err(|e| ("storage_error", e))?;
+            if let Some(obj) = recorded.as_object_mut() {
+                obj.insert("ok".into(), json!(true));
+            }
+            Ok(recorded)
         }
         ("data_source", "request_refresh") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3996,7 +5105,91 @@ fn dispatch_domain_command(
             );
             Ok(json!({"ok": true, "id": id, "recorded_at_ms": ts}))
         }
-        ("data_source", "resolve_sources" | "resolve_for_conversation") => {
+        ("data_source", "resolve_for_conversation") => {
+            let input = payload.get("input").unwrap_or(payload);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str());
+            let all: Vec<Value> = suite
+                .list_records("data_source")
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let mut selections = Vec::with_capacity(all.len());
+            for rec in all {
+                let ds_id = rec
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let source_revision = rec
+                    .get("revision")
+                    .or_else(|| rec.get("source_revision"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1)
+                    .max(1);
+                let default_enabled = rec
+                    .get("default_enabled")
+                    .or_else(|| rec.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let (effective, reason) = if let Some(cid) = conv_id {
+                    match store
+                        .get_kv(&format!("ds_override:{cid}:{ds_id}"))
+                        .ok()
+                        .flatten()
+                    {
+                        Some(Value::Bool(b)) => (b, if b { "override_enabled" } else { "override_disabled" }),
+                        Some(Value::String(ref s)) if s.eq_ignore_ascii_case("enabled") => {
+                            (true, "override_enabled")
+                        }
+                        Some(Value::String(ref s)) if s.eq_ignore_ascii_case("disabled") => {
+                            (false, "override_disabled")
+                        }
+                        Some(ref o) if o.get("enabled").and_then(|v| v.as_bool()).is_some() => {
+                            let b = o
+                                .get("enabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(default_enabled);
+                            (b, if b { "override_enabled" } else { "override_disabled" })
+                        }
+                        _ => (
+                            default_enabled,
+                            if default_enabled { "default_enabled" } else { "default_disabled" },
+                        ),
+                    }
+                } else {
+                    (
+                        default_enabled,
+                        if default_enabled { "default_enabled" } else { "default_disabled" },
+                    )
+                };
+                let content_reference = rec
+                    .get("content_reference")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let observed_at_ms = rec
+                    .get("observed_at_ms")
+                    .or_else(|| rec.get("updated_at_ms"))
+                    .and_then(|v| v.as_i64());
+                let schema_version = rec
+                    .get("schema_version")
+                    .and_then(|v| v.as_i64())
+                    .map(|n| n as i32);
+                selections.push(json!({
+                    "source_id": ds_id,
+                    "source_revision": source_revision,
+                    "enabled": effective,
+                    "usable": effective,
+                    "should_refresh": false,
+                    "reason": reason,
+                    "content_reference": content_reference,
+                    "observed_at_ms": observed_at_ms,
+                    "schema_version": schema_version
+                }));
+            }
+            Ok(Value::Array(selections))
+        }
+        ("data_source", "resolve_sources") => {
             let input = payload.get("input").unwrap_or(payload);
             let conv_id = input
                 .get("conversation_id")
@@ -4020,6 +5213,8 @@ fn dispatch_domain_command(
                 let effective = if let Some(cid) = conv_id {
                     match store.get_kv(&format!("ds_override:{cid}:{ds_id}")).ok().flatten() {
                         Some(Value::Bool(b)) => b,
+                        Some(Value::String(ref s)) if s.eq_ignore_ascii_case("enabled") => true,
+                        Some(Value::String(ref s)) if s.eq_ignore_ascii_case("disabled") => false,
                         Some(ref o) if o.get("enabled").and_then(|v| v.as_bool()).is_some() => {
                             o.get("enabled").and_then(|v| v.as_bool()).unwrap_or(default_enabled)
                         }
@@ -4087,11 +5282,24 @@ fn enrich_mcp_server_json(store: &Store, cfg: &McpServerConfig) -> Value {
             .and_then(|v| v.as_str())
             .unwrap_or(&cfg.name);
         let revision = meta.get("revision").and_then(|r| r.as_u64()).unwrap_or(1);
+        let configuration_json = meta
+            .get("configuration_json")
+            .and_then(|v| v.as_str())
+            .unwrap_or("{}");
+        let updated_at_ms = meta
+            .get("updated_at_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let created_at_ms = meta
+            .get("created_at_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(updated_at_ms);
         obj.insert("display_name".into(), json!(display_name));
+        obj.insert("enabled".into(), json!(cfg.enabled));
         obj.insert("revision".into(), json!(revision));
-        if let Some(cj) = meta.get("configuration_json") {
-            obj.insert("configuration_json".into(), cj.clone());
-        }
+        obj.insert("configuration_json".into(), json!(configuration_json));
+        obj.insert("created_at_ms".into(), json!(created_at_ms));
+        obj.insert("updated_at_ms".into(), json!(updated_at_ms));
     }
     val
 }
@@ -4128,26 +5336,48 @@ fn dispatch_automation_definition(
                 .get("definition")
                 .or_else(|| input.get("record"))
                 .unwrap_or(input);
-            let mut norm = crate::web_api::normalize_automation_record(record);
-            let id = norm
+            let id = record
                 .get("id")
+                .or_else(|| input.get("id"))
+                .or_else(|| payload.get("id"))
+                .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let prev_rev = suite
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let existing = suite
                 .get_record::<Value>("automation", &id)
                 .ok()
-                .flatten()
+                .flatten();
+            let prev_rev = existing
+                .as_ref()
                 .and_then(|v| v.get("revision").and_then(|r| r.as_u64()))
                 .unwrap_or(0);
-            let next_rev = prev_rev + 1;
-            if let Some(obj) = norm.as_object_mut() {
+            let incoming_rev = record.get("revision").and_then(|r| r.as_u64());
+            let next_rev = match incoming_rev {
+                Some(r) if r > prev_rev => r,
+                _ => prev_rev + 1,
+            };
+            let ts = now_ms();
+            let mut stored = record.clone();
+            if let Some(obj) = stored.as_object_mut() {
+                obj.insert("id".into(), json!(id));
                 obj.insert("revision".into(), json!(next_rev));
+                if !obj.contains_key("created_at_ms") {
+                    let prev_created = existing
+                        .as_ref()
+                        .and_then(|v| v.get("created_at_ms").and_then(|c| c.as_i64()))
+                        .unwrap_or(ts);
+                    obj.insert("created_at_ms".into(), json!(prev_created));
+                }
+                if !obj.contains_key("updated_at_ms") {
+                    obj.insert("updated_at_ms".into(), json!(ts));
+                }
             }
             suite
-                .upsert_record("automation", &id, &norm)
+                .upsert_record("automation", &id, &stored)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "id": id, "revision": next_rev, "record": norm, "definition": norm}))
+            Ok(stored)
         }
         "update" | "update_if_revision" => {
             let record = input
@@ -4181,6 +5411,9 @@ fn dispatch_automation_definition(
                     ));
                 }
             }
+            let prev_created = existing
+                .as_ref()
+                .and_then(|v| v.get("created_at_ms").and_then(|c| c.as_i64()));
             let mut merged = existing.unwrap_or_else(|| json!({"id": id}));
             if let (Some(dst), Some(src)) = (merged.as_object_mut(), record.as_object()) {
                 for (k, v) in src {
@@ -4189,16 +5422,22 @@ fn dispatch_automation_definition(
                     }
                 }
                 dst.insert("id".into(), json!(id));
-            }
-            let mut norm = crate::web_api::normalize_automation_record(&merged);
-            let next_rev = cur_rev + 1;
-            if let Some(obj) = norm.as_object_mut() {
-                obj.insert("revision".into(), json!(next_rev));
+                let next_rev = match src.get("revision").and_then(|r| r.as_u64()) {
+                    Some(r) if r > cur_rev => r,
+                    _ => cur_rev + 1,
+                };
+                dst.insert("revision".into(), json!(next_rev));
+                if !dst.contains_key("created_at_ms") {
+                    dst.insert("created_at_ms".into(), json!(prev_created.unwrap_or_else(now_ms)));
+                }
+                if !src.contains_key("updated_at_ms") {
+                    dst.insert("updated_at_ms".into(), json!(now_ms()));
+                }
             }
             suite
-                .upsert_record("automation", id, &norm)
+                .upsert_record("automation", id, &merged)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "id": id, "revision": next_rev, "record": norm, "definition": norm}))
+            Ok(merged)
         }
         "pause" | "resume" => {
             let id = input

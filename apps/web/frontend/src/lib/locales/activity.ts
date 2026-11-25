@@ -138,6 +138,7 @@ const entries: Record<string, Translations> = {
     "activity.status.skipped": ["已跳过","Skipped","Übersprungen","Omitida","Ignoré","スキップ済み","Пропущено"],
     "activity.status.running": ["执行中","Running","In Ausführung","En ejecución","En cours","実行中","Выполняется"],
     "activity.status.queued": ["排队中","Queued","In Warteschlange","En cola","En attente","待機中","В очереди"],
+    "activity.status.idle": ["空闲","Idle","Inaktiv","Inactivo","Inactif","待機中","Ожидание"],
     "activity.format.html": ["网页","Web page","Webseite","Página web","Page web","ウェブページ","Веб-страница"],
     "activity.format.search": ["搜索","Search","Suche","Búsqueda","Recherche","検索","Поиск"],
     "activity.format.script": ["脚本","Script","Skript","Script","Script","スクリプト","Скрипт"],

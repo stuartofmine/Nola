@@ -10,7 +10,7 @@ const pageTitles: Record<string, string> = {
     '/workspace-review': 'chatInspector.review',
     '/models': 'shell.nav.models', '/model-test': 'shell.nav.models', '/capabilities': 'shell.nav.capabilities',
     '/activity': 'chatInspector.list.activity', '/results': 'activity.results', '/dashboard': 'activity.overview', '/data-sources': 'shell.information',
-    '/settings': 'shell.settings', '/scheduled-actions': 'activity.automations',
+    '/settings': 'shell.settings', '/scheduled-actions': 'activity.automations', '/automations': 'activity.automations',
 };
 export function managementContentPath(href: string, origin: string): {path: string; titleKey: string} | null {
     try {

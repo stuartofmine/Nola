@@ -15,7 +15,7 @@ use std::io::BufRead;
 use nola_types::{
     GenerationParams, HistoryMessage, MediaAttachment, ModelProtocol, ModelRouteConfig,
     ModelStopReason, ModelStreamDelta, ModelToolCall, NormalizedModelResponse,
-    StructuredModelRequest, TokenUsage,
+    ProviderContinuation, StructuredModelRequest, TokenUsage,
 };
 use serde_json::{json, Value};
 
@@ -52,6 +52,60 @@ fn gemini_endpoint(base: &str, model: &str, stream: bool) -> String {
     } else {
         format!("{root}/v1beta/models/{clean_model}:{action}")
     }
+}
+
+fn sanitize_gemini_schema(val: &mut Value) {
+    match val {
+        Value::Object(map) => {
+            map.remove("additionalProperties");
+            map.remove("$schema");
+            map.remove("$id");
+            map.remove("default");
+            map.remove("x-nola-read-only");
+            for v in map.values_mut() {
+                sanitize_gemini_schema(v);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                sanitize_gemini_schema(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_gemini_cont_part(cont_parts: &mut Vec<Value>, part: &Value) {
+    let is_plain_text = part.get("text").and_then(|v| v.as_str()).is_some()
+        && part.get("functionCall").is_none()
+        && part.get("thoughtSignature").is_none();
+    if is_plain_text {
+        let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
+        if let Some(last) = cont_parts.last_mut() {
+            let last_plain = last.get("text").and_then(|v| v.as_str()).is_some()
+                && last.get("functionCall").is_none()
+                && last.get("thoughtSignature").is_none()
+                && last
+                    .get("thought")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    == is_thought;
+            if last_plain {
+                if let (Some(prev), Some(add)) = (
+                    last.get("text")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    part.get("text").and_then(|v| v.as_str()),
+                ) {
+                    if let Some(obj) = last.as_object_mut() {
+                        obj.insert("text".into(), Value::String(format!("{prev}{add}")));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    cont_parts.push(part.clone());
 }
 
 fn push_or_merge_content(contents: &mut Vec<Value>, role: &str, mut new_parts: Vec<Value>) {
@@ -180,38 +234,58 @@ impl ProviderWireAdapter for GeminiAdapter {
                 HistoryMessage::Assistant {
                     content,
                     tool_calls,
+                    continuation,
                     ..
                 } => {
-                    let mut parts = Vec::new();
-                    if !content.is_empty() {
-                        parts.push(json!({"text": content}));
-                    }
-                    for tc in tool_calls {
-                        parts.push(json!({
-                            "functionCall": {
-                                "name": tc.name,
-                                "args": tc.arguments
+                    let parts = if let Some(cont) = continuation.as_ref().filter(|c| {
+                        c.protocol == ModelProtocol::Gemini
+                            && c.model == route.model
+                            && !c.items.is_empty()
+                    }) {
+                        cont.items.clone()
+                    } else {
+                        let mut p = Vec::new();
+                        if !content.is_empty() {
+                            p.push(json!({"text": content}));
+                        }
+                        for tc in tool_calls {
+                            let args = if tc.arguments.is_object() {
+                                tc.arguments.clone()
+                            } else {
+                                json!({})
+                            };
+                            let mut fc = serde_json::Map::new();
+                            if !tc.call_id.is_empty() && !tc.call_id.starts_with("gemini_call_") {
+                                fc.insert("id".into(), Value::String(tc.call_id.clone()));
                             }
-                        }));
-                    }
+                            fc.insert("name".into(), Value::String(tc.name.clone()));
+                            fc.insert("args".into(), args);
+                            p.push(json!({ "functionCall": Value::Object(fc) }));
+                        }
+                        p
+                    };
                     push_or_merge_content(&mut contents, "model", parts);
                 }
                 HistoryMessage::Tool {
+                    call_id,
                     tool_name,
                     payload,
                     is_error,
                     media,
-                    ..
                 } => {
-                    let mut parts = vec![json!({
-                        "functionResponse": {
-                            "name": tool_name,
-                            "response": {
-                                "output": payload.to_model_string(),
-                                "is_error": is_error
-                            }
-                        }
-                    })];
+                    let mut fr = serde_json::Map::new();
+                    if !call_id.is_empty() && !call_id.starts_with("gemini_call_") {
+                        fr.insert("id".into(), Value::String(call_id.clone()));
+                    }
+                    fr.insert("name".into(), Value::String(tool_name.clone()));
+                    fr.insert(
+                        "response".into(),
+                        json!({
+                            "output": payload.to_model_string(),
+                            "is_error": is_error
+                        }),
+                    );
+                    let mut parts = vec![json!({ "functionResponse": Value::Object(fr) })];
                     parts.extend(media_parts(media));
                     push_or_merge_content(&mut contents, "user", parts);
                 }
@@ -221,8 +295,17 @@ impl ProviderWireAdapter for GeminiAdapter {
         if let Some(tail) = format_tail_reminders(&req.ephemeral_tail_reminders) {
             push_or_merge_content(&mut contents, "user", vec![json!({"text": tail})]);
         }
-        if contents.is_empty() {
-            contents.push(json!({"role": "user", "parts": [{"text": "Continue."}]}));
+        if contents.is_empty()
+            || contents
+                .first()
+                .and_then(|m| m.get("role"))
+                .and_then(|v| v.as_str())
+                != Some("user")
+        {
+            contents.insert(
+                0,
+                json!({"role": "user", "parts": [{"text": "Continue."}]}),
+            );
         }
         body.insert("contents".into(), Value::Array(contents));
 
@@ -231,10 +314,12 @@ impl ProviderWireAdapter for GeminiAdapter {
                 .prefix_stable_tools
                 .iter()
                 .map(|t| {
+                    let mut params = t.parameters.clone();
+                    sanitize_gemini_schema(&mut params);
                     json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters
+                        "parameters": params
                     })
                 })
                 .collect();
@@ -337,12 +422,18 @@ impl ProviderWireAdapter for GeminiAdapter {
         let mut content = String::new();
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
+        let mut cont_parts = Vec::new();
+        let allow_tool_calls = !matches!(
+            stop_reason,
+            ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+        );
         if let Some(parts) = candidate
             .get("content")
             .and_then(|c| c.get("parts"))
             .and_then(|p| p.as_array())
         {
             for (idx, part) in parts.iter().enumerate() {
+                cont_parts.push(part.clone());
                 if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                     if part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false) {
                         reasoning.push_str(text);
@@ -350,13 +441,16 @@ impl ProviderWireAdapter for GeminiAdapter {
                         content.push_str(text);
                     }
                 } else if let Some(fc) = part.get("functionCall") {
-                    if stop_reason != ModelStopReason::OutputLimit {
+                    if allow_tool_calls {
                         let name = fc
                             .get("name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
+                        let args = match fc.get("args") {
+                            Some(v @ Value::Object(_)) => v.clone(),
+                            _ => json!({}),
+                        };
                         let call_id = fc
                             .get("id")
                             .and_then(|v| v.as_str())
@@ -374,6 +468,17 @@ impl ProviderWireAdapter for GeminiAdapter {
             }
         }
 
+        let continuation = if cont_parts.is_empty() || !allow_tool_calls {
+            None
+        } else {
+            Some(ProviderContinuation {
+                protocol: ModelProtocol::Gemini,
+                model: route.model.clone(),
+                response_id: response_id.clone(),
+                items: cont_parts,
+            })
+        };
+
         Ok(finalize_response(
             response_id,
             response_model,
@@ -386,7 +491,7 @@ impl ProviderWireAdapter for GeminiAdapter {
             tool_calls,
             stop_reason,
             usage,
-            None,
+            continuation,
         ))
     }
 
@@ -402,6 +507,7 @@ impl ProviderWireAdapter for GeminiAdapter {
         let mut content = String::new();
         let mut reasoning = String::new();
         let mut tool_calls = Vec::new();
+        let mut cont_parts = Vec::new();
         let mut stop_reason = ModelStopReason::Stop;
         let mut usage = TokenUsage::default();
         let mut saw_any_chunk = false;
@@ -445,6 +551,7 @@ impl ProviderWireAdapter for GeminiAdapter {
                     .and_then(|p| p.as_array())
                 {
                     for part in parts {
+                        push_gemini_cont_part(&mut cont_parts, part);
                         if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                             if !text.is_empty() {
                                 if part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -456,27 +563,35 @@ impl ProviderWireAdapter for GeminiAdapter {
                                 }
                             }
                         } else if let Some(fc) = part.get("functionCall") {
-                            let name = fc
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let args = fc.get("args").cloned().unwrap_or_else(|| json!({}));
-                            let call_id = fc
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .map(ToString::to_string)
-                                .unwrap_or_else(|| format!("gemini_call_{}", tool_calls.len()));
-                            if !name.is_empty() {
-                                on_delta(ModelStreamDelta::ToolCallStart {
-                                    call_id: call_id.clone(),
-                                    name: name.clone(),
-                                });
-                                tool_calls.push(ModelToolCall {
-                                    call_id,
-                                    name,
-                                    arguments: args,
-                                });
+                            if !matches!(
+                                stop_reason,
+                                ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+                            ) {
+                                let name = fc
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let args = match fc.get("args") {
+                                    Some(v @ Value::Object(_)) => v.clone(),
+                                    _ => json!({}),
+                                };
+                                let call_id = fc
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(|| format!("gemini_call_{}", tool_calls.len()));
+                                if !name.is_empty() {
+                                    on_delta(ModelStreamDelta::ToolCallStart {
+                                        call_id: call_id.clone(),
+                                        name: name.clone(),
+                                    });
+                                    tool_calls.push(ModelToolCall {
+                                        call_id,
+                                        name,
+                                        arguments: args,
+                                    });
+                                }
                             }
                         }
                     }
@@ -487,6 +602,21 @@ impl ProviderWireAdapter for GeminiAdapter {
         if !saw_any_chunk {
             return Err(LlmError::Wire("gemini SSE stream ended empty".into()));
         }
+
+        let continuation = if cont_parts.is_empty()
+            || matches!(
+                stop_reason,
+                ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+            ) {
+            None
+        } else {
+            Some(ProviderContinuation {
+                protocol: ModelProtocol::Gemini,
+                model: route.model.clone(),
+                response_id: response_id.clone(),
+                items: cont_parts,
+            })
+        };
 
         Ok(finalize_response(
             response_id,
@@ -500,7 +630,7 @@ impl ProviderWireAdapter for GeminiAdapter {
             tool_calls,
             stop_reason,
             usage,
-            None,
+            continuation,
         ))
     }
 }

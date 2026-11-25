@@ -250,9 +250,11 @@ pub fn parse_automation_value(raw: &Value, default_workspace: &Path) -> Option<A
     })
 }
 
-/// Compute the next UTC timestamp (in ms) matching a 5-field cron expression after `after` (scanning up to 8 days).
+/// Compute the next UTC timestamp (in ms) matching a 5-field cron expression after `after`
+/// (scanning up to 366 days using day/hour stepping when month/day/hour do not match).
 pub fn next_scheduled_at_ms(cron_expr: &str, after: DateTime<Utc>) -> Option<i64> {
-    if cron_expr.split_whitespace().count() != 5 {
+    let fields: Vec<&str> = cron_expr.split_whitespace().collect();
+    if fields.len() != 5 {
         return None;
     }
     let start = after
@@ -260,11 +262,37 @@ pub fn next_scheduled_at_ms(cron_expr: &str, after: DateTime<Utc>) -> Option<i64
         .and_then(|d| d.with_nanosecond(0))
         .unwrap_or(after)
         + ChronoDuration::minutes(1);
-    for offset_min in 0..(8 * 24 * 60) {
-        let candidate = start + ChronoDuration::minutes(offset_min);
-        if cron_matches(cron_expr, candidate) {
+    let end = start + ChronoDuration::days(366);
+    let mut candidate = start;
+    while candidate < end {
+        if !field_matches(fields[3], candidate.month(), 1, 12, false)
+            || !field_matches(fields[2], candidate.day(), 1, 31, false)
+            || !field_matches(
+                fields[4],
+                candidate.weekday().num_days_from_sunday(),
+                0,
+                7,
+                true,
+            )
+        {
+            candidate = (candidate + ChronoDuration::days(1))
+                .with_hour(0)
+                .and_then(|d| d.with_minute(0))
+                .and_then(|d| d.with_second(0))
+                .and_then(|d| d.with_nanosecond(0))
+                .unwrap_or(candidate + ChronoDuration::days(1));
+            continue;
+        }
+        if !field_matches(fields[1], candidate.hour(), 0, 23, false) {
+            candidate = (candidate + ChronoDuration::hours(1))
+                .with_minute(0)
+                .unwrap_or(candidate + ChronoDuration::hours(1));
+            continue;
+        }
+        if field_matches(fields[0], candidate.minute(), 0, 59, false) {
             return Some(candidate.timestamp_millis());
         }
+        candidate += ChronoDuration::minutes(1);
     }
     None
 }
@@ -416,9 +444,9 @@ impl AutomationScheduler {
                     (Some(a), None) | (None, Some(a)) => Some(a),
                     (None, None) => None,
                 };
-                // Guard against firing twice in the same minute
+                // Guard against firing twice in the same UTC minute bucket
                 effective_last
-                    .map(|last| now.saturating_sub(last) >= 55_000)
+                    .map(|last| last.div_euclid(60_000) < now.div_euclid(60_000))
                     .unwrap_or(true)
             })
             .collect()
@@ -433,7 +461,7 @@ impl AutomationScheduler {
     ) -> Vec<(String, Result<String, String>)> {
         let due = Self::find_due(suite, at);
         let mut results = Vec::new();
-        for mut rec in due {
+        for rec in due {
             let rec_ws = Path::new(&rec.workspace_root);
             if !path_within_workspace(&suite.workspace_root, rec_ws) {
                 let err = format!(
@@ -451,10 +479,9 @@ impl AutomationScheduler {
                 results.push((rec.id.clone(), Err(err)));
                 continue;
             }
-            // Stamp last_run_ms BEFORE execution so concurrent scheduler ticks cannot double-fire!
-            rec.last_run_ms = Some(at.timestamp_millis());
-            rec.updated_at_ms = now_ms();
-            let _ = suite.upsert_record(KIND_AUTOMATION, &rec.id, &rec);
+            // Stamp last_run_ms BEFORE execution by patching only timestamp fields on the raw
+            // stored JSON so Web-normalized fields (`userPrompt`, `frequency`, `time`, etc.) are preserved!
+            patch_automation_timestamps(suite, &rec, Some(at.timestamp_millis()), now_ms());
 
             let mut registry = ToolRegistry::with_builtin_tools();
             suite.register_tools(&mut registry);
@@ -521,12 +548,38 @@ impl AutomationScheduler {
                 }
             }
 
-            rec.updated_at_ms = now_ms();
-            let _ = suite.upsert_record(KIND_AUTOMATION, &rec.id, &rec);
+            patch_automation_timestamps(suite, &rec, Some(at.timestamp_millis()), now_ms());
             results.push((rec.id, outcome));
         }
         results
     }
+}
+
+fn patch_automation_timestamps(
+    suite: &ModulesSuite,
+    rec: &AutomationRecord,
+    last_run_ms: Option<i64>,
+    updated_at_ms: i64,
+) {
+    if let Ok(Some(mut raw)) = suite.get_record::<Value>(KIND_AUTOMATION, &rec.id) {
+        if let Some(obj) = raw.as_object_mut() {
+            if let Some(ts) = last_run_ms {
+                obj.insert("last_run_ms".into(), Value::Number(ts.into()));
+                if obj.contains_key("lastRunMs") {
+                    obj.insert("lastRunMs".into(), Value::Number(ts.into()));
+                }
+            }
+            obj.insert("updated_at_ms".into(), Value::Number(updated_at_ms.into()));
+            let _ = suite.upsert_record(KIND_AUTOMATION, &rec.id, &raw);
+            return;
+        }
+    }
+    let mut fallback = rec.clone();
+    if let Some(ts) = last_run_ms {
+        fallback.last_run_ms = Some(ts);
+    }
+    fallback.updated_at_ms = updated_at_ms;
+    let _ = suite.upsert_record(KIND_AUTOMATION, &rec.id, &fallback);
 }
 
 #[cfg(test)]
@@ -598,5 +651,54 @@ mod tests {
         // Background scheduler stops cleanly when signaled
         let stop = spawn_background_scheduler(store, dir.path().to_path_buf(), None, None);
         stop.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn scheduler_minute_bucket_366d_next_and_raw_patch_preserve_web_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        store
+            .put_module_record(
+                KIND_AUTOMATION,
+                "web-preserve",
+                &json!({
+                    "id": "web-preserve",
+                    "name": "Yearly Report",
+                    "userPrompt": "Run yearly summary",
+                    "frequency": "monthly",
+                    "time": "09:00",
+                    "customWebField": "keep_me",
+                    "enabled": true
+                }),
+            )
+            .unwrap();
+
+        let rec = parse_automation_value(
+            &store
+                .get_module_record::<Value>(KIND_AUTOMATION, "web-preserve")
+                .unwrap()
+                .unwrap(),
+            dir.path(),
+        )
+        .unwrap();
+        patch_automation_timestamps(&suite, &rec, Some(1_700_000_000_000), 1_700_000_001_000);
+        let patched: Value = store
+            .get_module_record(KIND_AUTOMATION, "web-preserve")
+            .unwrap()
+            .unwrap();
+        assert_eq!(patched["customWebField"], "keep_me");
+        assert_eq!(patched["userPrompt"], "Run yearly summary");
+        assert_eq!(patched["last_run_ms"], 1_700_000_000_000i64);
+
+        // Yearly cron (>8 days away) is found within 366 days!
+        let jan2 = DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let next_jan1 = next_scheduled_at_ms("0 9 1 1 *", jan2);
+        assert!(next_jan1.is_some());
+        let dt = DateTime::from_timestamp_millis(next_jan1.unwrap()).unwrap();
+        assert_eq!((dt.year(), dt.month(), dt.day(), dt.hour(), dt.minute()), (2027, 1, 1, 9, 0));
     }
 }

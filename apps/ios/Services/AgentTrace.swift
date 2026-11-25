@@ -723,14 +723,14 @@ nonisolated public enum AgentTraceAdapter {
             var surfaceID = "ui_surface"
             var summary = "ui_surface"
             if case .object(let root) = snapshot {
-                if case .object(let identity) = root["identity"],
-                   case .string(let sid) = identity["surface_id"],
+                if case .object(let identity)? = root["identity"],
+                   case .string(let sid)? = identity["surface_id"],
                    !sid.isEmpty {
                     surfaceID = sid
                 }
-                if case .string(let s) = root["summary"], !s.isEmpty {
+                if case .string(let s)? = root["summary"], !s.isEmpty {
                     summary = s
-                } else if case .string(let p) = root["phase"], !p.isEmpty {
+                } else if case .string(let p)? = root["phase"], !p.isEmpty {
                     summary = p
                 }
             }

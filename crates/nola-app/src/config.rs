@@ -116,11 +116,11 @@ pub fn default_vault_path(db_path: &Path) -> PathBuf {
         .join("vault.json")
 }
 
-fn vault_secret_key(conn_id: &str) -> String {
+pub(crate) fn vault_secret_key(conn_id: &str) -> String {
     format!("model_conn_key:{conn_id}")
 }
 
-fn resolve_vault_path_for_store(store: &Store) -> PathBuf {
+pub(crate) fn resolve_vault_path_for_store(store: &Store) -> PathBuf {
     if let Ok(Some(val)) = store.get_kv(KV_VAULT_PATH) {
         if let Some(p) = val.as_str().map(str::trim).filter(|s| !s.is_empty()) {
             return PathBuf::from(p);

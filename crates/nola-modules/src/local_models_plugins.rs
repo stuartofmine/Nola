@@ -132,7 +132,11 @@ fn detect_memory_bytes() -> (Option<u64>, Option<u64>) {
 fn detect_free_disk_bytes() -> Option<u64> {
     #[cfg(unix)]
     {
-        let out = Command::new("df").args(["-k", "."]).output().ok()?;
+        let out = Command::new("df")
+            .args(["-P", "-k", "."])
+            .env("LC_ALL", "C")
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }
@@ -393,6 +397,37 @@ impl LocalModelProcessManager {
             .and_then(|v| v.as_str())
             .unwrap_or(engine);
         let effective_port = if port == 0 { 8081 } else { port };
+        let entry_id = if id.trim().is_empty() {
+            new_id()
+        } else {
+            id.trim().to_string()
+        };
+
+        // Reap exited entries, kill any existing process with the same `id`, and reject port conflicts
+        // BEFORE spawning the new subprocess!
+        let mut guard = self
+            .processes
+            .lock()
+            .map_err(|_| "process manager lock poisoned".to_string())?;
+        let mut exited_ids = Vec::new();
+        for (existing_id, entry) in guard.iter_mut() {
+            if matches!(entry.child.try_wait(), Ok(Some(_))) {
+                exited_ids.push(existing_id.clone());
+            }
+        }
+        for dead_id in exited_ids {
+            guard.remove(&dead_id);
+        }
+        if let Some(mut old) = guard.remove(&entry_id) {
+            let _ = old.child.kill();
+            let _ = old.child.wait();
+        }
+        if let Some(conflict) = guard.values().find(|e| e.port == effective_port) {
+            return Err(format!(
+                "port {effective_port} is already held by running local model '{}'",
+                conflict.id
+            ));
+        }
 
         let mut cmd = Command::new(&binary_path);
         match canonical_engine {
@@ -440,6 +475,16 @@ impl LocalModelProcessManager {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::process::CommandExt;
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+        }
 
         let child = cmd
             .spawn()
@@ -447,20 +492,7 @@ impl LocalModelProcessManager {
         let pid = child.id();
         let endpoint = format!("http://127.0.0.1:{effective_port}");
         let started_at_ms = now_ms();
-        let entry_id = if id.trim().is_empty() {
-            new_id()
-        } else {
-            id.trim().to_string()
-        };
 
-        let mut guard = self
-            .processes
-            .lock()
-            .map_err(|_| "process manager lock poisoned".to_string())?;
-        if let Some(mut old) = guard.remove(&entry_id) {
-            let _ = old.child.kill();
-            let _ = old.child.wait();
-        }
         guard.insert(
             entry_id.clone(),
             RunningLocalModel {
@@ -485,6 +517,15 @@ impl LocalModelProcessManager {
             "binaryPath": binary_path,
             "startedAtMs": started_at_ms
         }))
+    }
+
+    pub fn stop_all(&self) {
+        if let Ok(mut guard) = self.processes.lock() {
+            for (_, mut proc_entry) in std::mem::take(&mut *guard) {
+                let _ = proc_entry.child.kill();
+                let _ = proc_entry.child.wait();
+            }
+        }
     }
 
     pub fn stop_local_model(&self, id: &str) -> Result<Value, String> {
@@ -758,11 +799,26 @@ pub fn list_harness_plugins(store: Option<&Store>, workspace_root: &Path) -> Val
                 .any(|p| p.get("id").and_then(|v| v.as_str()) == Some(rec.id.as_str()))
             {
                 let src = format!("{}@{}", rec.name, rec.version);
-                dsh_web_packages.push(json!({
+                let pkg_entry = json!({
                     "source": src,
                     "pages": [],
                     "links": []
-                }));
+                });
+                let has_cap = |needle: &str| {
+                    rec.capabilities
+                        .iter()
+                        .any(|c| c.trim().eq_ignore_ascii_case(needle))
+                };
+                if has_cap("pi") || has_cap("runtime:pi") {
+                    pi_packages.push(pkg_entry);
+                } else if has_cap("terminal")
+                    || has_cap("dsh_terminal")
+                    || has_cap("profile:terminal")
+                {
+                    dsh_term_packages.push(pkg_entry);
+                } else {
+                    dsh_web_packages.push(pkg_entry);
+                }
                 discovered_plugins.push(json!({
                     "id": rec.id,
                     "name": rec.name,
@@ -1255,5 +1311,40 @@ mod tests {
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0]["id"], "metrics");
         assert_eq!(pages[0]["html"], "<h1>Live Metrics</h1>");
+
+        // Stored PluginRecords route to pi / dsh-terminal / dsh-web by capability
+        let store = Store::open_in_memory().unwrap();
+        store
+            .put_module_record(
+                KIND_PLUGIN,
+                "p-pi",
+                &PluginRecord {
+                    id: "p-pi".into(),
+                    name: "pi-tool".into(),
+                    version: "1.0.0".into(),
+                    entry_path: "".into(),
+                    enabled: true,
+                    capabilities: vec!["pi".into()],
+                },
+            )
+            .unwrap();
+        store
+            .put_module_record(
+                KIND_PLUGIN,
+                "p-term",
+                &PluginRecord {
+                    id: "p-term".into(),
+                    name: "term-tool".into(),
+                    version: "1.0.0".into(),
+                    entry_path: "".into(),
+                    enabled: true,
+                    capabilities: vec!["terminal".into()],
+                },
+            )
+            .unwrap();
+        let cat2 = list_harness_plugins(Some(&store), dir.path());
+        let profiles = cat2["profiles"].as_array().unwrap();
+        assert_eq!(profiles[0]["packages"].as_array().unwrap().len(), 1);
+        assert_eq!(profiles[2]["packages"].as_array().unwrap().len(), 1);
     }
 }

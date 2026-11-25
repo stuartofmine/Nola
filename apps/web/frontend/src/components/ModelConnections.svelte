@@ -62,6 +62,7 @@
     }
     let gatewayToken = $state('');
     let tokenCopied = $state(false);
+    let tokenCopyTimer: ReturnType<typeof setTimeout> | undefined;
     function attemptLabel(profileId: string) {
         const match = inventory.selections.find(item => `${item.connection_id}:${item.catalog_key}` === profileId);
         if (!match) return profileId;
@@ -74,7 +75,8 @@
         try {
             await navigator.clipboard?.writeText(gatewayToken);
             tokenCopied = true;
-            setTimeout(() => { if (alive) tokenCopied = false; }, 2000);
+            clearTimeout(tokenCopyTimer);
+            tokenCopyTimer = setTimeout(() => { tokenCopyTimer = undefined; if (alive) tokenCopied = false; }, 2000);
         } catch { tokenCopied = false; }
     }
     let attempts = $state<{record: {id: string; profile_id: string; outcome: string; usage: {input_tokens?: number | null; output_tokens?: number | null} | null}}[]>([]);
@@ -176,11 +178,11 @@
         }
         void operation(async () => {
             const value = await api<{revision: number; token?: string}>('/api/model-gateway/access', {method: 'POST', body: JSON.stringify({expected_revision: gateway.revision, revoke})});
-            if (alive) { gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
+            if (alive) { clearTimeout(tokenCopyTimer); tokenCopyTimer = undefined; gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
         });
     }
     function readAttempts() { void operation(async () => { const value = await api<typeof attempts>('/api/model-gateway/attempts'); if (alive) attempts = value; }); }
-    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(true); alive = false; gatewayToken = ''; controller?.abort(); }; });
+    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(true); alive = false; gatewayToken = ''; clearTimeout(tokenCopyTimer); tokenCopyTimer = undefined; controller?.abort(); }; });
 </script>
 
 <ConfirmationDialog bind:this={confirmation} />

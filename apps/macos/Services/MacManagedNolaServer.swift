@@ -300,6 +300,7 @@ final class MacManagedNolaServer {
 
     private(set) var state: MacManagedNolaServerState = .stopped
     private var process: Process?
+    private var stdinPipe: Pipe?
     private var stdoutTask: Task<Void, Never>?
     private var stderrTask: Task<Void, Never>?
     private var launchRevision = 0
@@ -346,12 +347,13 @@ final class MacManagedNolaServer {
             let process = Process()
             let output = Pipe()
             let errors = Pipe()
+            let input = Pipe()
             process.executableURL = executableURL
             process.currentDirectoryURL = environment.scratchWorkspaceURL
             process.arguments = arguments
             process.standardOutput = output
             process.standardError = errors
-            process.standardInput = FileHandle.nullDevice
+            process.standardInput = input
             var environment = self.environment.launchAgentEnvironment(
                 projectURL: self.environment.scratchWorkspaceURL
             )
@@ -377,6 +379,7 @@ final class MacManagedNolaServer {
             try process.run()
             MacOwnedChildProcessRegistry.shared.register(process)
             self.process = process
+            self.stdinPipe = input
             stderrTask = Task.detached {
                 do {
                     for try await line in errors.fileHandleForReading.bytes.lines {
@@ -467,6 +470,8 @@ final class MacManagedNolaServer {
     }
 
     private func stopProcess() {
+        try? stdinPipe?.fileHandleForWriting.close()
+        stdinPipe = nil
         stdoutTask?.cancel()
         stdoutTask = nil
         stderrTask?.cancel()
@@ -488,6 +493,8 @@ final class MacManagedNolaServer {
             MacOwnedChildProcessRegistry.shared.unregister(process)
         }
         process = nil
+        try? stdinPipe?.fileHandleForWriting.close()
+        stdinPipe = nil
         stdoutTask?.cancel()
         stdoutTask = nil
         stderrTask?.cancel()

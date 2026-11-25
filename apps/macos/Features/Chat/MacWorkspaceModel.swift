@@ -6237,6 +6237,30 @@ final class MacWorkspaceModel {
         }
         guard generationID == activeGenerationID else { return }
         if await reconcileCanonicalRunTerminal(conversationID: conversationID) { return }
+        if succeeded && runCoordinator.canFinish(generationID: generationID) {
+            let disposition = await finishAssistantStream(
+                response: &response,
+                assembler: &assembler,
+                conversationID: conversationID,
+                messageID: currentAssistantMessageID
+            )
+            if disposition == .completed, generationID == activeGenerationID {
+                await notifyCompletionIfNeeded(
+                    conversationID: conversationID,
+                    assistantMessageID: currentAssistantMessageID,
+                    execution: .thisMac,
+                    generationID: generationID
+                )
+            }
+            runCoordinator.releaseTask(generationID: generationID)
+            if activeConversationID == conversationID {
+                activeAssistantMessageID = nil
+                isRunning = false
+                activeConversationID = nil
+                activeRunExecutionLocation = nil
+            }
+            return
+        }
         if observedGoalExecution,
            let goal = try? modelApplication.goalControlObservation(conversationID: conversationID),
            goal.status != "running" {
@@ -7969,10 +7993,10 @@ final class MacWorkspaceModel {
     }
 
     @discardableResult
-    func submitV2UIInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+    func submitV2UIInteraction(conversationId: String, interactionData: Data) async throws -> Data {
         let data = try await remoteHost.v2SubmitUiInteraction(
             conversationId: conversationId,
-            interaction: interaction
+            interactionData: interactionData
         )
         if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let snapshot = root["snapshot"],
@@ -8086,7 +8110,7 @@ final class MacWorkspaceModel {
                         attachmentURLs: permissionAttachmentURLs,
                         assistantMessageID: assistantMessageID,
                         generationID: generationID,
-                        usesLocalRuntime: false,
+                        usesLocalRuntime: permissionUsesLocalRuntime,
                         trace: nil,
                         createdAt: Date()
                     ))

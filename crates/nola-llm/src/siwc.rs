@@ -55,9 +55,17 @@ fn strip_nola_extensions(val: &mut Value) {
     }
 }
 
+fn strip_siwc_namespace(name: &str) -> String {
+    name.strip_prefix("nola.")
+        .or_else(|| name.strip_prefix("nola/"))
+        .or_else(|| name.strip_prefix("nola:"))
+        .unwrap_or(name)
+        .to_string()
+}
+
 /// Apply SIWC-specific wire constraints on top of the canonical Responses payload:
 /// - Enforce `stream: true` and `store: false`.
-/// - Strip forbidden fields (`max_output_tokens`, `temperature`, `top_p`, `seed`).
+/// - Strip forbidden fields (`max_output_tokens`, `temperature`, `top_p`, `seed`, `stop`).
 /// - Strip internal `x-nola-read-only` extension fields and wrap function tools in the `nola` namespace.
 fn apply_siwc_payload_contract(body: &mut Value) {
     let Some(obj) = body.as_object_mut() else {
@@ -69,6 +77,7 @@ fn apply_siwc_payload_contract(body: &mut Value) {
     obj.remove("temperature");
     obj.remove("top_p");
     obj.remove("seed");
+    obj.remove("stop");
 
     if let Some(tools_val) = obj.remove("tools") {
         if let Value::Array(raw_tools) = tools_val {
@@ -160,7 +169,11 @@ impl ProviderWireAdapter for SiwcResponsesAdapter {
         route: &ModelRouteConfig,
         body: &Value,
     ) -> Result<NormalizedModelResponse, LlmError> {
-        decode_responses_body(ModelProtocol::SiwcResponses, route, body)
+        let mut resp = decode_responses_body(ModelProtocol::SiwcResponses, route, body)?;
+        for tc in &mut resp.tool_calls {
+            tc.name = strip_siwc_namespace(&tc.name);
+        }
+        Ok(resp)
     }
 
     fn parse_sse_stream(
@@ -169,6 +182,23 @@ impl ProviderWireAdapter for SiwcResponsesAdapter {
         reader: &mut dyn BufRead,
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
-        parse_responses_sse(ModelProtocol::SiwcResponses, route, reader, on_delta)
+        let mut wrapped_delta = |delta: ModelStreamDelta| {
+            let normalized = match delta {
+                ModelStreamDelta::ToolCallStart { call_id, name } => {
+                    ModelStreamDelta::ToolCallStart {
+                        call_id,
+                        name: strip_siwc_namespace(&name),
+                    }
+                }
+                other => other,
+            };
+            on_delta(normalized);
+        };
+        let mut resp =
+            parse_responses_sse(ModelProtocol::SiwcResponses, route, reader, &mut wrapped_delta)?;
+        for tc in &mut resp.tool_calls {
+            tc.name = strip_siwc_namespace(&tc.name);
+        }
+        Ok(resp)
     }
 }

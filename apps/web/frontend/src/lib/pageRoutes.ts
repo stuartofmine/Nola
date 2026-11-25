@@ -11,6 +11,7 @@ const pages = {
     '/data-sources': () => import('../pages/DataSources.svelte'),
     '/settings': () => import('../pages/Settings.svelte'),
     '/scheduled-actions': () => import('../pages/Automations.svelte'),
+    '/automations': () => import('../pages/Automations.svelte'),
     '/workspace-review': () => import('../pages/WorkspaceReview.svelte'),
     '/today': () => import('../pages/Today.svelte'),
     '/conversations': () => import('../pages/Conversations.svelte'),

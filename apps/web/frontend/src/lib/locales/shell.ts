@@ -84,6 +84,8 @@ const entries: Record<string, Translations> = {
     'shell.retry': ['重试', 'Retry', 'Erneut versuchen', 'Reintentar', 'Réessayer', '再試行', 'Повторить'],
     'shell.confirm': ['确认', 'Confirm', 'Bestätigen', 'Confirmar', 'Confirmer', '確認', 'Подтвердить'],
     'shell.cancel': ['取消', 'Cancel', 'Abbrechen', 'Cancelar', 'Annuler', 'キャンセル', 'Отмена'],
+    'shell.notifications': ['通知', 'Notifications', 'Benachrichtigungen', 'Notificaciones', 'Notifications', '通知', 'Уведомления'],
+    'shell.dismiss': ['关闭', 'Dismiss', 'Schließen', 'Descartar', 'Fermer', '閉じる', 'Закрыть'],
     'shell.language': ['语言', 'Language', 'Sprache', 'Idioma', 'Langue', '言語', 'Язык'],
     'shell.language.system': ['跟随浏览器', 'Browser default', 'Browsersprache', 'Idioma del navegador', 'Langue du navigateur', 'ブラウザの設定に従う', 'Язык браузера'],
     'shell.markdown.code': ['代码', 'Code', 'Code', 'Código', 'Code', 'コード', 'Код'],

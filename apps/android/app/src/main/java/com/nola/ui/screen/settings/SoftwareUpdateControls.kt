@@ -157,7 +157,7 @@ internal fun SoftwareUpdateControls() {
     var failure by remember { mutableStateOf<String?>(null) }
     var packageFile by remember { mutableStateOf<File?>(null) }
     val statusText = when (snapshot?.status) {
-        "disabled" -> R.string.software_update_status_disabled
+        "disabled", "unconfigured" -> R.string.software_update_status_disabled
         "up_to_date" -> R.string.software_update_status_up_to_date
         "ahead" -> R.string.software_update_status_ahead
         "available" -> R.string.software_update_status_available

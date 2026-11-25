@@ -166,7 +166,7 @@
 {#if path !== '/chat' && path !== '/login'}
 <nav class="mobile-primary-navigation" aria-label={t($locale, 'shell.primaryNavigation')}>
     <a href="/conversations" aria-label={t($locale, 'shell.conversations')} aria-current={path === '/conversations' ? 'page' : undefined}><PrototypeIcon name="chat" size={19} /><span>{t($locale, 'shell.mobileConversations')}</span></a>
-    <a href="/activity" aria-current={['/activity', '/results', '/scheduled-actions'].includes(path) ? 'page' : undefined}><PrototypeIcon name="clock" size={19} /><span>{t($locale, 'shell.mobileActivity')}</span></a>
+    <a href="/activity" aria-current={['/activity', '/results', '/scheduled-actions', '/automations'].includes(path) ? 'page' : undefined}><PrototypeIcon name="clock" size={19} /><span>{t($locale, 'shell.mobileActivity')}</span></a>
     <a href="/data-sources" aria-label={t($locale, 'shell.information')} aria-current={path === '/data-sources' ? 'page' : undefined}><PrototypeIcon name="folder" size={19} /><span>{t($locale, 'shell.mobileInformation')}</span></a>
     <a href="/settings" aria-current={['/settings', '/models', '/capabilities', '/model-test'].includes(path) ? 'page' : undefined}><PrototypeIcon name="settings" size={19} /><span>{t($locale, 'shell.settings')}</span></a>
 </nav>

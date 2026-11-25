@@ -4024,9 +4024,12 @@ nonisolated final class MacApplicationPort:
     }
 
     func listAutomations() throws -> [MacCanonicalAutomation] {
-        try execute(MacAutomationCommandEnvelope(command: MacAutomationObjectCommand(
-            type: "definition", command: TypeOnlyCommand(type: "list")
-        )))
+        try executeList(
+            MacAutomationCommandEnvelope(command: MacAutomationObjectCommand(
+                type: "definition", command: TypeOnlyCommand(type: "list")
+            )),
+            wrapperKeys: ["automations", "definitions", "items", "records"]
+        )
     }
 
     func enqueueAutomationRun(_ input: MacCanonicalAutomationRun) throws -> MacCanonicalAutomationRun {
@@ -4073,7 +4076,10 @@ nonisolated final class MacApplicationPort:
         try execute(ObserveAutomationExecutionCommand(occurrenceID: occurrenceID))
     }
     func listPendingAutomationExecutions(afterOccurrenceID: String?, limit: Int) throws -> [String] {
-        try execute(ListPendingAutomationExecutionsCommand(afterOccurrenceID: afterOccurrenceID, limit: limit))
+        try executeList(
+            ListPendingAutomationExecutionsCommand(afterOccurrenceID: afterOccurrenceID, limit: limit),
+            wrapperKeys: ["executions", "occurrences", "items", "records"]
+        )
     }
 
     func reconcileAutomationExecution(occurrenceID: String, reconciledAtMs: Int64) throws -> MacAutomationExecutionReceipt? {
@@ -4095,12 +4101,16 @@ nonisolated final class MacApplicationPort:
     }
 
     func listAutomationRuns(automationID: String? = nil, limit: Int = 200) throws -> [MacCanonicalAutomationRun] {
-        try execute(MacAutomationCommandEnvelope(command: MacAutomationObjectCommand(
-            type: "run", command: ListAutomationRunsCommand(
-            type: "list",
-            automationID: automationID,
-            limit: max(1, limit)
-        ))))
+        try executeList(
+            MacAutomationCommandEnvelope(command: MacAutomationObjectCommand(
+                type: "run", command: ListAutomationRunsCommand(
+                    type: "list",
+                    automationID: automationID,
+                    limit: max(1, limit)
+                )
+            )),
+            wrapperKeys: ["runs", "items", "records"]
+        )
     }
 
     func createDataSourceDraft(_ input: MacCanonicalDataSourceDraft) throws -> MacCanonicalDataSource {

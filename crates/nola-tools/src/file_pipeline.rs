@@ -377,7 +377,8 @@ impl ToolHandler for ReadFileTool {
             }
         }
         let numbered = rendered.join("\n");
-        let truncated = byte_capped || (total_lines > 0 && actual_end < total_lines);
+        let truncated =
+            byte_capped || (total_lines > 0 && start <= total_lines && actual_end < total_lines);
 
         ToolExecutionResult::ok_structured(
             json!({
@@ -678,11 +679,37 @@ pub(crate) fn apply_text_edit(
     // Tier 2: CRLF-normalized exact match (preserves original file's CRLF line endings!)
     if original.contains("\r\n") && !old_text.contains("\r\n") {
         let crlf_old = old_text.replace('\n', "\r\n");
-        let crlf_new = new_text.replace('\n', "\r\n");
+        let crlf_new = new_text.replace("\r\n", "\n").replace('\n', "\r\n");
         let crlf_positions: Vec<usize> = original.match_indices(&crlf_old).map(|(i, _)| i).collect();
-        if !crlf_positions.is_empty()
-            && (replace_all || expected == Some(crlf_positions.len()) || (expected.is_none() && crlf_positions.len() == 1))
-        {
+        let crlf_count = crlf_positions.len();
+        if crlf_count > 0 {
+            if let Some(exp) = expected {
+                if crlf_count != exp {
+                    let match_lines: Vec<usize> = crlf_positions
+                        .iter()
+                        .take(20)
+                        .map(|&off| byte_offset_to_line(original, off))
+                        .collect();
+                    return Err(ToolExecutionResult::err_structured(
+                        "replacement_count_mismatch",
+                        format!("expected {exp} matches but found {crlf_count} at line(s) {match_lines:?}"),
+                        Some(json!({"found": crlf_count, "expected": exp, "match_lines": match_lines})),
+                    ));
+                }
+            } else if !replace_all && crlf_count > 1 {
+                let match_lines: Vec<usize> = crlf_positions
+                    .iter()
+                    .take(20)
+                    .map(|&off| byte_offset_to_line(original, off))
+                    .collect();
+                return Err(ToolExecutionResult::err_structured(
+                    "ambiguous_match",
+                    format!(
+                        "old_text matched {crlf_count} locations at line(s) {match_lines:?}; provide more context or set replace_all=true"
+                    ),
+                    Some(json!({"found": crlf_count, "match_lines": match_lines})),
+                ));
+            }
             let first_line = byte_offset_to_line(original, crlf_positions[0]);
             let new_line_count = new_text.lines().count().max(1);
             let do_all = replace_all || expected.map(|e| e > 1).unwrap_or(false);
@@ -691,7 +718,7 @@ pub(crate) fn apply_text_edit(
             } else {
                 original.replacen(&crlf_old, &crlf_new, 1)
             };
-            let count = if do_all { crlf_positions.len() } else { 1 };
+            let count = if do_all { crlf_count } else { 1 };
             return Ok((
                 out,
                 count,
@@ -994,15 +1021,45 @@ struct Hunk {
     new_no_trailing_newline: bool,
 }
 
+fn unquote_diff_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some('t') => out.push('\t'),
+                    Some('n') => out.push('\n'),
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn strip_diff_prefix(raw: &str) -> String {
-    let trimmed = raw.trim().split('\t').next().unwrap_or("").trim();
-    if trimmed == "/dev/null" {
+    let before_tab = raw.trim().split('\t').next().unwrap_or("").trim();
+    let unquoted = unquote_diff_path(before_tab);
+    if unquoted == "/dev/null" {
         return "/dev/null".into();
     }
-    trimmed
+    unquoted
         .strip_prefix("a/")
-        .or_else(|| trimmed.strip_prefix("b/"))
-        .unwrap_or(trimmed)
+        .or_else(|| unquoted.strip_prefix("b/"))
+        .unwrap_or(&unquoted)
         .to_string()
 }
 
@@ -1117,6 +1174,7 @@ fn parse_range(spec: &str, header: &str) -> Result<(usize, usize), String> {
 }
 
 fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
+    let line_ending = if original.contains("\r\n") { "\r\n" } else { "\n" };
     let mut lines: Vec<String> = if original.is_empty() {
         Vec::new()
     } else {
@@ -1178,9 +1236,9 @@ fn apply_hunks(original: &str, hunks: &[Hunk]) -> Result<String, String> {
         min_next_idx = found + new_len;
     }
 
-    let mut out = lines.join("\n");
+    let mut out = lines.join(line_ending);
     if !out.is_empty() && !no_trailing_newline {
-        out.push('\n');
+        out.push_str(line_ending);
     }
     Ok(out)
 }

@@ -239,7 +239,17 @@ impl Store {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let out = f(&tx)?;
             if let Err(e) = tx.commit() {
-                self.poison_connection(conn);
+                let is_transient_lock = matches!(
+                    e,
+                    rusqlite::Error::SqliteFailure(ffi_err, _)
+                        if matches!(
+                            ffi_err.code,
+                            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                        )
+                );
+                if !is_transient_lock {
+                    self.poison_connection(conn);
+                }
                 return Err(StoreError::Sqlite(e));
             }
             Ok(out)
@@ -321,10 +331,17 @@ impl Store {
     }
 
     pub fn delete_session(&self, id: &str) -> Result<(), StoreError> {
+        let state_key = format!("session_state:{id}");
+        let todos_key = format!("todos:{id}");
+        let plan_key = format!("plan:{id}");
         self.run_write_tx(|tx| {
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM events WHERE scope = ?1", params![id])?;
             tx.execute("DELETE FROM event_watermarks WHERE scope = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM kv WHERE key IN (?1, ?2, ?3)",
+                params![state_key, todos_key, plan_key],
+            )?;
             Ok(())
         })
     }
@@ -372,6 +389,10 @@ impl Store {
                    min_retained_seq = MAX(event_watermarks.min_retained_seq, excluded.min_retained_seq),
                    max_seq = excluded.max_seq",
                 params![scope, min_retained, next_seq],
+            )?;
+            tx.execute(
+                "UPDATE sessions SET updated_at_ms = ?1 WHERE id = ?2",
+                params![ts, scope],
             )?;
             Ok(SessionEvent {
                 scope: scope.to_string(),
@@ -566,7 +587,13 @@ impl Store {
             }
             // CJK / non-space-delimited substring fallback when unicode61 FTS5 finds 0 hits
             if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
-                let like_pat = format!("%{}%", trimmed.replace('%', "\\%").replace('_', "\\_"));
+                let like_pat = format!(
+                    "%{}%",
+                    trimmed
+                        .replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                );
                 let mut stmt = conn.prepare(
                     "SELECT id, namespace, title, content, tags_json, created_at_ms, updated_at_ms
                      FROM memory_items
@@ -892,11 +919,13 @@ impl Store {
         if let Ok(f) = std::fs::File::open(&tmp_dest) {
             let _ = f.sync_all();
         }
+        // Remove stale WAL/SHM sidecars BEFORE and AFTER replacing the database file.
+        let _ = std::fs::remove_file(format!("{}-wal", dest_path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", dest_path.display()));
         if let Err(e) = std::fs::rename(&tmp_dest, dest_path) {
             let _ = std::fs::remove_file(&tmp_dest);
             return Err(StoreError::Io(e));
         }
-        // Remove stale WAL/SHM sidecars if any existed for the replaced database file.
         let _ = std::fs::remove_file(format!("{}-wal", dest_path.display()));
         let _ = std::fs::remove_file(format!("{}-shm", dest_path.display()));
         Ok(())
@@ -1094,5 +1123,52 @@ mod tests {
         // Reads still succeed under query_only
         assert_eq!(store.list_module_records::<GoalRecord>("goal").unwrap().len(), 1);
         assert!(store.events_after("s", 0, 10).is_ok());
+    }
+
+    #[test]
+    fn delete_session_cleans_kv_append_updates_timestamp_and_cjk_escapes_backslash() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_session(&Session {
+                id: "s1".into(),
+                title: "Initial".into(),
+                workspace_root: "/tmp".into(),
+                model_connection: None,
+                model_id: None,
+                created_at_ms: 100,
+                updated_at_ms: 100,
+            })
+            .unwrap();
+        store.set_kv("session_state:s1", &json!({"ok": true})).unwrap();
+        store.set_kv("todos:s1", &json!({"todos": []})).unwrap();
+        store.set_kv("plan:s1", &json!({"title": "p"})).unwrap();
+
+        let ev = store.append_event("s1", "msg", json!({"x": 1}), 10).unwrap();
+        let sess = store.get_session("s1").unwrap().unwrap();
+        assert_eq!(sess.updated_at_ms, ev.created_at_ms);
+        assert!(sess.updated_at_ms > 100);
+
+        store.delete_session("s1").unwrap();
+        assert!(store.get_session("s1").unwrap().is_none());
+        assert!(store.get_kv("session_state:s1").unwrap().is_none());
+        assert!(store.get_kv("todos:s1").unwrap().is_none());
+        assert!(store.get_kv("plan:s1").unwrap().is_none());
+
+        // CJK LIKE fallback properly escapes backslash before % and _
+        store
+            .upsert_memory(&MemoryItem {
+                id: "cjk1".into(),
+                namespace: "default".into(),
+                title: "路径".into(),
+                content: r"测试\foo%bar_baz内容".into(),
+                tags: vec![],
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+        let hits = store.search_memory(r"测试\foo%bar_baz", Some("default"), 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        let miss = store.search_memory(r"测试\fooXbarYbaz", Some("default"), 10).unwrap();
+        assert!(miss.is_empty());
     }
 }

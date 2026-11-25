@@ -183,7 +183,7 @@
     {#if connectionError}<p role="alert" class="error">{t($locale, connectionError)}</p>{/if}
     {#if connectionNotice}<p role="status">{t($locale, connectionNotice)}</p>{/if}
     {#if channelsLoaded}{#each channels as channel (channel.connection_id)}
-        <button class="card connection" disabled={busy || workerLoading} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
+        <button class="card connection" disabled={busy || workerLoading} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification','ready','disabled'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
     {:else}<p class="muted">{t($locale, 'messaging.empty')}</p>{/each}{/if}
 </section>
 <dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="messaging-editor-title">

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy } from 'svelte';
     import { locale, t } from '../lib/i18n';
     import { errorMessage } from '../lib/api';
     import {
@@ -72,13 +73,39 @@
     let dataSourcesSaving = $state(false);
     let dataSourcesError = $state('');
 
-    // Tab 5: Knowledge
-    let knowledgeDraft = $state('');
-    let savedKnowledge = $state('');
+    // Tab 5: Knowledge (key points and wiki kept strictly separate)
+    let keyPointsDraft = $state('');
+    let savedKeyPoints = $state('');
+    let wikiDraft = $state('');
+    let savedWiki = $state('');
     let knowledgeLoading = $state(false);
     let knowledgeSaving = $state(false);
     let knowledgeNotice = $state('');
     let knowledgeError = $state('');
+
+    let disposed = false;
+    let tabController: AbortController | null = null;
+    let actionController: AbortController | null = null;
+
+    function isAbortError(cause: unknown): boolean {
+        return cause instanceof DOMException
+            ? cause.name === 'AbortError'
+            : cause instanceof Error && cause.name === 'AbortError';
+    }
+
+    function nextTabSignal(): AbortSignal {
+        tabController?.abort();
+        tabController = new AbortController();
+        return tabController.signal;
+    }
+
+    onDestroy(() => {
+        disposed = true;
+        tabController?.abort();
+        tabController = null;
+        actionController?.abort();
+        actionController = null;
+    });
 
     const liveTasks = $derived.by(() => {
         const items: Array<{ id: string; label: string; status: 'running' | 'completed' | 'failed'; detail?: string }> = [];
@@ -116,21 +143,23 @@
 
     const userMsgCount = $derived(messages.filter(m => m.role === 'user').length);
     const assistantMsgCount = $derived(messages.filter(m => m.role === 'assistant').length);
-    const knowledgeDirty = $derived(knowledgeDraft !== savedKnowledge);
+    const knowledgeDirty = $derived(keyPointsDraft !== savedKeyPoints || wikiDraft !== savedWiki);
 
-    async function loadGoal(convId: string) {
+    async function loadGoal(convId: string, signal: AbortSignal) {
         goalLoading = true;
         goalError = '';
         try {
-            const loaded = await getV2ConversationGoal(convId);
-            if (conversationId !== convId) return;
+            const loaded = await getV2ConversationGoal(convId, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
             goal = loaded;
             goalTitleDraft = loaded?.title ?? '';
             goalDescDraft = loaded?.description ?? '';
         } catch (cause) {
-            if (conversationId === convId) goalError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                goalError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) goalLoading = false;
+            if (!disposed && !signal.aborted && conversationId === convId) goalLoading = false;
         }
     }
 
@@ -139,20 +168,29 @@
         const convId = conversationId;
         goalSaving = true;
         goalError = '';
+        actionController?.abort();
+        actionController = new AbortController();
+        const signal = actionController.signal;
         try {
-            const saved = await saveV2ConversationGoal(convId, {
-                title: goalTitleDraft,
-                description: goalDescDraft,
-                status: 'active',
-            });
-            if (conversationId !== convId) return;
+            const saved = await saveV2ConversationGoal(
+                convId,
+                {
+                    title: goalTitleDraft,
+                    description: goalDescDraft,
+                    status: 'active',
+                },
+                signal,
+            );
+            if (disposed || signal.aborted || conversationId !== convId) return;
             goal = saved;
             goalTitleDraft = saved?.title ?? goalTitleDraft.trim();
             goalDescDraft = saved?.description ?? '';
         } catch (cause) {
-            if (conversationId === convId) goalError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                goalError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) goalSaving = false;
+            if (!disposed && conversationId === convId) goalSaving = false;
         }
     }
 
@@ -161,38 +199,43 @@
         const convId = conversationId;
         goalSaving = true;
         goalError = '';
+        actionController?.abort();
+        actionController = new AbortController();
+        const signal = actionController.signal;
         try {
-            await clearV2ConversationGoal(convId);
-            if (conversationId !== convId) return;
+            await clearV2ConversationGoal(convId, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
             goal = null;
             goalTitleDraft = '';
             goalDescDraft = '';
         } catch (cause) {
-            if (conversationId === convId) goalError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                goalError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) goalSaving = false;
+            if (!disposed && conversationId === convId) goalSaving = false;
         }
     }
 
-    async function loadDiffAndCheckpoints(convId: string) {
+    async function loadDiffAndCheckpoints(convId: string, signal: AbortSignal) {
         diffLoading = true;
         diffError = '';
         try {
             const [diffRes, cpRes] = await Promise.allSettled([
-                getV2WorkspaceDiff(convId),
-                listV2WorkspaceCheckpoints(convId),
+                getV2WorkspaceDiff(convId, signal),
+                listV2WorkspaceCheckpoints(convId, signal),
             ]);
-            if (conversationId !== convId) return;
+            if (disposed || signal.aborted || conversationId !== convId) return;
             if (diffRes.status === 'fulfilled') {
                 diffSnapshot = diffRes.value;
-            } else {
+            } else if (!isAbortError(diffRes.reason)) {
                 diffError = errorMessage(diffRes.reason);
             }
             if (cpRes.status === 'fulfilled') {
                 checkpoints = cpRes.value;
             }
         } finally {
-            if (conversationId === convId) diffLoading = false;
+            if (!disposed && !signal.aborted && conversationId === convId) diffLoading = false;
         }
     }
 
@@ -202,15 +245,22 @@
         diffBusy = true;
         diffError = '';
         diffNotice = '';
+        actionController?.abort();
+        actionController = new AbortController();
+        const signal = actionController.signal;
         try {
-            const res = kind === 'undo' ? await undoV2Workspace(convId) : await redoV2Workspace(convId);
-            if (conversationId !== convId) return;
+            const res = kind === 'undo'
+                ? await undoV2Workspace(convId, signal)
+                : await redoV2Workspace(convId, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
             diffNotice = res.message || (kind === 'undo' ? t($locale, 'chatInspector.undo') : t($locale, 'chatInspector.redo'));
-            await loadDiffAndCheckpoints(convId);
+            await loadDiffAndCheckpoints(convId, nextTabSignal());
         } catch (cause) {
-            if (conversationId === convId) diffError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                diffError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) diffBusy = false;
+            if (!disposed && conversationId === convId) diffBusy = false;
         }
     }
 
@@ -222,113 +272,155 @@
         compactNotice = '';
         try {
             const res = await compactV2Conversation(convId);
-            if (conversationId !== convId) return;
+            if (disposed || conversationId !== convId) return;
             compactNotice = res.summary || t($locale, 'chatPage.compactionRecord');
             oncompacted?.(compactNotice);
         } catch (cause) {
-            if (conversationId === convId) compactError = errorMessage(cause);
+            if (!disposed && conversationId === convId) compactError = errorMessage(cause);
         } finally {
-            if (conversationId === convId) compacting = false;
+            if (!disposed && conversationId === convId) compacting = false;
         }
     }
 
-    async function loadDataSources(convId: string) {
+    async function loadDataSources(convId: string, signal: AbortSignal) {
         dataSourcesLoading = true;
         dataSourcesError = '';
         try {
-            const items = await listV2ConversationDataSources(convId);
-            if (conversationId !== convId) return;
+            const items = await listV2ConversationDataSources(convId, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
             dataSources = items;
         } catch (cause) {
-            if (conversationId === convId) dataSourcesError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                dataSourcesError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) dataSourcesLoading = false;
+            if (!disposed && !signal.aborted && conversationId === convId) dataSourcesLoading = false;
         }
     }
 
     async function toggleDataSource(sourceId: string) {
         if (!conversationId || dataSourcesSaving) return;
+        const target = dataSources.find(item => item.id === sourceId);
+        if (!target || target.blocked || target.accessPolicy === 'blocked') return;
         const convId = conversationId;
         const previous = dataSources;
         const next = dataSources.map(item => (item.id === sourceId ? { ...item, enabled: !item.enabled } : item));
         dataSources = next;
         dataSourcesSaving = true;
         dataSourcesError = '';
+        actionController?.abort();
+        actionController = new AbortController();
+        const signal = actionController.signal;
         try {
-            const enabledIds = next.filter(item => item.enabled).map(item => item.id);
-            await saveV2ConversationDataSources(convId, enabledIds);
+            const enabledIds = next
+                .filter(item => !item.blocked && item.accessPolicy !== 'blocked' && item.enabled)
+                .map(item => item.id);
+            const disabledIds = next
+                .filter(item => !item.blocked && item.accessPolicy !== 'blocked' && !item.enabled)
+                .map(item => item.id);
+            await saveV2ConversationDataSources(convId, enabledIds, disabledIds, signal);
         } catch (cause) {
-            if (conversationId === convId) {
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
                 dataSources = previous;
                 dataSourcesError = errorMessage(cause);
             }
         } finally {
-            if (conversationId === convId) dataSourcesSaving = false;
+            if (!disposed && conversationId === convId) dataSourcesSaving = false;
         }
     }
 
-    async function loadKnowledge(convId: string) {
+    async function loadKnowledge(convId: string, signal: AbortSignal) {
         knowledgeLoading = true;
         knowledgeError = '';
         knowledgeNotice = '';
         try {
-            const cfg = await getV2ConversationConfiguration(convId);
-            if (conversationId !== convId) return;
-            savedKnowledge = cfg.knowledge;
-            knowledgeDraft = cfg.knowledge;
+            const cfg = await getV2ConversationConfiguration(convId, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
+            savedKeyPoints = cfg.keyPointsMarkdown;
+            keyPointsDraft = cfg.keyPointsMarkdown;
+            savedWiki = cfg.wikiMarkdown;
+            wikiDraft = cfg.wikiMarkdown;
         } catch (cause) {
-            if (conversationId === convId) knowledgeError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                knowledgeError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) knowledgeLoading = false;
+            if (!disposed && !signal.aborted && conversationId === convId) knowledgeLoading = false;
         }
     }
 
     async function saveKnowledge() {
-        if (!conversationId || knowledgeSaving) return;
+        if (!conversationId || knowledgeSaving || !knowledgeDirty) return;
         const convId = conversationId;
         knowledgeSaving = true;
         knowledgeError = '';
         knowledgeNotice = '';
+        actionController?.abort();
+        actionController = new AbortController();
+        const signal = actionController.signal;
+        const nextKeyPoints = keyPointsDraft;
+        const nextWiki = wikiDraft;
+        const patch: { keyPointsMarkdown?: string; wikiMarkdown?: string; summary?: string } = {};
+        if (nextKeyPoints !== savedKeyPoints) {
+            patch.keyPointsMarkdown = nextKeyPoints;
+            patch.summary = nextKeyPoints;
+        }
+        if (nextWiki !== savedWiki) {
+            patch.wikiMarkdown = nextWiki;
+        }
         try {
-            await patchV2ConversationConfiguration(convId, {
-                knowledge: { keyPointsMarkdown: knowledgeDraft, summary: knowledgeDraft },
-            });
-            if (conversationId !== convId) return;
-            savedKnowledge = knowledgeDraft;
+            await patchV2ConversationConfiguration(convId, { knowledge: patch }, signal);
+            if (disposed || signal.aborted || conversationId !== convId) return;
+            savedKeyPoints = nextKeyPoints;
+            savedWiki = nextWiki;
             knowledgeNotice = t($locale, 'chatKnowledge.saved');
         } catch (cause) {
-            if (conversationId === convId) knowledgeError = errorMessage(cause);
+            if (!disposed && !signal.aborted && !isAbortError(cause) && conversationId === convId) {
+                knowledgeError = errorMessage(cause);
+            }
         } finally {
-            if (conversationId === convId) knowledgeSaving = false;
+            if (!disposed && conversationId === convId) knowledgeSaving = false;
         }
     }
 
     function refreshCurrentTab() {
         if (!conversationId) return;
-        if (activeTab === 'tasks') void loadGoal(conversationId);
-        else if (activeTab === 'diff') void loadDiffAndCheckpoints(conversationId);
-        else if (activeTab === 'data-sources') void loadDataSources(conversationId);
-        else if (activeTab === 'knowledge') void loadKnowledge(conversationId);
+        const signal = nextTabSignal();
+        if (activeTab === 'tasks') void loadGoal(conversationId, signal);
+        else if (activeTab === 'diff') void loadDiffAndCheckpoints(conversationId, signal);
+        else if (activeTab === 'data-sources') void loadDataSources(conversationId, signal);
+        else if (activeTab === 'knowledge') void loadKnowledge(conversationId, signal);
     }
 
     $effect(() => {
         const convId = conversationId;
         const tab = activeTab;
         if (!convId) {
+            tabController?.abort();
+            tabController = null;
             goal = null;
             goalTitleDraft = '';
             goalDescDraft = '';
             diffSnapshot = null;
             checkpoints = [];
             dataSources = [];
-            savedKnowledge = '';
-            knowledgeDraft = '';
+            savedKeyPoints = '';
+            keyPointsDraft = '';
+            savedWiki = '';
+            wikiDraft = '';
+            compactNotice = '';
+            compactError = '';
             return;
         }
-        if (tab === 'tasks') void loadGoal(convId);
-        else if (tab === 'diff') void loadDiffAndCheckpoints(convId);
-        else if (tab === 'data-sources') void loadDataSources(convId);
-        else if (tab === 'knowledge') void loadKnowledge(convId);
+        const signal = nextTabSignal();
+        if (tab === 'tasks') void loadGoal(convId, signal);
+        else if (tab === 'diff') void loadDiffAndCheckpoints(convId, signal);
+        else if (tab === 'data-sources') void loadDataSources(convId, signal);
+        else if (tab === 'knowledge') void loadKnowledge(convId, signal);
+        return () => {
+            tabController?.abort();
+            tabController = null;
+        };
     });
 </script>
 
@@ -635,17 +727,20 @@
                 {:else}
                     <ul class="source-list">
                         {#each dataSources as src (src.id)}
-                            <li class="source-item">
+                            {@const isBlocked = src.blocked || src.accessPolicy === 'blocked'}
+                            <li class="source-item" class:blocked={isBlocked}>
                                 <label class="source-toggle">
                                     <input
                                         type="checkbox"
-                                        checked={src.enabled}
-                                        disabled={dataSourcesSaving}
+                                        checked={!isBlocked && src.enabled}
+                                        disabled={dataSourcesSaving || isBlocked}
                                         onchange={() => void toggleDataSource(src.id)}
                                     />
                                     <div class="source-meta">
                                         <strong>{src.name}</strong>
-                                        <small class="inspector-muted">{src.kind}{src.location ? ` · ${src.location}` : ''}</small>
+                                        <small class="inspector-muted">
+                                            {src.kind}{src.location ? ` · ${src.location}` : ''}{isBlocked ? ` · ${t($locale, 'chatDataSources.blocked')}` : ''}
+                                        </small>
                                     </div>
                                 </label>
                             </li>
@@ -663,16 +758,28 @@
                 {#if knowledgeLoading}
                     <p class="inspector-muted">{t($locale, 'chatKnowledge.loading')}</p>
                 {:else}
-                    {#if !savedKnowledge && !knowledgeDraft}
+                    {#if !savedKeyPoints && !keyPointsDraft && !savedWiki && !wikiDraft}
                         <p class="inspector-muted">{t($locale, 'chatInspector.knowledgeEmpty')}</p>
                     {/if}
-                    <textarea
-                        class="knowledge-textarea"
-                        rows="10"
-                        bind:value={knowledgeDraft}
-                        placeholder={t($locale, 'chatInspector.knowledgeSummaryPlaceholder')}
-                        disabled={knowledgeSaving}
-                    ></textarea>
+                    <label class="knowledge-field">
+                        <span class="knowledge-field-label">{t($locale, 'chatKnowledge.knowledgePoints')}</span>
+                        <textarea
+                            class="knowledge-textarea"
+                            rows="6"
+                            bind:value={keyPointsDraft}
+                            placeholder={t($locale, 'chatInspector.knowledgeSummaryPlaceholder')}
+                            disabled={knowledgeSaving}
+                        ></textarea>
+                    </label>
+                    <label class="knowledge-field">
+                        <span class="knowledge-field-label">{t($locale, 'chatKnowledge.wiki')}</span>
+                        <textarea
+                            class="knowledge-textarea"
+                            rows="6"
+                            bind:value={wikiDraft}
+                            disabled={knowledgeSaving}
+                        ></textarea>
+                    </label>
                     <div class="inspector-btn-row">
                         <button
                             type="button"
@@ -686,7 +793,7 @@
                             type="button"
                             class="compact-btn"
                             disabled={knowledgeSaving}
-                            onclick={() => conversationId && void loadKnowledge(conversationId)}
+                            onclick={() => conversationId && void loadKnowledge(conversationId, nextTabSignal())}
                         >
                             {t($locale, 'chatKnowledge.reload')}
                         </button>
@@ -854,6 +961,16 @@
         color: var(--content);
         font-size: 12px;
         resize: vertical;
+    }
+    .knowledge-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .knowledge-field-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--muted);
     }
     .inspector-btn-row {
         display: flex;

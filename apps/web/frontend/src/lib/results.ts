@@ -13,16 +13,21 @@ export function executionConversationLink(conversationId: unknown, runId: unknow
     if (typeof conversationId !== 'string' || !conversationId.trim() || typeof runId !== 'string' || !runId.trim()) return;
     return `/chat?conversation=${encodeURIComponent(conversationId)}&run=${encodeURIComponent(runId)}`;
 }
+const resultStatusAliases: Record<string, string> = {
+    waiting_for_input: 'waiting_input',
+    completed: 'action_completed',
+};
 export function resultStatus(value: string, locale: Locale): string {
-    return ['answered', 'action_completed', 'delegation_accepted', 'incomplete', 'blocked', 'cancelled', 'failed', 'running', 'waiting_input', 'queued'].includes(value) ? t(locale, `activity.status.${value}`) : value;
+    const normalized = Object.hasOwn(resultStatusAliases, value) ? resultStatusAliases[value] : value;
+    return ['answered', 'action_completed', 'delegation_accepted', 'incomplete', 'blocked', 'cancelled', 'failed', 'running', 'waiting_input', 'queued', 'idle'].includes(normalized) ? t(locale, `activity.status.${normalized}`) : value;
 }
 export function resultFormat(value: string, locale: Locale): string {
     if (value === 'rss' || value === 'json') return value.toUpperCase();
     return ['html', 'search', 'script', 'file', 'folder', 'icalendar'].includes(value) ? t(locale, `activity.format.${value}`) : value;
 }
-export const successfulResult = (result: ResultSummary) => ['answered', 'action_completed'].includes(result.status);
+export const successfulResult = (result: ResultSummary) => ['answered', 'action_completed', 'completed'].includes(result.status);
 export const attentionResult = (result: ResultSummary) => ['incomplete', 'blocked', 'failed'].includes(result.status);
-export function activeResult(result: ResultSummary) { return ['running', 'waiting_input', 'queued'].includes(result.status); }
+export function activeResult(result: ResultSummary) { return ['running', 'waiting_input', 'waiting_for_input', 'queued'].includes(result.status); }
 export function sourceResults(results: ResultSummary[], sourceId: string | null): ResultSummary[] {
     // IDs are opaque. Never use substring matching or reinterpret them as URLs.
     return sourceId === null ? results : results.filter(result => result.sourceId === sourceId);

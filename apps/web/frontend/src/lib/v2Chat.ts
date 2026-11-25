@@ -153,12 +153,15 @@ export interface V2DataSourceItem {
     location: string;
     accessPolicy: string;
     enabled: boolean;
+    blocked: boolean;
 }
 
 export interface V2ConversationConfiguration {
     permissionProfile: V2PermissionProfile;
     reasoningEffort: V2ReasoningEffort;
     knowledge: string;
+    keyPointsMarkdown: string;
+    wikiMarkdown: string;
     selectedModelId?: string;
     configurationRevision?: number;
 }
@@ -181,6 +184,7 @@ export interface V2ModelChoice {
     modelName: string;
     endpointId: string;
     selected: boolean;
+    source?: 'remote' | 'local';
 }
 
 export interface V2SendOptions {
@@ -263,7 +267,13 @@ export async function listV2Conversations(signal?: AbortSignal): Promise<ChatCon
 }
 
 export async function createV2Conversation(
-    body: { title?: string; selectedModelSource?: string; selectedModelId?: string } = {},
+    body: {
+        title?: string;
+        selectedModelSource?: string;
+        selectedModelId?: string;
+        permissionProfile?: V2PermissionProfile;
+        reasoningEffort?: V2ReasoningEffort;
+    } = {},
     signal?: AbortSignal,
 ): Promise<ChatConversation> {
     return parseChatConversation(
@@ -280,33 +290,75 @@ export async function getV2Conversation(id: string, signal?: AbortSignal): Promi
 }
 
 export async function listV2ModelChoices(signal?: AbortSignal): Promise<V2ModelChoice[]> {
-    const res = await api<{
-        profiles?: Array<{
-            id?: string;
-            displayName?: string;
-            modelName?: string;
-            enabled?: boolean;
-            selected?: boolean;
-            capabilities?: string[];
-            endpoint?: { id?: string; enabled?: boolean };
-        }>;
-    }>('/api/model-profiles', { signal });
-    if (!Array.isArray(res.profiles)) return [];
-    return res.profiles
-        .filter(
-            p =>
-                p.id &&
-                p.enabled !== false &&
-                p.endpoint?.enabled !== false &&
-                (!p.capabilities || p.capabilities.includes('chat')),
-        )
-        .map(p => ({
-            id: String(p.id),
-            displayName: String(p.displayName || p.modelName || p.id),
-            modelName: String(p.modelName || p.id),
-            endpointId: String(p.endpoint?.id || ''),
-            selected: p.selected === true,
-        }));
+    const [remoteRes, localRes] = await Promise.allSettled([
+        api<{
+            profiles?: Array<{
+                id?: string;
+                displayName?: string;
+                modelName?: string;
+                enabled?: boolean;
+                selected?: boolean;
+                capabilities?: string[];
+                endpoint?: { id?: string; enabled?: boolean };
+            }>;
+        }>('/api/model-profiles', { signal }),
+        api<{
+            models?: Array<{
+                id?: string;
+                displayName?: string;
+                name?: string;
+                runtime?: string;
+                installed?: boolean;
+                selected?: boolean;
+            }>;
+        }>('/api/local-models', { signal }),
+    ]);
+
+    const choices: V2ModelChoice[] = [];
+    const seen = new Set<string>();
+
+    if (remoteRes.status === 'fulfilled' && Array.isArray(remoteRes.value.profiles)) {
+        for (const p of remoteRes.value.profiles) {
+            if (
+                !p.id ||
+                p.enabled === false ||
+                p.endpoint?.enabled === false ||
+                (p.capabilities && !p.capabilities.includes('chat'))
+            ) {
+                continue;
+            }
+            const id = String(p.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            choices.push({
+                id,
+                displayName: String(p.displayName || p.modelName || p.id),
+                modelName: String(p.modelName || p.id),
+                endpointId: String(p.endpoint?.id || ''),
+                selected: p.selected === true,
+                source: 'remote',
+            });
+        }
+    }
+
+    if (localRes.status === 'fulfilled' && Array.isArray(localRes.value.models)) {
+        for (const m of localRes.value.models) {
+            if (!m.id || m.installed !== true) continue;
+            const id = String(m.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            choices.push({
+                id,
+                displayName: String(m.displayName || m.name || m.id),
+                modelName: String(m.name || m.id),
+                endpointId: String(m.runtime || 'local'),
+                selected: m.selected === true,
+                source: 'local',
+            });
+        }
+    }
+
+    return choices;
 }
 
 function extractUsageFromEvents(events: unknown[]): V2TokenUsage {
@@ -402,26 +454,34 @@ export async function getV2ConversationConfiguration(
 ): Promise<V2ConversationConfiguration> {
     const res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/configuration`, { signal });
     const rawKnowledge = res.knowledge;
-    let knowledge = '';
+    let keyPointsMarkdown = '';
+    let wikiMarkdown = '';
     if (typeof rawKnowledge === 'string') {
-        knowledge = rawKnowledge;
+        keyPointsMarkdown = rawKnowledge;
     } else if (rawKnowledge && typeof rawKnowledge === 'object') {
         const kObj = rawKnowledge as Record<string, unknown>;
-        const nonEmpty = (value: unknown): string | undefined =>
-            typeof value === 'string' && value.length > 0 ? value : undefined;
-        knowledge =
-            nonEmpty(kObj.keyPointsMarkdown) ??
-            nonEmpty(kObj.wikiMarkdown) ??
-            nonEmpty(kObj.summary) ??
-            nonEmpty(kObj.points) ??
-            nonEmpty(kObj.wiki) ??
-            '';
+        keyPointsMarkdown =
+            typeof kObj.keyPointsMarkdown === 'string'
+                ? kObj.keyPointsMarkdown
+                : typeof kObj.summary === 'string'
+                  ? kObj.summary
+                  : typeof kObj.points === 'string'
+                    ? kObj.points
+                    : '';
+        wikiMarkdown =
+            typeof kObj.wikiMarkdown === 'string'
+                ? kObj.wikiMarkdown
+                : typeof kObj.wiki === 'string'
+                  ? kObj.wiki
+                  : '';
     }
     const rawModelId = res.selectedModelId ?? res.selected_model_id;
     return {
         permissionProfile: normalizeV2PermissionProfile(res.permissionProfile ?? res.permission_profile),
         reasoningEffort: normalizeV2ReasoningEffort(res.reasoningEffort ?? res.reasoning_effort),
-        knowledge,
+        knowledge: keyPointsMarkdown,
+        keyPointsMarkdown,
+        wikiMarkdown,
         selectedModelId: typeof rawModelId === 'string' && rawModelId ? rawModelId : undefined,
         configurationRevision:
             typeof res.configurationRevision === 'number' ? res.configurationRevision : undefined,
@@ -541,10 +601,13 @@ export async function getV2WorkspaceDiff(
 }
 
 export async function listV2WorkspaceCheckpoints(
-    _conversationId: string,
+    conversationId: string,
     signal?: AbortSignal,
 ): Promise<V2WorkspaceCheckpoint[]> {
-    const res = await api<{ checkpoints?: unknown[] }>('/api/workspace/checkpoints', { signal });
+    const res = await api<{ checkpoints?: unknown[] }>(
+        `${conversationUrl(conversationId)}/workspace/checkpoints`,
+        { signal },
+    );
     const items = Array.isArray(res.checkpoints) ? res.checkpoints : [];
     return items.map((raw, idx) => {
         const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -564,10 +627,10 @@ export async function listV2WorkspaceCheckpoints(
 }
 
 export async function undoV2Workspace(
-    _conversationId: string,
+    conversationId: string,
     signal?: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
-    const res = await api<Record<string, unknown>>('/api/workspace/undo', {
+    const res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace/undo`, {
         method: 'POST',
         body: '{}',
         signal,
@@ -579,10 +642,10 @@ export async function undoV2Workspace(
 }
 
 export async function redoV2Workspace(
-    _conversationId: string,
+    conversationId: string,
     signal?: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
-    const res = await api<Record<string, unknown>>('/api/workspace/redo', {
+    const res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace/redo`, {
         method: 'POST',
         body: '{}',
         signal,
@@ -605,7 +668,15 @@ export async function listV2ConversationDataSources(
     ]);
 
     const enabledSet = new Set<string>();
-    const rawBound = (convRes as Record<string, unknown>).sources ?? (convRes as Record<string, unknown>).enabledIds ?? [];
+    const disabledSet = new Set<string>();
+    const convRecord = convRes as Record<string, unknown>;
+    const topDisabled = convRecord.disabledIds ?? convRecord.disabled_ids;
+    if (Array.isArray(topDisabled)) {
+        for (const entry of topDisabled) {
+            if (typeof entry === 'string' && entry) disabledSet.add(entry);
+        }
+    }
+    const rawBound = convRecord.sources ?? convRecord.enabledIds ?? [];
     if (Array.isArray(rawBound)) {
         for (const entry of rawBound) {
             if (typeof entry === 'string') {
@@ -613,11 +684,19 @@ export async function listV2ConversationDataSources(
             } else if (entry && typeof entry === 'object') {
                 const o = entry as Record<string, unknown>;
                 const id = String(o.id ?? o.sourceId ?? o.source_id ?? '');
-                if (id && o.enabled !== false) enabledSet.add(id);
+                if (!id) continue;
+                if (o.enabled === false) disabledSet.add(id);
+                else enabledSet.add(id);
             }
         }
     } else if (rawBound && typeof rawBound === 'object') {
         const o = rawBound as Record<string, unknown>;
+        const nestedDisabled = o.disabledIds ?? o.disabled_ids;
+        if (Array.isArray(nestedDisabled)) {
+            for (const entry of nestedDisabled) {
+                if (typeof entry === 'string' && entry) disabledSet.add(entry);
+            }
+        }
         const arr = Array.isArray(o.enabledIds)
             ? o.enabledIds
             : Array.isArray(o.sources)
@@ -630,13 +709,16 @@ export async function listV2ConversationDataSources(
                 if (typeof entry === 'string') enabledSet.add(entry);
                 else if (entry && typeof entry === 'object') {
                     const item = entry as Record<string, unknown>;
-                    const id = String(item.id ?? item.sourceId ?? '');
-                    if (id && item.enabled !== false) enabledSet.add(id);
+                    const id = String(item.id ?? item.sourceId ?? item.source_id ?? '');
+                    if (!id) continue;
+                    if (item.enabled === false) disabledSet.add(id);
+                    else enabledSet.add(id);
                 }
             }
         } else {
             for (const [k, v] of Object.entries(o)) {
                 if (v === true) enabledSet.add(k);
+                else if (v === false) disabledSet.add(k);
             }
         }
     }
@@ -656,13 +738,21 @@ export async function listV2ConversationDataSources(
                 ? wrapped.source
                 : wrapped) as Record<string, unknown>;
             const id = String(src.id ?? `ds-${idx}`);
+            const accessPolicy = String(src.accessPolicy ?? src.access_policy ?? 'conversationOptIn');
+            const blocked = accessPolicy === 'blocked';
+            const enabled = blocked
+                ? false
+                : accessPolicy === 'defaultEnabled'
+                  ? !disabledSet.has(id)
+                  : enabledSet.has(id);
             return {
                 id,
                 name: String(src.name ?? src.title ?? id),
                 kind: String(src.kind ?? 'localFile'),
                 location: String(src.location ?? src.url ?? ''),
-                accessPolicy: String(src.accessPolicy ?? 'conversationOptIn'),
-                enabled: enabledSet.has(id),
+                accessPolicy,
+                enabled,
+                blocked,
             };
         })
         .filter(item => item.id);
@@ -671,11 +761,28 @@ export async function listV2ConversationDataSources(
 export async function saveV2ConversationDataSources(
     conversationId: string,
     enabledIds: string[],
+    disabledIds: string[] = [],
     signal?: AbortSignal,
 ): Promise<void> {
     const url = `${conversationUrl(conversationId)}/data-sources`;
-    const body = JSON.stringify({ enabledIds, sources: enabledIds });
+    const body = JSON.stringify({ enabledIds, disabledIds, sources: enabledIds });
     await api(url, { method: 'POST', body, signal });
+}
+
+export async function parseV2Attachment(
+    payload: { filename: string; mimeType: string; dataBase64: string },
+    signal?: AbortSignal,
+): Promise<{ text: string }> {
+    const res = await api<{ text?: string; content?: string }>('/api/attachments/parse', {
+        method: 'POST',
+        body: JSON.stringify({
+            filename: payload.filename,
+            mimeType: payload.mimeType,
+            dataBase64: payload.dataBase64,
+        }),
+        signal,
+    });
+    return { text: typeof res.text === 'string' ? res.text : typeof res.content === 'string' ? res.content : '' };
 }
 
 let cachedExperts: V2Expert[] | null = null;

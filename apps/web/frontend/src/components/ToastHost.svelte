@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { fade, fly } from 'svelte/transition';
+    import { locale, t } from '../lib/i18n';
     import { toasts, dismissToast } from '../lib/toast';
 
     let reducedMotion = $state(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -15,12 +16,12 @@
 </script>
 
 {#if $toasts.length}
-    <div class="toast-host" role="region" aria-live="polite" aria-label="Notifications">
+    <div class="toast-host" role="region" aria-live="polite" aria-label={t($locale, 'shell.notifications')}>
         {#each $toasts as item (item.id)}
             <div class="toast" data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}
                 in:fly={{ y: 8, duration: reducedMotion ? 0 : 180 }} out:fade={{ duration: reducedMotion ? 0 : 100 }}>
                 <span>{item.message}</span>
-                <button type="button" class="toast-close" aria-label="Dismiss" onclick={() => dismissToast(item.id)}>×</button>
+                <button type="button" class="toast-close" aria-label={t($locale, 'shell.dismiss')} onclick={() => dismissToast(item.id)}>×</button>
             </div>
         {/each}
     </div>

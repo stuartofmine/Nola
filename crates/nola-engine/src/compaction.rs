@@ -94,9 +94,17 @@ fn compact_history_inner(
         .len()
         .saturating_sub(RECENT_REASONING_KEEP_COUNT);
     for &idx in assistant_indices.iter().take(prune_asst_count) {
-        if let HistoryMessage::Assistant { reasoning, .. } = &mut history[idx] {
+        if let HistoryMessage::Assistant {
+            reasoning,
+            continuation,
+            ..
+        } = &mut history[idx]
+        {
             if reasoning.as_ref().is_some_and(|r| r.len() > 200) {
                 *reasoning = None;
+                strip_continuation_reasoning(continuation);
+            } else if continuation.as_ref().is_some_and(has_continuation_reasoning) {
+                strip_continuation_reasoning(continuation);
             }
         }
     }
@@ -179,10 +187,10 @@ fn compact_history_inner(
     let keep_recent = if force { 2 } else { 6 }.min(history.len().saturating_sub(1));
     let mut split_idx = history.len().saturating_sub(keep_recent);
     // Avoid splitting between an Assistant tool_calls turn and its matching Tool results!
-    while split_idx > 1 && matches!(history.get(split_idx), Some(HistoryMessage::Tool { .. })) {
+    while split_idx > 0 && matches!(history.get(split_idx), Some(HistoryMessage::Tool { .. })) {
         split_idx -= 1;
     }
-    if split_idx >= 2 {
+    if split_idx >= 2 && !matches!(history.get(split_idx), Some(HistoryMessage::Tool { .. })) {
         let old_slice = &history[..split_idx];
         let summary_text = summarizer
             .and_then(|f| f(old_slice))
@@ -208,10 +216,16 @@ fn compact_history_inner(
     // --- Tier 3: Emergency Hard-Limit Guard (NEVER knowingly exceed prompt_token_limit!) ---
     let mut current_tokens = estimate_history_tokens(history);
     if force || current_tokens > hard_limit {
-        // 3A: Strip all remaining reasoning in history
+        // 3A: Strip all remaining reasoning in history (and continuation reasoning items!)
         for msg in history.iter_mut() {
-            if let HistoryMessage::Assistant { reasoning, .. } = msg {
+            if let HistoryMessage::Assistant {
+                reasoning,
+                continuation,
+                ..
+            } = msg
+            {
                 *reasoning = None;
+                strip_continuation_reasoning(continuation);
             }
         }
         // 3B: Shrink even recent oversized tool payloads (preserving output_id, exit_code, path, head+tail)
@@ -227,10 +241,10 @@ fn compact_history_inner(
     // compacted summary + latest turn boundary!
     if current_tokens > hard_limit && history.len() > 2 {
         let mut cut = history.len().saturating_sub(2);
-        while cut > 1 && matches!(history.get(cut), Some(HistoryMessage::Tool { .. })) {
+        while cut > 0 && matches!(history.get(cut), Some(HistoryMessage::Tool { .. })) {
             cut -= 1;
         }
-        if cut >= 1 {
+        if cut >= 1 && !matches!(history.get(cut), Some(HistoryMessage::Tool { .. })) {
             let summary_text = deterministic_ledger_summary(&history[..cut]);
             let mut trimmed = Vec::with_capacity(history.len() - cut + 1);
             trimmed.push(HistoryMessage::User {
@@ -247,12 +261,127 @@ fn compact_history_inner(
         }
     }
 
+    // 3D: Head+tail truncation fallback for single massive messages when STILL over hard_limit
+    // or when force-compacting made no progress on an oversized message.
+    current_tokens = estimate_history_tokens(history);
+    if current_tokens > hard_limit || (force && current_tokens >= tokens_before && current_tokens > 256) {
+        let target_tokens = if current_tokens > hard_limit {
+            hard_limit.max(256)
+        } else {
+            (current_tokens / 2).max(256)
+        };
+        truncate_massive_messages(history, target_tokens);
+    }
+
     let tokens_after = estimate_history_tokens(history);
     CompactionReport {
         tokens_before,
         tokens_after,
         micro_compacted_tools,
         summary_compacted_messages,
+    }
+}
+
+fn has_continuation_reasoning(cont: &nola_types::ProviderContinuation) -> bool {
+    cont.items.iter().any(|item| {
+        let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let is_thought = item
+            .get("thought")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        matches!(t, "thinking" | "redacted_thinking" | "reasoning") || is_thought
+    })
+}
+
+fn strip_continuation_reasoning(continuation: &mut Option<nola_types::ProviderContinuation>) {
+    if let Some(cont) = continuation {
+        cont.items.retain(|item| {
+            let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let is_thought = item
+                .get("thought")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            !matches!(t, "thinking" | "redacted_thinking" | "reasoning") && !is_thought
+        });
+        if cont.items.is_empty() {
+            *continuation = None;
+        }
+    }
+}
+
+fn head_tail_truncate(text: &str, max_chars: usize) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars || max_chars < 64 {
+        return None;
+    }
+    let keep_head = (max_chars * 2) / 3;
+    let keep_tail = max_chars.saturating_sub(keep_head).max(16);
+    let dropped = chars.len().saturating_sub(keep_head + keep_tail);
+    let head: String = chars[..keep_head].iter().collect();
+    let tail: String = chars[chars.len().saturating_sub(keep_tail)..].iter().collect();
+    Some(format!(
+        "{head}\n... [truncated {dropped} chars for context budget] ...\n{tail}"
+    ))
+}
+
+fn truncate_massive_messages(history: &mut [HistoryMessage], target_tokens: usize) {
+    if history.is_empty() {
+        return;
+    }
+    let per_msg_token_budget = (target_tokens / history.len().max(1)).max(128);
+    // Conservative char budget (assuming worst-case ~2 chars/token for mixed CJK/ASCII)
+    let max_chars = per_msg_token_budget.saturating_mul(2).max(256);
+    for msg in history.iter_mut() {
+        if estimate_history_message_tokens(msg) <= per_msg_token_budget {
+            continue;
+        }
+        match msg {
+            HistoryMessage::User { content, media } => {
+                if let Some(truncated) = head_tail_truncate(content, max_chars) {
+                    *content = truncated;
+                }
+                if estimate_history_message_tokens(&HistoryMessage::User {
+                    content: content.clone(),
+                    media: media.clone(),
+                }) > per_msg_token_budget
+                {
+                    media.clear();
+                }
+            }
+            HistoryMessage::Assistant {
+                content,
+                reasoning,
+                continuation,
+                ..
+            } => {
+                *reasoning = None;
+                *continuation = None;
+                if let Some(truncated) = head_tail_truncate(content, max_chars) {
+                    *content = truncated;
+                }
+            }
+            HistoryMessage::Tool {
+                tool_name,
+                payload,
+                media,
+                ..
+            } => {
+                media.clear();
+                let serialized = payload.to_model_string();
+                if let Some(truncated) = head_tail_truncate(&serialized, max_chars) {
+                    let summary: String = payload.ui_summary().chars().take(160).collect();
+                    *payload = ToolModelPayload::structured(
+                        json!({
+                            "compacted": true,
+                            "tool": tool_name,
+                            "original_bytes": serialized.len(),
+                            "preview": truncated
+                        }),
+                        summary,
+                    );
+                }
+            }
+        }
     }
 }
 

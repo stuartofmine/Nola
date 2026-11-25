@@ -3182,8 +3182,14 @@ private fun V2UserQuestionCard(
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                androidx.compose.material3.TextButton(
+                    onClick = { onRespond(prompt.requestId, null) },
+                ) {
+                    Text("Skip")
+                }
                 androidx.compose.material3.Button(
                     enabled = answerText.isNotBlank(),
                     onClick = { onRespond(prompt.requestId, answerText.trim()) },
@@ -3235,8 +3241,8 @@ private fun V2UiSurfaceItem(
                                     "interaction",
                                     v2UiSnapshotJson.parseToJsonElement(
                                         v2UiSnapshotJson.encodeToString(
-                                            com.nola.data.local.UiSubmission.serializer(),
-                                            submission,
+                                            com.nola.data.local.UiInteraction.serializer(),
+                                            submission.interaction,
                                         )
                                     )
                                 )

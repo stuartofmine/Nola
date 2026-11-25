@@ -170,27 +170,27 @@ fn matchers() -> &'static SymbolMatchers {
         rust: vec![
             (
                 "function",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?(?:extern\s+\S+\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?(?:extern\s+\S+\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
             (
                 "struct",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
             (
                 "enum",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
             (
                 "trait",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
             (
                 "type",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?type\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
             (
                 "module",
-                Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
+                Regex::new(r"^\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap(),
             ),
         ],
         ts_js: vec![
@@ -306,7 +306,7 @@ fn matchers() -> &'static SymbolMatchers {
             ),
             (
                 "function",
-                Regex::new(r"^(?:static\s+|inline\s+|extern\s+|virtual\s+|constexpr\s+)*[A-Za-z_][A-Za-z0-9_:<>*&\s]{0,60}\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const\s*)?(?:\{|$)").unwrap(),
+                Regex::new(r"^\s*(?:static\s+|inline\s+|extern\s+|virtual\s+|constexpr\s+)*[A-Za-z_][A-Za-z0-9_:<>*&\s]{0,60}\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*(?:const\s*)?(?:\{|$)").unwrap(),
             ),
         ],
     })
@@ -328,11 +328,12 @@ fn extract_symbols(rel_path: &str, ext: &str, content: &str) -> Vec<CodeSymbol> 
     let mut symbols = Vec::new();
     for (idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();
+        let is_rust_attr = ext == "rs" && (trimmed.starts_with("#[") || trimmed.starts_with("#!["));
         if trimmed.is_empty()
             || trimmed.starts_with("//")
             || trimmed.starts_with("/*")
             || trimmed.starts_with('*')
-            || trimmed.starts_with('#')
+            || (trimmed.starts_with('#') && !is_rust_attr)
         {
             continue;
         }

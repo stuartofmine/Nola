@@ -1733,9 +1733,12 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listAutomationDefinitions() throws -> [IOSCanonicalAutomationDefinition] {
-        try execute(AutomationCommandEnvelope(command: AutomationObjectCommand(
-            type: "definition", command: TypeCommand(type: "list")
-        )))
+        try executeList(
+            AutomationCommandEnvelope(command: AutomationObjectCommand(
+                type: "definition", command: TypeCommand(type: "list")
+            )),
+            wrapperKeys: ["automations", "definitions", "items", "records"]
+        )
     }
 
     @discardableResult
@@ -1789,7 +1792,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         try execute(IOSAutomationExecutionCommand(type: "ack_automation_notification", occurrenceID: occurrenceID, notificationID: notificationID, deliveredAtMs: deliveredAtMs))
     }
     func listPendingAutomationExecutions(afterOccurrenceID: String?, limit: Int) throws -> [String] {
-        try execute(IOSAutomationExecutionCommand(type: "list_pending_automation_executions", afterOccurrenceID: afterOccurrenceID, limit: limit))
+        try executeList(
+            IOSAutomationExecutionCommand(type: "list_pending_automation_executions", afterOccurrenceID: afterOccurrenceID, limit: limit),
+            wrapperKeys: ["executions", "occurrences", "items", "records"]
+        )
     }
 
     func loadAutomationRun(id: String) throws -> IOSCanonicalAutomationRun? {
@@ -1799,11 +1805,14 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listAutomationRuns(automationID: String? = nil, limit: Int = 500) throws -> [IOSCanonicalAutomationRun] {
-        try execute(AutomationCommandEnvelope(command: AutomationObjectCommand(
-            type: "run", command: ListAutomationRunsCommand(
-                type: "list", automationID: automationID, limit: limit
-            )
-        )))
+        try executeList(
+            AutomationCommandEnvelope(command: AutomationObjectCommand(
+                type: "run", command: ListAutomationRunsCommand(
+                    type: "list", automationID: automationID, limit: limit
+                )
+            )),
+            wrapperKeys: ["runs", "items", "records"]
+        )
     }
 
     @discardableResult

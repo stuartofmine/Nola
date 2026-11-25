@@ -288,15 +288,24 @@ impl EffectivePolicy {
         };
 
         // Explicit rules: highest scope wins; within same scope Deny > Ask > Allow!
-        // Evaluate against EVERY extracted resource so multi-target tools (move_file, apply_patch,
-        // read_many_files) cannot slip a denied path past a secondary argument.
+        // For Allow rules with a resource_pattern, EVERY extracted resource MUST match
+        // (so multi-target tools like move_file / read_many_files cannot smuggle an unallowed path).
+        // For Ask/Deny rules, ANY matching resource triggers the restriction.
         let mut matched: Option<&PermissionRule> = None;
         for rule in &self.rules {
             if !tool_matches(&rule.tool_pattern, tool_name, domain) {
                 continue;
             }
             if let Some(rp) = &rule.resource_pattern {
-                if !resources.iter().any(|res| glob_matches(rp, res)) {
+                let res_matches = match rule.action {
+                    PermissionAction::Allow => {
+                        !resources.is_empty() && resources.iter().all(|res| glob_matches(rp, res))
+                    }
+                    PermissionAction::Ask | PermissionAction::Deny => {
+                        resources.iter().any(|res| glob_matches(rp, res))
+                    }
+                };
+                if !res_matches {
                     continue;
                 }
             }
@@ -394,7 +403,14 @@ impl EffectivePolicy {
         // Default profile behavior
         if spec.read_only
             || is_git_read_only
-            || matches!(tool_name, "update_agent_todos" | "propose_agent_plan")
+            || matches!(
+                tool_name,
+                "update_agent_todos"
+                    | "propose_agent_plan"
+                    | "request_user_input"
+                    | "render_ui_surface"
+                    | "delete_ui_surface"
+            )
             || (tool_name == "task_control"
                 && matches!(
                     args.get("action").and_then(|v| v.as_str()).unwrap_or("list"),
@@ -494,6 +510,92 @@ fn resolve_canonical_path(workspace_root: &Path, raw: &str) -> PathBuf {
     canonicalize_nearest_ancestor(&joined)
 }
 
+fn unquote_diff_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some('t') => out.push('\t'),
+                    Some('n') => out.push('\n'),
+                    Some(other) => {
+                        out.push('\\');
+                        out.push(other);
+                    }
+                    None => out.push('\\'),
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn tokenize_shell_command(cmd: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = cmd.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else if ch == '\\' && q == '"' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                }
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                }
+                c if c.is_whitespace()
+                    || matches!(c, ';' | '|' | '&' | '<' | '>' | '(' | ')' | '`') =>
+                {
+                    if !current.is_empty() {
+                        tokens.push(std::mem::take(&mut current));
+                    }
+                }
+                other => current.push(other),
+            },
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    let mut expanded = Vec::with_capacity(tokens.len());
+    for tok in tokens {
+        let cleaned = tok.trim_matches(|c| matches!(c, '\'' | '"'));
+        if !cleaned.is_empty() {
+            expanded.push(cleaned.to_string());
+            if let Some((_, rhs)) = cleaned.split_once('=') {
+                let rhs_clean = rhs.trim_matches(|c| matches!(c, '\'' | '"'));
+                if !rhs_clean.is_empty() {
+                    expanded.push(rhs_clean.to_string());
+                }
+            }
+        }
+    }
+    expanded
+}
+
 fn extract_patch_target_paths(patch: &str, workspace_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for line in patch.lines() {
@@ -504,14 +606,15 @@ fn extract_patch_target_paths(patch: &str, workspace_root: &Path) -> Vec<PathBuf
         } else {
             continue;
         };
-        let raw = rest.split('\t').next().unwrap_or(rest).trim();
-        if raw.is_empty() || raw == "/dev/null" {
+        let raw_tab = rest.split('\t').next().unwrap_or(rest).trim();
+        let unquoted = unquote_diff_path(raw_tab);
+        if unquoted.is_empty() || unquoted == "/dev/null" {
             continue;
         }
-        let cleaned = raw
+        let cleaned = unquoted
             .strip_prefix("a/")
-            .or_else(|| raw.strip_prefix("b/"))
-            .unwrap_or(raw);
+            .or_else(|| unquoted.strip_prefix("b/"))
+            .unwrap_or(&unquoted);
         if !cleaned.is_empty() {
             paths.push(resolve_canonical_path(workspace_root, cleaned));
         }
@@ -558,14 +661,15 @@ fn extract_file_paths(tool_name: &str, args: &Value, workspace_root: &Path) -> V
                 } else {
                     continue;
                 };
-                let raw = rest.split('\t').next().unwrap_or(rest).trim();
-                if raw.is_empty() || raw == "/dev/null" {
+                let raw_tab = rest.split('\t').next().unwrap_or(rest).trim();
+                let unquoted = unquote_diff_path(raw_tab);
+                if unquoted.is_empty() || unquoted == "/dev/null" {
                     continue;
                 }
-                let cleaned = raw
+                let cleaned = unquoted
                     .strip_prefix("a/")
-                    .or_else(|| raw.strip_prefix("b/"))
-                    .unwrap_or(raw);
+                    .or_else(|| unquoted.strip_prefix("b/"))
+                    .unwrap_or(&unquoted);
                 if !cleaned.is_empty() {
                     out.push(cleaned.to_string());
                     out.push(
@@ -574,6 +678,29 @@ fn extract_file_paths(tool_name: &str, args: &Value, workspace_root: &Path) -> V
                             .to_string(),
                     );
                 }
+            }
+        }
+    }
+    if matches!(tool_name, "bash" | "pty_exec") {
+        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+            for tok in tokenize_shell_command(cmd) {
+                out.push(tok);
+            }
+        }
+    }
+    if tool_name == "glob" {
+        if let Some(pat) = args.get("pattern").and_then(|v| v.as_str()) {
+            let trimmed = pat.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+        }
+    }
+    if tool_name == "grep" {
+        if let Some(inc) = args.get("include").and_then(|v| v.as_str()) {
+            let trimmed = inc.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
             }
         }
     }

@@ -144,10 +144,11 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                     continuation,
                     ..
                 } => {
-                    let blocks = if let Some(cont) = continuation
-                        .as_ref()
-                        .filter(|c| c.protocol == ModelProtocol::AnthropicMessages && !c.items.is_empty())
-                    {
+                    let blocks = if let Some(cont) = continuation.as_ref().filter(|c| {
+                        c.protocol == ModelProtocol::AnthropicMessages
+                            && c.model == route.model
+                            && !c.items.is_empty()
+                    }) {
                         cont.items.clone()
                     } else {
                         let mut b = Vec::new();
@@ -268,14 +269,20 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                 .and_then(|n| n.trim().parse::<usize>().ok())
         });
 
+        let mut effective_max_tokens = req.max_output_tokens.max(1);
         let mut explicit_thinking_enabled = false;
         if effort_norm.as_deref() == Some("none") {
             body.insert("thinking".into(), json!({"type": "disabled"}));
         } else if let Some(budget) = explicit_budget {
             if route.capabilities.reasoning && budget > 0 {
+                let clamped_budget = budget.max(1024);
+                if effective_max_tokens <= clamped_budget {
+                    effective_max_tokens = clamped_budget.saturating_add(1024);
+                }
+                body.insert("max_tokens".into(), json!(effective_max_tokens));
                 body.insert(
                     "thinking".into(),
-                    json!({"type": "enabled", "budget_tokens": budget}),
+                    json!({"type": "enabled", "budget_tokens": clamped_budget}),
                 );
                 explicit_thinking_enabled = true;
             }
@@ -362,9 +369,24 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
         let mut tool_calls = Vec::new();
         let mut cont_blocks = Vec::new();
 
+        let allow_tool_calls = !matches!(
+            stop_reason,
+            ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+        );
         for block in &blocks {
-            cont_blocks.push(block.clone());
-            match block.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+            let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let keep_in_cont = if btype == "thinking" {
+                block
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.trim().is_empty())
+            } else {
+                true
+            };
+            if keep_in_cont {
+                cont_blocks.push(block.clone());
+            }
+            match btype {
                 "text" => {
                     if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
                         content.push_str(t);
@@ -375,7 +397,7 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
                         reasoning.push_str(t);
                     }
                 }
-                "tool_use" if stop_reason != ModelStopReason::OutputLimit => {
+                "tool_use" if allow_tool_calls => {
                     let call_id = block
                         .get("id")
                         .and_then(|v| v.as_str())
@@ -402,14 +424,12 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
             }
         }
 
-        let continuation = if cont_blocks.is_empty() || stop_reason == ModelStopReason::OutputLimit {
+        let continuation = if cont_blocks.is_empty() || !allow_tool_calls {
             None
         } else {
             Some(ProviderContinuation {
                 protocol: ModelProtocol::AnthropicMessages,
-                model: response_model
-                    .clone()
-                    .unwrap_or_else(|| route.model.clone()),
+                model: route.model.clone(),
                 response_id: response_id.clone(),
                 items: cont_blocks,
             })
@@ -579,19 +599,27 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
 
         let mut tool_calls = Vec::new();
         let mut cont_blocks = Vec::new();
+        let allow_tool_calls = !matches!(
+            stop_reason,
+            ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+        );
         for (_, (btype, id_or_sig, name, buf)) in blocks {
             match btype.as_str() {
                 "text" if !buf.is_empty() => cont_blocks.push(json!({"type": "text", "text": buf})),
-                "thinking" => cont_blocks.push(json!({
-                    "type": "thinking",
-                    "thinking": buf,
-                    "signature": id_or_sig
-                })),
+                "thinking" => {
+                    if !id_or_sig.trim().is_empty() {
+                        cont_blocks.push(json!({
+                            "type": "thinking",
+                            "thinking": buf,
+                            "signature": id_or_sig
+                        }));
+                    }
+                }
                 "redacted_thinking" => cont_blocks.push(json!({
                     "type": "redacted_thinking",
                     "data": buf
                 })),
-                "tool_use" if stop_reason != ModelStopReason::OutputLimit => {
+                "tool_use" if allow_tool_calls => {
                     let parsed = parse_tool_arguments(&buf)?;
                     cont_blocks.push(json!({
                         "type": "tool_use",
@@ -609,14 +637,12 @@ impl ProviderWireAdapter for AnthropicMessagesAdapter {
             }
         }
 
-        let continuation = if cont_blocks.is_empty() || stop_reason == ModelStopReason::OutputLimit {
+        let continuation = if cont_blocks.is_empty() || !allow_tool_calls {
             None
         } else {
             Some(ProviderContinuation {
                 protocol: ModelProtocol::AnthropicMessages,
-                model: response_model
-                    .clone()
-                    .unwrap_or_else(|| route.model.clone()),
+                model: route.model.clone(),
                 response_id: response_id.clone(),
                 items: cont_blocks,
             })

@@ -2309,10 +2309,10 @@ public final class ChatManager: ObservableObject {
     private func upsertV2UiSurface(_ snapshot: AgentCoreJSONValue) {
         var surfaceID: String?
         if case .object(let root) = snapshot {
-            if case .string(let sid) = root["surface_id"], !sid.isEmpty {
+            if case .string(let sid)? = root["surface_id"], !sid.isEmpty {
                 surfaceID = sid
-            } else if case .object(let identity) = root["identity"],
-                      case .string(let sid) = identity["surface_id"],
+            } else if case .object(let identity)? = root["identity"],
+                      case .string(let sid)? = identity["surface_id"],
                       !sid.isEmpty {
                 surfaceID = sid
             }
@@ -2323,11 +2323,11 @@ public final class ChatManager: ObservableObject {
         }
         if let index = v2UiSurfaces.firstIndex(where: { existing in
             if case .object(let root) = existing {
-                if case .string(let sid) = root["surface_id"], sid == surfaceID {
+                if case .string(let sid)? = root["surface_id"], sid == surfaceID {
                     return true
                 }
-                if case .object(let identity) = root["identity"],
-                   case .string(let sid) = identity["surface_id"],
+                if case .object(let identity)? = root["identity"],
+                   case .string(let sid)? = identity["surface_id"],
                    sid == surfaceID {
                     return true
                 }
@@ -2354,13 +2354,16 @@ public final class ChatManager: ObservableObject {
             return
         }
         let existingPrompt = pendingV2UserQuestion
-        let conversationID = existingPrompt?.requestID == requestID
+        let fallbackConversationID = existingPrompt?.requestID == requestID
             ? existingPrompt?.conversationID
             : currentConversationId?.uuidString
-        guard let conversationID, !conversationID.isEmpty else {
+        let targetConversationID = v2SessionID ?? fallbackConversationID
+        guard let targetConversationID, !targetConversationID.isEmpty else {
             throw IOSApplicationRuntimeError.rejected("No active conversation for user question")
         }
-        let provider = remoteSubmissionProviders[conversationID]
+        let provider = remoteSubmissionProviders[targetConversationID]
+            ?? fallbackConversationID.flatMap { remoteSubmissionProviders[$0] }
+            ?? currentConversationId.flatMap { remoteSubmissionProviders[$0.uuidString] }
             ?? (effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider
         guard let provider else {
             throw IOSApplicationRuntimeError.rejected("No paired Web Agent Host provider available")
@@ -2370,7 +2373,7 @@ public final class ChatManager: ObservableObject {
         }
         do {
             try await provider.v2RespondUserInput(
-                conversationID: conversationID,
+                conversationID: targetConversationID,
                 requestID: requestID,
                 answer: answer
             )
@@ -2390,13 +2393,16 @@ public final class ChatManager: ObservableObject {
                 interaction: interaction
             )
         }
-        let provider = remoteSubmissionProviders[conversationId]
+        let targetConversationID = v2SessionID ?? conversationId
+        let provider = remoteSubmissionProviders[targetConversationID]
+            ?? remoteSubmissionProviders[conversationId]
+            ?? currentConversationId.flatMap { remoteSubmissionProviders[$0.uuidString] }
             ?? (effectiveLLMClient as? ModelService)?.currentProvider() as? WebAgentProvider
         guard let provider else {
             throw IOSApplicationRuntimeError.rejected("No paired Web Agent Host provider available")
         }
         let result = try await provider.v2SubmitUiInteraction(
-            conversationId: conversationId,
+            conversationId: targetConversationID,
             interaction: interaction
         )
         if let rawSnapshot = result["snapshot"],
@@ -4894,7 +4900,7 @@ public final class ChatManager: ObservableObject {
                                     let scope = (payload["scope"] as? String)
                                         ?? ((decision == "allow_conversation" || rememberForConversation) ? "session" : "once")
                                     try await journalProvider.v2RespondPermission(
-                                        conversationID: conversationID,
+                                        conversationID: self.v2SessionID ?? conversationID,
                                         requestID: id,
                                         allow: allow,
                                         scope: scope
@@ -4917,7 +4923,7 @@ public final class ChatManager: ObservableObject {
                             self.thinkingFinished = true
                             self.pendingV2UserQuestion = V2UserQuestionPrompt(
                                 requestID: requestID,
-                                conversationID: conversationID,
+                                conversationID: self.v2SessionID ?? conversationID,
                                 question: question,
                                 options: options
                             )

@@ -2076,10 +2076,12 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                         )
                     }
                     if let wait = event.userInputRequest {
-                        guard wait.runID == currentRunID,
-                              wait.conversationID == request.conversationID,
-                              wait.sessionID == admittedCoreSessionID else {
-                            throw MacLocalAgentRuntimeError.protocolViolation("The user question belongs to a different canonical Run.")
+                        if event.v2Event == nil {
+                            guard wait.runID == currentRunID,
+                                  wait.conversationID == request.conversationID,
+                                  wait.sessionID == admittedCoreSessionID else {
+                                throw MacLocalAgentRuntimeError.protocolViolation("The user question belongs to a different canonical Run.")
+                            }
                         }
                         observedUserInputWaitIDs.insert(wait.id)
                     }
@@ -3076,6 +3078,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let nested = object["event"] as? [String: Any]
         let type = optionalString(in: nested ?? object, keys: ["type"])
             ?? optionalString(in: object, keys: ["type"]) ?? "unknown"
+        if type == "turn_completed" && object["protocol_version"] == nil {
+            return false
+        }
         return requiresCoreSessionWitness(type: type) || requiresControlSessionWitness(type: type)
     }
 

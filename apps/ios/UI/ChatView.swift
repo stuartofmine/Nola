@@ -1396,7 +1396,7 @@ struct ChatView: View {
             }
 
             if !v2UiSurfaces.isEmpty {
-                let activeConvID = container.chatManager.currentConversationId?.uuidString ?? ""
+                let activeConvID = container.chatManager.v2SessionID ?? container.chatManager.currentConversationId?.uuidString ?? ""
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(v2UiSurfaces.enumerated()), id: \.offset) { _, surface in
                         IOSV2UISurfaceCard(
@@ -3427,8 +3427,8 @@ private struct IOSV2UISurfaceCard: View {
                     snapshot: snapshot,
                     submit: { submission in
                         do {
-                            let encoded = try JSONEncoder().encode(submission)
-                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? [:]
+                            let encoded = try JSONEncoder().encode(submission.interaction)
+                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? ([String: Any]())
                             let payload: [String: Any] = [
                                 "surface_id": submission.interaction.identity.surface_id,
                                 "action_id": submission.interaction.action?.action_id ?? "",

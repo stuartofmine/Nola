@@ -21,6 +21,7 @@ use crate::McpError;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const SSE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const SSE_STREAM_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Explicit allowlist of safe environment variables inherited by stdio MCP child processes.
 /// Prevents parent API keys (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) from leaking.
@@ -39,7 +40,7 @@ const SAFE_STDIO_ENV_ALLOWLIST: &[&str] = &[
     "XDG_RUNTIME_DIR",
 ];
 
-fn is_loopback_url(raw: &str) -> bool {
+pub(crate) fn is_loopback_url(raw: &str) -> bool {
     let Ok(parsed) = url::Url::parse(raw) else {
         return false;
     };
@@ -99,6 +100,15 @@ impl Drop for StdioState {
             let _ = stdin.take();
         }
         if let Ok(mut child) = self.child.lock() {
+            #[cfg(unix)]
+            {
+                let pgid = child.id() as libc::pid_t;
+                if pgid > 0 {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                    }
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -122,6 +132,13 @@ struct SseState {
     oauth: Option<Arc<McpOAuthManager>>,
     pending: PendingMap,
     closed: Arc<AtomicBool>,
+}
+
+impl Drop for SseState {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::SeqCst);
+        fail_all_pending(&self.pending, "mcp sse connection closed");
+    }
 }
 
 /// Active JSON-RPC 2.0 connection to a single MCP server.
@@ -154,6 +171,11 @@ impl McpConnection {
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null());
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    cmd.process_group(0);
+                }
                 let mut child = cmd.spawn()?;
                 let stdin = child
                     .stdin
@@ -221,8 +243,11 @@ impl McpConnection {
                 let closed = Arc::new(AtomicBool::new(false));
 
                 let bearer = resolve_bearer(&oauth, &cfg.id)?;
-                let sse_client =
-                    build_mcp_http_client(&url, None, Some(Duration::from_secs(10)))?;
+                let sse_client = build_mcp_http_client(
+                    &url,
+                    Some(SSE_STREAM_TIMEOUT),
+                    Some(Duration::from_secs(10)),
+                )?;
                 let hmap = build_headers(
                     &[("accept", "text/event-stream")],
                     &cfg.headers,
@@ -253,21 +278,47 @@ impl McpConnection {
                     let mut data_lines: Vec<String> = Vec::new();
                     let mut ep_tx = Some(ep_tx);
 
-                    let mut flush_event = |ev: &mut String, data: &mut Vec<String>| {
+                    let mut flush_event = |ev: &mut String, data: &mut Vec<String>| -> bool {
                         if data.is_empty() {
                             ev.clear();
-                            return;
+                            return true;
                         }
                         let joined = data.join("\n");
                         let d = joined.trim();
                         if ev == "endpoint" && !d.is_empty() {
-                            if let Ok(base) = url::Url::parse(&base_url) {
-                                if let Ok(resolved) = base.join(d) {
+                            match url::Url::parse(&base_url).and_then(|base| {
+                                base.join(d).map(|resolved| (base, resolved))
+                            }) {
+                                Ok((base, resolved)) => {
+                                    let same_origin = resolved.scheme() == base.scheme()
+                                        && resolved.host_str() == base.host_str()
+                                        && resolved.port_or_known_default()
+                                            == base.port_or_known_default();
+                                    if !same_origin {
+                                        if let Some(tx) = ep_tx.take() {
+                                            let _ = tx.send(Err(format!(
+                                                "rejected cross-origin MCP SSE endpoint '{resolved}'"
+                                            )));
+                                        }
+                                        ev.clear();
+                                        data.clear();
+                                        return false;
+                                    }
                                     let resolved_str = resolved.to_string();
                                     *post_url_bg.lock().unwrap() = resolved_str.clone();
                                     if let Some(tx) = ep_tx.take() {
                                         let _ = tx.send(Ok(resolved_str));
                                     }
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = ep_tx.take() {
+                                        let _ = tx.send(Err(format!(
+                                            "invalid MCP SSE endpoint '{d}': {e}"
+                                        )));
+                                    }
+                                    ev.clear();
+                                    data.clear();
+                                    return false;
                                 }
                             }
                         } else if let Ok(val) = serde_json::from_str::<Value>(d) {
@@ -275,16 +326,22 @@ impl McpConnection {
                         }
                         ev.clear();
                         data.clear();
+                        true
                     };
 
-                    while let Ok(n) = reader.read_line(&mut line) {
+                    while !closed_bg.load(Ordering::SeqCst) {
+                        let Ok(n) = reader.read_line(&mut line) else {
+                            break;
+                        };
                         if n == 0 {
-                            flush_event(&mut current_event, &mut data_lines);
+                            let _ = flush_event(&mut current_event, &mut data_lines);
                             break;
                         }
                         let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
                         if trimmed.is_empty() {
-                            flush_event(&mut current_event, &mut data_lines);
+                            if !flush_event(&mut current_event, &mut data_lines) {
+                                break;
+                            }
                         } else if let Some(ev) = trimmed.strip_prefix("event:") {
                             current_event = ev.trim().to_string();
                         } else if let Some(data) = trimmed.strip_prefix("data:") {
@@ -302,11 +359,15 @@ impl McpConnection {
                 // Wait for the mandatory `event: endpoint` handshake frame!
                 match ep_rx.recv_timeout(SSE_HANDSHAKE_TIMEOUT) {
                     Ok(Ok(_)) => {}
-                    Ok(Err(e)) => return Err(McpError::Transport(e)),
+                    Ok(Err(e)) => {
+                        closed.store(true, Ordering::SeqCst);
+                        return Err(McpError::Transport(e));
+                    }
                     Err(_) => {
+                        closed.store(true, Ordering::SeqCst);
                         return Err(McpError::Transport(
                             "timed out waiting for MCP SSE endpoint event".into(),
-                        ))
+                        ));
                     }
                 }
 
@@ -337,13 +398,18 @@ impl McpConnection {
     }
 
     pub fn initialize(&self) -> Result<Value, McpError> {
-        let res = self.request(
+        self.initialize_inner(true)
+    }
+
+    fn initialize_inner(&self, allow_404_retry: bool) -> Result<Value, McpError> {
+        let res = self.request_inner(
             "initialize",
             json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {"name": "nola-v2", "version": "2.0.0"}
             }),
+            allow_404_retry,
         )?;
         // Mandatory MCP handshake notification
         let _ = self.notify("notifications/initialized", json!({}));
@@ -416,12 +482,21 @@ impl McpConnection {
     }
 
     pub fn request(&self, method: &str, params: Value) -> Result<Value, McpError> {
+        self.request_inner(method, params, true)
+    }
+
+    fn request_inner(
+        &self,
+        method: &str,
+        params: Value,
+        allow_404_retry: bool,
+    ) -> Result<Value, McpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let payload = json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
-            "params": params
+            "params": &params
         });
 
         match &self.backend {
@@ -477,6 +552,10 @@ impl McpConnection {
                 let status = resp.status();
                 if status.as_u16() == 404 {
                     *http.session_id.lock().unwrap() = None;
+                    if allow_404_retry && method != "initialize" {
+                        let _ = self.initialize_inner(false)?;
+                        return self.request_inner(method, params, false);
+                    }
                 }
                 if !status.is_success() {
                     let body = resp.text().unwrap_or_default();
@@ -499,21 +578,38 @@ impl McpConnection {
                     .map(|ct| ct.to_ascii_lowercase().contains("text/event-stream"))
                     .unwrap_or(false);
                 if is_sse {
-                    // Stream line-by-line so keep-alive SSE streams return immediately on reply!
+                    // Stream line-by-line accumulating multi-line `data:` blocks until blank line!
                     let mut reader = BufReader::new(resp);
                     let mut line = String::new();
-                    while let Ok(n) = reader.read_line(&mut line) {
+                    let mut data_lines: Vec<String> = Vec::new();
+                    loop {
+                        line.clear();
+                        let n = reader.read_line(&mut line).unwrap_or(0);
                         if n == 0 {
-                            break;
-                        }
-                        if let Some(data) = line.trim().strip_prefix("data:") {
-                            if let Ok(val) = serde_json::from_str::<Value>(data.trim()) {
-                                if let Some(res) = match_rpc_reply(&val, id) {
-                                    return res;
+                            if !data_lines.is_empty() {
+                                let joined = data_lines.join("\n");
+                                if let Ok(val) = serde_json::from_str::<Value>(joined.trim()) {
+                                    if let Some(res) = match_rpc_reply(&val, id) {
+                                        return res;
+                                    }
                                 }
                             }
+                            break;
                         }
-                        line.clear();
+                        let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
+                        if trimmed.is_empty() {
+                            if !data_lines.is_empty() {
+                                let joined = data_lines.join("\n");
+                                data_lines.clear();
+                                if let Ok(val) = serde_json::from_str::<Value>(joined.trim()) {
+                                    if let Some(res) = match_rpc_reply(&val, id) {
+                                        return res;
+                                    }
+                                }
+                            }
+                        } else if let Some(data) = trimmed.strip_prefix("data:") {
+                            data_lines.push(data.strip_prefix(' ').unwrap_or(data).to_string());
+                        }
                     }
                     return Err(McpError::Transport(
                         "streamable_http SSE response lacked matching JSON-RPC reply".into(),
@@ -652,7 +748,7 @@ fn fail_all_pending(pending: &PendingMap, reason: &str) {
 }
 
 fn extract_rpc_result(val: Value) -> Result<Value, McpError> {
-    if let Some(err) = val.get("error") {
+    if let Some(err) = val.get("error").filter(|v| !v.is_null()) {
         let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(-32000);
         let message = err
             .get("message")
@@ -728,5 +824,11 @@ mod tests {
         let res = conn.request("ping", json!({})).unwrap();
         assert_eq!(res["secret"], "");
         assert_eq!(res["explicit"], "allowed_val");
+    }
+
+    #[test]
+    fn rpc_result_ignores_null_error_field() {
+        let res = extract_rpc_result(json!({"jsonrpc": "2.0", "id": 1, "error": null, "result": {"ok": 1}})).unwrap();
+        assert_eq!(res, json!({"ok": 1}));
     }
 }

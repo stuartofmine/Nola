@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nola_llm::{LlmClient, LlmError};
+use nola_llm::{adapter_for, LlmClient, LlmError};
 use nola_store::{EventPage, Store, StoreError, DEFAULT_MAX_EVENTS_PER_SCOPE};
 use nola_tools::{ToolContext, ToolRegistry};
 use nola_types::{
@@ -19,6 +19,7 @@ use nola_types::{
     HistoryMessage, HookDecision, HookEvent, HostCapabilities, MediaAttachment, MemoryItem,
     ModelRouteConfig, ModelStopReason, ModelStreamDelta, NormalizedModelResponse, ResourceEffect,
     RuleScope, RuntimeReminder, Session, StructuredModelRequest, TokenUsage, ToolExecutionResult,
+    ToolModelPayload,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -363,18 +364,29 @@ impl AgentEngine {
             Vec::new()
         };
 
-        let existing_created = self
-            .store
-            .get_session(&session_id)?
+        let existing_session = self.store.get_session(&session_id)?;
+        let existing_created = existing_session
+            .as_ref()
             .map(|s| s.created_at_ms)
             .unwrap_or(now);
-        let title: String = user_prompt
-            .lines()
-            .next()
-            .unwrap_or("New Session")
-            .chars()
-            .take(80)
-            .collect();
+        let default_title = || -> String {
+            user_prompt
+                .lines()
+                .next()
+                .unwrap_or("New Session")
+                .chars()
+                .take(80)
+                .collect()
+        };
+        let title: String = if cfg.resume {
+            existing_session
+                .as_ref()
+                .map(|s| s.title.clone())
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(default_title)
+        } else {
+            default_title()
+        };
         self.store.upsert_session(&Session {
             id: session_id.clone(),
             title,
@@ -384,6 +396,10 @@ impl AgentEngine {
             created_at_ms: existing_created,
             updated_at_ms: now,
         })?;
+
+        if cfg.resume {
+            sanitize_history_media_for_route(&mut history, &cfg.route);
+        }
 
         self.emit_and_persist(
             &session_id,
@@ -483,7 +499,9 @@ impl AgentEngine {
         let mut deadline_warn_60_sent = false;
 
         loop {
-            if cfg.cancel.load(Ordering::Relaxed) {
+            if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
+                || cfg.cancel.load(Ordering::Relaxed)
+            {
                 cancelled = true;
                 break;
             }
@@ -767,7 +785,9 @@ impl AgentEngine {
             } else if all_read_only {
                 let mut collected = Vec::with_capacity(resp.tool_calls.len());
                 for chunk in resp.tool_calls.chunks(MAX_PARALLEL_READ_TOOLS) {
-                    if cfg.cancel.load(Ordering::Relaxed) {
+                    if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
+                        || cfg.cancel.load(Ordering::Relaxed)
+                    {
                         cancelled = true;
                         for _ in chunk {
                             collected.push(MiddlewareOutcome {
@@ -812,7 +832,9 @@ impl AgentEngine {
             } else {
                 let mut collected = Vec::with_capacity(resp.tool_calls.len());
                 for tc in &resp.tool_calls {
-                    if cfg.cancel.load(Ordering::Relaxed) {
+                    if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
+                        || cfg.cancel.load(Ordering::Relaxed)
+                    {
                         cancelled = true;
                         collected.push(MiddlewareOutcome {
                             result: ToolExecutionResult::err_structured(
@@ -889,6 +911,13 @@ impl AgentEngine {
                 } else {
                     out.result.payload.clone()
                 };
+                let (accepted_media, omitted_notes) =
+                    filter_media_for_route(&out.result.media, &cfg.route);
+                let effective_payload = if omitted_notes.is_empty() {
+                    effective_payload
+                } else {
+                    attach_media_omission_notes(effective_payload, &omitted_notes)
+                };
                 self.emit_and_persist(
                     &session_id,
                     AgentEvent::ToolFinished {
@@ -906,7 +935,7 @@ impl AgentEngine {
                     tool_name: tc.name.clone(),
                     payload: effective_payload,
                     is_error: out.result.is_error,
-                    media: out.result.media.clone(),
+                    media: accepted_media,
                 });
                 guard_batch.push((tc.name.clone(), tc.arguments.clone(), out.result));
             }
@@ -998,6 +1027,137 @@ impl AgentEngine {
                 .append_event(session_id, &kind, val, DEFAULT_MAX_EVENTS_PER_SCOPE);
         }
         on_event(event);
+    }
+}
+
+fn poll_store_cancel_flag(store: &Store, session_id: &str, cancel: &AtomicBool) -> bool {
+    let key = format!("cancel_requested:{session_id}");
+    let requested = match store.get_kv(&key).ok().flatten() {
+        Some(Value::Bool(true)) => true,
+        Some(Value::String(s)) => matches!(
+            s.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes"
+        ),
+        Some(Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
+        _ => false,
+    };
+    if requested {
+        cancel.store(true, Ordering::SeqCst);
+        let _ = store.set_kv(&key, &Value::Bool(false));
+        true
+    } else {
+        false
+    }
+}
+
+fn filter_media_for_route(
+    media: &[MediaAttachment],
+    route: &ModelRouteConfig,
+) -> (Vec<MediaAttachment>, Vec<String>) {
+    if media.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let limits = adapter_for(route.protocol).media_limits();
+    let mut accepted = Vec::new();
+    let mut notes = Vec::new();
+    for att in media {
+        let mime = att.mime_type.trim().to_ascii_lowercase();
+        let is_image = matches!(
+            mime.as_str(),
+            "image/png" | "image/jpeg" | "image/jpg" | "image/gif" | "image/webp"
+        );
+        let is_pdf = mime == "application/pdf";
+        if !is_image && !is_pdf {
+            notes.push(format!(
+                "Omitted media '{}' ({}): unsupported mime type",
+                att.filename, att.mime_type
+            ));
+            continue;
+        }
+        if is_image && !route.capabilities.image_input {
+            notes.push(format!(
+                "Omitted image '{}' ({} bytes): active model '{}' does not support image_input",
+                att.filename, att.raw_bytes_len, route.model
+            ));
+            continue;
+        }
+        if is_pdf && !route.capabilities.native_pdf_input {
+            notes.push(format!(
+                "Omitted PDF '{}' ({} bytes): active model '{}' does not support native_pdf_input",
+                att.filename, att.raw_bytes_len, route.model
+            ));
+            continue;
+        }
+        if att.raw_bytes_len > limits.max_bytes_per_item {
+            notes.push(format!(
+                "Omitted media '{}' ({} bytes): exceeds {:?} protocol limit ({} bytes)",
+                att.filename, att.raw_bytes_len, route.protocol, limits.max_bytes_per_item
+            ));
+            continue;
+        }
+        if accepted.len() >= limits.max_items_per_request {
+            notes.push(format!(
+                "Omitted media '{}': exceeds protocol attachment count cap ({})",
+                att.filename, limits.max_items_per_request
+            ));
+            continue;
+        }
+        accepted.push(att.clone());
+    }
+    (accepted, notes)
+}
+
+fn attach_media_omission_notes(payload: ToolModelPayload, notes: &[String]) -> ToolModelPayload {
+    if notes.is_empty() {
+        return payload;
+    }
+    let summary = payload.ui_summary().to_string();
+    match payload {
+        ToolModelPayload::Structured { mut model_data, .. } => {
+            if let Some(obj) = model_data.as_object_mut() {
+                obj.insert("media_omitted".into(), json!(notes));
+            } else {
+                model_data = json!({ "result": model_data, "media_omitted": notes });
+            }
+            ToolModelPayload::structured(model_data, summary)
+        }
+        ToolModelPayload::Text(mut text) => {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("[Media omitted: {}]", notes.join("; ")));
+            ToolModelPayload::Text(text)
+        }
+    }
+}
+
+fn sanitize_history_media_for_route(history: &mut [HistoryMessage], route: &ModelRouteConfig) {
+    for msg in history.iter_mut() {
+        match msg {
+            HistoryMessage::Tool { payload, media, .. } => {
+                if !media.is_empty() {
+                    let (accepted, notes) = filter_media_for_route(media, route);
+                    if !notes.is_empty() {
+                        *media = accepted;
+                        let current = std::mem::replace(payload, ToolModelPayload::text(""));
+                        *payload = attach_media_omission_notes(current, &notes);
+                    }
+                }
+            }
+            HistoryMessage::User { content, media } => {
+                if !media.is_empty() {
+                    let (accepted, notes) = filter_media_for_route(media, route);
+                    if !notes.is_empty() {
+                        *media = accepted;
+                        if !content.is_empty() {
+                            content.push('\n');
+                        }
+                        content.push_str(&format!("[Media omitted: {}]", notes.join("; ")));
+                    }
+                }
+            }
+            HistoryMessage::Assistant { .. } => {}
+        }
     }
 }
 
@@ -1206,7 +1366,7 @@ fn summarize_history_with_llm_client(
     route: &ModelRouteConfig,
     slice: &[HistoryMessage],
 ) -> Option<String> {
-    if slice.is_empty() {
+    if slice.is_empty() || route.model.trim().is_empty() || route.endpoint.trim().is_empty() {
         return None;
     }
     let req = build_compaction_summary_request(slice);

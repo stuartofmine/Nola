@@ -100,6 +100,7 @@ struct CliOptions {
     skill_dirs: Vec<PathBuf>,
     no_skills: bool,
     github_skills: Vec<String>,
+    double_dash_pos: Option<usize>,
     positional: Vec<String>,
 }
 
@@ -136,9 +137,19 @@ fn is_known_subcommand(cmd: &str) -> bool {
     )
 }
 
-fn subcommand_wants_help(rest: &[String]) -> bool {
+fn subcommand_wants_help(cmd: &str, rest: &[String], double_dash_pos: Option<usize>) -> bool {
+    let limit = double_dash_pos
+        .map(|pos| pos.saturating_sub(1))
+        .unwrap_or(rest.len());
+    let scan = &rest[..limit.min(rest.len())];
+    if matches!(scan.first().map(String::as_str), Some("--help" | "-h")) {
+        return true;
+    }
+    if cmd == "run" {
+        return false;
+    }
     let mut skip_next = false;
-    for a in rest {
+    for a in scan {
         if skip_next {
             skip_next = false;
             continue;
@@ -160,6 +171,9 @@ fn subcommand_wants_help(rest: &[String]) -> bool {
                 | "--host"
                 | "--port"
                 | "--web-root"
+                | "--assets"
+                | "--transport"
+                | "--env"
         ) {
             skip_next = true;
             continue;
@@ -177,7 +191,10 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
     // Dispatch metadata and DB-free commands BEFORE opening SQLite (avoid side-effect DB creation).
     if let Some(cmd) = opts.positional.first().map(String::as_str) {
         let rest = &opts.positional[1..];
-        if is_known_subcommand(cmd) && subcommand_wants_help(rest) {
+        if opts.double_dash_pos != Some(0)
+            && is_known_subcommand(cmd)
+            && subcommand_wants_help(cmd, rest, opts.double_dash_pos)
+        {
             print_help();
             return Ok(0);
         }
@@ -274,7 +291,12 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             }
             "server" => {
                 let rest = &opts.positional[1..];
-                let wants_http = rest.iter().any(|a| a == "--host" || a == "--port");
+                let wants_http = rest.iter().any(|a| {
+                    a == "--host"
+                        || a == "--port"
+                        || a.starts_with("--host=")
+                        || a.starts_with("--port=")
+                });
                 if wants_http {
                     return crate::web_server::run_web_server(store, suite, rest, opts.json_mode);
                 }
@@ -296,7 +318,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                     },
                 )
             }
-            other if other.starts_with("--") => {
+            other if other.starts_with("--") && opts.double_dash_pos != Some(0) => {
                 return Err(format!("unknown option '{other}'. Run 'nola --help' for usage."));
             }
             _ => {}
@@ -805,8 +827,14 @@ fn resolve_network_allowed(opts: &CliOptions, cfg: &AppliedConfig) -> bool {
 fn parse_args(args: &[String]) -> Result<CliOptions, String> {
     let mut opts = CliOptions::default();
     let mut i = 0;
+    let mut end_of_options = false;
     while i < args.len() {
         let a = args[i].as_str();
+        if end_of_options {
+            opts.positional.push(a.to_string());
+            i += 1;
+            continue;
+        }
         let active_subcmd = opts.positional.first().map(String::as_str);
         let in_non_agent_subcmd = matches!(
             active_subcmd,
@@ -846,10 +874,19 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     | "--host"
                     | "--port"
                     | "--web-root"
+                    | "--assets"
+                    | "--transport"
+                    | "--env"
             )
         });
         if prev_takes_subcmd_value {
             opts.positional.push(a.to_string());
+            i += 1;
+            continue;
+        }
+        if a == "--" {
+            end_of_options = true;
+            opts.double_dash_pos = Some(opts.positional.len());
             i += 1;
             continue;
         }
@@ -1019,16 +1056,7 @@ fn default_config_path() -> PathBuf {
 }
 
 fn validate_config_file(path: &Path) -> Result<AppliedConfig, String> {
-    let meta = fs::symlink_metadata(path)
-        .map_err(|e| format!("failed to stat config '{}': {e}", path.display()))?;
-    if meta.file_type().is_symlink() {
-        return Err(format!(
-            "config file '{}' must not be a symlink",
-            path.display()
-        ));
-    }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("failed to read config '{}': {e}", path.display()))?;
+    let raw = crate::config::read_config_file_safe(path)?;
     let clean = strip_jsonc(&raw);
     let cfg: AppliedConfig = serde_json::from_str(&clean)
         .map_err(|e| format!("invalid config JSONC '{}': {e}", path.display()))?;
@@ -1365,13 +1393,31 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                 }
             };
 
-            let probe_url = format!("{}/models", conn.endpoint.trim_end_matches('/'));
+            let base = conn.endpoint.trim_end_matches('/');
+            let probe_url = if base.ends_with("/models") {
+                base.to_string()
+            } else {
+                format!("{base}/models")
+            };
+            let is_loopback = url::Url::parse(&probe_url)
+                .ok()
+                .and_then(|u| {
+                    u.host_str()
+                        .map(|h| h.trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase())
+                })
+                .is_some_and(|h| {
+                    h == "localhost"
+                        || h.parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                });
             let start = Instant::now();
-            let client = reqwest::blocking::Client::builder()
+            let mut client_builder = reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| e.to_string())?;
+                .redirect(reqwest::redirect::Policy::none());
+            if is_loopback {
+                client_builder = client_builder.no_proxy();
+            }
+            let client = client_builder.build().map_err(|e| e.to_string())?;
             let mut req = client.get(&probe_url);
             if protocol == ModelProtocol::AnthropicMessages {
                 req = req.header("anthropic-version", "2023-06-01");
@@ -1460,6 +1506,7 @@ fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, 
             let mut name = id.clone();
             let mut command: Option<String> = None;
             let mut cmd_args: Vec<String> = Vec::new();
+            let mut env: BTreeMap<String, String> = BTreeMap::new();
             let mut url: Option<String> = None;
             let mut enabled = true;
             let mut i = 2;
@@ -1495,6 +1542,15 @@ fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, 
                         i += 1;
                         cmd_args.push(args.get(i).ok_or("--arg requires a value")?.clone());
                     }
+                    "--env" => {
+                        i += 1;
+                        let raw = args.get(i).ok_or("--env requires KEY=VALUE")?;
+                        let (k, v) = raw
+                            .split_once('=')
+                            .filter(|(k, _)| !k.trim().is_empty())
+                            .ok_or_else(|| format!("invalid --env '{raw}' (expected KEY=VALUE)"))?;
+                        env.insert(k.trim().to_string(), v.to_string());
+                    }
                     "--url" => {
                         i += 1;
                         url = Some(args.get(i).ok_or("--url requires a URL")?.clone());
@@ -1517,7 +1573,7 @@ fn handle_mcp_cmd(store: &Store, db_path: &Path, args: &[String]) -> Result<u8, 
                 enabled,
                 command,
                 args: cmd_args,
-                env: BTreeMap::new(),
+                env,
                 url,
                 headers: BTreeMap::new(),
                 oauth_client_id: None,

@@ -15,6 +15,7 @@ pub struct SseEvent {
 pub struct SseReader<'a> {
     inner: &'a mut dyn BufRead,
     line_buf: String,
+    saw_first_line: bool,
 }
 
 impl<'a> SseReader<'a> {
@@ -22,6 +23,7 @@ impl<'a> SseReader<'a> {
         Self {
             inner,
             line_buf: String::new(),
+            saw_first_line: false,
         }
     }
 
@@ -40,7 +42,11 @@ impl<'a> SseReader<'a> {
                     data: data_lines.join("\n"),
                 }));
             }
-            let line = self.line_buf.trim_end_matches(&['\r', '\n'][..]);
+            let mut line = self.line_buf.trim_end_matches(&['\r', '\n'][..]);
+            if !self.saw_first_line {
+                self.saw_first_line = true;
+                line = line.strip_prefix('\u{feff}').unwrap_or(line);
+            }
             if line.is_empty() {
                 if !data_lines.is_empty() {
                     return Ok(Some(SseEvent {

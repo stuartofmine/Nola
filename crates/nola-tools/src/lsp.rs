@@ -11,19 +11,20 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use nola_types::{CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier};
+use nola_types::{now_ms, CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier};
 use serde_json::{json, Value};
 
 use crate::file_pipeline::resolve_path;
 use crate::{ToolContext, ToolHandler};
 
 const LSP_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_LSP_POOL_SESSIONS: usize = 8;
 pub(crate) const MAX_LSP_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_LSP_HEADER_BYTES: usize = 8 * 1024;
 
@@ -94,20 +95,21 @@ pub(crate) fn build_reverse_request_reply(req_id: Value, method: &str) -> Value 
 
 struct LspSession {
     child: Mutex<Child>,
-    stdin: Arc<Mutex<Option<ChildStdin>>>,
+    writer_tx: Mutex<Option<mpsc::Sender<Value>>>,
     next_id: AtomicU64,
     pending: Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, String>>>>>,
     published_diagnostics: Arc<Mutex<BTreeMap<String, Vec<Value>>>>,
     opened_docs: Mutex<BTreeMap<PathBuf, i32>>,
     supports_pull_diagnostics: AtomicBool,
     closed: Arc<AtomicBool>,
+    last_used_ms: AtomicI64,
 }
 
 impl Drop for LspSession {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::SeqCst);
-        if let Ok(mut stdin) = self.stdin.lock() {
-            let _ = stdin.take();
+        if let Ok(mut tx) = self.writer_tx.lock() {
+            let _ = tx.take();
         }
         if let Ok(mut ch) = self.child.lock() {
             let _ = ch.kill();
@@ -126,17 +128,36 @@ impl LspSession {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("{} unavailable: {e}", spec.bin))?;
-        let stdin_raw = child.stdin.take().ok_or("missing lsp stdin")?;
+        let mut stdin_raw = child.stdin.take().ok_or("missing lsp stdin")?;
         let stdout_raw = child.stdout.take().ok_or("missing lsp stdout")?;
 
-        let stdin = Arc::new(Mutex::new(Some(stdin_raw)));
+        let (writer_tx, writer_rx) = mpsc::channel::<Value>();
         let pending: Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, String>>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let published_diagnostics: Arc<Mutex<BTreeMap<String, Vec<Value>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
 
-        let stdin_bg = Arc::clone(&stdin);
+        // Dedicated non-blocking writer thread so stdout reader reverse-request replies
+        // can NEVER deadlock on a full stdin pipe buffer!
+        let closed_writer = Arc::clone(&closed);
+        thread::spawn(move || {
+            while let Ok(msg) = writer_rx.recv() {
+                let Ok(body) = serde_json::to_vec(&msg) else {
+                    continue;
+                };
+                let ok = write!(stdin_raw, "Content-Length: {}\r\n\r\n", body.len())
+                    .and_then(|_| stdin_raw.write_all(&body))
+                    .and_then(|_| stdin_raw.flush())
+                    .is_ok();
+                if !ok {
+                    closed_writer.store(true, Ordering::SeqCst);
+                    break;
+                }
+            }
+        });
+
+        let reply_tx = writer_tx.clone();
         let pending_bg = Arc::clone(&pending);
         let diags_bg = Arc::clone(&published_diagnostics);
         let closed_bg = Arc::clone(&closed);
@@ -149,7 +170,7 @@ impl LspSession {
                     // Server-to-client request: allow only workspace/configuration, reject all others!
                     (Some(req_id), Some(method)) => {
                         let reply = build_reverse_request_reply(req_id, method);
-                        let _ = write_lsp_frame(&stdin_bg, &reply);
+                        let _ = reply_tx.send(reply);
                     }
                     // Notification: cache `textDocument/publishDiagnostics`
                     (None, Some("textDocument/publishDiagnostics")) => {
@@ -168,11 +189,12 @@ impl LspSession {
                     (Some(id_val), None) => {
                         if let Some(id) = id_val.as_u64() {
                             if let Some(tx) = pending_bg.lock().unwrap().remove(&id) {
-                                let res = if let Some(err) = frame.get("error") {
-                                    Err(err.to_string())
-                                } else {
-                                    Ok(frame.get("result").cloned().unwrap_or(Value::Null))
-                                };
+                                let res =
+                                    if let Some(err) = frame.get("error").filter(|v| !v.is_null()) {
+                                        Err(err.to_string())
+                                    } else {
+                                        Ok(frame.get("result").cloned().unwrap_or(Value::Null))
+                                    };
                                 let _ = tx.send(res);
                             }
                         }
@@ -189,13 +211,14 @@ impl LspSession {
 
         let session = Self {
             child: Mutex::new(child),
-            stdin,
+            writer_tx: Mutex::new(Some(writer_tx)),
             next_id: AtomicU64::new(1),
             pending,
             published_diagnostics,
             opened_docs: Mutex::new(BTreeMap::new()),
             supports_pull_diagnostics: AtomicBool::new(false),
             closed,
+            last_used_ms: AtomicI64::new(now_ms()),
         };
         let root_uri = path_to_uri(workspace_root);
         let init_res = session.request(
@@ -229,23 +252,37 @@ impl LspSession {
         !self.closed.load(Ordering::SeqCst)
     }
 
+    fn touch(&self) {
+        self.last_used_ms.store(now_ms(), Ordering::Relaxed);
+    }
+
+    fn is_idle(&self) -> bool {
+        self.pending.lock().map(|p| p.is_empty()).unwrap_or(true)
+    }
+
+    fn enqueue_write(&self, msg: Value) -> Result<(), String> {
+        let guard = self.writer_tx.lock().unwrap();
+        let Some(tx) = guard.as_ref() else {
+            return Err("lsp stdin closed".into());
+        };
+        tx.send(msg).map_err(|_| "lsp writer closed".to_string())
+    }
+
     fn notify(&self, method: &str, params: Value) -> Result<(), String> {
-        write_lsp_frame(
-            &self.stdin,
-            &json!({"jsonrpc": "2.0", "method": method, "params": params}),
-        )
+        self.touch();
+        self.enqueue_write(json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }
 
     fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         if !self.is_healthy() {
             return Err("lsp session closed".into());
         }
+        self.touch();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
-        if let Err(e) = write_lsp_frame(
-            &self.stdin,
-            &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
+        if let Err(e) = self.enqueue_write(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
         ) {
             self.pending.lock().unwrap().remove(&id);
             return Err(e);
@@ -301,17 +338,6 @@ impl LspSession {
             .insert(path.to_path_buf(), next_ver);
         Ok(uri)
     }
-}
-
-fn write_lsp_frame(stdin: &Mutex<Option<ChildStdin>>, msg: &Value) -> Result<(), String> {
-    let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
-    let mut guard = stdin.lock().unwrap();
-    let Some(w) = guard.as_mut() else {
-        return Err("lsp stdin closed".into());
-    };
-    write!(w, "Content-Length: {}\r\n\r\n", body.len()).map_err(|e| e.to_string())?;
-    w.write_all(&body).map_err(|e| e.to_string())?;
-    w.flush().map_err(|e| e.to_string())
 }
 
 pub(crate) fn read_lsp_frame(reader: &mut dyn BufRead) -> Result<Value, String> {
@@ -399,14 +425,31 @@ impl LspPool {
         );
         if let Some(existing) = self.sessions.lock().unwrap().get(&key).cloned() {
             if existing.is_healthy() {
+                existing.touch();
                 return Ok(existing);
             }
         }
         let session = Arc::new(LspSession::spawn(spec, workspace_root)?);
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(key, Arc::clone(&session));
+        let mut guard = self.sessions.lock().unwrap();
+        guard.retain(|_, s| s.is_healthy());
+        guard.insert(key, Arc::clone(&session));
+        while guard.len() > MAX_LSP_POOL_SESSIONS {
+            let victim = guard
+                .iter()
+                .filter(|(_, s)| s.is_idle())
+                .min_by_key(|(_, s)| s.last_used_ms.load(Ordering::Relaxed))
+                .or_else(|| {
+                    guard
+                        .iter()
+                        .min_by_key(|(_, s)| s.last_used_ms.load(Ordering::Relaxed))
+                })
+                .map(|(k, _)| k.clone());
+            if let Some(k) = victim {
+                guard.remove(&k);
+            } else {
+                break;
+            }
+        }
         Ok(session)
     }
 

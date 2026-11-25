@@ -313,7 +313,7 @@
         {#if results.length}
             <p class="context-target">{t($locale, 'local.contextTarget', {tokens: targetContextTokens.toLocaleString($locale)})}</p>
             <ul class="candidate-list">
-                {#each results as candidate (candidate.repository)}
+                {#each results as candidate (candidate.id || `${candidate.repository}:${candidate.quantization ?? candidate.variant ?? ''}`)}
                     {@const limitation = contextLimitation(candidate)}
                     {@const edition = unslothQuantization(candidate)}
                     {@const fit = modelFitLevel(candidate, hardware)}

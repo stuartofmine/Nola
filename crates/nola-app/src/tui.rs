@@ -64,8 +64,10 @@ impl ModelCaller for TrackingModelCaller {
         on_delta: &mut dyn FnMut(ModelStreamDelta),
     ) -> Result<NormalizedModelResponse, LlmError> {
         let resp = self.inner.call(route, req, stream, on_delta)?;
-        if let Ok(mut guard) = self.last_step_usage.lock() {
-            *guard = Some(resp.usage.clone());
+        if resp.usage.input_tokens > 0 || resp.usage.cache_read_tokens > 0 {
+            if let Ok(mut guard) = self.last_step_usage.lock() {
+                *guard = Some(resp.usage.clone());
+            }
         }
         Ok(resp)
     }
@@ -114,6 +116,8 @@ pub fn run_tui(
         inner: HttpModelCaller::new(300).map_err(|e| e.to_string())?,
         last_step_usage: Arc::clone(&last_step_usage),
     });
+    let raw_caller: Arc<dyn ModelCaller> =
+        Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
     let llm_client = LlmClient::new(120).ok();
 
     let network_allowed = !cfg
@@ -159,7 +163,7 @@ pub fn run_tui(
         }
     }
 
-    let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
+    let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&raw_caller)));
     subagents.configure_parent(route.clone(), base_policy.clone());
     register_subagent_tools(&subagents, &mut registry);
 
@@ -212,22 +216,26 @@ pub fn run_tui(
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
     let session_grants = Arc::new(Mutex::new(BTreeSet::<(String, String)>::new()));
 
-    let mut stdout = io::stdout();
-    let _ = stdout.queue(SetForegroundColor(Color::Cyan));
-    println!(
-        "Nola v2 Interactive TUI | model={} | permission={} | workspace={}",
-        route.model,
-        permission_profile.as_canonical_str(),
-        workspace.display()
-    );
-    let _ = stdout.queue(ResetColor);
-    if !first_turn {
-        println!("Resuming session {session_id}");
+    {
+        let mut out = io::stdout().lock();
+        let _ = out.queue(SetForegroundColor(Color::Cyan));
+        let _ = writeln!(
+            out,
+            "Nola v2 Interactive TUI | model={} | permission={} | workspace={}",
+            route.model,
+            permission_profile.as_canonical_str(),
+            workspace.display()
+        );
+        let _ = out.queue(ResetColor);
+        if !first_turn {
+            let _ = writeln!(out, "Resuming session {session_id}");
+        }
+        let _ = writeln!(
+            out,
+            "Type /help for slash commands (/edit /resume /model /allow /compact /config /goal /room /new /quit)\n"
+        );
+        let _ = out.flush();
     }
-    println!(
-        "Type /help for slash commands (/edit /resume /model /allow /compact /config /goal /room /new /quit)\n"
-    );
-    let _ = stdout.flush();
 
     let stdin = io::stdin();
     let mut input = String::new();
@@ -237,7 +245,15 @@ pub fn run_tui(
         print!("nola> ");
         let _ = io::stdout().flush();
         input.clear();
-        let n = stdin.read_line(&mut input).map_err(|e| e.to_string())?;
+        let n = match stdin.read_line(&mut input) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                cancel.store(false, Ordering::Relaxed);
+                println!();
+                continue;
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         if n == 0 {
             break;
         }
@@ -372,7 +388,7 @@ pub fn run_tui(
                     continue;
                 }
                 "/room" => {
-                    handle_tui_room_cmd(&suite, &caller, &route, &base_policy, rest);
+                    handle_tui_room_cmd(&suite, &raw_caller, &route, &base_policy, rest);
                     continue;
                 }
                 "/rooms" => {
@@ -483,19 +499,18 @@ pub fn run_tui(
             auto_recall_memory: true,
             inbox: None,
         };
-        first_turn = false;
-
         match engine.run(&ctx, &prompt_to_run, run_cfg, |ev| match ev {
             AgentEvent::ReasoningDelta { delta } if verbose_tools => {
-                let mut out = io::stdout();
+                let mut out = io::stdout().lock();
                 let _ = out.queue(SetAttribute(Attribute::Dim));
-                print!("{delta}");
-                let _ = out.queue(ResetColor);
+                let _ = write!(out, "{delta}");
+                let _ = out.queue(SetAttribute(Attribute::NormalIntensity));
                 let _ = out.flush();
             }
             AgentEvent::TextDelta { delta } => {
-                print!("{delta}");
-                let _ = io::stdout().flush();
+                let mut out = io::stdout().lock();
+                let _ = write!(out, "{delta}");
+                let _ = out.flush();
             }
             AgentEvent::ToolStarted {
                 name, arguments, ..
@@ -517,13 +532,19 @@ pub fn run_tui(
             _ => {}
         }) {
             Ok(res) => {
+                first_turn = false;
                 let _ = MemoryWorker::distill_turn(&suite, "tui", &prompt_to_run, &res.final_text);
                 let step_usage = last_step_usage.lock().ok().and_then(|g| g.clone());
                 println!();
                 print_context_usage_footer(&route, step_usage.as_ref().unwrap_or(&res.usage));
                 println!();
             }
-            Err(e) => eprintln!("\nerror: {e}\n"),
+            Err(e) => {
+                if store.get_session(&session_id).ok().flatten().is_some() {
+                    first_turn = false;
+                }
+                eprintln!("\nerror: {e}\n");
+            }
         }
     }
     ctx.pty.close_all();
@@ -550,6 +571,14 @@ fn apply_tui_model_override(cfg: &AppliedConfig, route: &mut ModelRouteConfig, a
     route.model = arg.to_string();
 }
 
+struct TempFileCleanupGuard(PathBuf);
+
+impl Drop for TempFileCleanupGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 fn compose_prompt_in_editor() -> Result<Option<String>, String> {
     let editor_cmd = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
@@ -570,25 +599,26 @@ fn compose_prompt_in_editor() -> Result<Option<String>, String> {
     let extra_args: Vec<&str> = parts.collect();
 
     let tmp_path = std::env::temp_dir().join(format!("nola-prompt-{}.txt", new_id()));
-    if fs::symlink_metadata(&tmp_path).is_ok() {
-        return Err(format!(
-            "refusing to overwrite existing temp file '{}'",
-            tmp_path.display()
-        ));
+    let mut open_opts = fs::OpenOptions::new();
+    open_opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open_opts.mode(0o600);
     }
-    fs::write(&tmp_path, "").map_err(|e| format!("failed to create temp prompt file: {e}"))?;
+    let file = open_opts
+        .open(&tmp_path)
+        .map_err(|e| format!("failed to create temp prompt file '{}': {e}", tmp_path.display()))?;
+    let _cleanup_guard = TempFileCleanupGuard(tmp_path.clone());
+    drop(file);
 
     let status = Command::new(program)
         .args(&extra_args)
         .arg(&tmp_path)
         .status()
-        .map_err(|e| {
-            let _ = fs::remove_file(&tmp_path);
-            format!("failed to launch editor '{program}': {e}")
-        })?;
+        .map_err(|e| format!("failed to launch editor '{program}': {e}"))?;
 
     let content = fs::read_to_string(&tmp_path).unwrap_or_default();
-    let _ = fs::remove_file(&tmp_path);
 
     if !status.success() {
         return Err(format!("editor '{program}' exited with status {status}"));
@@ -760,10 +790,13 @@ fn print_context_usage_footer(route: &ModelRouteConfig, latest_usage: &TokenUsag
         .unwrap_or_else(|| latest_usage.cache_hit_rate_bps());
     let cache_pct = cache_bps as f64 / 100.0;
 
-    let mut out = io::stdout();
+    let mut out = io::stdout().lock();
     let _ = out.queue(SetAttribute(Attribute::Dim));
-    print!("Context {pct:.0}% · {used_k:.1}k/{win_k:.0}k · cache hit {cache_pct:.0}%");
-    let _ = out.queue(ResetColor);
+    let _ = write!(
+        out,
+        "Context {pct:.0}% · {used_k:.1}k/{win_k:.0}k · cache hit {cache_pct:.0}%"
+    );
+    let _ = out.queue(SetAttribute(Attribute::NormalIntensity));
     let _ = out.flush();
 }
 

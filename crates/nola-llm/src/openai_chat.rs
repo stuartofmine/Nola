@@ -47,7 +47,12 @@ fn user_content_value(text: &str, media: &[MediaAttachment]) -> Value {
         parts.push(json!({"type": "text", "text": text}));
     }
     for att in media {
-        let mime = att.mime_type.trim().to_ascii_lowercase();
+        let raw_mime = att.mime_type.trim().to_ascii_lowercase();
+        let mime = if raw_mime == "image/jpg" {
+            "image/jpeg"
+        } else {
+            raw_mime.as_str()
+        };
         let data_url = format!("data:{mime};base64,{}", att.bytes_base64);
         if mime == "application/pdf" {
             parts.push(json!({
@@ -304,7 +309,10 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
         let stop_reason = map_finish_reason(finish);
 
         let mut tool_calls = Vec::new();
-        if stop_reason != ModelStopReason::OutputLimit {
+        if !matches!(
+            stop_reason,
+            ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+        ) {
             if let Some(arr) = msg.get("tool_calls").and_then(|v| v.as_array()) {
                 for (i, tc) in arr.iter().enumerate() {
                     let call_id = tc
@@ -471,7 +479,10 @@ impl ProviderWireAdapter for OpenAiChatAdapter {
         }
 
         let mut tool_calls = Vec::new();
-        if stop_reason != ModelStopReason::OutputLimit {
+        if !matches!(
+            stop_reason,
+            ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+        ) {
             for (_, (call_id, name, raw_args)) in partial_calls {
                 if !name.is_empty() {
                     tool_calls.push(ModelToolCall {

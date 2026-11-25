@@ -37,12 +37,17 @@ pub struct UpdateCheckResult {
     pub latest: Option<UpdateManifest>,
 }
 
-/// Resolve the current platform update target, honoring `NOLA_UPDATE_TARGET` first.
+/// Resolve the current platform update target, honoring `NOLA_UPDATE_TARGET` first
+/// (sanitized strictly to `[A-Za-z0-9_-]`).
 pub fn current_update_target() -> String {
     if let Ok(raw) = std::env::var("NOLA_UPDATE_TARGET") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
+        let clean: String = raw
+            .trim()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            .collect();
+        if !clean.is_empty() {
+            return clean;
         }
     }
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
@@ -79,8 +84,60 @@ fn is_valid_sha256_hex(s: &str) -> bool {
     exp.len() == 64 && exp.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Fetch an HTTPS update feed manifest (DNS-pinned against SSRF, no redirects, 64 KiB cap)
-/// and check whether a newer version exists.
+const MAX_UPDATE_REDIRECTS: usize = 5;
+
+fn https_get_with_safe_redirects(
+    raw_url: &str,
+    timeout: Duration,
+    extra_header: Option<(&str, &str)>,
+) -> Result<(reqwest::blocking::Response, String), String> {
+    let mut current_url = raw_url.to_string();
+    for hop in 0..=MAX_UPDATE_REDIRECTS {
+        if !current_url.starts_with("https://") {
+            return Err("update URL must use https://".into());
+        }
+        let (parsed, host, addrs) = resolve_and_validate_public_url(&current_url)?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(&host, &addrs)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let mut req = client.get(parsed.clone());
+        if let Some((k, v)) = extra_header {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .map_err(|e| format!("update request failed: {e}"))?;
+        let status_code = resp.status().as_u16();
+        if matches!(status_code, 301 | 302 | 303 | 307 | 308) {
+            if hop == MAX_UPDATE_REDIRECTS {
+                return Err(format!(
+                    "update request exceeded maximum {MAX_UPDATE_REDIRECTS} redirects"
+                ));
+            }
+            let Some(loc) = resp.headers().get("location").and_then(|v| v.to_str().ok()) else {
+                return Ok((resp, current_url));
+            };
+            let next = parsed
+                .join(loc)
+                .map_err(|e| format!("invalid redirect Location '{loc}': {e}"))?;
+            if next.scheme() != "https" {
+                return Err("update redirect target must use https://".into());
+            }
+            current_url = next.to_string();
+            continue;
+        }
+        return Ok((resp, current_url));
+    }
+    Err(format!(
+        "update request exceeded maximum {MAX_UPDATE_REDIRECTS} redirects"
+    ))
+}
+
+/// Fetch an HTTPS update feed manifest (DNS-pinned against SSRF, up to 5 safe HTTPS redirects,
+/// 64 KiB cap) and check whether a newer version exists.
 ///
 /// When both `feed_url` and `NOLA_UPDATE_FEED_URL` are empty/unset, returns truthful
 /// `status: "unconfigured"` (NEVER fakes `"up_to_date"`).
@@ -106,18 +163,11 @@ pub fn check_for_update(feed_url: &str, current_version: &str) -> Result<UpdateC
     if !effective_url.starts_with("https://") {
         return Err("update feed URL must use https://".into());
     }
-    let (parsed, host, addrs) = resolve_and_validate_public_url(effective_url)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&host, &addrs)
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(parsed)
-        .header("X-Nola-Update-Target", &target)
-        .send()
-        .map_err(|e| format!("update feed fetch failed: {e}"))?;
+    let (resp, _) = https_get_with_safe_redirects(
+        effective_url,
+        Duration::from_secs(10),
+        Some(("X-Nola-Update-Target", &target)),
+    )?;
     if !resp.status().is_success() {
         return Err(format!("update feed returned HTTP {}", resp.status()));
     }
@@ -161,10 +211,11 @@ fn sanitize_package_filename(url: &str) -> String {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         .collect();
+    let clean = clean.trim_start_matches('.');
     if clean.is_empty() || clean == "." || clean == ".." {
         format!("nola-update-{}.pkg", current_update_target())
     } else {
-        clean
+        clean.to_string()
     }
 }
 
@@ -185,18 +236,8 @@ pub fn download_update_package(
         }
     }
 
-    let (parsed, host, addrs) = resolve_and_validate_public_url(trimmed_url)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(&host, &addrs)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut resp = client
-        .get(parsed)
-        .send()
-        .map_err(|e| format!("update package download failed: {e}"))?;
+    let (mut resp, final_url) =
+        https_get_with_safe_redirects(trimmed_url, Duration::from_secs(120), None)?;
     if !resp.status().is_success() {
         return Err(format!("update package returned HTTP {}", resp.status()));
     }
@@ -256,7 +297,16 @@ pub fn download_update_package(
         }
     }
 
-    let final_path = dest_dir.join(sanitize_package_filename(trimmed_url));
+    let canonical_dest = dest_dir
+        .canonicalize()
+        .unwrap_or_else(|_| dest_dir.to_path_buf());
+    let final_path = canonical_dest.join(sanitize_package_filename(&final_url));
+    if final_path.parent() != Some(canonical_dest.as_path())
+        || !nola_tools::path_within_workspace(&canonical_dest, &final_path)
+    {
+        let _ = fs::remove_file(&temp_path);
+        return Err("sanitized update package path escapes dest_dir".into());
+    }
     if let Err(e) = fs::rename(&temp_path, &final_path) {
         let _ = fs::remove_file(&temp_path);
         return Err(format!("failed to finalize update package: {e}"));
@@ -305,5 +355,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(bad_sha.contains("64-char"));
+
+        assert_eq!(sanitize_package_filename("https://example.com/...hidden.tar.gz"), "hidden.tar.gz");
+        assert!(!sanitize_package_filename("https://example.com/...").starts_with('.'));
     }
 }

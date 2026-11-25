@@ -363,10 +363,10 @@ struct MacConversationCanvas: View {
                                 MacV2UISurfaceCard(
                                     snapshotJSON: snapshotJSON,
                                     conversationID: conversationID,
-                                    onSubmit: { convID, interaction in
+                                    onSubmit: { convID, interactionData in
                                         try await model.submitV2UIInteraction(
                                             conversationId: convID,
-                                            interaction: interaction
+                                            interactionData: interactionData
                                         )
                                     }
                                 )
@@ -675,7 +675,7 @@ struct MacConversationCanvas: View {
 private struct MacV2UISurfaceCard: View {
     let snapshotJSON: String
     let conversationID: String
-    let onSubmit: (String, [String: Any]) async throws -> Data
+    let onSubmit: (String, Data) async throws -> Data
     @State private var fieldValues: [String: String] = [:]
     @State private var isSubmitting = false
     @State private var submissionError: String?
@@ -698,15 +698,16 @@ private struct MacV2UISurfaceCard: View {
                     snapshot: snapshot,
                     submit: { submission in
                         do {
-                            let encoded = try JSONEncoder().encode(submission)
-                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? [:]
+                            let encoded = try JSONEncoder().encode(submission.interaction)
+                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? ([String: Any]())
                             let payload: [String: Any] = [
                                 "surface_id": submission.interaction.identity.surface_id,
                                 "action_id": submission.interaction.action?.action_id ?? "",
                                 "submission_id": submission.submission_id,
                                 "interaction": interactionObj,
                             ]
-                            let responseData = try await onSubmit(targetConvID, payload)
+                            let payloadData = try JSONSerialization.data(withJSONObject: payload)
+                            let responseData = try await onSubmit(targetConvID, payloadData)
                             if let root = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
                                let rawSnap = root["snapshot"],
                                JSONSerialization.isValidJSONObject(rawSnap),
@@ -755,11 +756,12 @@ private struct MacV2UISurfaceCard: View {
                         Task {
                             defer { isSubmitting = false }
                             do {
-                                _ = try await onSubmit(conversationID, [
+                                let payloadData = try JSONSerialization.data(withJSONObject: [
                                     "surface_id": surfaceID,
                                     "action_id": actionID,
                                     "data_model": fieldValues,
                                 ])
+                                _ = try await onSubmit(conversationID, payloadData)
                             } catch {
                                 submissionError = error.localizedDescription
                             }

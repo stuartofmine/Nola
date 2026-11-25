@@ -97,7 +97,7 @@
         return value >= 1024 && value % 1024 === 0 ? `${value / 1024}K` : new Intl.NumberFormat($locale).format(value);
     }
     const numericFields: { key: Exclude<keyof Parameters, 'flashAttention'>; label: string; min: number; max: number; step: number }[] = [
-        { key: 'contextTokens', label: 'models.context', min: 65536, max: 4000000, step: 1 },
+        { key: 'contextTokens', label: 'models.context', min: 2048, max: 4000000, step: 1 },
         { key: 'temperature', label: 'models.temperature', min: 0, max: 2, step: 0.05 },
         { key: 'topP', label: 'modelDisplay.topP', min: 0, max: 1, step: 0.01 },
         { key: 'topK', label: 'modelDisplay.topK', min: 1, max: 200, step: 1 },

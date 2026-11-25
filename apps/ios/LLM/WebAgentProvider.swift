@@ -3504,7 +3504,8 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         let timestamp = UInt64(Date().timeIntervalSince1970)
         let nonce = UUID().uuidString.lowercased()
         let method = (request.httpMethod ?? "GET").uppercased()
-        let path = url.path + (url.query.map { "?\($0)" } ?? "")
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (comps?.percentEncodedPath ?? url.path) + (comps?.percentEncodedQuery.map { "?\($0)" } ?? "")
         let bodyDigest = SHA256.hash(data: request.httpBody ?? Data())
             .map { String(format: "%02x", $0) }
             .joined()

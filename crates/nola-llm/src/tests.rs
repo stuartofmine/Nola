@@ -442,8 +442,8 @@ fn openai_responses_chat_siwc_gemini_and_loopback_proxy_contracts() {
         .build_request_with_params(&r_no_sum, &sample_request(false), &params, false)
         .unwrap();
     assert!(b_no_sum.body["reasoning"].get("summary").is_none());
-    assert_eq!(b_no_sum.body["seed"], 123);
-    assert_eq!(b_no_sum.body["stop"], json!(["STOP"]));
+    assert!(b_no_sum.body.get("seed").is_none());
+    assert!(b_no_sum.body.get("stop").is_none());
 
     let mut r_with_sum = sample_route(ModelProtocol::OpenAiResponses);
     r_with_sum.capabilities.supports_reasoning_summary = true;
@@ -577,4 +577,190 @@ fn openai_responses_chat_siwc_gemini_and_loopback_proxy_contracts() {
     assert!(!is_loopback_url("https://api.openai.com/v1/responses"));
     let client = LlmClient::new(15).unwrap();
     let _ = client.client_for_url("http://127.0.0.1:8081");
+}
+
+#[test]
+fn forensic_batch1_wire_adapter_fixes() {
+    // 1. SSE BOM stripping + SIWC namespace unwrapping in decode & SSE (including ToolCallStart) + strip stop
+    let siwc = adapter_for(ModelProtocol::SiwcResponses);
+    let siwc_route = sample_route(ModelProtocol::SiwcResponses);
+    let params = GenerationParams {
+        seed: Some(7),
+        stop: vec!["END".into()],
+        ..Default::default()
+    };
+    let built_siwc = siwc
+        .build_request_with_params(&siwc_route, &sample_request(false), &params, true)
+        .unwrap();
+    assert!(built_siwc.body.get("stop").is_none());
+    assert!(built_siwc.body.get("seed").is_none());
+
+    let decoded_siwc = siwc
+        .decode_response(
+            &siwc_route,
+            &json!({
+                "id": "r1",
+                "model": "gpt-5",
+                "status": "completed",
+                "output": [
+                    {"type": "function_call", "call_id": "c1", "name": "nola.read_file", "arguments": "{}"},
+                    {"type": "function_call", "call_id": "c2", "name": "nola/bash", "arguments": "{}"},
+                    {"type": "function_call", "call_id": "c3", "name": "nola:grep", "arguments": "{}"}
+                ]
+            }),
+        )
+        .unwrap();
+    let names: Vec<&str> = decoded_siwc.tool_calls.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, vec!["read_file", "bash", "grep"]);
+
+    let bom_sse = concat!(
+        "\u{feff}data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"nola.read_file\"}}\n\n",
+        "data: {\"type\":\"response.function_call_arguments.delta\",\"call_id\":\"c1\",\"delta\":\"{\\\"path\\\":\\\"a.rs\\\"}\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r2\",\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[]}}\n\n"
+    );
+    let mut cursor = Cursor::new(bom_sse.as_bytes());
+    let mut started_names = Vec::new();
+    let sse_resp = siwc
+        .parse_sse_stream(&siwc_route, &mut cursor, &mut |d| {
+            if let ModelStreamDelta::ToolCallStart { name, .. } = d {
+                started_names.push(name);
+            }
+        })
+        .unwrap();
+    assert_eq!(started_names, vec!["read_file"]);
+    assert_eq!(sse_resp.tool_calls.len(), 1);
+    assert_eq!(sse_resp.tool_calls[0].name, "read_file");
+
+    // 2. Gemini schema sanitization, continuation thoughtSignature, id echo, non-object args, user-first
+    let gem = adapter_for(ModelProtocol::Gemini);
+    let gem_route = sample_route(ModelProtocol::Gemini);
+    let mut gem_req = sample_request(false);
+    gem_req.prefix_stable_tools[0].parameters = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "tool.json",
+        "type": "object",
+        "additionalProperties": false,
+        "x-nola-read-only": true,
+        "properties": {
+            "path": {"type": "string", "default": "main.rs"}
+        }
+    });
+    let gem_decoded = gem
+        .decode_response(
+            &gem_route,
+            &json!({
+                "responseId": "g1",
+                "modelVersion": "gemini-2.5-pro",
+                "candidates": [{
+                    "finishReason": "STOP",
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"functionCall": {"id": "fc_99", "name": "read_file", "args": "not-an-object"}, "thoughtSignature": "sig_xyz"}
+                        ]
+                    }
+                }]
+            }),
+        )
+        .unwrap();
+    assert_eq!(gem_decoded.tool_calls[0].call_id, "fc_99");
+    assert_eq!(gem_decoded.tool_calls[0].arguments, json!({}));
+    assert!(gem_decoded.continuation.is_some());
+
+    gem_req.history = vec![
+        HistoryMessage::Assistant {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: gem_decoded.tool_calls.clone(),
+            continuation: gem_decoded.continuation.clone(),
+        },
+        HistoryMessage::Tool {
+            call_id: "fc_99".into(),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::text("ok"),
+            is_error: false,
+            media: vec![],
+        },
+    ];
+    let gem_built = gem.build_request(&gem_route, &gem_req, false).unwrap();
+    assert_eq!(gem_built.body["contents"][0]["role"], "user");
+    assert_eq!(
+        gem_built.body["contents"][1]["parts"][0]["thoughtSignature"],
+        "sig_xyz"
+    );
+    assert_eq!(
+        gem_built.body["contents"][2]["parts"][0]["functionResponse"]["id"],
+        "fc_99"
+    );
+    let decl_params = &gem_built.body["tools"][0]["functionDeclarations"][0]["parameters"];
+    assert!(decl_params.get("additionalProperties").is_none());
+    assert!(decl_params.get("$schema").is_none());
+    assert!(decl_params.get("$id").is_none());
+    assert!(decl_params.get("x-nola-read-only").is_none());
+    assert!(decl_params["properties"]["path"].get("default").is_none());
+
+    // 3. Anthropic thinking budget >= 1024, max_tokens > budget_tokens, empty signature skipped, model mismatch rejected
+    let anth = adapter_for(ModelProtocol::AnthropicMessages);
+    let mut anth_route = sample_route(ModelProtocol::AnthropicMessages);
+    anth_route.reasoning_effort = Some("budget:256".into());
+    let mut anth_req = sample_request(false);
+    anth_req.max_output_tokens = 1024;
+    let anth_built = anth.build_request(&anth_route, &anth_req, false).unwrap();
+    assert_eq!(anth_built.body["thinking"]["budget_tokens"], 1024);
+    assert!(anth_built.body["max_tokens"].as_u64().unwrap() > 1024);
+
+    let anth_dec = anth
+        .decode_response(
+            &anth_route,
+            &json!({
+                "id": "m1",
+                "model": "claude-sonnet",
+                "stop_reason": "end_turn",
+                "content": [
+                    {"type": "thinking", "thinking": "unsigned", "signature": ""},
+                    {"type": "text", "text": "hello"}
+                ]
+            }),
+        )
+        .unwrap();
+    let cont_items = anth_dec.continuation.unwrap().items;
+    assert_eq!(cont_items.len(), 1);
+    assert_eq!(cont_items[0]["type"], "text");
+
+    // 4. OpenAI Responses buffers parallel Tool media + normalizes image/jpg -> image/jpeg
+    let resp_ad = adapter_for(ModelProtocol::OpenAiResponses);
+    let resp_route = sample_route(ModelProtocol::OpenAiResponses);
+    let mut resp_req = sample_request(false);
+    resp_req.history = vec![
+        HistoryMessage::User { content: "hi".into(), media: vec![] },
+        HistoryMessage::Tool {
+            call_id: "c1".into(),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::text("img1"),
+            is_error: false,
+            media: vec![MediaAttachment {
+                mime_type: "image/jpg".into(),
+                filename: "a.jpg".into(),
+                bytes_base64: "AAAA".into(),
+                sha256: "00".into(),
+                raw_bytes_len: 3,
+            }],
+        },
+        HistoryMessage::Tool {
+            call_id: "c2".into(),
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::text("img2"),
+            is_error: false,
+            media: vec![],
+        },
+    ];
+    let resp_built = resp_ad.build_request(&resp_route, &resp_req, false).unwrap();
+    let inp = resp_built.body["input"].as_array().unwrap();
+    assert_eq!(inp[1]["type"], "function_call_output");
+    assert_eq!(inp[2]["type"], "function_call_output");
+    assert_eq!(inp[3]["role"], "user");
+    assert!(inp[3]["content"][1]["image_url"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/jpeg;base64,"));
 }

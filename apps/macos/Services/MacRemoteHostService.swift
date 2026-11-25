@@ -1157,7 +1157,7 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
     ) async throws
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws
     func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws
-    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data
     func sendTaskGuidance(
         conversationID: String,
         parentRunID: String,
@@ -2442,6 +2442,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                         submission?.ticket.markAccepted()
                     }
                     if case .turnCompleted = event.v2Event {
+                        activeToolPlans.removeValue(forKey: conversationID)
+                        activeToolPlanOwners.removeValue(forKey: conversationID)
                         receivedTerminalEvent = true
                         continuation.yield(event)
                         continuation.finish()
@@ -2471,6 +2473,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 submission?.ticket.markAccepted()
             }
             if case .turnCompleted = event.v2Event {
+                activeToolPlans.removeValue(forKey: conversationID)
+                activeToolPlanOwners.removeValue(forKey: conversationID)
                 receivedTerminalEvent = true
             }
             if terminalRetiresToolPlan(event, conversationID: conversationID,
@@ -3129,6 +3133,10 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
 
     private func encrypt(_ payload: [String: Any], token: String) throws -> [String: Any] {
         let plaintext = try JSONSerialization.data(withJSONObject: payload)
+        return try encryptData(plaintext, token: token)
+    }
+
+    private func encryptData(_ plaintext: Data, token: String) throws -> [String: Any] {
         let key = SymmetricKey(data: Data(SHA256.hash(data: Data(token.utf8))))
         let nonce = AES.GCM.Nonce()
         let sealed = try AES.GCM.seal(plaintext, using: key, nonce: nonce, authenticating: cryptoAAD)
@@ -3167,11 +3175,12 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let url = request.url else { return }
         let timestamp = UInt64(Date().timeIntervalSince1970)
         let nonce = UUID().uuidString.lowercased()
-        let path = url.path + (url.query.map { "?\($0)" } ?? "")
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (comps?.percentEncodedPath ?? url.path) + (comps?.percentEncodedQuery.map { "?\($0)" } ?? "")
         let bodyDigest = SHA256.hash(data: request.httpBody ?? Data())
             .map { String(format: "%02x", $0) }
             .joined()
-        let method = request.httpMethod ?? "GET"
+        let method = (request.httpMethod ?? "GET").uppercased()
         let message = "v1\n\(method)\n\(path)\n\(timestamp)\n\(nonce)\n\(bodyDigest)"
         let signature = HMAC<SHA256>.authenticationCode(
             for: Data(message.utf8),
@@ -3397,7 +3406,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     ) async throws {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow, "scope": scope])
+        let payload: [String: Any] = ["request_id": requestID, "allow": allow, "scope": scope]
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(payload, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
         let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
@@ -3423,7 +3439,13 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         req.httpMethod = "POST"
         var body: [String: Any] = ["request_id": requestID]
         if let answer { body["answer"] = answer }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(body, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
         let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
@@ -3433,13 +3455,13 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     }
 
     @discardableResult
-    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data {
         guard let configuration = configuration(for: conversationId) ?? (try? configurationStore.load()) else {
             throw MacRemoteHostError.notConfigured
         }
         return try await v2SubmitUiInteraction(
             conversationId: conversationId,
-            interaction: interaction,
+            interactionData: interactionData,
             configuration: configuration
         )
     }
@@ -3447,12 +3469,18 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     @discardableResult
     func v2SubmitUiInteraction(
         conversationId: String,
-        interaction: [String: Any],
+        interactionData: Data,
         configuration: MacRemoteHostConfiguration
     ) async throws -> Data {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationId)/ui-interactions"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: interaction)
+        if !configuration.token.isEmpty {
+            let envelope = try encryptData(interactionData, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = interactionData
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         applyAuthentication(to: &req, token: configuration.token)
@@ -3460,13 +3488,26 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
+        if !configuration.token.isEmpty,
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           root["type"] as? String == "encrypted" {
+            let decrypted = try decrypt(root, token: configuration.token)
+            return try JSONSerialization.data(withJSONObject: decrypted)
+        }
         return data
     }
 
     func v2TruncateConversation(conversationID: String, fromSeq: Int64, configuration: MacRemoteHostConfiguration) async throws {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/truncate"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["fromSeq": fromSeq])
+        let payload: [String: Any] = ["fromSeq": fromSeq]
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(payload, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
         let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
@@ -3508,7 +3549,7 @@ extension MacRemoteAgentRunning {
     func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
         throw MacRemoteHostError.invalidResponse
     }
-    func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> Data {
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data {
         throw MacRemoteHostError.invalidResponse
     }
 }

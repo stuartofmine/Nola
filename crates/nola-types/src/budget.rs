@@ -39,23 +39,23 @@ pub fn estimate_history_message_tokens(msg: &HistoryMessage) -> usize {
             tool_calls,
             continuation,
         } => {
-            let calls: usize = tool_calls
-                .iter()
-                .map(|c| {
-                    estimate_text_tokens(&c.name)
-                        .saturating_add(estimate_json_tokens(&c.arguments))
-                        .saturating_add(8)
-                })
-                .sum();
-            let cont: usize = continuation
-                .as_ref()
-                .map(|c| c.items.iter().map(estimate_json_tokens).sum())
-                .unwrap_or(0);
-            estimate_text_tokens(content)
-                .saturating_add(reasoning.as_deref().map(estimate_text_tokens).unwrap_or(0))
-                .saturating_add(calls)
-                .saturating_add(cont)
-                .saturating_add(6)
+            if let Some(cont) = continuation.as_ref().filter(|c| !c.items.is_empty()) {
+                let cont_tokens: usize = cont.items.iter().map(estimate_json_tokens).sum();
+                cont_tokens.saturating_add(6)
+            } else {
+                let calls: usize = tool_calls
+                    .iter()
+                    .map(|c| {
+                        estimate_text_tokens(&c.name)
+                            .saturating_add(estimate_json_tokens(&c.arguments))
+                            .saturating_add(8)
+                    })
+                    .sum();
+                estimate_text_tokens(content)
+                    .saturating_add(reasoning.as_deref().map(estimate_text_tokens).unwrap_or(0))
+                    .saturating_add(calls)
+                    .saturating_add(6)
+            }
         }
         HistoryMessage::Tool {
             tool_name,

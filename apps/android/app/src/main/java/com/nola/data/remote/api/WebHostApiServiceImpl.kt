@@ -566,6 +566,7 @@ class WebHostApiServiceImpl @Inject constructor(
         val url = webHostMobileUrl(hostBaseUrl, path)
         val response = client.get(url) {
             mobileAuthHeaders(token, "GET", url).forEach { (name, value) -> header(name, value) }
+            header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
             header("Accept", "application/json")
         }
         val route = if (onRoute == null) null else when {

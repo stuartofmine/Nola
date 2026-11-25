@@ -566,6 +566,11 @@ class WebAgentProvider @Inject constructor(
         conversationId: String,
         content: String,
         configuration: Config? = config,
+        attachments: JsonArray? = null,
+        modelId: String? = null,
+        reasoningEffort: String? = null,
+        permissionProfile: String? = null,
+        selectedExperts: JsonArray? = null,
     ): Flow<SseEvent> {
         val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
         return webHostApi.v2StreamMessage(
@@ -573,6 +578,21 @@ class WebAgentProvider @Inject constructor(
             token = cfg.token,
             conversationId = conversationId,
             content = content,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+            attachments = attachments,
+            modelId = modelId,
+            reasoningEffort = reasoningEffort,
+            permissionProfile = permissionProfile,
+            selectedExperts = selectedExperts,
+        )
+    }
+
+    suspend fun v2CreateConversation(title: String = "Chat", configuration: Config? = config): String {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2CreateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            title = title,
             pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
         )
     }

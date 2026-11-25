@@ -25,7 +25,8 @@ export function newAutomationDraft(): AutomationDraft {
     return { skillIds: [], workspaceRoot: '', permissionProfile: '', name: '', format: 'agent', source: '', prompt: '', script: '', cwd: '', frequency: 'daily', weekday: 1, time: '09:00' };
 }
 export function parseAutomations(value: unknown): Automation[] {
-    const items = (value as { actions?: unknown })?.actions;
+    const obj = value as { actions?: unknown; automations?: unknown; items?: unknown } | null | undefined;
+    const items = obj?.actions ?? obj?.automations ?? obj?.items;
     if (!Array.isArray(items)) throw new Error('automation.invalidResponse');
     const ids = new Set<string>();
     return items.map(item => {
@@ -84,7 +85,8 @@ export function automationCanEdit(action: Automation): boolean {
 }
 export interface AutomationSkill { id: string; name: string; description: string }
 export function parseAutomationSkills(value: unknown): AutomationSkill[] {
-    const skills = (value as { skills?: unknown })?.skills;
+    const obj = value as { skills?: unknown; items?: unknown } | null | undefined;
+    const skills = obj?.skills ?? obj?.items;
     if (!Array.isArray(skills)) throw new Error('automation.invalidResponse');
     const ids = new Set<string>();
     return skills.map(item => {

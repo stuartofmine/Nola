@@ -27,6 +27,7 @@ pub const MAX_NODES_PER_SURFACE: usize = 1_000;
 pub const MAX_SURFACE_PAYLOAD_BYTES: usize = 1024 * 1024;
 pub const MAX_SUMMARY_BYTES: usize = 4_096;
 pub const MAX_INTERACTION_PAYLOAD_BYTES: usize = 64 * 1024;
+const MAX_STORED_REVISIONS: usize = 20;
 
 const SUPPORTED_COMPONENTS: &[&str] = &[
     "Text",
@@ -366,6 +367,27 @@ pub fn to_read_only_snapshot(snapshot: &UiSnapshot) -> UiSnapshot {
     ro
 }
 
+fn trim_revisions(revisions: &mut BTreeMap<u64, UiSnapshot>) {
+    while revisions.len() > MAX_STORED_REVISIONS {
+        if let Some(oldest) = revisions.keys().next().copied() {
+            revisions.remove(&oldest);
+        } else {
+            break;
+        }
+    }
+}
+
+fn extract_slot_ids(val: &Value) -> Vec<String> {
+    match val {
+        Value::String(s) if !s.trim().is_empty() => vec![s.clone()],
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().filter(|s| !s.trim().is_empty()).map(ToString::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Parse LLM tool arguments (`components` array or `nodes` map) into normalized `UiNodeSnapshot`s.
 pub fn build_nodes_from_spec(raw: &Value) -> Result<(Option<String>, BTreeMap<String, UiNodeSnapshot>), String> {
     let mut nodes = BTreeMap::new();
@@ -423,6 +445,10 @@ pub fn build_nodes_from_spec(raw: &Value) -> Result<(Option<String>, BTreeMap<St
                 "min",
                 "max",
                 "step",
+                "steps",
+                "axis",
+                "displayStyle",
+                "filterable",
                 "name",
                 "ariaLabel",
                 "weight",
@@ -440,25 +466,57 @@ pub fn build_nodes_from_spec(raw: &Value) -> Result<(Option<String>, BTreeMap<St
                     }
                 }
             }
+            // Alias `step` -> `steps` for Slider parity with A2UI Basic Catalog
+            if component == "Slider" && !props.contains_key("steps") {
+                if let Some(step_val) = props.get("step").or_else(|| obj.get("step")).cloned() {
+                    props.insert("steps".into(), step_val);
+                }
+            }
+            // Default DateTimeInput `enableDate: true` when neither enableDate nor enableTime is set
+            if component == "DateTimeInput"
+                && !props.contains_key("enableDate")
+                && !props.contains_key("enableTime")
+            {
+                props.insert("enableDate".into(), Value::Bool(true));
+            }
 
             let mut slots = BTreeMap::new();
             if let Some(raw_slots) = obj.get("slots").and_then(|v| v.as_object()) {
-                for (slot_name, ids) in raw_slots {
-                    if let Some(arr_ids) = ids.as_array() {
-                        slots.insert(
-                            slot_name.clone(),
-                            arr_ids
-                                .iter()
-                                .filter_map(|v| v.as_str().map(ToString::to_string))
-                                .collect(),
-                        );
+                for (slot_name, ids_val) in raw_slots {
+                    let ids = extract_slot_ids(ids_val);
+                    if !ids.is_empty() || ids_val.is_array() {
+                        slots.insert(slot_name.clone(), ids);
                     }
                 }
             }
             if let Some(child_id) = obj.get("child").and_then(|v| v.as_str()) {
-                slots.entry("child".into()).or_insert_with(|| vec![child_id.to_string()]);
+                slots
+                    .entry("child".into())
+                    .or_insert_with(|| vec![child_id.to_string()]);
+            }
+            if component == "Modal" {
+                if let Some(trig) = obj.get("trigger") {
+                    let ids = extract_slot_ids(trig);
+                    if !ids.is_empty() {
+                        slots.entry("trigger".into()).or_insert(ids);
+                    }
+                }
+                if let Some(cont) = obj.get("content") {
+                    let ids = extract_slot_ids(cont);
+                    if !ids.is_empty() {
+                        slots.entry("content".into()).or_insert(ids);
+                    }
+                }
             }
             if let Some(children) = obj.get("children").and_then(|v| v.as_array()) {
+                if component == "Tabs" {
+                    for (tab_idx, child_val) in children.iter().enumerate() {
+                        let ids = extract_slot_ids(child_val);
+                        if !ids.is_empty() {
+                            slots.entry(format!("tab:{tab_idx}")).or_insert(ids);
+                        }
+                    }
+                }
                 slots.entry("children".into()).or_insert_with(|| {
                     children
                         .iter()
@@ -528,6 +586,13 @@ pub fn build_nodes_from_spec(raw: &Value) -> Result<(Option<String>, BTreeMap<St
         for (id, node_val) in map {
             let mut node: UiNodeSnapshot = serde_json::from_value(node_val.clone())
                 .map_err(|e| format!("invalid node '{id}': {e}"))?;
+            if !SUPPORTED_COMPONENTS.contains(&node.component.as_str()) {
+                return Err(format!(
+                    "unsupported A2UI component '{}' (supported: {})",
+                    node.component,
+                    SUPPORTED_COMPONENTS.join(", ")
+                ));
+            }
             if node.instance_id.is_empty() {
                 node.instance_id = id.clone();
             }
@@ -641,6 +706,7 @@ pub fn upsert_ui_surface(
     }
 
     revisions.insert(revision, to_read_only_snapshot(&snapshot));
+    trim_revisions(&mut revisions);
 
     let stored = StoredUiSurface {
         storage_key: key.clone(),
@@ -815,6 +881,7 @@ pub fn commit_ui_interaction(
     stored
         .revisions
         .insert(next_rev, to_read_only_snapshot(&stored.current));
+    trim_revisions(&mut stored.revisions);
     stored.updated_at_ms = now_ms();
     store
         .put_module_record(KIND_UI_SURFACE, &key, &stored)
@@ -857,6 +924,7 @@ pub fn delete_ui_surface(
     stored
         .revisions
         .insert(stored.current.revision, stored.current.clone());
+    trim_revisions(&mut stored.revisions);
     stored.updated_at_ms = now_ms();
     store
         .put_module_record(KIND_UI_SURFACE, &key, &stored)
@@ -929,7 +997,7 @@ impl ToolHandler for RenderUiSurfaceTool {
             },
             tier: ToolTier::Core,
             domain: CapabilityDomain::System,
-            read_only: true,
+            read_only: false,
         }
     }
 
@@ -1011,7 +1079,7 @@ impl ToolHandler for DeleteUiSurfaceTool {
             },
             tier: ToolTier::Deferred,
             domain: CapabilityDomain::System,
-            read_only: true,
+            read_only: false,
         }
     }
 
@@ -1271,5 +1339,71 @@ mod tests {
         )
         .unwrap_err();
         assert!(huge_interaction_err.contains("budget"));
+    }
+
+    #[test]
+    fn a2ui_basic_catalog_parity_and_revision_cap() {
+        let store = Store::open_in_memory().unwrap();
+        let (_, nodes) = build_nodes_from_spec(&json!({
+            "root_id": "tabs",
+            "components": [
+                { "id": "tabs", "component": "Tabs", "tab_titles": ["A", "B"], "children": ["modal", "dt"] },
+                { "id": "modal", "component": "Modal", "trigger": "open_btn", "content": "slider" },
+                { "id": "open_btn", "component": "Button", "text": "Open" },
+                { "id": "slider", "component": "Slider", "min": 0, "max": 100, "step": 5 },
+                { "id": "dt", "component": "DateTimeInput", "label": "When" },
+                { "id": "div", "component": "Divider", "axis": "vertical" },
+                { "id": "cp", "component": "ChoicePicker", "displayStyle": "chips", "filterable": true }
+            ]
+        }))
+        .unwrap();
+        assert_eq!(nodes["tabs"].slots["tab:0"], vec!["modal"]);
+        assert_eq!(nodes["tabs"].slots["tab:1"], vec!["dt"]);
+        assert_eq!(nodes["modal"].slots["trigger"], vec!["open_btn"]);
+        assert_eq!(nodes["modal"].slots["content"], vec!["slider"]);
+        assert_eq!(nodes["slider"].props["steps"], json!(5));
+        assert_eq!(nodes["dt"].props["enableDate"], json!(true));
+        assert_eq!(nodes["div"].props["axis"], json!("vertical"));
+        assert_eq!(nodes["cp"].props["displayStyle"], json!("chips"));
+        assert_eq!(nodes["cp"].props["filterable"], json!(true));
+
+        // Invalid component rejected in nodes map branch too
+        let bad_nodes = build_nodes_from_spec(&json!({
+            "nodes": {
+                "x": {
+                    "instance_id": "x",
+                    "component_id": "x",
+                    "component": "EvilScriptTag",
+                    "props": {},
+                    "slots": {},
+                    "bindings": {},
+                    "actions": {},
+                    "validation_errors": []
+                }
+            }
+        }));
+        assert!(bad_nodes.is_err());
+
+        // Revisions capped to 20
+        for _ in 0..25 {
+            upsert_ui_surface(
+                &store,
+                test_owner("conv-rev"),
+                "surf",
+                "summary",
+                Some("tabs".into()),
+                nodes.clone(),
+                json!({}),
+            )
+            .unwrap();
+        }
+        let key = surface_storage_key("conv-rev", "surf");
+        let stored: StoredUiSurface = store
+            .get_module_record(KIND_UI_SURFACE, &key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.revisions.len(), 20);
+        assert_eq!(*stored.revisions.keys().next().unwrap(), 6);
+        assert_eq!(*stored.revisions.keys().last().unwrap(), 25);
     }
 }

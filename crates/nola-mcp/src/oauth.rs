@@ -61,11 +61,26 @@ impl McpOAuthManager {
         format!("mcp_oauth:{server_id}")
     }
 
-    pub fn store_tokens(&self, server_id: &str, tokens: &OAuthTokenSet) -> Result<(), McpError> {
+    fn server_lock(&self, server_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.refresh_locks.lock().unwrap();
+        Arc::clone(
+            locks
+                .entry(server_id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(()))),
+        )
+    }
+
+    fn store_tokens_unlocked(&self, server_id: &str, tokens: &OAuthTokenSet) -> Result<(), McpError> {
         let raw = serde_json::to_string(tokens)?;
         self.vault
             .set_secret(&Self::vault_key(server_id), &raw)
             .map_err(|e| McpError::OAuth(e.to_string()))
+    }
+
+    pub fn store_tokens(&self, server_id: &str, tokens: &OAuthTokenSet) -> Result<(), McpError> {
+        let server_lock = self.server_lock(server_id);
+        let _guard = server_lock.lock().unwrap();
+        self.store_tokens_unlocked(server_id, tokens)
     }
 
     pub fn load_tokens(&self, server_id: &str) -> Result<Option<OAuthTokenSet>, McpError> {
@@ -93,14 +108,7 @@ impl McpOAuthManager {
         }
 
         // Single-flight per-server lock so concurrent requests never double-spend a refresh token.
-        let server_lock = {
-            let mut locks = self.refresh_locks.lock().unwrap();
-            Arc::clone(
-                locks
-                    .entry(server_id.to_string())
-                    .or_insert_with(|| Arc::new(Mutex::new(()))),
-            )
-        };
+        let server_lock = self.server_lock(server_id);
         let _guard = server_lock.lock().unwrap();
 
         // Re-check after acquiring lock in case another caller just refreshed!
@@ -129,7 +137,7 @@ impl McpOAuthManager {
             return Ok(Some(latest.access_token));
         };
         let refreshed = self.refresh_access_token(&latest, refresh_token)?;
-        self.store_tokens(server_id, &refreshed)?;
+        self.store_tokens_unlocked(server_id, &refreshed)?;
         Ok(Some(refreshed.access_token))
     }
 
@@ -139,8 +147,13 @@ impl McpOAuthManager {
         refresh_token: &str,
     ) -> Result<OAuthTokenSet, McpError> {
         let request_started_ms = now_ms();
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none());
+        if crate::transport::is_loopback_url(&existing.token_endpoint) {
+            builder = builder.no_proxy();
+        }
+        let client = builder
             .build()
             .map_err(|e| McpError::OAuth(e.to_string()))?;
         let resp = client

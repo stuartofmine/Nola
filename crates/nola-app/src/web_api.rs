@@ -204,6 +204,8 @@ pub fn session_to_conversation_json(store: &Store, s: &Session) -> Value {
         .unwrap_or("automatic");
     let knowledge = load_conversation_knowledge(store, &s.id);
     let token_usage = session_usage_json(store, &s.id);
+    let (reconstructed_msgs, _) = reconstruct_v2_messages(store, &s.id);
+    let msg_count = reconstructed_msgs.len();
 
     json!({
         "conversationId": s.id,
@@ -221,6 +223,7 @@ pub fn session_to_conversation_json(store: &Store, s: &Session) -> Value {
         "configurationRevision": config_rev,
         "knowledge": knowledge,
         "tokenUsage": token_usage,
+        "message_count": msg_count,
         "workspace_root": s.workspace_root,
         "created_at_ms": s.created_at_ms,
         "updated_at_ms": s.updated_at_ms
@@ -331,7 +334,20 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
     (messages, raw_events)
 }
 
+pub fn memory_meta_key(id: &str) -> String {
+    format!("memory_meta:{id}")
+}
+
+pub fn memory_item_to_record_with_store(store: &Store, item: &MemoryItem) -> Value {
+    let meta = store.get_kv(&memory_meta_key(&item.id)).ok().flatten();
+    memory_item_to_record_with_meta(item, meta.as_ref())
+}
+
 pub fn memory_item_to_record(item: &MemoryItem) -> Value {
+    memory_item_to_record_with_meta(item, None)
+}
+
+fn memory_item_to_record_with_meta(item: &MemoryItem, meta: Option<&Value>) -> Value {
     let created = ms_to_rfc3339(item.created_at_ms);
     let updated = ms_to_rfc3339(item.updated_at_ms);
     let (scope, kind) = item
@@ -345,6 +361,41 @@ pub fn memory_item_to_record(item: &MemoryItem) -> Value {
                 &item.namespace
             },
         ));
+    let source = meta
+        .and_then(|m| m.get("source"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("user");
+    let confidence = meta
+        .and_then(|m| m.get("confidence"))
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .unwrap_or(1.0);
+    let importance = meta
+        .and_then(|m| m.get("importance"))
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .unwrap_or(0.5);
+    let supersedes: Vec<String> = meta
+        .and_then(|m| m.get("supersedes"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::trim).filter(|s| !s.is_empty()).map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sensitivity = meta
+        .and_then(|m| m.get("sensitivity"))
+        .and_then(|v| v.as_str())
+        .map(|s| json!(s))
+        .unwrap_or(Value::Null);
+    let expires_at = meta
+        .and_then(|m| m.get("expires_at"))
+        .and_then(|v| v.as_str())
+        .map(|s| json!(s))
+        .unwrap_or(Value::Null);
+
     json!({
         "id": item.id,
         "scope": scope,
@@ -352,17 +403,17 @@ pub fn memory_item_to_record(item: &MemoryItem) -> Value {
         "content": item.content,
         "summary": if item.title.is_empty() { Value::Null } else { Value::String(item.title.clone()) },
         "tags": item.tags,
-        "source": "user",
-        "confidence": 1.0,
-        "supersedes": [],
-        "importance": 0.5,
-        "sensitivity": Value::Null,
-        "expires_at": Value::Null,
+        "source": source,
+        "confidence": confidence,
+        "supersedes": supersedes,
+        "importance": importance,
+        "sensitivity": sensitivity,
+        "expires_at": expires_at,
         "created_at": created,
         "updated_at": updated,
         "provenance": {
-            "kind": "user",
-            "source": "user",
+            "kind": source,
+            "source": source,
             "observed_at": updated
         }
     })
@@ -500,7 +551,15 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
     });
     let messaging_channels: Vec<Value> = suite
         .list_records::<Value>("messaging_channel")
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(|mut ch| {
+            if let Some(obj) = ch.as_object_mut() {
+                obj.remove("webhook_secret");
+            }
+            ch
+        })
+        .collect();
 
     let cfg = load_active_config(store);
     let model_profiles_resp = build_model_profiles_response(store);
@@ -508,14 +567,40 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         .get("profiles")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    let default_chat_model_resolution = match cfg.llm.default_model.as_ref() {
-        Some(sel) => json!({
+    let resolved_profile_id = cfg.llm.default_model.as_ref().map(|sel| {
+        model_profiles
+            .as_array()
+            .and_then(|arr| {
+                arr.iter().find_map(|p| {
+                    let ep_id = p.pointer("/endpoint/id").and_then(|v| v.as_str());
+                    let m_name = p
+                        .get("modelName")
+                        .or_else(|| p.get("model_name"))
+                        .and_then(|v| v.as_str());
+                    if ep_id == Some(sel.connection.as_str()) && m_name == Some(sel.model.as_str()) {
+                        p.get("id")
+                            .or_else(|| p.get("profile_id"))
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| format!("{}:{}", sel.connection, sel.model))
+    });
+    let default_chat_model_resolution = match (cfg.llm.default_model.as_ref(), resolved_profile_id) {
+        (Some(sel), Some(pid)) => json!({
+            "kind": "resolved",
+            "origin": "default",
             "status": "resolved",
             "connection_id": sel.connection,
             "model_id": sel.model,
-            "profile_id": format!("{}:{}", sel.connection, sel.model)
+            "profile_id": pid
         }),
-        None => json!({
+        _ => json!({
+            "kind": "unconfigured",
+            "origin": "default",
             "status": "unconfigured",
             "connection_id": Value::Null,
             "model_id": Value::Null,
@@ -559,7 +644,15 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
             {
                 "id": "nola-v2",
                 "display_name": "Nola v2 Rust Engine",
-                "capabilities": { "supports_permission_bridge": true }
+                "availability": "available",
+                "capabilities": {
+                    "streams_text": true,
+                    "streams_reasoning": true,
+                    "streams_tools": true,
+                    "supports_resume": true,
+                    "supports_cancel": true,
+                    "supports_permission_bridge": true
+                }
             }
         ]
     })
@@ -596,6 +689,7 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
         .unwrap_or_default();
     for p in &mut stored_profiles {
         scrub_secret_fields(p);
+        ensure_profile_snake_case_aliases(p);
     }
 
     let profiles: Vec<Value> = if !stored_profiles.is_empty() {
@@ -647,13 +741,17 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
                 } else {
                     json!({ "control": "unsupported" })
                 };
+                let prof_id = format!("{}:{}", conn.id, m.id);
                 out.push(json!({
-                    "id": format!("{}:{}", conn.id, m.id),
+                    "id": prof_id,
+                    "profile_id": prof_id,
                     "provider": "openai-compatible",
                     "connectionId": Value::Null,
                     "modelId": m.id,
                     "modelName": m.id,
+                    "model_name": m.id,
                     "displayName": m.id,
+                    "display_name": m.id,
                     "revision": 1,
                     "enabled": true,
                     "selected": selected,
@@ -687,27 +785,78 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
     })
 }
 
+fn ensure_profile_snake_case_aliases(p: &mut Value) {
+    let Some(obj) = p.as_object_mut() else {
+        return;
+    };
+    let id = obj
+        .get("id")
+        .or_else(|| obj.get("profile_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let model_name = obj
+        .get("modelName")
+        .or_else(|| obj.get("model_name"))
+        .or_else(|| obj.get("modelId"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let display_name = obj
+        .get("displayName")
+        .or_else(|| obj.get("display_name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&model_name)
+        .to_string();
+    if !id.is_empty() {
+        obj.entry("profile_id".to_string()).or_insert_with(|| json!(id));
+        obj.entry("id".to_string()).or_insert_with(|| json!(id));
+    }
+    if !model_name.is_empty() {
+        obj.entry("model_name".to_string())
+            .or_insert_with(|| json!(model_name));
+        obj.entry("modelName".to_string())
+            .or_insert_with(|| json!(model_name));
+    }
+    if !display_name.is_empty() {
+        obj.entry("display_name".to_string())
+            .or_insert_with(|| json!(display_name));
+        obj.entry("displayName".to_string())
+            .or_insert_with(|| json!(display_name));
+    }
+}
+
 pub fn normalize_automation_record(raw: &Value) -> Value {
     let id = raw
         .get("id")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(new_id);
     let name = raw
         .get("name")
         .or_else(|| raw.get("title"))
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("Automation");
     let format = raw
         .get("format")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("agent");
-    let url = raw
-        .get("url")
-        .or_else(|| raw.get("path"))
-        .or_else(|| raw.get("query"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let url = if format == "agent" || format == "script" {
+        ""
+    } else {
+        raw.get("url")
+            .or_else(|| raw.get("path"))
+            .or_else(|| raw.get("query"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    };
     let mut prompt = raw
         .get("userPrompt")
         .or_else(|| raw.get("prompt"))
@@ -738,22 +887,30 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
             .unwrap_or_else(|| raw.get("scriptCwd").cloned().unwrap_or(Value::Null));
         (json!(approved), cwd_val)
     } else {
-        (
-            raw.get("scriptApproved").cloned().unwrap_or(Value::Null),
-            raw.get("scriptCwd").cloned().unwrap_or(Value::Null),
-        )
+        (Value::Null, Value::Null)
     };
     let frequency = raw
         .get("frequency")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("daily");
+    let weekday = if frequency == "weekly" {
+        raw.get("weekday").cloned().unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
     let time = raw
         .get("time")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("09:00");
     let timezone = raw
         .get("timezone")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or("local");
     let enabled = raw
         .get("enabled")
@@ -762,9 +919,15 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
     let updated_at = raw
         .get("updatedAt")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| Utc::now().to_rfc3339());
-    let revision = raw.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+    let revision = raw
+        .get("revision")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1)
+        .max(1);
     json!({
         "id": id,
         "name": name,
@@ -773,7 +936,7 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
         "userPrompt": prompt,
         "revision": revision,
         "frequency": frequency,
-        "weekday": raw.get("weekday").cloned().unwrap_or(Value::Null),
+        "weekday": weekday,
         "time": time,
         "timezone": timezone,
         "enabled": enabled,
@@ -1211,8 +1374,107 @@ mod tests {
         assert_eq!(snap["default_chat_model_revision"], 1);
         assert!(snap["model_profiles"].is_array());
         assert!(snap["default_chat_model_resolution"].is_object());
+        assert_eq!(snap["default_chat_model_resolution"]["kind"], "unconfigured");
+        assert_eq!(snap["default_chat_model_resolution"]["origin"], "default");
+        assert_eq!(snap["execution_backends"][0]["availability"], "available");
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["streams_text"], true);
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["streams_reasoning"], true);
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["streams_tools"], true);
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["supports_resume"], true);
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["supports_cancel"], true);
+        assert_eq!(snap["execution_backends"][0]["capabilities"]["supports_permission_bridge"], true);
         assert_eq!(snap["mcp_servers"][0]["endpoint"], "http://127.0.0.1:9000/mcp");
         assert_eq!(snap["mcp_servers"][0]["url"], "http://127.0.0.1:9000/mcp");
+    }
+
+    #[test]
+    fn memory_meta_and_conversation_message_count_and_profile_aliases_persist() {
+        let store = Store::open_in_memory().unwrap();
+        let sess = Session {
+            id: "conv-cnt".into(),
+            title: "Count Test".into(),
+            workspace_root: "/tmp".into(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: 1000,
+            updated_at_ms: 1000,
+        };
+        store.upsert_session(&sess).unwrap();
+        store
+            .append_event("conv-cnt", "chat_user", json!({"content": "hi"}), 100)
+            .unwrap();
+        store
+            .append_event("conv-cnt", "chat_assistant", json!({"content": "hello"}), 100)
+            .unwrap();
+        let proj = session_to_conversation_json(&store, &sess);
+        assert_eq!(proj["message_count"], 2);
+
+        let mem = MemoryItem {
+            id: "mem-meta-1".into(),
+            namespace: "global:preference".into(),
+            title: "Editor".into(),
+            content: "Prefers neovim".into(),
+            tags: vec!["dev".into()],
+            created_at_ms: 1000,
+            updated_at_ms: 2000,
+        };
+        store
+            .set_kv(
+                &memory_meta_key("mem-meta-1"),
+                &json!({
+                    "supersedes": ["mem-old-0"],
+                    "confidence": 0.9,
+                    "importance": 0.85,
+                    "sensitivity": "private",
+                    "expires_at": "2027-01-01T00:00:00Z",
+                    "source": "user"
+                }),
+            )
+            .unwrap();
+        let rec = memory_item_to_record_with_store(&store, &mem);
+        assert_eq!(rec["supersedes"], json!(["mem-old-0"]));
+        assert_eq!(rec["confidence"], 0.9);
+        assert_eq!(rec["importance"], 0.85);
+        assert_eq!(rec["sensitivity"], "private");
+        assert_eq!(rec["expires_at"], "2027-01-01T00:00:00Z");
+
+        // Ensure model profile response includes snake_case aliases alongside camelCase
+        let dir = tempfile::tempdir().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        save_applied_config(
+            &store,
+            &AppliedConfig {
+                llm: LlmSection {
+                    default_model: Some(DefaultModelSelection {
+                        connection: "ep".into(),
+                        model: "gpt-4o".into(),
+                    }),
+                    connections: vec![ConnectionConfig {
+                        id: "ep".into(),
+                        endpoint: "http://127.0.0.1:8080/v1".into(),
+                        protocol: Some("chat_completions".into()),
+                        provider: None,
+                        api_key: None,
+                        api_key_env: None,
+                        models: vec![ModelEntry {
+                            id: "gpt-4o".into(),
+                            context_window: Some(128_000),
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        }],
+                    }],
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let profs = build_model_profiles_response(&store);
+        assert_eq!(profs["profiles"][0]["profile_id"], "ep:gpt-4o");
+        assert_eq!(profs["profiles"][0]["display_name"], "gpt-4o");
+        assert_eq!(profs["profiles"][0]["model_name"], "gpt-4o");
     }
 
     #[test]

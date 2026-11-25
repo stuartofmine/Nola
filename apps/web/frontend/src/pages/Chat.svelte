@@ -35,6 +35,7 @@
         mergeV2TokenUsage,
         normalizeV2PermissionProfile,
         normalizeV2ReasoningEffort,
+        parseV2Attachment,
         patchV2ConversationConfiguration,
         respondV2Permission,
         respondV2UserInput,
@@ -414,10 +415,53 @@
         syncUrl(active?.conversationId ?? null, resolvedPath);
     }
 
+    const MAX_NON_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+    const TEXT_FILE_EXTENSIONS = new Set([
+        'txt', 'md', 'markdown', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv', 'tsv',
+        'html', 'htm', 'css', 'scss', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'svelte', 'vue',
+        'py', 'rs', 'go', 'java', 'kt', 'c', 'h', 'cpp', 'hpp', 'cs', 'rb', 'php',
+        'sh', 'bash', 'zsh', 'sql', 'env', 'ini', 'conf', 'cfg', 'log', 'svg', 'gitignore',
+    ]);
+
+    function isLikelyTextAttachment(file: File): boolean {
+        const mime = (file.type || '').toLowerCase();
+        if (mime.startsWith('text/')) return true;
+        if (
+            mime === 'application/json' ||
+            mime === 'application/xml' ||
+            mime === 'application/javascript' ||
+            mime === 'application/typescript' ||
+            mime === 'application/x-yaml' ||
+            mime === 'application/yaml' ||
+            mime === 'application/toml' ||
+            mime === 'application/sql' ||
+            mime === 'application/x-sh' ||
+            mime === 'application/xhtml+xml' ||
+            mime.endsWith('+json') ||
+            mime.endsWith('+xml')
+        ) {
+            return true;
+        }
+        if (mime && mime !== 'application/octet-stream') return false;
+        const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+        return TEXT_FILE_EXTENSIONS.has(ext);
+    }
+
+    function bytesToBase64(bytes: Uint8Array): string {
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+    }
+
     async function ensureActiveConversation(): Promise<ChatConversation> {
         if (active) return active;
         const created = await createV2Conversation({
             ...(selectedModelId ? { selectedModelId } : {}),
+            permissionProfile,
+            reasoningEffort,
         });
         active = created;
         syncUrl(created.conversationId);
@@ -425,11 +469,20 @@
         return created;
     }
 
+    async function reloadActiveConversation(conversationId: string, serial = generation): Promise<void> {
+        const canonical = await loadV2MessagesWithUsage(conversationId);
+        if (serial !== generation || active?.conversationId !== conversationId) return;
+        messages = canonical.messages;
+        sessionUsage = canonical.usage;
+    }
+
     async function handleFileSelect(event: Event) {
         const input = event.currentTarget as HTMLInputElement;
         const files = input.files;
         if (!files?.length) return;
+        error = '';
         const next: V2Attachment[] = [...attachments];
+        const rejected: string[] = [];
         for (const file of Array.from(files)) {
             if (file.type.startsWith('image/')) {
                 const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -439,12 +492,45 @@
                     reader.readAsDataURL(file);
                 });
                 next.push({ name: file.name, mimeType: file.type, dataUrl });
-            } else {
-                const text = await file.text();
-                next.push({ name: file.name, mimeType: file.type || 'text/plain', text: text.slice(0, 64_000) });
+                continue;
             }
+            if (file.size > MAX_NON_IMAGE_ATTACHMENT_BYTES) {
+                rejected.push(file.name);
+                continue;
+            }
+            const mimeType = file.type || 'application/octet-stream';
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (isLikelyTextAttachment(file) && !bytes.includes(0)) {
+                try {
+                    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+                    next.push({
+                        name: file.name,
+                        mimeType: file.type || 'text/plain',
+                        text: text.slice(0, 64_000),
+                    });
+                    continue;
+                } catch {
+                    // Fall through to binary parser if bytes are not valid UTF-8.
+                }
+            }
+            const fallbackLabel = `[Binary attachment '${file.name}' (${mimeType}, ${file.size} bytes)]`;
+            let parsedText = fallbackLabel;
+            try {
+                const parsed = await parseV2Attachment({
+                    filename: file.name,
+                    mimeType,
+                    dataBase64: bytesToBase64(bytes),
+                });
+                if (parsed.text) parsedText = parsed.text.slice(0, 64_000);
+            } catch {
+                // Keep structured binary marker without corrupting bytes via file.text().
+            }
+            next.push({ name: file.name, mimeType, text: parsedText });
         }
         attachments = next;
+        if (rejected.length) {
+            error = `${t($locale, 'chatTextAttachment.invalidFile')} (${rejected.join(', ')})`;
+        }
         input.value = '';
     }
 
@@ -468,11 +554,14 @@
 
         // Lightweight slash commands
         if (text === '/compact' && active) {
+            const convId = active.conversationId;
+            const serial = generation;
             try {
-                const res = await compactV2Conversation(active.conversationId);
+                const res = await compactV2Conversation(convId);
                 statusNotice = res.summary || t($locale, 'chatPage.compactionRecord');
                 draft = '';
-                conversationDrafts.delete(active.conversationId);
+                conversationDrafts.delete(convId);
+                await reloadActiveConversation(convId, serial).catch(() => {});
             } catch (cause) {
                 error = errorMessage(cause);
             }
@@ -632,7 +721,7 @@
                     },
                     onError: msg => {
                         if (serial !== generation) return;
-                        if (msg.includes('model_not_configured') || msg.includes('no_model_configured') || msg.includes('model')) {
+                        if (msg.includes('model_not_configured') || msg.includes('no_model_configured')) {
                             needsModelConfig = true;
                         }
                         error = msg;
@@ -650,17 +739,18 @@
             );
             if (serial === generation) {
                 void conversationManager?.refresh();
-                // Reload canonical seq numbers in background without flashing UI
-                void loadV2MessagesWithUsage(conv.conversationId)
-                    .then(canonical => {
-                        if (serial === generation && !streaming && canonical.messages.length) {
+                // Await canonical messages so persisted seq numbers and session usage are ready before Edit/Regenerate.
+                try {
+                    const canonical = await loadV2MessagesWithUsage(conv.conversationId);
+                    if (serial === generation) {
+                        if (canonical.messages.length) {
                             messages = canonical.messages;
-                            if (canonical.usage.input_tokens > sessionUsage.input_tokens) {
-                                sessionUsage = canonical.usage;
-                            }
                         }
-                    })
-                    .catch(() => {});
+                        sessionUsage = canonical.usage;
+                    }
+                } catch {
+                    // Keep streamed transcript if canonical reload fails transiently.
+                }
             }
         } catch (cause) {
             if (serial !== generation) return;
@@ -791,13 +881,26 @@
     async function confirmEditAndResend(msg: V2Message, index: number) {
         if (streaming || !active) return;
         confirmEditIndex = null;
+        const convId = active.conversationId;
+        const serial = generation;
         try {
-            if (typeof msg.seq === 'number') {
-                await truncateV2Conversation(active.conversationId, msg.seq);
+            let targetSeq = msg.seq;
+            if (typeof targetSeq !== 'number') {
+                const canonical = await loadV2MessagesWithUsage(convId);
+                if (serial !== generation || active?.conversationId !== convId) return;
+                targetSeq = canonical.messages[index]?.seq;
             }
-            messages = messages.slice(0, index);
+            if (typeof targetSeq === 'number') {
+                await truncateV2Conversation(convId, targetSeq);
+            }
+            try {
+                await reloadActiveConversation(convId, serial);
+            } catch {
+                messages = messages.slice(0, index);
+            }
             draft = msg.content;
-            saveDraftForKey(active.conversationId, draft);
+            attachments = msg.attachments?.length ? msg.attachments.map(att => ({ ...att })) : [];
+            saveDraftForKey(convId, draft);
             await tick();
             composerEl?.focus();
         } catch (cause) {
@@ -811,11 +914,23 @@
         while (userIdx >= 0 && messages[userIdx].role !== 'user') userIdx--;
         if (userIdx < 0) return;
         const userMsg = messages[userIdx];
+        const convId = active.conversationId;
+        const serial = generation;
         try {
-            if (typeof userMsg.seq === 'number') {
-                await truncateV2Conversation(active.conversationId, userMsg.seq);
+            let targetSeq = userMsg.seq;
+            if (typeof targetSeq !== 'number') {
+                const canonical = await loadV2MessagesWithUsage(convId);
+                if (serial !== generation || active?.conversationId !== convId) return;
+                targetSeq = canonical.messages[userIdx]?.seq;
             }
-            messages = messages.slice(0, userIdx);
+            if (typeof targetSeq === 'number') {
+                await truncateV2Conversation(convId, targetSeq);
+            }
+            try {
+                await reloadActiveConversation(convId, serial);
+            } catch {
+                messages = messages.slice(0, userIdx);
+            }
             await sendPrompt(userMsg.content, userMsg.attachments ?? []);
         } catch (cause) {
             error = errorMessage(cause);
@@ -1120,7 +1235,12 @@
                                         {#if msg.attachments?.length}
                                             <div class="attachment-chips">
                                                 {#each msg.attachments as att}
-                                                    <span class="attachment-chip">{att.name}</span>
+                                                    <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
+                                                        {#if att.dataUrl}
+                                                            <img class="attachment-thumb message-thumb" src={att.dataUrl} alt={att.name} />
+                                                        {/if}
+                                                        <span>{att.name}</span>
+                                                    </span>
                                                 {/each}
                                             </div>
                                         {/if}
@@ -1169,7 +1289,7 @@
                                         <div class="message-body">
                                             {#if msg.role === 'assistant'}
                                                 {#if msg.content}
-                                                    <Markdown source={msg.content} />
+                                                    <Markdown source={msg.content} streaming={streaming && msgIndex === messages.length - 1} />
                                                 {:else if streaming}
                                                     <p class="muted">{t($locale, 'chatPage.working')}</p>
                                                 {/if}
@@ -1311,8 +1431,11 @@
                                     </span>
                                 {/each}
                                 {#each attachments as att, idx}
-                                    <span class="attachment-chip">
-                                        {att.name}
+                                    <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
+                                        {#if att.dataUrl}
+                                            <img class="attachment-thumb" src={att.dataUrl} alt={att.name} />
+                                        {/if}
+                                        <span>{att.name}</span>
                                         <button type="button" class="chip-remove" aria-label={t($locale, 'shell.cancel')} onclick={() => removeAttachment(idx)}>×</button>
                                     </span>
                                 {/each}
@@ -1454,6 +1577,9 @@
                         onopenPage={openManagementTab}
                         oncompacted={summary => {
                             statusNotice = summary;
+                            if (active) {
+                                void reloadActiveConversation(active.conversationId, generation).catch(() => {});
+                            }
                         }}
                     />
                 {/if}
@@ -1869,6 +1995,22 @@
         border-radius: 999px;
         background: var(--panel);
         font-size: 12px;
+    }
+    .attachment-chip.has-thumb {
+        border-radius: 10px;
+        padding: 4px 8px 4px 4px;
+    }
+    .attachment-thumb {
+        width: 28px;
+        height: 28px;
+        object-fit: cover;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+    .attachment-thumb.message-thumb {
+        width: 48px;
+        height: 48px;
     }
     .expert-chip {
         border-color: var(--info);

@@ -189,6 +189,12 @@ pub unsafe extern "C" fn nola_core_application_open(
             return std::ptr::null_mut();
         }
     };
+    if let Err(e) =
+        crate::config::bind_store_vault_path(&store, &crate::config::default_vault_path(&db_path))
+    {
+        set_last_open_error(Some(format!("failed to bind store vault path: {e}")));
+        return std::ptr::null_mut();
+    }
     let ws = db_path
         .parent()
         .map(PathBuf::from)
@@ -535,12 +541,23 @@ pub unsafe extern "C" fn nola_core_application_intelligence_ingest(
                 .and_then(|v| v.as_str())
                 .unwrap_or("semantic")
                 .to_string();
+            let mut cand_val = cand.clone();
+            if let Some(obj) = cand_val.as_object_mut() {
+                let missing_status = obj
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true);
+                if missing_status {
+                    obj.insert("status".into(), json!("active"));
+                }
+            }
             let item = MemoryItem {
                 id,
                 namespace: "intelligence:memory".into(),
                 title: kind,
                 content: statement,
-                tags: vec![cand.to_string()],
+                tags: vec![cand_val.to_string()],
                 created_at_ms: ts,
                 updated_at_ms: ts,
             };

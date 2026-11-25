@@ -351,7 +351,7 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
             && value.snapshot.catalog_id == snapshot.catalog_id && value.snapshot.catalog_digest == snapshot.catalog_digest
     }
     private var displaySnapshot: AppleUISnapshot<JSON> { previewReady ? editing.preview!.snapshot : snapshot }
-    private var actionsDisabled: Bool { surfaceIsComposing || (!editing.drafts.isEmpty && !previewReady) }
+    private var actionsDisabled: Bool { surfaceIsComposing || (preview != nil && !editing.drafts.isEmpty && !previewReady) }
     private var draftEdits: [AppleUIEdit<JSON>] {
         snapshot.nodes.values.flatMap { node in node.bindings.keys.compactMap { binding in
             editing.drafts[key(node.instance_id, binding)].map { .set(instanceID: node.instance_id, binding: binding, value: $0) }
@@ -406,7 +406,11 @@ struct AppleUISurfaceView<JSON: JournalJSONValue>: View {
                 try await Task.sleep(for: .milliseconds(180))
                 while isSurfaceTextFocused && appleUIHasMarkedText() { try await Task.sleep(for: .milliseconds(80)) }
                 try Task.checkCancellation()
-                guard editing.draftRevision == snapshot.revision, let preview else {
+                guard let preview else {
+                    editing.failure = nil
+                    return
+                }
+                guard editing.draftRevision == snapshot.revision else {
                     editing.failure = String(localized: "a2ui.previewUnavailable", defaultValue: "Reload this form before editing.")
                     return
                 }

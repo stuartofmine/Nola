@@ -160,6 +160,16 @@ mod unix_pty {
         }
     }
 
+    fn waitpid_eintr(pid: libc::pid_t, status: &mut libc::c_int) -> libc::pid_t {
+        loop {
+            let rc = unsafe { libc::waitpid(pid, status, 0) };
+            if rc < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return rc;
+        }
+    }
+
     pub struct PtySession {
         pub cwd: PathBuf,
         pid: libc::pid_t,
@@ -255,9 +265,9 @@ mod unix_pty {
                 unsafe {
                     libc::close(master_fd);
                     libc::kill(pid, libc::SIGKILL);
-                    let mut st = 0;
-                    libc::waitpid(pid, &mut st, 0);
                 }
+                let mut st = 0;
+                waitpid_eintr(pid, &mut st);
                 return Err("dup(master_fd) failed".into());
             }
             unsafe {
@@ -292,9 +302,7 @@ mod unix_pty {
                     }
                 }
                 let mut status: libc::c_int = 0;
-                unsafe {
-                    libc::waitpid(pid, &mut status, 0);
-                }
+                waitpid_eintr(pid, &mut status);
                 let mut r_guard = reaped_bg.lock().unwrap();
                 *r_guard = true;
                 let code = if libc::WIFEXITED(status) {

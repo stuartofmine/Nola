@@ -20,6 +20,8 @@ export type ModelPlan = Record<string, unknown> & { repository: string };
 export const targetContextTokens = 128 * 1024;
 type ContextLimitReason = 'target_met' | 'native_limit' | 'memory_budget' | 'metadata_unknown';
 export type ModelCandidate = {
+    id?: string;
+    quantization?: string;
     quantized?: boolean; targetContextTokens?: number; nativeContextTokens?: number | null;
     contextLimitReason?: ContextLimitReason;
     repository: string; revision: string; downloadBytes: number; variant?: string;

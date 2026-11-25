@@ -104,6 +104,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import com.nola.core.AndroidChildPermissions
@@ -1720,43 +1721,48 @@ class ChatViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            memoryProfileDataStore.skillCatalog.collect { skills ->
-                _uiState.update { it.copy(uploadedSkills = skills) }
-            }
+            memoryProfileDataStore.skillCatalog
+                .catch { e -> Log.w("ChatViewModel", "skillCatalog collector failed", e) }
+                .collect { skills ->
+                    _uiState.update { it.copy(uploadedSkills = skills) }
+                }
         }
         viewModelScope.launch {
-            memoryProfileDataStore.profile.collect { profile ->
-                val previousSnapshot = memoryEditorSnapshot
-                val previousLongTerm = previousSnapshot?.longTermMemory?.joinToString("\n")
-                val previousUserPrefs = previousSnapshot?.userPreferences?.joinToString("\n")
-                memoryEditorSnapshot = profile
-                _uiState.update { state ->
-                    val longTermDirty = previousLongTerm != null && state.longTermMemory != previousLongTerm
-                    val userPrefsDirty = previousUserPrefs != null && state.userPreferences != previousUserPrefs
-                    state.copy(
-                        longTermMemory = if (longTermDirty) state.longTermMemory else profile.longTermMemory.joinToString("\n"),
-                        userPreferences = if (userPrefsDirty) state.userPreferences else profile.userPreferences.joinToString("\n"),
-                        uploadedSkills = profile.uploadedSkills,
-                        uploadedDocuments = profile.uploadedDocuments,
-                        mcpServers = profile.mcpServers,
-                        customDataSources = profile.customDataSources,
-                        dataSources = buildDataSources(
+            memoryProfileDataStore.profile
+                .catch { e -> Log.w("ChatViewModel", "profile collector failed", e) }
+                .collect { profile ->
+                    val previousSnapshot = memoryEditorSnapshot
+                    val previousLongTerm = previousSnapshot?.longTermMemory?.joinToString("\n")
+                    val previousUserPrefs = previousSnapshot?.userPreferences?.joinToString("\n")
+                    memoryEditorSnapshot = profile
+                    _uiState.update { state ->
+                        val longTermDirty = previousLongTerm != null && state.longTermMemory != previousLongTerm
+                        val userPrefsDirty = previousUserPrefs != null && state.userPreferences != previousUserPrefs
+                        state.copy(
+                            longTermMemory = if (longTermDirty) state.longTermMemory else profile.longTermMemory.joinToString("\n"),
+                            userPreferences = if (userPrefsDirty) state.userPreferences else profile.userPreferences.joinToString("\n"),
+                            uploadedSkills = profile.uploadedSkills,
                             uploadedDocuments = profile.uploadedDocuments,
-                            hostUploadedDocuments = state.hostUploadedDocuments,
                             mcpServers = profile.mcpServers,
-                            hostMcpServers = state.hostMcpServers,
                             customDataSources = profile.customDataSources,
-                        ),
-                    )
+                            dataSources = buildDataSources(
+                                uploadedDocuments = profile.uploadedDocuments,
+                                hostUploadedDocuments = state.hostUploadedDocuments,
+                                mcpServers = profile.mcpServers,
+                                hostMcpServers = state.hostMcpServers,
+                                customDataSources = profile.customDataSources,
+                            ),
+                        )
+                    }
                 }
-            }
         }
         viewModelScope.launch {
             var displayedChildRequest: String? = null
             combine(AndroidChildPermissions.pending, _uiState) { pending, state ->
                 pending.firstOrNull { state.taskChildOwner == null &&
                     it.parentConversationId == state.conversationId }?.request
-            }.collect { request ->
+            }.catch { e -> Log.w("ChatViewModel", "child permissions collector failed", e) }
+                .collect { request ->
                 request?.let { displayedChildPermissionIds.add(it.requestId) }
                 _uiState.update { state ->
                     if (request != null && (state.agentPermissionRequest == null ||
@@ -1774,16 +1780,32 @@ class ChatViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            composerDrafts.initialize()
-            val restored = composerDrafts.pendingConfiguration()
+            runCatching { composerDrafts.initialize() }
+                .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    Log.w("ChatViewModel", "composerDrafts initialize failed", it)
+                }
+            val restored = runCatching { composerDrafts.pendingConfiguration() }.getOrNull()
             restoredPendingConfiguration = restored
             if (_uiState.value.conversationId == null && restored != null) _uiState.update { it.copy(currentModel = restored.model,
                 currentParameters = restored.parameters, contextMaxTokens = restored.parameters.maxContextTokens,
                 executionHostBinding = restored.hostBinding) }
-            loadConversations()
-            loadAvailableModels()
-            loadPreferences()
-            loadLastConversation()
+            runCatching { loadConversations() }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadConversations failed", it)
+            }
+            runCatching { loadAvailableModels() }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadAvailableModels failed", it)
+            }
+            runCatching { loadPreferences() }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadPreferences failed", it)
+            }
+            runCatching { loadLastConversation() }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadLastConversation failed", it)
+            }
         }
     }
 
@@ -1792,38 +1814,45 @@ class ChatViewModel @Inject constructor(
 
     private fun loadPreferences() {
         viewModelScope.launch {
-            prefs.hostDeviceGrants.collect { grants ->
-                _uiState.update { it.copy(pairedHostIdentity = grants.identity,
-                    hybridDeviceToolsEnabled = grants.enabled, hybridDeviceCapabilities = grants.capabilities) }
-            }
+            prefs.hostDeviceGrants
+                .catch { e -> Log.w("ChatViewModel", "hostDeviceGrants collector failed", e) }
+                .collect { grants ->
+                    _uiState.update { it.copy(pairedHostIdentity = grants.identity,
+                        hybridDeviceToolsEnabled = grants.enabled, hybridDeviceCapabilities = grants.capabilities) }
+                }
         }
         viewModelScope.launch {
-            val agentMode = prefs.isAgentModeEnabled.first()
-            val permissionMode = prefs.agentPermissionMode.first()
-            defaultPermissionMode = permissionMode
-            val autoCompact = memoryProfileDataStore.autoCompactTriggerPercent.first()
-            val documents = memoryProfileDataStore.documentEditor()
-            val profile = chatRepo.getMemoryProfile().copy(uploadedDocuments = documents.documents)
-            documentEditorSnapshot = documents
-            memoryEditorSnapshot = profile
-            healthConnectionState = readHealthConnectionState()
-            val dataSources = buildDataSources(
-                uploadedDocuments = profile.uploadedDocuments,
-                mcpServers = profile.mcpServers,
-                customDataSources = profile.customDataSources
-            )
-            _uiState.update { it.copy(
-                agentMode = agentMode,
-                permissionMode = if (it.conversationId == null) permissionMode else it.permissionMode,
-                autoCompactTriggerPercent = autoCompact,
-                longTermMemory = profile.longTermMemory.joinToString("\n"),
-                userPreferences = profile.userPreferences.joinToString("\n"),
-                uploadedSkills = profile.uploadedSkills,
-                uploadedDocuments = profile.uploadedDocuments,
-                mcpServers = profile.mcpServers,
-                dataSources = dataSources,
-                customDataSources = profile.customDataSources
-            ) }
+            runCatching {
+                val agentMode = prefs.isAgentModeEnabled.first()
+                val permissionMode = prefs.agentPermissionMode.first()
+                defaultPermissionMode = permissionMode
+                val autoCompact = memoryProfileDataStore.autoCompactTriggerPercent.first()
+                val documents = memoryProfileDataStore.documentEditor()
+                val profile = chatRepo.getMemoryProfile().copy(uploadedDocuments = documents.documents)
+                documentEditorSnapshot = documents
+                memoryEditorSnapshot = profile
+                healthConnectionState = readHealthConnectionState()
+                val dataSources = buildDataSources(
+                    uploadedDocuments = profile.uploadedDocuments,
+                    mcpServers = profile.mcpServers,
+                    customDataSources = profile.customDataSources
+                )
+                _uiState.update { it.copy(
+                    agentMode = agentMode,
+                    permissionMode = if (it.conversationId == null) permissionMode else it.permissionMode,
+                    autoCompactTriggerPercent = autoCompact,
+                    longTermMemory = profile.longTermMemory.joinToString("\n"),
+                    userPreferences = profile.userPreferences.joinToString("\n"),
+                    uploadedSkills = profile.uploadedSkills,
+                    uploadedDocuments = profile.uploadedDocuments,
+                    mcpServers = profile.mcpServers,
+                    dataSources = dataSources,
+                    customDataSources = profile.customDataSources
+                ) }
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadPreferences failed", it)
+            }
         }
     }
 
@@ -4477,24 +4506,6 @@ class ChatViewModel @Inject constructor(
                     }
                 }
                 val usesCanonicalDeviceCore = state.currentModel?.source != ModelInfo.ModelSource.WebHost
-                val remoteFrontier = if (!usesCanonicalDeviceCore) {
-                    val configuration = checkNotNull(frozenHost)
-                    val displayedParent = submittedState.messages.lastOrNull()?.let {
-                        it.meta?.get("nola.canonicalMessageID") ?: it.id
-                    }
-                    // Core's admitted source receipt survives terminal sealing;
-                    // permission UI and pending-intent projections do not.
-                    val owner = withContext(Dispatchers.IO) {
-                        assistantJournal.admittedSourceOwner(convId, configuration.expectedHostId,
-                            configuration.clientId, displayedParent)
-                    }
-                    check(owner != null || displayedParent == null) {
-                        "Host conversation owner is not confirmed. Reload before submitting; your draft is retained."
-                    }
-                    webAgentProvider.submissionFrontier(convId, owner?.let {
-                        com.nola.data.remote.api.RemoteRunKey(convId, it.submissionId, it.assistantMessageId)
-                    }, displayedParent, configuration)
-                } else null
                 if (!usesCanonicalDeviceCore) {
                     remoteConversationObserver.reset()
                     remoteSubmissionIntent = null
@@ -4504,16 +4515,7 @@ class ChatViewModel @Inject constructor(
                     val configuration = checkNotNull(frozenHost)
                     remoteObservationConfiguration = configuration
                     remoteSubmissionAdmitted = false
-                    remoteSubmissionIntent = conversationRepo.prepareRemoteSubmission(
-                        sourceHostId = configuration.expectedHostId, clientId = configuration.clientId,
-                        conversationId = convId,
-                        conversationTitle = conv.title.orEmpty(),
-                        submissionId = submissionId,
-                        userText = text,
-                        userMeta = messageMeta,
-                        createdAtMs = responseStartedAt,
-                        userMessageId = userMsg.id,
-                    )
+                    executionSession.v2TurnCompleted = false
                 }
                 _uiState.update { it.copy(
                     messages = it.messages + userMsg,
@@ -4565,23 +4567,19 @@ class ChatViewModel @Inject constructor(
                         ),
                     )
                 } else if (state.currentModel?.source == ModelInfo.ModelSource.WebHost) {
-                    val tools = webAgentProvider.contextToolSchemas(
-                        conversationId = convId,
-                        hybridDeviceToolsEnabled = state.hybridDeviceToolsEnabled,
-                        hybridDeviceCapabilities = state.hybridDeviceCapabilities,
-                        permissionMode = state.permissionMode,
+                    val v2ModelInput = ModelInput(messages = listOf(mapOf("role" to "user", "content" to text)))
+                    streamAgentResponse(
+                        input = v2ModelInput,
+                        convId = convId,
+                        submissionId = submissionId,
+                        originalText = text,
+                        expectedConfigurationRevision = conv.configurationRevision,
+                        expectedParentMessageId = activeMessages.lastOrNull()?.id,
+                        queuedUserCommandId = remoteQueuedCommandId,
+                        selectedExperts = selectedExpertContext?.get("selected_experts")?.jsonArray,
+                        expertSourceEpoch = selectedExpertContext?.get("expected_source_store_epoch")?.jsonPrimitive?.content,
+                        expertMentions = selectedExpertContext?.get("expert_mentions")?.jsonObject,
                     )
-                    val prepared = prepareFinalContext(
-                        conv = conv,
-                        messages = activeMessages + userMsg,
-                        currentUserText = text,
-                        route = AndroidContextRoute.Web,
-                        tools = tools,
-                    )
-                    recordPreparedDataSourceUsage(prepared, convId, AndroidContextRoute.Web)
-                    streamAgentResponse(prepared.modelInput, convId, submissionId, text,
-                        checkNotNull(remoteFrontier).configurationRevision, remoteFrontier.parentMessageId,
-                        remoteQueuedCommandId, selectedExpertContext?.get("selected_experts")?.jsonArray, selectedExpertContext?.get("expected_source_store_epoch")?.jsonPrimitive?.content, selectedExpertContext?.get("expert_mentions")?.jsonObject)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -4859,66 +4857,66 @@ class ChatViewModel @Inject constructor(
         require(hostId.isNotBlank())
         val owner = com.nola.data.local.AndroidJournalTurn(hostId, convId, submissionId, "$submissionId:assistant")
         remoteJournalTurn = owner
-        remoteJournalTransport = webAgentProvider.journalTransport(configuration)
-        remoteJournalProjection = withContext(Dispatchers.IO) { conversationRepo.getProjection(convId) }
-        remoteObservationInitialKey = null
-        remoteObservationVisibleHeads = emptyList()
-        observeRemoteAgentTasks(convId)
-        val conversation = conversationRepo.getConversation(convId)
-        val executionBackend = conversation?.executionBackend
-            ?.takeIf { it.isNotBlank() }
-            ?: _uiState.value.currentExecutionBackend
-        val externalSessionId = conversation
-            ?.externalExecutionSessions
-            ?.get(executionBackend)
-            .orEmpty()
-        val request = webAgentProvider.prepareAgentRequest(
-            input = input,
-            conversationId = convId,
-            agentMode = _uiState.value.agentMode,
-            permissionMode = _uiState.value.permissionMode,
-            responseStyle = _uiState.value.responseStyle,
-            customSystemPrompt = _uiState.value.currentParameters.customSystemPrompt,
-            nativeAppHostId = _uiState.value.hostComputerUseStatus
-                ?.hosts
-                ?.firstOrNull()
-                ?.hostId
-                .orEmpty(),
-            hybridDeviceToolsEnabled = _uiState.value.hybridDeviceToolsEnabled && _uiState.value.hybridDeviceCapabilities.isNotEmpty(),
-            hybridDeviceCapabilities = _uiState.value.hybridDeviceCapabilities,
-            executionBackend = executionBackend,
-            externalSessionId = externalSessionId,
-            submissionId = submissionId,
-            currentUserDisplayText = originalText,
-            configuration = configuration,
-            expectedConfigurationRevision = expectedConfigurationRevision,
-            expectedParentMessageId = expectedParentMessageId,
-            queuedUserCommandId = queuedUserCommandId,
-            selectedExperts = selectedExperts, expertSourceEpoch = expertSourceEpoch, expertMentions = expertMentions,
-        )
-        val intent = checkNotNull(remoteSubmissionIntent)
-        val frozenRequest = webAgentProvider.freezeHostToolPlan(request, configuration)
-        if (!currentRemoteJournal(owner)) return
-        val bound = withContext(Dispatchers.IO) { conversationRepo.bindRemoteSubmissionRequest(intent.identity, frozenRequest) }
-        require(bound.identity == intent.identity && bound.phase == com.nola.data.remote.api.RemoteSubmissionPhase.Bound)
-        remoteSubmissionIntent = bound
-        val frozen = com.nola.data.remote.api.FrozenRemoteSubmission(bound.identity, checkNotNull(bound.requestDigest), frozenRequest)
+        executionSession.v2TurnCompleted = false
         executionSession.dispatchStarted = true
-        try { webAgentProvider.streamFrozenSubmission(frozen, configuration).collect { event ->
-            if (!currentRemoteJournal(owner)) return@collect
-            handleAgentEvent(event, convId)
+        val remoteConvId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() }
+            ?: runCatching {
+                val title = withContext(Dispatchers.IO) {
+                    conversationRepo.getConversation(convId)?.title?.takeIf { it.isNotBlank() }
+                } ?: "Chat"
+                webAgentProvider.v2CreateConversation(title = title, configuration = configuration)
+            }.getOrElse { convId }
+        if (_uiState.value.v2SessionId != remoteConvId) {
+            _uiState.update { it.copy(v2SessionId = remoteConvId) }
         }
-            if (currentRemoteJournal(owner) && !verifyRemoteTerminal(owner)) startRemoteConversationObservation(convId)
+        val selectedModelId = _uiState.value.currentModel?.id?.takeIf { it.isNotBlank() }
+        val permissionProfile = when (_uiState.value.permissionMode) {
+            com.nola.core.AndroidAgentPermissionMode.AllowAll -> "allow_all"
+            com.nola.core.AndroidAgentPermissionMode.Cautious -> "cautious"
+        }
+        try {
+            webAgentProvider.streamV2Message(
+                conversationId = remoteConvId,
+                content = originalText,
+                configuration = configuration,
+                modelId = selectedModelId,
+                permissionProfile = permissionProfile,
+                selectedExperts = selectedExperts,
+            ).collect { event ->
+                if (!currentRemoteJournal(owner) && !executionSession.v2TurnCompleted) return@collect
+                handleAgentEvent(event, convId)
+            }
+            if (!executionSession.v2TurnCompleted && currentRemoteJournal(owner)) {
+                val state = _uiState.value
+                if (state.currentResponse.isNotEmpty()) {
+                    val responseId = state.activeResponseId ?: owner.assistantMessageId
+                    val startedAt = state.activeResponseStartedAt ?: System.currentTimeMillis()
+                    val assistantMsg = ConversationMessage(
+                        id = responseId,
+                        conversationId = convId,
+                        role = ChatRole.assistant,
+                        text = state.currentResponse,
+                        createdAt = startedAt,
+                    )
+                    executionSession.v2TurnCompleted = true
+                    _uiState.update { it.completeAssistantTurn(assistantMsg).copy(pendingUserQuestion = null) }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            processingState = ProcessingState.Idle,
+                            activeResponseId = null,
+                            activeTurnId = null,
+                            activeResponseStartedAt = null,
+                            pendingUserQuestion = null,
+                        )
+                    }
+                }
+            }
         } catch (failure: Exception) {
             if (failure is kotlinx.coroutines.CancellationException) throw failure
+            if (executionSession.v2TurnCompleted) return
             if (!currentRemoteJournal(owner)) return
-            val terminal = try { verifyRemoteTerminal(owner) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) { false }
-            if (terminal) return
-            _uiState.update { it.copy(processingState = ProcessingState.BuildingContext, error = failure.message) }
-            remoteObservationInitialKey = owner.runId?.let { com.nola.data.remote.api.RemoteRunKey(convId, it, owner.assistantMessageId) }
-            startRemoteConversationObservation(convId)
+            _uiState.update { it.copy(processingState = ProcessingState.Error, error = failure.message) }
         }
     }
 
@@ -5165,7 +5163,7 @@ class ChatViewModel @Inject constructor(
                     args = argsMap,
                     reason = event.reason,
                     message = event.reason.ifBlank { toolLabel },
-                    sessionId = convId,
+                    sessionId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() } ?: convId,
                     safeReviewText = safeReviewText,
                 )
                 v2PermissionRequestIds.add(requestId)
@@ -5184,7 +5182,7 @@ class ChatViewModel @Inject constructor(
             is SseEvent.V2UserQuestion -> {
                 val prompt = V2UserQuestionPrompt(
                     requestId = event.requestId,
-                    conversationId = convId,
+                    conversationId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() } ?: convId,
                     question = event.question,
                     options = event.options,
                 )
@@ -5197,12 +5195,40 @@ class ChatViewModel @Inject constructor(
                 }
             }
             is SseEvent.V2TurnCompleted -> {
-                _uiState.update {
-                    it.copy(
-                        currentResponse = event.finalText.takeIf { text -> text.isNotBlank() } ?: it.currentResponse,
-                        thinkingFinished = true,
+                executionSession.v2TurnCompleted = true
+                val resolvedSessionId = event.sessionId.takeIf { it.isNotBlank() }
+                val currentState = _uiState.value
+                val finalText = event.finalText.takeIf { text -> text.isNotBlank() }
+                    ?: currentState.currentResponse
+                val responseId = currentState.activeResponseId ?: "${UUID.randomUUID()}:assistant"
+                val startedAt = currentState.activeResponseStartedAt ?: System.currentTimeMillis()
+                val assistantMsg = ConversationMessage(
+                    id = responseId,
+                    conversationId = convId,
+                    role = ChatRole.assistant,
+                    text = finalText,
+                    createdAt = startedAt,
+                )
+                _uiState.update { state ->
+                    val completed = if (finalText.isNotEmpty()) {
+                        state.completeAssistantTurn(assistantMsg)
+                    } else {
+                        state.copy(
+                            processingState = ProcessingState.Idle,
+                            currentResponse = "",
+                            activeResponseId = null,
+                            activeTurnId = null,
+                            activeResponseStartedAt = null,
+                            thinking = "",
+                            thinkingFinished = true,
+                            toolEvents = emptyList(),
+                            permissionRequest = null,
+                            pendingPermissionRequests = emptyList(),
+                        )
+                    }
+                    completed.copy(
+                        v2SessionId = resolvedSessionId ?: completed.v2SessionId,
                         pendingUserQuestion = null,
-                        processingState = ProcessingState.Idle,
                     )
                 }
             }
@@ -5439,7 +5465,8 @@ class ChatViewModel @Inject constructor(
                     )
                 }
                 if (isV2Permission) {
-                    val targetConversationId = request.sessionId?.takeIf { it.isNotBlank() }
+                    val targetConversationId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() }
+                        ?: request.sessionId?.takeIf { it.isNotBlank() }
                         ?: _uiState.value.conversationId.orEmpty()
                     webAgentProvider.v2RespondPermission(
                         conversationId = targetConversationId,
@@ -5456,7 +5483,7 @@ class ChatViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (isV2Permission) v2PermissionRequestIds.add(request.id)
-                if (_uiState.value.conversationId == request.sessionId) {
+                if (_uiState.value.conversationId == request.sessionId || _uiState.value.v2SessionId == request.sessionId) {
                     permissionSession.prependHostRequest(request)
                     val restored = permissionSession.hostRequests()
                     _uiState.update { it.copy(processingState = ProcessingState.Streaming,
@@ -5470,7 +5497,8 @@ class ChatViewModel @Inject constructor(
 
     fun respondToV2UserQuestion(requestId: String, answer: String?) {
         val currentPrompt = _uiState.value.pendingUserQuestion
-        val conversationId = currentPrompt?.takeIf { it.requestId == requestId }?.conversationId
+        val conversationId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() }
+            ?: currentPrompt?.takeIf { it.requestId == requestId }?.conversationId
             ?: _uiState.value.conversationId
             ?: return
         val configuration = remoteObservationConfiguration ?: webAgentProvider.config ?: return
@@ -5491,7 +5519,7 @@ class ChatViewModel @Inject constructor(
                 )
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                if (_uiState.value.conversationId == conversationId && currentPrompt != null) {
+                if ((_uiState.value.conversationId == conversationId || _uiState.value.v2SessionId == conversationId) && currentPrompt != null) {
                     _uiState.update {
                         it.copy(
                             pendingUserQuestion = currentPrompt,
@@ -5507,13 +5535,14 @@ class ChatViewModel @Inject constructor(
         withContext(Dispatchers.IO) {
             val configuration = remoteObservationConfiguration ?: webAgentProvider.config
                 ?: error("Web Agent Host is not configured")
+            val targetConversationId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() } ?: conversationId
             val result = webAgentProvider.v2SubmitUiInteraction(
-                conversationId = conversationId,
+                conversationId = targetConversationId,
                 interaction = interaction,
                 configuration = configuration,
             )
             val updatedSnapshot = result["snapshot"] as? JsonObject
-            if (updatedSnapshot != null && _uiState.value.conversationId == conversationId) {
+            if (updatedSnapshot != null && (_uiState.value.conversationId == conversationId || _uiState.value.v2SessionId == targetConversationId)) {
                 _uiState.update { state ->
                     state.copy(v2UiSurfaces = upsertV2UiSurface(state.v2UiSurfaces, updatedSnapshot))
                 }
@@ -6452,11 +6481,22 @@ class ChatViewModel @Inject constructor(
     private suspend fun loadLastConversation() {
         if (composerDrafts.shouldRestorePending()) return
         val owner = composerDrafts.captureRead(_uiState.value.conversationId, modelSelectionGeneration)
-        val convs = conversationRepo.getAllConversations()
+        val convs = try {
+            conversationRepo.getAllConversations()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w("ChatViewModel", "loadLastConversation failed", error)
+            return
+        }
         if (!composerDrafts.ownsRead(owner, _uiState.value.conversationId, modelSelectionGeneration) ||
             composerDrafts.shouldRestorePending()) return
         val last = convs.firstOrNull { it.agentRoomOwner == null } ?: return
-        loadConversation(last.id)
+        runCatching { loadConversation(last.id) }
+            .onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                Log.w("ChatViewModel", "loadLastConversation failed to load ${last.id}", it)
+            }
     }
 
     private fun String.toModelSource(): ModelInfo.ModelSource? {

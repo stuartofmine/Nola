@@ -24,7 +24,7 @@ internal data class ActivityQuery(val source: String?, val needs_response: Boole
     val query: String, val cursor: ActivityCursor?, val limit: Int)
 @Serializable
 internal data class ActivityEntry(val run_id: String, val conversation_id: String,
-    val assistant_message_id: String, val source: String, val title: String,
+    val assistant_message_id: String? = null, val source: String, val title: String,
     val created_at_ms: Long, val completed_at_ms: Long?, val status: String,
     val needs_response: Boolean, val is_current: Boolean)
 @Serializable

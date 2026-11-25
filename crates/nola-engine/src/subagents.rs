@@ -25,6 +25,7 @@ use crate::loop_runner::{AgentEngine, AgentRunConfig, ModelCaller};
 use crate::policy::EffectivePolicy;
 
 const MAX_CONCURRENT_SUBAGENTS: usize = 8;
+const MAX_RETAINED_FINISHED_SUBAGENTS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,10 +192,25 @@ impl SubagentManager {
             cancel: Arc::clone(&cancel),
             inbox: Arc::clone(&inbox),
         });
-        self.tasks
-            .lock()
-            .unwrap()
-            .insert(task_id.clone(), Arc::clone(&entry));
+        {
+            let mut tasks_guard = self.tasks.lock().unwrap();
+            tasks_guard.insert(task_id.clone(), Arc::clone(&entry));
+            let mut finished: Vec<(i64, String)> = tasks_guard
+                .iter()
+                .filter_map(|(id, e)| {
+                    let s = e.snapshot.lock().unwrap();
+                    (s.status != TaskStatus::Running)
+                        .then_some((s.ended_at_ms.unwrap_or(s.started_at_ms), id.clone()))
+                })
+                .collect();
+            if finished.len() > MAX_RETAINED_FINISHED_SUBAGENTS {
+                finished.sort_by_key(|(ts, _)| *ts);
+                let remove_count = finished.len() - MAX_RETAINED_FINISHED_SUBAGENTS;
+                for (_, old_id) in finished.into_iter().take(remove_count) {
+                    tasks_guard.remove(&old_id);
+                }
+            }
+        }
 
         let store = self.store.clone();
         let persist_store = self.store.clone();
@@ -202,92 +218,116 @@ impl SubagentManager {
         let caller = Arc::clone(&self.caller);
         let child_ctx = ctx.clone().with_session_id(session_id.clone());
         let child_entry = Arc::clone(&entry);
+        let panic_entry = Arc::clone(&entry);
+        let panic_store = self.store.clone();
+        let panic_task_id = task_id.clone();
         let run_child = move || {
-            let mut reg = ToolRegistry::with_builtin_tools();
-            if let Some(allow) = allowed_tools.filter(|a| !a.is_empty()) {
-                let mut filtered = ToolRegistry::default();
-                for spec in reg.all_specs() {
-                    if allow.iter().any(|a| a == "*" || a == &spec.schema.name) {
-                        if let Some(h) = reg.get(&spec.schema.name) {
-                            filtered.register(h);
+            let unwind_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let mut reg = ToolRegistry::with_builtin_tools();
+                if let Some(allow) = allowed_tools.filter(|a| !a.is_empty()) {
+                    let mut filtered = ToolRegistry::default();
+                    for spec in reg.all_specs() {
+                        if allow.iter().any(|a| a == "*" || a == &spec.schema.name) {
+                            if let Some(h) = reg.get(&spec.schema.name) {
+                                filtered.register(h);
+                            }
                         }
                     }
+                    reg = filtered;
                 }
-                reg = filtered;
-            }
-            let child_registry = Arc::new(reg);
-            let engine = AgentEngine::new(store, child_registry, caller);
-            if parent_cancel
-                .as_ref()
-                .is_some_and(|pc| pc.load(Ordering::Relaxed))
-            {
-                cancel.store(true, Ordering::SeqCst);
-            }
-            let cfg = AgentRunConfig {
-                session_id: Some(session_id),
-                resume: false,
-                route,
-                frozen_system_blocks: vec![FrozenSystemBlock {
-                    id: "subagent_role".into(),
-                    text: if system_prompt.trim().is_empty() {
-                        format!(
-                            "You are a focused Nola subagent acting as '{role}'. \
-                             Complete the delegated task thoroughly and return a concise, verified report."
-                        )
-                    } else {
-                        system_prompt
+                let child_registry = Arc::new(reg);
+                let engine = AgentEngine::new(store, child_registry, caller);
+                if parent_cancel
+                    .as_ref()
+                    .is_some_and(|pc| pc.load(Ordering::Relaxed))
+                {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+                let cfg = AgentRunConfig {
+                    session_id: Some(session_id),
+                    resume: false,
+                    route,
+                    frozen_system_blocks: vec![FrozenSystemBlock {
+                        id: "subagent_role".into(),
+                        text: if system_prompt.trim().is_empty() {
+                            format!(
+                                "You are a focused Nola subagent acting as '{role}'. \
+                                 Complete the delegated task thoroughly and return a concise, verified report."
+                            )
+                        } else {
+                            system_prompt
+                        },
+                    }],
+                    host_capabilities: HostCapabilities {
+                        interactive_user_input: false,
+                        network_allowed: child_ctx.network_allowed,
                     },
-                }],
-                host_capabilities: HostCapabilities {
-                    interactive_user_input: false,
-                    network_allowed: child_ctx.network_allowed,
-                },
-                policy,
-                hooks,
-                approval: None,
-                max_steps: if max_steps == 0 { 24 } else { max_steps },
-                force_tool_set: ForceToolSet::Auto,
-                stream: false,
-                json_schema: None,
-                cancel: Arc::clone(&cancel),
-                auto_recall_memory: false,
-                inbox: Some(inbox),
-            };
-            let parent_c = parent_cancel.clone();
-            let child_c = Arc::clone(&cancel);
-            let run_res = engine.run(&child_ctx, &task_prompt, cfg, |_| {
-                if parent_c.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {
-                    child_c.store(true, Ordering::SeqCst);
-                }
-            });
-            let final_snap = match run_res {
-                Ok(res) => {
-                    let mut snap = child_entry.snapshot.lock().unwrap();
-                    snap.output = res.final_text;
-                    snap.steps = res.steps;
-                    snap.cancelling = false;
-                    snap.status = if res.cancelled || cancel.load(Ordering::SeqCst) {
-                        TaskStatus::Stopped
-                    } else {
-                        TaskStatus::Completed
-                    };
-                    snap.ended_at_ms.get_or_insert_with(now_ms);
-                    snap.clone()
-                }
-                Err(e) => {
-                    let mut snap = child_entry.snapshot.lock().unwrap();
-                    snap.cancelling = false;
-                    if cancel.load(Ordering::SeqCst) {
-                        snap.status = TaskStatus::Stopped;
-                    } else {
-                        snap.error = Some(e.to_string());
-                        snap.status = TaskStatus::Failed;
+                    policy,
+                    hooks,
+                    approval: None,
+                    max_steps: if max_steps == 0 { 24 } else { max_steps },
+                    force_tool_set: ForceToolSet::Auto,
+                    stream: false,
+                    json_schema: None,
+                    cancel: Arc::clone(&cancel),
+                    auto_recall_memory: false,
+                    inbox: Some(inbox),
+                };
+                let parent_c = parent_cancel.clone();
+                let child_c = Arc::clone(&cancel);
+                let run_res = engine.run(&child_ctx, &task_prompt, cfg, |_| {
+                    if parent_c.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {
+                        child_c.store(true, Ordering::SeqCst);
                     }
-                    snap.ended_at_ms.get_or_insert_with(now_ms);
-                    snap.clone()
-                }
-            };
-            let _ = persist_store.put_module_record("durable_task", &persist_task_id, &final_snap);
+                });
+                let final_snap = match run_res {
+                    Ok(res) => {
+                        let mut snap = child_entry.snapshot.lock().unwrap();
+                        snap.output = res.final_text;
+                        snap.steps = res.steps;
+                        snap.cancelling = false;
+                        snap.status = if res.cancelled || cancel.load(Ordering::SeqCst) {
+                            TaskStatus::Stopped
+                        } else {
+                            TaskStatus::Completed
+                        };
+                        snap.ended_at_ms.get_or_insert_with(now_ms);
+                        snap.clone()
+                    }
+                    Err(e) => {
+                        let mut snap = child_entry.snapshot.lock().unwrap();
+                        snap.cancelling = false;
+                        if cancel.load(Ordering::SeqCst) {
+                            snap.status = TaskStatus::Stopped;
+                        } else {
+                            snap.error = Some(e.to_string());
+                            snap.status = TaskStatus::Failed;
+                        }
+                        snap.ended_at_ms.get_or_insert_with(now_ms);
+                        snap.clone()
+                    }
+                };
+                let _ =
+                    persist_store.put_module_record("durable_task", &persist_task_id, &final_snap);
+            }));
+            if let Err(payload) = unwind_res {
+                let panic_msg = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "subagent task panicked".to_string());
+                let mut snap = panic_entry
+                    .snapshot
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                snap.cancelling = false;
+                snap.status = TaskStatus::Failed;
+                snap.error = Some(format!("subagent panic: {panic_msg}"));
+                snap.ended_at_ms.get_or_insert_with(now_ms);
+                let snap_clone = snap.clone();
+                drop(snap);
+                let _ = panic_store.put_module_record("durable_task", &panic_task_id, &snap_clone);
+            }
         };
 
         if background {

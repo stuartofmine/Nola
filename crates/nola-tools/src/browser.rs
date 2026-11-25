@@ -9,9 +9,9 @@
 //! - Checks child liveness via `try_wait()`, surfaces JS `exceptionDetails` & `{ok:false}` as errors
 //! - Bounded `NativeBrowserBridge` queue.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -58,7 +58,7 @@ fn scrub_sensitive_env(cmd: &mut Command) {
 #[derive(Default)]
 pub struct NativeBrowserBridge {
     pending: Mutex<VecDeque<Value>>,
-    results: Mutex<BTreeMap<String, Value>>,
+    results: Mutex<VecDeque<(String, Value)>>,
     last_host_poll_ms: Mutex<Option<i64>>,
 }
 
@@ -89,6 +89,10 @@ impl NativeBrowserBridge {
                 return Ok(res);
             }
             if Instant::now() >= deadline {
+                let mut q = self.pending.lock().unwrap();
+                q.retain(|item| {
+                    item.get("command_id").and_then(|v| v.as_str()) != Some(id.as_str())
+                });
                 return Err(format!(
                     "attached browser bridge timed out after {}ms waiting for command {id}",
                     timeout.as_millis()
@@ -105,16 +109,21 @@ impl NativeBrowserBridge {
 
     pub fn submit_result(&self, command_id: String, result: Value) {
         let mut r = self.results.lock().unwrap();
-        if r.len() >= MAX_BRIDGE_ITEMS {
-            if let Some(first_key) = r.keys().next().cloned() {
-                r.remove(&first_key);
-            }
+        if let Some(pos) = r.iter().position(|(k, _)| k == &command_id) {
+            r.remove(pos);
         }
-        r.insert(command_id, result);
+        while r.len() >= MAX_BRIDGE_ITEMS {
+            r.pop_front();
+        }
+        r.push_back((command_id, result));
     }
 
     pub fn take_result(&self, command_id: &str) -> Option<Value> {
-        self.results.lock().unwrap().remove(command_id)
+        let mut r = self.results.lock().unwrap();
+        r.iter()
+            .position(|(k, _)| k == command_id)
+            .and_then(|pos| r.remove(pos))
+            .map(|(_, v)| v)
     }
 
     pub fn status(&self) -> Value {
@@ -234,6 +243,7 @@ impl BrowserManager {
         })?;
 
         let client = Client::builder()
+            .no_proxy()
             .timeout(Duration::from_secs(2))
             .build()
             .map_err(|e| e.to_string())?;
@@ -295,6 +305,7 @@ impl BrowserManager {
     fn list_tabs(&self) -> Result<Vec<Value>, String> {
         let port = self.cdp_port()?;
         let client = Client::builder()
+            .no_proxy()
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|e| e.to_string())?;
@@ -471,28 +482,51 @@ print(json.dumps(out))
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(payload.to_string().as_bytes());
         }
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+        let stdout_handle = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut out) = stdout_pipe {
+                let _ = out.read_to_end(&mut buf);
+            }
+            buf
+        });
+        let stderr_handle = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut err) = stderr_pipe {
+                let _ = err.read_to_end(&mut buf);
+            }
+            buf
+        });
         let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(st)) => break st,
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
+                        let _ = stdout_handle.join();
+                        let _ = stderr_handle.join();
                         return Err("CDP operation timed out after 20s".into());
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
-                Err(_) => break,
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_handle.join();
+                    let _ = stderr_handle.join();
+                    return Err(format!("cdp helper wait error: {e}"));
+                }
             }
+        };
+        let stdout_bytes = stdout_handle.join().unwrap_or_default();
+        let stderr_bytes = stderr_handle.join().unwrap_or_default();
+        if !status.success() {
+            return Err(String::from_utf8_lossy(&stderr_bytes).trim().to_string());
         }
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("cdp helper io error: {e}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(&stdout_bytes);
         serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid cdp output: {e}"))
     }
 }

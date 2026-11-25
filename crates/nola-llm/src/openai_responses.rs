@@ -38,7 +38,12 @@ fn responses_media_parts(text: &str, media: &[MediaAttachment]) -> Vec<Value> {
         parts.push(json!({"type": "input_text", "text": text}));
     }
     for att in media {
-        let mime = att.mime_type.trim().to_ascii_lowercase();
+        let raw_mime = att.mime_type.trim().to_ascii_lowercase();
+        let mime = if raw_mime == "image/jpg" {
+            "image/jpeg"
+        } else {
+            raw_mime.as_str()
+        };
         let data_url = format!("data:{mime};base64,{}", att.bytes_base64);
         if mime == "application/pdf" {
             parts.push(json!({
@@ -67,8 +72,18 @@ pub(crate) fn build_responses_body(
     let all_media = collect_request_media(req);
     ProtocolMediaLimits::OPENAI.validate_all(&all_media, &route.capabilities)?;
 
+    let _ = params;
     let mut input: Vec<Value> = Vec::new();
+    let mut buffered_tool_media: Vec<MediaAttachment> = Vec::new();
     for msg in &req.history {
+        if !matches!(msg, HistoryMessage::Tool { .. }) && !buffered_tool_media.is_empty() {
+            input.push(json!({
+                "type": "message",
+                "role": "user",
+                "content": responses_media_parts("Attached media from tool outputs:", &buffered_tool_media)
+            }));
+            buffered_tool_media.clear();
+        }
         match msg {
             HistoryMessage::User { content, media } => {
                 if media.is_empty() {
@@ -91,10 +106,9 @@ pub(crate) fn build_responses_body(
                 continuation,
                 ..
             } => {
-                if let Some(cont) = continuation
-                    .as_ref()
-                    .filter(|c| c.protocol == protocol && !c.items.is_empty())
-                {
+                if let Some(cont) = continuation.as_ref().filter(|c| {
+                    c.protocol == protocol && c.model == route.model && !c.items.is_empty()
+                }) {
                     for item in &cont.items {
                         if force_store_false {
                             let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -151,15 +165,16 @@ pub(crate) fn build_responses_body(
                     "call_id": call_id,
                     "output": payload.to_model_string()
                 }));
-                if !media.is_empty() {
-                    input.push(json!({
-                        "type": "message",
-                        "role": "user",
-                        "content": responses_media_parts("Attached media from tool output:", media)
-                    }));
-                }
+                buffered_tool_media.extend(media.iter().cloned());
             }
         }
+    }
+    if !buffered_tool_media.is_empty() {
+        input.push(json!({
+            "type": "message",
+            "role": "user",
+            "content": responses_media_parts("Attached media from tool outputs:", &buffered_tool_media)
+        }));
     }
 
     if let Some(tail) = format_tail_reminders(&req.ephemeral_tail_reminders) {
@@ -195,12 +210,6 @@ pub(crate) fn build_responses_body(
         if let Some(tp) = route.top_p {
             body.insert("top_p".into(), json!(tp));
         }
-        if let Some(seed) = params.seed {
-            body.insert("seed".into(), json!(seed));
-        }
-    }
-    if !params.stop.is_empty() {
-        body.insert("stop".into(), json!(params.stop));
     }
     if let Some(effort) = route
         .reasoning_effort
@@ -297,6 +306,10 @@ pub(crate) fn decode_responses_body(
     let mut tool_calls = Vec::new();
     let mut cont_items = Vec::new();
 
+    let allow_tool_calls = !matches!(
+        stop_reason,
+        ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+    );
     for item in &output {
         cont_items.push(item.clone());
         match item.get("type").and_then(|v| v.as_str()).unwrap_or("") {
@@ -318,7 +331,7 @@ pub(crate) fn decode_responses_body(
                     }
                 }
             }
-            "function_call" if stop_reason != ModelStopReason::OutputLimit => {
+            "function_call" if allow_tool_calls => {
                 let call_id = item
                     .get("call_id")
                     .or_else(|| item.get("id"))
@@ -346,14 +359,12 @@ pub(crate) fn decode_responses_body(
         }
     }
 
-    let continuation = if cont_items.is_empty() || stop_reason == ModelStopReason::OutputLimit {
+    let continuation = if cont_items.is_empty() || !allow_tool_calls {
         None
     } else {
         Some(ProviderContinuation {
             protocol,
-            model: response_model
-                .clone()
-                .unwrap_or_else(|| route.model.clone()),
+            model: route.model.clone(),
             response_id: response_id.clone(),
             items: cont_items,
         })
@@ -481,8 +492,38 @@ pub(crate) fn parse_responses_sse(
         }
     }
 
+    let mut response_id: Option<String> = None;
+    let mut response_model: Option<String> = None;
     if let Some(resp) = final_response_obj {
-        return decode_responses_body(protocol, route, &resp);
+        let status = resp
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("completed");
+        let has_output = resp
+            .get("output")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty());
+        if has_output || status == "failed" || status == "cancelled" {
+            return decode_responses_body(protocol, route, &resp);
+        }
+        response_id = resp
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        response_model = resp
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        let incomplete_reason = resp
+            .get("incomplete_details")
+            .and_then(|d| d.get("reason"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if status == "incomplete" && incomplete_reason == "max_output_tokens" {
+            stop_reason = ModelStopReason::OutputLimit;
+        } else if incomplete_reason == "content_filter" {
+            stop_reason = ModelStopReason::ContentFilter;
+        }
     }
     if !saw_terminal {
         return Err(LlmError::Wire(
@@ -491,7 +532,10 @@ pub(crate) fn parse_responses_sse(
     }
 
     let mut tool_calls = Vec::new();
-    if stop_reason != ModelStopReason::OutputLimit {
+    if !matches!(
+        stop_reason,
+        ModelStopReason::OutputLimit | ModelStopReason::ContentFilter
+    ) {
         for (call_id, (name, raw_args)) in calls {
             if !name.is_empty() {
                 tool_calls.push(ModelToolCall {
@@ -503,8 +547,8 @@ pub(crate) fn parse_responses_sse(
         }
     }
     Ok(finalize_response(
-        None,
-        Some(route.model.clone()),
+        response_id,
+        response_model.or_else(|| Some(route.model.clone())),
         content,
         if reasoning.is_empty() {
             None
