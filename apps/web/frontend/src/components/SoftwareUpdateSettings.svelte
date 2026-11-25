@@ -49,6 +49,17 @@
         downloading = true; downloaded = false; failure = ''; controller = new AbortController();
         const url = `/api/software-update/package?release_id=${encodeURIComponent(release.release_id)}`;
         try {
+            const isDesktop = typeof window !== 'undefined' && Boolean((window as Window & { NolaDesktop?: unknown }).NolaDesktop);
+            if (isDesktop) {
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                if (release.artifact.filename) anchor.download = release.artifact.filename;
+                document.body.append(anchor);
+                anchor.click();
+                anchor.remove();
+                downloaded = true;
+                return;
+            }
             const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
             if (!response.ok) {
                 let detail = `HTTP ${response.status}`;

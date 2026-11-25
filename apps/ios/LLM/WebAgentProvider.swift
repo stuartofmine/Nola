@@ -1824,8 +1824,11 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
+        let conversationID = (payload["session_id"] as? String)
+            ?? (payload["conversation_id"] as? String)
+            ?? "default"
         var request = URLRequest(
-            url: Self.mobileURL(baseURL: config.baseURL, path: "agent/settings")
+            url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/permission")
         )
         request.httpMethod = "POST"
         request.timeoutInterval = 30
@@ -1952,7 +1955,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                         throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
                     }
                     var request = URLRequest(
-                        url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/events")
+                        url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationId)/events")
                     )
                     request.httpMethod = "POST"
                     request.timeoutInterval = 35
@@ -2205,7 +2208,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             receipt = try await pairedReadRequest(Request(expected_host_id: sourceHost,
                 client_id: config.clientId, conversation_id: owner.conversation_id,
                 expected_run_id: owner.run_id, assistant_message_id: owner.assistant_message_id),
-                path: "chat/conversations/\(owner.conversation_id)/messages", timeout: 180)
+                path: "chat/conversations/\(owner.conversation_id)/compact", timeout: 180)
         } catch {
             // A lost reply does not prove that the Host failed to commit. Never
             // replay this maintenance command automatically or mutate a mirror.
@@ -2366,12 +2369,21 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         return surfaces
     }
 
-    public func v2RespondPermission(conversationID: String, requestID: String, allow: Bool) async throws {
-        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/permission"))
-        req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow])
+    private func encodeV2Body(_ body: [String: Any], onto req: inout URLRequest) throws {
+        if !config.token.isEmpty {
+            req.httpBody = try JSONSerialization.data(withJSONObject: Self.encryptMobileJSON(body, token: config.token))
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         Self.applyMobileAuth(to: &req, token: config.token)
+    }
+
+    public func v2RespondPermission(conversationID: String, requestID: String, allow: Bool, scope: String = "once") async throws {
+        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/permission"))
+        req.httpMethod = "POST"
+        try encodeV2Body(["request_id": requestID, "allow": allow, "scope": scope], onto: &req)
         let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
         defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
         let (_, resp) = try await session.data(for: req)
@@ -2385,9 +2397,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         req.httpMethod = "POST"
         var body: [String: Any] = ["request_id": requestID]
         if let answer { body["answer"] = answer }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        Self.applyMobileAuth(to: &req, token: config.token)
+        try encodeV2Body(body, onto: &req)
         let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
         defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
         let (_, resp) = try await session.data(for: req)
@@ -2400,25 +2410,25 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     public func v2SubmitUiInteraction(conversationId: String, interaction: [String: Any]) async throws -> [String: Any] {
         var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationId)/ui-interactions"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: interaction)
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        Self.applyMobileAuth(to: &req, token: config.token)
+        try encodeV2Body(interaction, onto: &req)
         let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
         defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
         let (data, resp) = try await session.data(for: req)
         if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw NolaError.llm(.invalidResponse(reason: "UI interaction submission failed (\(http.statusCode))"))
         }
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        if object["type"] as? String == "encrypted", !config.token.isEmpty {
+            return (try? Self.decryptMobileJSON(object, token: config.token)) ?? object
+        }
+        return object
     }
 
     public func v2TruncateConversation(conversationID: String, fromSeq: Int64) async throws {
         var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/truncate"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["fromSeq": fromSeq])
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        Self.applyMobileAuth(to: &req, token: config.token)
+        try encodeV2Body(["fromSeq": fromSeq], onto: &req)
         let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
         defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
         let (_, resp) = try await session.data(for: req)
@@ -2640,7 +2650,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard MobileHostTransportPolicy.allows(config.baseURL) else {
             throw NolaError.llm(.invalidResponse(reason: "Public Web Host addresses require HTTPS. HTTP is limited to this device or a private local network."))
         }
-        let v2ConvID = input.userPrefs["conversation_id"] ?? "default"
+        let v2ConvID = input.userPrefs["host_conversation_id"] ?? input.userPrefs["conversation_id"] ?? "default"
         var request = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(v2ConvID)/messages"))
         request.httpMethod = "POST"
         if let rawTimeout = input.userPrefs["request_timeout_seconds"],
@@ -2891,7 +2901,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         let frontier: AppleSubmissionFrontier = try await pairedReadRequest(FrontierQuery(
             expected_host_id: host, client_id: config.clientId, conversation_id: sessionID,
             expected_run_id: sourceRunID, assistant_message_id: sourceAssistantMessageID),
-            path: "chat/conversations/\(conversationID)/configuration")
+            path: "chat/conversations/\(sessionID)/configuration")
         try frontier.validate(host: host, client: config.clientId, conversation: sessionID,
             observedParent: original["expected_parent_message_id"] as? String)
         // Only fresh requests enter this path. Bound/unknown submissions replay
@@ -3020,6 +3030,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         // remain owned by the host-side Web settings; mobile only sends prompt
         // and execution preferences.
         var payload: [String: Any] = [
+            "content": message,
             "messages": hostMessages,
             "allow_local_dev_tools": allowLocalDevTools,
             "agent_mode": true,
@@ -3068,6 +3079,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         if let permissionProfile = input.userPrefs["permission_profile"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            IOSPermissionMode(rawValue: permissionProfile) != nil {
             payload["permission_profile"] = permissionProfile
+            payload["permissionProfile"] = permissionProfile
         }
         if let responseStyle = input.userPrefs["response_style"], !responseStyle.isEmpty {
             payload["response_style"] = responseStyle
@@ -3131,7 +3143,18 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
                     summary: object["summary"] as? String ?? ""
                 )
             case "compacted":
-                return .v2Compacted(summary: object["summary"] as? String ?? "")
+                let explicitSummary = (object["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let summary: String
+                if let explicitSummary, !explicitSummary.isEmpty {
+                    summary = explicitSummary
+                } else if let before = object["tokens_before"], let after = object["tokens_after"] {
+                    summary = "Context compacted (\(before) → \(after) tokens)"
+                } else if let after = object["tokens_after"] {
+                    summary = "Context compacted (\(after) tokens)"
+                } else {
+                    summary = "Context compacted"
+                }
+                return .v2Compacted(summary: summary)
             case "ui_surface":
                 if let snap = object["snapshot"], let val = coreJSONValue(from: snap) {
                     return .v2UiSurface(val)
@@ -3241,13 +3264,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
     }
 
-    private static func coreJSONValue(from object: [String: Any]) -> AgentCoreJSONValue? {
+    static func coreJSONValue(from object: [String: Any]) -> AgentCoreJSONValue? {
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
         return try? JSONDecoder().decode(AgentCoreJSONValue.self, from: data)
     }
 
-    private static func coreJSONValue(from object: Any) -> AgentCoreJSONValue? {
+    static func coreJSONValue(from object: Any) -> AgentCoreJSONValue? {
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
         return try? JSONDecoder().decode(AgentCoreJSONValue.self, from: data)

@@ -355,6 +355,25 @@ struct MacConversationCanvas: View {
                             dismiss: { model.dismissPermissionResolutionError() }
                         )
                     }
+                    if let conversationID = model.selectedConversationID,
+                       let v2Surfaces = model.v2UISurfacesByConversation[conversationID],
+                       !v2Surfaces.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(v2Surfaces.enumerated()), id: \.offset) { _, snapshotJSON in
+                                MacV2UISurfaceCard(
+                                    snapshotJSON: snapshotJSON,
+                                    conversationID: conversationID,
+                                    onSubmit: { convID, interaction in
+                                        try await model.submitV2UIInteraction(
+                                            conversationId: convID,
+                                            interaction: interaction
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                        .accessibilityIdentifier("chat.v2.uiSurfaces")
+                    }
                     if let request = model.selectedPendingRemotePermission {
                         MacHostPermissionCard(
                             request: request,
@@ -648,6 +667,125 @@ struct MacConversationCanvas: View {
             || model.hasDeferredUserInputWaits
             || model.selectedUserInputWaitError != nil
             || model.canCancelRejectedUIQueue
+            || !(model.selectedConversationID.flatMap { model.v2UISurfacesByConversation[$0] } ?? []).isEmpty
             || MacExpertPermissionDock.hasControls(workspace: expertWorkspace, conversationID: model.selectedConversationID)
+    }
+}
+
+private struct MacV2UISurfaceCard: View {
+    let snapshotJSON: String
+    let conversationID: String
+    let onSubmit: (String, [String: Any]) async throws -> Data
+    @State private var fieldValues: [String: String] = [:]
+    @State private var isSubmitting = false
+    @State private var submissionError: String?
+
+    private var decodedSnapshot: AppleUISnapshot<MacCanonicalJSONValue>? {
+        guard let data = snapshotJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AppleUISnapshot<MacCanonicalJSONValue>.self, from: data)
+    }
+
+    private var rawObject: [String: Any]? {
+        guard let data = snapshotJSON.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    var body: some View {
+        Group {
+            if let snapshot = decodedSnapshot {
+                let targetConvID = conversationID.isEmpty ? snapshot.identity.owner.conversation_id : conversationID
+                AppleUISurfaceView(
+                    snapshot: snapshot,
+                    submit: { submission in
+                        do {
+                            let encoded = try JSONEncoder().encode(submission)
+                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? [:]
+                            let payload: [String: Any] = [
+                                "surface_id": submission.interaction.identity.surface_id,
+                                "action_id": submission.interaction.action?.action_id ?? "",
+                                "submission_id": submission.submission_id,
+                                "interaction": interactionObj,
+                            ]
+                            let responseData = try await onSubmit(targetConvID, payload)
+                            if let root = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                               let rawSnap = root["snapshot"],
+                               JSONSerialization.isValidJSONObject(rawSnap),
+                               let snapData = try? JSONSerialization.data(withJSONObject: rawSnap),
+                               let updated = try? JSONDecoder().decode(AppleUISnapshot<MacCanonicalJSONValue>.self, from: snapData) {
+                                return .committed(AppleUIInteractionReceipt(snapshot: updated, queued_submission_id: submission.submission_id))
+                            }
+                            return .committed(AppleUIInteractionReceipt(snapshot: snapshot, queued_submission_id: submission.submission_id))
+                        } catch {
+                            return .rejected(error.localizedDescription)
+                        }
+                    },
+                    accepted: { _ in }
+                )
+                .id(snapshot.identity)
+            } else if let root = rawObject {
+                rawSurfaceBody(root: root)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("chat.v2.uiSurface")
+    }
+
+    @ViewBuilder
+    private func rawSurfaceBody(root: [String: Any]) -> some View {
+        let surfaceID = (root["surface_id"] as? String) ?? ""
+        let summary = (root["summary"] as? String) ?? ""
+        let components = (root["components"] as? [[String: Any]]) ?? []
+        VStack(alignment: .leading, spacing: 8) {
+            if !summary.isEmpty {
+                Text(summary).font(.callout.weight(.semibold))
+            }
+            ForEach(Array(components.enumerated()), id: \.offset) { _, comp in
+                let kind = (comp["component"] as? String) ?? (comp["type"] as? String) ?? ""
+                let id = (comp["id"] as? String) ?? ""
+                let props = (comp["props"] as? [String: Any]) ?? comp
+                let text = (props["text"] as? String) ?? (props["label"] as? String) ?? (props["title"] as? String) ?? ""
+                let actionID = (props["action_id"] as? String) ?? (props["action"] as? String) ?? id
+                switch kind.lowercased() {
+                case "button", "action":
+                    Button(text.isEmpty ? (actionID.isEmpty ? "Submit" : actionID) : text) {
+                        isSubmitting = true
+                        submissionError = nil
+                        Task {
+                            defer { isSubmitting = false }
+                            do {
+                                _ = try await onSubmit(conversationID, [
+                                    "surface_id": surfaceID,
+                                    "action_id": actionID,
+                                    "data_model": fieldValues,
+                                ])
+                            } catch {
+                                submissionError = error.localizedDescription
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSubmitting)
+                case "textfield", "text_field", "input":
+                    let bindingKey = (props["binding"] as? String) ?? (id.isEmpty ? "input" : id)
+                    TextField(text.isEmpty ? bindingKey : text, text: Binding(
+                        get: { fieldValues[bindingKey] ?? "" },
+                        set: { fieldValues[bindingKey] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                default:
+                    if !text.isEmpty {
+                        Text(text).font(.body)
+                    }
+                }
+            }
+            if isSubmitting {
+                ProgressView().controlSize(.small)
+            }
+            if let submissionError {
+                Text(submissionError).font(.caption).foregroundStyle(MacDesignColor.danger)
+            }
+        }
     }
 }

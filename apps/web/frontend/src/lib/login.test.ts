@@ -11,8 +11,10 @@ test('login destinations remain on the host and exclude normalized authenticatio
     assert.equal(safeLoginNext('/x/../models'), '/models');
 });
 
-test('host tokens are validated without accepting overlong or short values', () => {
-    assert.equal(validHostToken('x'.repeat(31)), false);
+test('host tokens are validated without accepting empty or overlong values', () => {
+    assert.equal(validHostToken(''), false);
+    assert.equal(validHostToken('   '), false);
+    assert.equal(validHostToken('x'), true);
     assert.equal(validHostToken('x'.repeat(32)), true);
     assert.equal(validHostToken(`  ${'x'.repeat(256)}  `), true);
     assert.equal(validHostToken('x'.repeat(257)), false);

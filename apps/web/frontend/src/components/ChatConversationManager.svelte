@@ -257,8 +257,12 @@
                     {#if activeId === conversation.conversationId && showHistoryActions}
                         <div class="history-actions">
                             <button disabled={branchLocked || !hasMessages} onclick={() => mutate('branch')}>{t($locale, selectedMessageId ? 'chatConversations.branch' : 'chatConversations.branchWhole')}</button>
-                            <button disabled={locked || !selectedMessageId} onclick={() => mutate('truncate')}>{t($locale, 'chatConversations.truncate')}</button>
-                            <p class="muted">{t($locale, busy && canBranchDuringMaintenance ? 'chatConversations.compactionCopyHint' : 'chatConversations.selectionHint')}</p>
+                            {#if selectedMessageId}
+                                <button disabled={locked} onclick={() => mutate('truncate')}>{t($locale, 'chatConversations.truncate')}</button>
+                            {/if}
+                            {#if selectedMessageId || (busy && canBranchDuringMaintenance)}
+                                <p class="muted">{t($locale, busy && canBranchDuringMaintenance ? 'chatConversations.compactionCopyHint' : 'chatConversations.selectionHint')}</p>
+                            {/if}
                         </div>
                     {/if}
                     <button class="danger" disabled={rowLocked(conversation)} onclick={event => deleteRow(conversation, event.currentTarget)}>{t($locale, 'chatConversations.delete')}</button>

@@ -102,7 +102,7 @@ data class UiRemoteInteractionResult(
     val message: String? = null,
 )
 
-private val uiJson = Json { encodeDefaults = true; explicitNulls = true }
+private val uiJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
 fun AndroidApplicationRuntime.listUiSurfaces(conversationId: String): List<UiSnapshot> {
     val result = executeQuery(buildJsonObject {

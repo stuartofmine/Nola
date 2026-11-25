@@ -1615,6 +1615,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.httpBody = try JSONSerialization.data(withJSONObject: encrypt(payload, token: configuration.token))
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw MacRemoteHostError.invalidResponse }
@@ -2410,6 +2411,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2439,6 +2441,12 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     if event.canonicalRunID == submission?.ticket.identity.submissionID {
                         submission?.ticket.markAccepted()
                     }
+                    if case .turnCompleted = event.v2Event {
+                        receivedTerminalEvent = true
+                        continuation.yield(event)
+                        continuation.finish()
+                        return
+                    }
                     if terminalRetiresToolPlan(event, conversationID: conversationID,
                                               owner: planOwner, hostID: configuration.expectedHostID) {
                         // This execution stream ends at its durable, exact-Run
@@ -2461,6 +2469,9 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         ) {
             if event.canonicalRunID == submission?.ticket.identity.submissionID {
                 submission?.ticket.markAccepted()
+            }
+            if case .turnCompleted = event.v2Event {
+                receivedTerminalEvent = true
             }
             if terminalRetiresToolPlan(event, conversationID: conversationID,
                                       owner: planOwner, hostID: configuration.expectedHostID) {
@@ -2528,6 +2539,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 conversationID: permissionRequest.sessionID,
                 requestID: permissionRequest.id,
                 allow: allow,
+                scope: scope == .conversation ? "session" : "once",
                 configuration: configuration
             )
             return
@@ -2895,6 +2907,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (data, response) = try await NolaTailcatTransport.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -3247,7 +3260,17 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 v2Event: .toolFinished(callID: callID, name: name, isError: isError, summary: summary)
             ).bindingCanonicalRun(expectedRunID)
         case "compacted":
-            let summary = (object["summary"] as? String) ?? ""
+            let explicitSummary = (object["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary: String
+            if let explicitSummary, !explicitSummary.isEmpty {
+                summary = explicitSummary
+            } else if let before = object["tokens_before"], let after = object["tokens_after"] {
+                summary = "Context compacted (\(before) → \(after) tokens)"
+            } else if let after = object["tokens_after"] {
+                summary = "Context compacted (\(after) tokens)"
+            } else {
+                summary = "Context compacted"
+            }
             return MacLocalAgentEvent(
                 kind: .status,
                 text: summary,
@@ -3292,7 +3315,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             let clientID = (try? configurationStore.clientID()) ?? "nola-macos"
             let request = MacRemotePermissionRequest(
                 id: requestID,
-                allowConversation: false,
+                allowConversation: true,
                 protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
                 nonce: "v2-\(requestID)",
                 hostID: sourceHostID,
@@ -3365,13 +3388,19 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         }
     }
 
-    func v2RespondPermission(conversationID: String, requestID: String, allow: Bool, configuration: MacRemoteHostConfiguration) async throws {
+    func v2RespondPermission(
+        conversationID: String,
+        requestID: String,
+        allow: Bool,
+        scope: String = "once",
+        configuration: MacRemoteHostConfiguration
+    ) async throws {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
         req.httpMethod = "POST"
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow])
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow, "scope": scope])
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
-        let (_, resp) = try await URLSession.shared.data(for: req)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
@@ -3397,7 +3426,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
-        let (_, resp) = try await URLSession.shared.data(for: req)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
@@ -3427,7 +3456,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         applyAuthentication(to: &req, token: configuration.token)
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await NolaTailcatTransport.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }
@@ -3440,7 +3469,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         req.httpBody = try JSONSerialization.data(withJSONObject: ["fromSeq": fromSeq])
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         applyAuthentication(to: &req, token: configuration.token)
-        let (_, resp) = try await URLSession.shared.data(for: req)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw MacRemoteHostError.invalidResponse
         }

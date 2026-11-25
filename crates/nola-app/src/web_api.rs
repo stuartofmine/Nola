@@ -29,6 +29,21 @@ pub fn ms_to_rfc3339(ms: i64) -> String {
         .unwrap_or_else(|| Utc::now().to_rfc3339())
 }
 
+/// Load or generate a persistent host identifier stored in KV `"host_id"`.
+/// Guaranteed to be 16..=128 characters so Android/iOS/macOS pairing validation always succeeds.
+pub fn ensure_host_id(store: &Store) -> String {
+    if let Ok(Some(val)) = store.get_kv("host_id") {
+        if let Some(s) = val.as_str().map(str::trim) {
+            if (16..=128).contains(&s.len()) {
+                return s.to_string();
+            }
+        }
+    }
+    let id = format!("nola-host-{}", new_id().replace('-', ""));
+    let _ = store.set_kv("host_id", &json!(id));
+    id
+}
+
 pub fn session_meta_key(id: &str) -> String {
     format!("conv_meta:{id}")
 }
@@ -344,7 +359,12 @@ pub fn memory_item_to_record(item: &MemoryItem) -> Value {
         "sensitivity": Value::Null,
         "expires_at": Value::Null,
         "created_at": created,
-        "updated_at": updated
+        "updated_at": updated,
+        "provenance": {
+            "kind": "user",
+            "source": "user",
+            "observed_at": updated
+        }
     })
 }
 
@@ -354,6 +374,26 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         .ok()
         .flatten()
         .unwrap_or_else(|| json!({}));
+    let host_id = ensure_host_id(store);
+    let host_name = saved
+        .get("host_name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            std::env::var("HOSTNAME")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            std::env::var("COMPUTERNAME")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "Nola Host".into());
     let permission_profile =
         normalize_permission_profile(saved.get("permission_profile").and_then(|v| v.as_str()));
     let custom_system_prompt = saved
@@ -385,13 +425,14 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         nola_modules::skills::discover_skills(&suite.workspace_root, suite.user_home.as_deref())
             .into_iter()
             .map(|s| {
+                let enabled = nola_modules::skills::is_skill_enabled(store, &s.name);
                 json!({
                     "id": s.name,
                     "name": s.name,
                     "display_name": s.name,
                     "description": s.description,
                     "content": s.body,
-                    "enabled": true,
+                    "enabled": enabled,
                     "source": "discovered",
                     "revision": 1
                 })
@@ -401,7 +442,21 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
 
     let mcp_servers: Vec<Value> =
         if let Some(arr) = saved.get("mcp_servers").and_then(|v| v.as_array()) {
-            arr.clone()
+            arr.iter()
+                .cloned()
+                .map(|mut item| {
+                    if let Some(map) = item.as_object_mut() {
+                        let ep = map.get("endpoint").cloned();
+                        let u = map.get("url").cloned();
+                        if ep.is_some() && u.is_none() {
+                            map.insert("url".into(), ep.unwrap_or(Value::Null));
+                        } else if u.is_some() && ep.is_none() {
+                            map.insert("endpoint".into(), u.unwrap_or(Value::Null));
+                        }
+                    }
+                    item
+                })
+                .collect()
         } else {
             store
                 .list_mcp_servers()
@@ -414,6 +469,7 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
                         "display_name": srv.name,
                         "enabled": srv.enabled,
                         "endpoint": srv.url,
+                        "url": srv.url,
                         "command": srv.command,
                         "args": srv.args,
                         "revision": 1
@@ -422,7 +478,58 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
                 .collect()
         };
 
+    let uploaded_documents = saved
+        .get("uploaded_documents")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let worker_saved = store
+        .get_kv("messaging_channel_worker")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| json!({}));
+    let messaging_worker = json!({
+        "enabled": worker_saved.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
+        "backend_url": worker_saved.get("backend_url").or_else(|| worker_saved.get("url")).and_then(|v| v.as_str()).unwrap_or(""),
+        "has_access_token": worker_saved.get("has_access_token").and_then(|v| v.as_bool()).unwrap_or(false),
+        "execution_backend": worker_saved.get("execution_backend").and_then(|v| v.as_str()).unwrap_or("nola-v2"),
+        "turn_timeout_seconds": worker_saved.get("turn_timeout_seconds").and_then(|v| v.as_i64()).unwrap_or(600).clamp(30, 14400),
+        "poll_seconds": worker_saved.get("poll_seconds").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 300),
+        "project_root": worker_saved.get("project_root").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| json!(s)).unwrap_or(Value::Null)
+    });
+    let messaging_channels: Vec<Value> = suite
+        .list_records::<Value>("messaging_channel")
+        .unwrap_or_default();
+
+    let cfg = load_active_config(store);
+    let model_profiles_resp = build_model_profiles_response(store);
+    let model_profiles = model_profiles_resp
+        .get("profiles")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let default_chat_model_resolution = match cfg.llm.default_model.as_ref() {
+        Some(sel) => json!({
+            "status": "resolved",
+            "connection_id": sel.connection,
+            "model_id": sel.model,
+            "profile_id": format!("{}:{}", sel.connection, sel.model)
+        }),
+        None => json!({
+            "status": "unconfigured",
+            "connection_id": Value::Null,
+            "model_id": Value::Null,
+            "profile_id": Value::Null
+        }),
+    };
+
     json!({
+        "host_identity": {
+            "id": host_id,
+            "name": host_name,
+            "display_name": host_name,
+            "permission_protocol_version": 1
+        },
         "permission_profile": permission_profile,
         "custom_system_prompt": custom_system_prompt,
         "enable_local_dev_tools": enable_local_dev_tools,
@@ -430,7 +537,23 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         "bash_prefixes": bash_prefixes,
         "auto_recall_memory": auto_recall_memory,
         "skills": skills,
+        "uploaded_skills": skills,
+        "uploaded_documents": uploaded_documents,
         "mcp_servers": mcp_servers,
+        "messaging": {
+            "worker": messaging_worker,
+            "channels": messaging_channels,
+            "management_path": "/settings?section=messaging"
+        },
+        "computer_use": {
+            "available": false
+        },
+        "native_browser": {
+            "available": true
+        },
+        "model_profiles": model_profiles,
+        "default_chat_model_resolution": default_chat_model_resolution,
+        "default_chat_model_revision": 1,
         "skill_settings_backup_key": Value::Null,
         "execution_backends": [
             {
@@ -585,11 +708,41 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
         .or_else(|| raw.get("query"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let prompt = raw
+    let mut prompt = raw
         .get("userPrompt")
         .or_else(|| raw.get("prompt"))
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
+    let (script_approved, script_cwd) = if format == "script" {
+        let cwd_opt = raw
+            .get("cwd")
+            .or_else(|| raw.get("scriptCwd"))
+            .and_then(|v| v.as_str());
+        let cwd = cwd_opt.unwrap_or("");
+        if let Some(script) = raw.get("script").and_then(|v| v.as_str()) {
+            prompt = serde_json::to_string(&json!({
+                "kind": "script_automation",
+                "runtime": "bash",
+                "script": script,
+                "cwd": cwd
+            }))
+            .unwrap_or(prompt);
+        }
+        let approved = raw
+            .get("scriptApproved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let cwd_val = cwd_opt
+            .map(|c| json!(c))
+            .unwrap_or_else(|| raw.get("scriptCwd").cloned().unwrap_or(Value::Null));
+        (json!(approved), cwd_val)
+    } else {
+        (
+            raw.get("scriptApproved").cloned().unwrap_or(Value::Null),
+            raw.get("scriptCwd").cloned().unwrap_or(Value::Null),
+        )
+    };
     let frequency = raw
         .get("frequency")
         .and_then(|v| v.as_str())
@@ -625,8 +778,8 @@ pub fn normalize_automation_record(raw: &Value) -> Value {
         "timezone": timezone,
         "enabled": enabled,
         "updatedAt": updated_at,
-        "scriptApproved": raw.get("scriptApproved").cloned().unwrap_or(Value::Null),
-        "scriptCwd": raw.get("scriptCwd").cloned().unwrap_or(Value::Null),
+        "scriptApproved": script_approved,
+        "scriptCwd": script_cwd,
         "latestResult": raw.get("latestResult").cloned().unwrap_or(Value::Null),
         "executionSpec": raw.get("executionSpec").cloned().unwrap_or(Value::Null)
     })
@@ -1023,5 +1176,74 @@ mod tests {
         assert_eq!(snap["stats"]["failedCount"], 1);
         assert!(snap["stats"]["nextScheduledAt"].is_string());
         assert!(snap["tasks"][0]["nextScheduledAt"].is_string());
+    }
+
+    #[test]
+    fn agent_settings_snapshot_includes_host_identity_and_all_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+        store
+            .upsert_mcp_server(&nola_types::McpServerConfig {
+                id: "srv-1".into(),
+                name: "Local MCP".into(),
+                transport: nola_types::McpTransport::StreamableHttp,
+                enabled: true,
+                command: None,
+                args: vec![],
+                env: Default::default(),
+                url: Some("http://127.0.0.1:9000/mcp".into()),
+                headers: Default::default(),
+                oauth_client_id: None,
+                oauth_scopes: vec![],
+            })
+            .unwrap();
+
+        let snap = build_agent_settings_snapshot(&store, &suite);
+        let hid = snap["host_identity"]["id"].as_str().unwrap();
+        assert!((16..=128).contains(&hid.len()));
+        assert_eq!(snap["host_identity"]["permission_protocol_version"], 1);
+        assert_eq!(snap["uploaded_skills"], snap["skills"]);
+        assert_eq!(snap["uploaded_documents"], json!([]));
+        assert_eq!(snap["messaging"]["management_path"], "/settings?section=messaging");
+        assert_eq!(snap["computer_use"]["available"], false);
+        assert_eq!(snap["native_browser"]["available"], true);
+        assert_eq!(snap["default_chat_model_revision"], 1);
+        assert!(snap["model_profiles"].is_array());
+        assert!(snap["default_chat_model_resolution"].is_object());
+        assert_eq!(snap["mcp_servers"][0]["endpoint"], "http://127.0.0.1:9000/mcp");
+        assert_eq!(snap["mcp_servers"][0]["url"], "http://127.0.0.1:9000/mcp");
+    }
+
+    #[test]
+    fn memory_item_to_record_includes_provenance_and_script_automation_normalizes() {
+        let mem = MemoryItem {
+            id: "m1".into(),
+            namespace: "global:fact".into(),
+            title: "Pref".into(),
+            content: "Likes Rust".into(),
+            tags: vec!["rust".into()],
+            created_at_ms: 1000,
+            updated_at_ms: 2000,
+        };
+        let rec = memory_item_to_record(&mem);
+        assert_eq!(rec["provenance"]["kind"], "user");
+        assert_eq!(rec["provenance"]["source"], "user");
+        assert_eq!(rec["provenance"]["observed_at"], rec["updated_at"]);
+
+        let norm = normalize_automation_record(&json!({
+            "id": "auto-1",
+            "name": "Backup",
+            "format": "script",
+            "script": "echo hi",
+            "cwd": "/tmp"
+        }));
+        let decoded: Value = serde_json::from_str(norm["userPrompt"].as_str().unwrap()).unwrap();
+        assert_eq!(decoded["kind"], "script_automation");
+        assert_eq!(decoded["runtime"], "bash");
+        assert_eq!(decoded["script"], "echo hi");
+        assert_eq!(decoded["cwd"], "/tmp");
+        assert_eq!(norm["scriptCwd"], "/tmp");
+        assert_eq!(norm["scriptApproved"], false);
     }
 }

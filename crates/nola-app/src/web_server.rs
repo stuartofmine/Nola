@@ -41,7 +41,7 @@ use nola_store::{EventPage, Store, Vault};
 use nola_tools::{BrowserManager, NativeBrowserBridge, SandboxMode, ToolContext, ToolRegistry};
 use nola_types::{
     new_id, now_ms, sha256_hex, AgentRoom, ExpertPeer, HostCapabilities, McpServerConfig,
-    McpTransport, MediaAttachment, MemoryItem, PermissionProfile, Session,
+    McpTransport, MediaAttachment, MemoryItem, PermissionProfile, PluginRecord, Session,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -56,9 +56,9 @@ use crate::config::{
 use crate::web_api::{
     build_agent_settings_snapshot, build_dashboard_snapshot, build_model_profiles_response,
     build_workspace_review, conversation_configuration_json, conversation_knowledge_key,
-    infer_model_capabilities, load_conversation_knowledge, memory_item_to_record, ms_to_rfc3339,
-    normalize_automation_record, reconstruct_v2_messages, session_meta_key,
-    session_to_conversation_json,
+    ensure_host_id, infer_model_capabilities, load_conversation_knowledge, memory_item_to_record,
+    ms_to_rfc3339, normalize_automation_record, reconstruct_v2_messages, session_meta_key,
+    session_to_conversation_json, session_usage_json,
 };
 
 const MAX_TRACKED_NONCES: usize = 4_096;
@@ -494,21 +494,43 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
-fn server_started_handshake(host: &str, bound_port: u16) -> Value {
+fn server_started_handshake_full(
+    host: &str,
+    bound_port: u16,
+    host_id: &str,
+    access_token: &str,
+    credentials_path: &Path,
+) -> Value {
     let host_part = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]")
     } else {
         host.to_string()
     };
+    let origin = format!("http://{host_part}:{bound_port}");
     json!({
         "type": "server.started",
         "protocol_version": 1,
         "loopback": is_loopback_host(host),
-        "origin": format!("http://{host_part}:{bound_port}"),
+        "origin": origin,
+        "client_api": format!("{origin}/api/mobile"),
+        "host_id": host_id,
+        "access_token": access_token,
+        "credentials_path": credentials_path.display().to_string(),
         "clientAPI": {
             "path": "/api/mobile"
         }
     })
+}
+
+#[cfg(test)]
+fn server_started_handshake(host: &str, bound_port: u16) -> Value {
+    server_started_handshake_full(
+        host,
+        bound_port,
+        "nola-host-0000000000000000",
+        "test-token",
+        Path::new("/tmp/mobile-access-token"),
+    )
 }
 
 /// Fail-closed validation for Chrome Native Browser Extension host routes:
@@ -639,7 +661,37 @@ pub fn run_web_server(
     let mut assets_override: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args[i].as_str();
+        if let Some(p_raw) = arg.strip_prefix("--port=") {
+            port = p_raw
+                .parse::<u16>()
+                .map_err(|_| format!("invalid --port value: '{p_raw}'"))?;
+            i += 1;
+            continue;
+        }
+        if let Some(h) = arg.strip_prefix("--host=") {
+            host = h.to_string();
+            i += 1;
+            continue;
+        }
+        if let Some(r) = arg.strip_prefix("--web-root=") {
+            web_root = Some(PathBuf::from(r));
+            i += 1;
+            continue;
+        }
+        if let Some(a) = arg.strip_prefix("--assets=") {
+            assets_override = Some(PathBuf::from(a));
+            i += 1;
+            continue;
+        }
+        if arg.starts_with("--tailcat-ingress=")
+            || arg.starts_with("--tailcat-helper=")
+            || arg.starts_with("--tailcat-helper-sha256=")
+        {
+            i += 1;
+            continue;
+        }
+        match arg {
             "--host" => {
                 i += 1;
                 if let Some(h) = args.get(i) {
@@ -648,9 +700,12 @@ pub fn run_web_server(
             }
             "--port" => {
                 i += 1;
-                if let Some(p) = args.get(i).and_then(|s| s.parse().ok()) {
-                    port = p;
-                }
+                let Some(raw_port) = args.get(i) else {
+                    return Err("missing value for --port".into());
+                };
+                port = raw_port
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid --port value: '{raw_port}'"))?;
             }
             "--web-root" => {
                 i += 1;
@@ -662,6 +717,11 @@ pub fn run_web_server(
                 i += 1;
                 if let Some(a) = args.get(i) {
                     assets_override = Some(PathBuf::from(a));
+                }
+            }
+            "--tailcat-ingress" | "--tailcat-helper" | "--tailcat-helper-sha256" => {
+                if args.get(i + 1).is_some_and(|next| !next.starts_with("--")) {
+                    i += 1;
                 }
             }
             "--json" => {
@@ -691,24 +751,49 @@ pub fn run_web_server(
     };
 
     let addr = format!("{host}:{port}");
-    let server = Server::http(&addr).map_err(|e| format!("failed to bind {addr}: {e}"))?;
+    let server = Arc::new(Server::http(&addr).map_err(|e| format!("failed to bind {addr}: {e}"))?);
     let bound_port = server
         .server_addr()
         .to_ip()
         .map(|s| s.port())
         .unwrap_or(port);
     let loopback = is_loopback_host(&host);
-    let host_id = store
-        .get_kv("host_id")
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_str().map(ToString::to_string))
-        .unwrap_or_else(|| {
-            let id = new_id();
-            let _ = store.set_kv("host_id", &json!(id));
-            id
-        });
+    let host_id = ensure_host_id(&store);
+    let token_path = mobile_access_token_path();
     let (access_token, env_token_override) = load_or_create_web_access_token();
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    if json_mode {
+        let server_stdin = Arc::clone(&server);
+        let flag_stdin = Arc::clone(&shutdown_flag);
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin();
+            let mut buf = [0u8; 256];
+            loop {
+                match stdin.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+            flag_stdin.store(true, Ordering::SeqCst);
+            server_stdin.unblock();
+        });
+    }
+    #[cfg(unix)]
+    {
+        if let Ok(mut signals) = signal_hook::iterator::Signals::new([
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGTERM,
+        ]) {
+            let server_sig = Arc::clone(&server);
+            let flag_sig = Arc::clone(&shutdown_flag);
+            std::thread::spawn(move || {
+                if signals.forever().next().is_some() {
+                    flag_sig.store(true, Ordering::SeqCst);
+                    server_sig.unblock();
+                }
+            });
+        }
+    }
     let sessions: Arc<Mutex<BTreeMap<String, i64>>> = Arc::new(Mutex::new(BTreeMap::new()));
     let nonces = Arc::new(Mutex::new(BoundedNonceCache::default()));
     let active_cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>> =
@@ -734,13 +819,19 @@ pub fn run_web_server(
     );
 
     if json_mode {
-        println!("{}", server_started_handshake(&host, bound_port));
+        println!(
+            "{}",
+            server_started_handshake_full(&host, bound_port, &host_id, &access_token, &token_path)
+        );
     } else {
         println!("Nola v2 WebHost listening on http://{host}:{bound_port}");
     }
     let _ = std::io::stdout().flush();
 
     for mut req in server.incoming_requests() {
+        if shutdown_flag.load(Ordering::SeqCst) {
+            break;
+        }
         let full_url = req.url().to_string();
         let (raw_path, query) = full_url.split_once('?').unwrap_or((full_url.as_str(), ""));
         let normalized_path = if let Some(rest) = raw_path.strip_prefix("/api/mobile/") {
@@ -868,17 +959,18 @@ pub fn run_web_server(
             }
             (Method::Get, "/api/web/session") => {
                 let session_auth = is_valid_session_cookie(&req, &sessions);
-                let authed = loopback || session_auth || req_authenticated;
-                let ingress = if loopback { "direct" } else { "lan" };
+                let local_trust = loopback && !env_token_override;
+                let bearer_auth = !session_auth && req_authenticated;
+                let authed = session_auth || local_trust || bearer_auth;
                 let _ = respond_api_json(
                     req,
                     200,
                     &json!({
                         "authenticated": authed,
                         "sessionAuthenticated": session_auth,
-                        "localTrust": loopback && !env_token_override,
+                        "localTrust": local_trust,
                         "tailcatAvailable": false,
-                        "transportIngress": ingress,
+                        "transportIngress": "direct",
                         "hostId": host_id,
                         "version": "2.0.0"
                     }),
@@ -965,14 +1057,36 @@ pub fn run_web_server(
                 match check_for_update(&feed_url, "2.0.0") {
                     Ok(res) => {
                         let release = res.latest.as_ref().map(|m| {
+                            let release_id = format!(
+                                "rel-{}-{}",
+                                m.version,
+                                &m.sha256[..m.sha256.len().min(12)]
+                            );
+                            let filename = Url::parse(&m.download_url)
+                                .ok()
+                                .and_then(|u| {
+                                    u.path_segments()
+                                        .and_then(|mut s| s.next_back().map(ToString::to_string))
+                                })
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| format!("nola-{}.bin", m.version));
                             json!({
+                                "release_id": release_id,
                                 "version": m.version,
-                                "download_url": m.download_url,
-                                "sha256": m.sha256,
+                                "build": 1,
                                 "notes": m.notes,
-                                "signature": m.signature
+                                "artifact": {
+                                    "kind": "archive",
+                                    "url": m.download_url,
+                                    "filename": filename,
+                                    "size": 0,
+                                    "sha256": m.sha256
+                                }
                             })
                         });
+                        if let Some(ref rel) = release {
+                            let _ = store.set_kv("latest_update_release", rel);
+                        }
                         let _ = respond_api_json(
                             req,
                             200,
@@ -1004,25 +1118,110 @@ pub fn run_web_server(
                 }
             }
             (Method::Get, "/api/software-update/package") => {
-                let pkg_url = parse_query_str(query, "url").unwrap_or_default();
-                let sha256 = parse_query_str(query, "sha256");
+                let requested_release_id = parse_query_str(query, "release_id");
+                let mut pkg_url = parse_query_str(query, "url").unwrap_or_default();
+                let mut sha256 = parse_query_str(query, "sha256");
+                let mut filename = String::new();
+                if pkg_url.trim().is_empty() {
+                    if let Some(ref req_rel_id) = requested_release_id {
+                        if let Ok(Some(saved_rel)) = store.get_kv("latest_update_release") {
+                            let saved_id = saved_rel
+                                .get("release_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if saved_id == req_rel_id.trim() || req_rel_id.trim().is_empty() {
+                                if let Some(u) = saved_rel
+                                    .pointer("/artifact/url")
+                                    .and_then(|v| v.as_str())
+                                {
+                                    pkg_url = u.to_string();
+                                }
+                                if sha256.is_none() {
+                                    sha256 = saved_rel
+                                        .pointer("/artifact/sha256")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string);
+                                }
+                                if let Some(fname) = saved_rel
+                                    .pointer("/artifact/filename")
+                                    .and_then(|v| v.as_str())
+                                {
+                                    filename = fname.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
                 if pkg_url.trim().is_empty() {
                     let _ = respond_api_json(
                         req,
                         400,
-                        &json!({"error": "update_package_unconfigured", "message": "missing 'url' query parameter"}),
+                        &json!({"error": "update_package_unconfigured", "message": "missing 'release_id' or 'url' query parameter"}),
                         crypto_tok,
                     );
                 } else {
                     let dest_dir = default_home_dir().join(".nola/updates");
                     match download_update_package(&pkg_url, sha256.as_deref(), &dest_dir) {
                         Ok(receipt) => {
-                            let _ = respond_api_json(
-                                req,
-                                200,
-                                &json!({"ok": true, "package": receipt}),
-                                crypto_tok,
-                            );
+                            let saved_path = receipt
+                                .get("path")
+                                .and_then(|v| v.as_str())
+                                .map(PathBuf::from);
+                            let Some(file_path) = saved_path else {
+                                let _ = respond_api_json(
+                                    req,
+                                    500,
+                                    &json!({"ok": false, "error": "downloaded package path missing"}),
+                                    crypto_tok,
+                                );
+                                continue;
+                            };
+                            if filename.is_empty() {
+                                filename = file_path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("nola-update.bin")
+                                    .to_string();
+                            }
+                            let safe_filename: String = filename
+                                .chars()
+                                .filter(|c| {
+                                    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')
+                                })
+                                .collect();
+                            let disp_name = if safe_filename.is_empty() {
+                                "nola-update.bin".to_string()
+                            } else {
+                                safe_filename
+                            };
+                            match fs::read(&file_path) {
+                                Ok(bytes) => {
+                                    let ct = Header::from_bytes(
+                                        &b"Content-Type"[..],
+                                        &b"application/octet-stream"[..],
+                                    )
+                                    .unwrap();
+                                    let cd_val = format!("attachment; filename=\"{disp_name}\"");
+                                    let cd = Header::from_bytes(
+                                        &b"Content-Disposition"[..],
+                                        cd_val.as_bytes(),
+                                    )
+                                    .unwrap();
+                                    let resp = Response::from_data(bytes)
+                                        .with_status_code(StatusCode(200))
+                                        .with_header(ct)
+                                        .with_header(cd);
+                                    let _ = req.respond(resp);
+                                }
+                                Err(e) => {
+                                    let _ = respond_api_json(
+                                        req,
+                                        500,
+                                        &json!({"ok": false, "error": format!("failed reading downloaded package: {e}")}),
+                                        crypto_tok,
+                                    );
+                                }
+                            }
                         }
                         Err(e) => {
                             let _ = respond_api_json(
@@ -1205,6 +1404,8 @@ pub fn run_web_server(
                     let needs_resp = pending_interactions.conversation_needs_response(&s.id);
                     let active_run = if active_ids.contains(&s.id) {
                         json!({
+                            "run_id": format!("run-{}", s.id),
+                            "assistant_message_id": format!("msg-active-{}", s.id),
                             "conversation_id": s.id,
                             "status": if needs_resp { "waiting_for_input" } else { "running" }
                         })
@@ -1280,7 +1481,7 @@ pub fn run_web_server(
             {
                 let id = percent_decode_path(p.trim_start_matches("/api/results/"));
                 if let Ok(Some(rec)) = suite.get_record::<Value>("automation_result", &id) {
-                    let _ = respond_api_json(req, 200, &json!({"result": rec}), crypto_tok);
+                    let _ = respond_api_json(req, 200, &rec, crypto_tok);
                 } else {
                     let _ = respond_api_json(req, 404, &json!({"error": "result_not_found"}), crypto_tok);
                 }
@@ -1380,8 +1581,112 @@ pub fn run_web_server(
                 }
             }
             (Method::Post, "/api/harness-plugins") => {
-                let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
-                let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                let action = body
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("library")
+                    .trim();
+                match action {
+                    "install" => {
+                        let source = body
+                            .get("source")
+                            .or_else(|| body.get("name"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .unwrap_or("");
+                        if source.is_empty() {
+                            let _ = respond_api_json(
+                                req,
+                                400,
+                                &json!({"error": "missing_plugin_source"}),
+                                crypto_tok,
+                            );
+                        } else {
+                            let cleaned = source.strip_prefix("npm:").unwrap_or(source);
+                            let (parsed_name, parsed_ver) =
+                                if let Some((n, v)) = cleaned.rsplit_once('@') {
+                                    if !n.is_empty() && !v.is_empty() && !v.contains('/') {
+                                        (n.to_string(), v.to_string())
+                                    } else {
+                                        (cleaned.to_string(), "latest".to_string())
+                                    }
+                                } else {
+                                    (cleaned.to_string(), "latest".to_string())
+                                };
+                            let runtime = body
+                                .get("runtime")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("dsh")
+                                .to_string();
+                            let profile = body
+                                .get("profile")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("web")
+                                .to_string();
+                            let id = body
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| parsed_name.clone());
+                            let rec = PluginRecord {
+                                id: id.clone(),
+                                name: parsed_name,
+                                version: parsed_ver,
+                                entry_path: source.to_string(),
+                                enabled: true,
+                                capabilities: vec![runtime, profile],
+                            };
+                            if let Err(e) = suite.upsert_record("plugin", &id, &rec) {
+                                let _ = respond_api_json(
+                                    req,
+                                    500,
+                                    &json!({"error": e.to_string()}),
+                                    crypto_tok,
+                                );
+                            } else {
+                                let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                                let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                            }
+                        }
+                    }
+                    "remove" => {
+                        let target = body
+                            .get("id")
+                            .or_else(|| body.get("source"))
+                            .or_else(|| body.get("name"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .unwrap_or("");
+                        if !target.is_empty() {
+                            let existing = suite
+                                .list_records::<PluginRecord>("plugin")
+                                .unwrap_or_default();
+                            let mut removed = false;
+                            for rec in existing {
+                                let formatted = format!("{}@{}", rec.name, rec.version);
+                                if rec.id == target
+                                    || rec.name == target
+                                    || rec.entry_path == target
+                                    || formatted == target
+                                {
+                                    let _ = suite.delete_record("plugin", &rec.id);
+                                    removed = true;
+                                }
+                            }
+                            if !removed {
+                                let _ = suite.delete_record("plugin", target);
+                            }
+                        }
+                        let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                    }
+                    _ => {
+                        let catalog = list_harness_plugins(Some(&store), &suite.workspace_root);
+                        let _ = respond_api_json(req, 200, &catalog, crypto_tok);
+                    }
+                }
             }
             (Method::Post, "/api/desktop-plugin-pages") => {
                 let pages = list_desktop_plugin_pages(&suite.workspace_root);
@@ -1440,7 +1745,11 @@ pub fn run_web_server(
                 }
             }
             (Method::Post, "/api/chat/conversations") => {
-                if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                let perm_opt = body
+                    .get("permissionProfile")
+                    .or_else(|| body.get("permission_profile"))
+                    .and_then(|v| v.as_str());
+                if let Some(perm) = perm_opt {
                     if let Err(err) = PermissionProfile::parse_strict(perm) {
                         let _ = respond_api_json(
                             req,
@@ -1479,7 +1788,7 @@ pub fn run_web_server(
                     created_at_ms: ts,
                     updated_at_ms: ts,
                 };
-                if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                if let Some(perm) = perm_opt {
                     let _ = store.set_kv(
                         &session_meta_key(&id),
                         &json!({
@@ -1511,6 +1820,7 @@ pub fn run_web_server(
                     .last()
                     .and_then(|e| e.get("seq").and_then(|s| s.as_i64()))
                     .unwrap_or(0);
+                let usage = session_usage_json(&store, id);
                 let _ = respond_api_json(
                     req,
                     200,
@@ -1518,6 +1828,7 @@ pub fn run_web_server(
                         "conversationId": id,
                         "messages": messages,
                         "events": events,
+                        "usage": usage,
                         "hasMore": false,
                         "projectionRevision": 1,
                         "eventSequence": latest_seq
@@ -1648,7 +1959,11 @@ pub fn run_web_server(
                     }
                     continue;
                 }
-                if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                let perm_opt = body
+                    .get("permissionProfile")
+                    .or_else(|| body.get("permission_profile"))
+                    .and_then(|v| v.as_str());
+                if let Some(perm) = perm_opt {
                     if let Err(err) = PermissionProfile::parse_strict(perm) {
                         let _ = respond_api_json(
                             req,
@@ -1671,7 +1986,11 @@ pub fn run_web_server(
                             .get("configurationRevision")
                             .and_then(|v| v.as_i64())
                             .unwrap_or(1);
-                        if let Some(expected) = body.get("expectedRevision").and_then(|v| v.as_i64()) {
+                        if let Some(expected) = body
+                            .get("expectedRevision")
+                            .or_else(|| body.get("expected_revision"))
+                            .and_then(|v| v.as_i64())
+                        {
                             if expected != current_cfg_rev {
                                 let _ = respond_api_json(
                                     req,
@@ -1695,31 +2014,43 @@ pub fn run_web_server(
                         if let Some(mid) = body.get("selectedModelId").and_then(|v| v.as_str()) {
                             sess.model_id = (!mid.is_empty()).then(|| mid.to_string());
                         }
-                        if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                        if let Some(perm) = perm_opt {
                             meta["permissionProfile"] = json!(perm.trim());
                         }
                         if let Some(effort) = body.get("reasoningEffort").and_then(|v| v.as_str()) {
                             meta["reasoningEffort"] = json!(effort);
                         }
-                        if let Some(k_patch) = body.get("knowledge").and_then(|v| v.as_object()) {
-                            let mut current_k = load_conversation_knowledge(&store, id);
-                            if let Some(dst) = current_k.as_object_mut() {
-                                if let Some(kp) = k_patch.get("keyPointsMarkdown").and_then(|v| v.as_str()) {
-                                    dst.insert("keyPointsMarkdown".into(), json!(kp));
-                                    dst.insert("summary".into(), json!(kp));
+                        match body.get("knowledge") {
+                            Some(Value::String(text)) => {
+                                let mut current_k = load_conversation_knowledge(&store, id);
+                                if let Some(dst) = current_k.as_object_mut() {
+                                    dst.insert("keyPointsMarkdown".into(), json!(text));
+                                    dst.insert("summary".into(), json!(text));
+                                    dst.insert("updatedAt".into(), json!(now_ms()));
                                 }
-                                if let Some(wiki) = k_patch.get("wikiMarkdown").and_then(|v| v.as_str()) {
-                                    dst.insert("wikiMarkdown".into(), json!(wiki));
-                                }
-                                if let Some(summary) = k_patch.get("summary").and_then(|v| v.as_str()) {
-                                    dst.insert("summary".into(), json!(summary));
-                                }
-                                if let Some(entries) = k_patch.get("entries").and_then(|v| v.as_array()) {
-                                    dst.insert("entries".into(), Value::Array(entries.clone()));
-                                }
-                                dst.insert("updatedAt".into(), json!(now_ms()));
+                                let _ = store.set_kv(&conversation_knowledge_key(id), &current_k);
                             }
-                            let _ = store.set_kv(&conversation_knowledge_key(id), &current_k);
+                            Some(Value::Object(k_patch)) => {
+                                let mut current_k = load_conversation_knowledge(&store, id);
+                                if let Some(dst) = current_k.as_object_mut() {
+                                    if let Some(kp) = k_patch.get("keyPointsMarkdown").and_then(|v| v.as_str()) {
+                                        dst.insert("keyPointsMarkdown".into(), json!(kp));
+                                        dst.insert("summary".into(), json!(kp));
+                                    }
+                                    if let Some(wiki) = k_patch.get("wikiMarkdown").and_then(|v| v.as_str()) {
+                                        dst.insert("wikiMarkdown".into(), json!(wiki));
+                                    }
+                                    if let Some(summary) = k_patch.get("summary").and_then(|v| v.as_str()) {
+                                        dst.insert("summary".into(), json!(summary));
+                                    }
+                                    if let Some(entries) = k_patch.get("entries").and_then(|v| v.as_array()) {
+                                        dst.insert("entries".into(), Value::Array(entries.clone()));
+                                    }
+                                    dst.insert("updatedAt".into(), json!(now_ms()));
+                                }
+                                let _ = store.set_kv(&conversation_knowledge_key(id), &current_k);
+                            }
+                            _ => {}
                         }
                         meta["configurationRevision"] = json!(current_cfg_rev + 1);
                         sess.updated_at_ms = now_ms();
@@ -1801,11 +2132,13 @@ pub fn run_web_server(
                 let _ = respond_api_json(req, 200, &json!({"conversation": conv}), crypto_tok);
             }
             (Method::Get, p)
-                if p.starts_with("/api/chat/conversations/") && p.ends_with("/workspace-review") =>
+                if p.starts_with("/api/chat/conversations/")
+                    && (p.ends_with("/workspace-review") || p.ends_with("/workspace/diff")) =>
             {
                 let id = p
                     .trim_start_matches("/api/chat/conversations/")
-                    .trim_end_matches("/workspace-review");
+                    .trim_end_matches("/workspace-review")
+                    .trim_end_matches("/workspace/diff");
                 let ws_root = store
                     .get_session(id)
                     .ok()
@@ -1815,6 +2148,103 @@ pub fn run_web_server(
                     .unwrap_or_else(|| suite.workspace_root.clone());
                 let review = build_workspace_review(&host_id, id, &ws_root);
                 let _ = respond_api_json(req, 200, &review, crypto_tok);
+            }
+            (Method::Get, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && p.ends_with("/workspace/checkpoints") =>
+            {
+                let checkpoints: Vec<Value> = suite
+                    .list_records("workspace_checkpoint")
+                    .unwrap_or_default();
+                let _ = respond_api_json(req, 200, &json!({"checkpoints": checkpoints}), crypto_tok);
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/workspace/undo") =>
+            {
+                let id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/workspace/undo");
+                let ws_root = store
+                    .get_session(id)
+                    .ok()
+                    .flatten()
+                    .map(|s| PathBuf::from(s.workspace_root))
+                    .filter(|p| p.is_dir())
+                    .unwrap_or_else(|| suite.workspace_root.clone());
+                let out = Command::new("git")
+                    .args(["stash", "push", "-u", "-m", "nola-v2-undo"])
+                    .current_dir(&ws_root)
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "stdout": String::from_utf8_lossy(&o.stdout)}),
+                            crypto_tok,
+                        );
+                    }
+                    Ok(o) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "error": String::from_utf8_lossy(&o.stderr)}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(
+                            req,
+                            500,
+                            &json!({"ok": false, "error": e.to_string()}),
+                            crypto_tok,
+                        );
+                    }
+                }
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/workspace/redo") =>
+            {
+                let id = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/workspace/redo");
+                let ws_root = store
+                    .get_session(id)
+                    .ok()
+                    .flatten()
+                    .map(|s| PathBuf::from(s.workspace_root))
+                    .filter(|p| p.is_dir())
+                    .unwrap_or_else(|| suite.workspace_root.clone());
+                let out = Command::new("git")
+                    .args(["stash", "pop"])
+                    .current_dir(&ws_root)
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"ok": true, "stdout": String::from_utf8_lossy(&o.stdout)}),
+                            crypto_tok,
+                        );
+                    }
+                    Ok(o) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"ok": false, "error": String::from_utf8_lossy(&o.stderr)}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(
+                            req,
+                            500,
+                            &json!({"ok": false, "error": e.to_string()}),
+                            crypto_tok,
+                        );
+                    }
+                }
             }
             (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/cancel") =>
@@ -1961,7 +2391,21 @@ pub fn run_web_server(
                     .trim_start_matches("/api/chat/conversations/")
                     .trim_end_matches("/ui-interactions");
                 let payload = unwrap_input_envelope(&body);
-                match serde_json::from_value::<UiInteraction>(payload) {
+                let queued_submission_id = payload
+                    .get("submission_id")
+                    .or_else(|| payload.get("submissionId"))
+                    .or_else(|| payload.get("request_id"))
+                    .or_else(|| payload.get("requestId"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                let interaction_val = payload
+                    .get("interaction")
+                    .filter(|v| v.is_object())
+                    .cloned()
+                    .unwrap_or(payload);
+                match serde_json::from_value::<UiInteraction>(interaction_val) {
                     Ok(interaction) if interaction.identity.owner.conversation_id == conv_id => {
                         match commit_ui_interaction(&store, &interaction) {
                             Ok(committed) => {
@@ -1973,7 +2417,12 @@ pub fn run_web_server(
                                         "snapshot": committed.snapshot,
                                         "dataModel": committed.data_model,
                                         "actionId": committed.action_id,
-                                        "summary": committed.summary
+                                        "summary": committed.summary,
+                                        "receipt": {
+                                            "snapshot": committed.snapshot,
+                                            "queued_submission_id": queued_submission_id,
+                                            "action_id": committed.action_id
+                                        }
                                     }),
                                     crypto_tok,
                                 );
@@ -2077,7 +2526,7 @@ pub fn run_web_server(
                 let goal = store.get_kv(&key).ok().flatten().unwrap_or(Value::Null);
                 let _ = respond_api_json(req, 200, &json!({"goal": goal}), crypto_tok);
             }
-            (Method::Post, p)
+            (Method::Post, p) | (Method::Put, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/goal") =>
             {
                 let conv_id = p
@@ -2118,7 +2567,7 @@ pub fn run_web_server(
                     .unwrap_or_else(|| json!([]));
                 let _ = respond_api_json(req, 200, &json!({"sources": bound}), crypto_tok);
             }
-            (Method::Post, p)
+            (Method::Post, p) | (Method::Put, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/data-sources") =>
             {
                 let conv_id = p
@@ -2134,7 +2583,11 @@ pub fn run_web_server(
                     .trim_start_matches("/api/chat/conversations/")
                     .trim_end_matches("/messages")
                     .to_string();
-                if let Some(perm) = body.get("permissionProfile").and_then(|v| v.as_str()) {
+                if let Some(perm) = body
+                    .get("permissionProfile")
+                    .or_else(|| body.get("permission_profile"))
+                    .and_then(|v| v.as_str())
+                {
                     if let Err(err) = PermissionProfile::parse_strict(perm) {
                         let _ = respond_api_json(
                             req,
@@ -2561,24 +3014,90 @@ pub fn run_web_server(
 
             // --- Local Models (Real Hardware, Engine Probe, Process Lifecycle & Recommendations) ---
             (Method::Get, "/api/local-models") => {
-                let engine_status = probe_engine_status("llama.cpp");
-                let hardware = probe_hardware();
-                let running = LocalModelProcessManager::global().list_running_models();
-                let items: Vec<Value> = suite.list_records("local_model").unwrap_or_default();
-                let binary_available = engine_status
+                let llama_status = probe_engine_status("llama.cpp");
+                let vllm_status = probe_engine_status("vllm");
+                let llama_ready = llama_status
                     .get("ready")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let vllm_ready = vllm_status
+                    .get("ready")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let hardware = probe_hardware();
+                let running = LocalModelProcessManager::global().list_running_models();
+                let running_ids: HashSet<String> = running
+                    .iter()
+                    .filter_map(|r| r.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
+                    .collect();
+                let cfg = load_active_config(&store);
+                let selected_local_id = cfg
+                    .llm
+                    .default_model
+                    .as_ref()
+                    .and_then(|d| d.connection.strip_prefix("local:").map(ToString::to_string));
+                let raw_items: Vec<Value> = suite.list_records("local_model").unwrap_or_default();
+                let items: Vec<Value> = raw_items
+                    .into_iter()
+                    .map(|mut m| {
+                        let id = m
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let is_running = running_ids.contains(&id);
+                        let is_selected = selected_local_id.as_deref() == Some(id.as_str());
+                        if let Some(obj) = m.as_object_mut() {
+                            obj.insert("running".into(), json!(is_running));
+                            obj.insert("selected".into(), json!(is_selected));
+                            obj.entry("installed".to_string()).or_insert_with(|| json!(true));
+                            obj.entry("deviceCompatible".to_string())
+                                .or_insert_with(|| json!(true));
+                            obj.entry("configurationRevision".to_string())
+                                .or_insert_with(|| json!(1));
+                            let mut default_params = json!({
+                                "contextTokens": 8192,
+                                "temperature": 0.7,
+                                "topP": 0.9,
+                                "topK": 40,
+                                "minP": 0.05,
+                                "batchSize": 512,
+                                "threads": 4,
+                                "gpuLayers": 0,
+                                "flashAttention": false
+                            });
+                            if let (Some(dp), Some(existing_p)) = (
+                                default_params.as_object_mut(),
+                                obj.get("parameters").and_then(|v| v.as_object()),
+                            ) {
+                                for (k, v) in existing_p {
+                                    dp.insert(k.clone(), v.clone());
+                                }
+                            }
+                            obj.insert("parameters".into(), default_params);
+                        }
+                        m
+                    })
+                    .collect();
+                let acquisition = store
+                    .get_kv("local_model_acquisition")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null);
                 let _ = respond_api_json(
                     req,
                     200,
                     &json!({
                         "models": items,
-                        "binaryAvailable": binary_available,
-                        "engineStatus": engine_status,
-                        "runtimes": running,
+                        "binaryAvailable": llama_ready,
+                        "engineStatus": llama_status,
+                        "runtimes": [
+                            { "id": "llama.cpp", "binaryAvailable": llama_ready },
+                            { "id": "vllm", "binaryAvailable": vllm_ready }
+                        ],
+                        "runningRuntimes": running,
                         "hardware": hardware,
-                        "acquisition": Value::Null
+                        "acquisition": acquisition
                     }),
                     crypto_tok,
                 );
@@ -2620,13 +3139,162 @@ pub fn run_web_server(
                     crypto_tok,
                 );
             }
+            (Method::Post, "/api/local-models/setup-engine") => {
+                let eng = body
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("llama.cpp");
+                let st = probe_engine_status(eng);
+                let ready = st.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "ok": true,
+                        "ready": ready,
+                        "engineStatus": st
+                    }),
+                    crypto_tok,
+                );
+            }
+            (Method::Post, "/api/local-models/install-plan") => {
+                let eng = body
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("llama.cpp");
+                let src = body
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("huggingface");
+                let repo = body
+                    .get("repository")
+                    .or_else(|| body.pointer("/plan/repository"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let plan = body.get("plan").cloned().unwrap_or_else(|| {
+                    json!({"engine": eng, "repository": repo, "files": []})
+                });
+                let total_bytes: u64 = plan
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|f| f.get("bytes").and_then(|b| b.as_u64()))
+                            .sum()
+                    })
+                    .unwrap_or(0);
+                let job = json!({
+                    "id": new_id(),
+                    "engine": eng,
+                    "source": src,
+                    "repository": repo,
+                    "plan": plan,
+                    "status": "downloading",
+                    "downloadedBytes": 0,
+                    "totalBytes": total_bytes
+                });
+                let _ = store.set_kv("local_model_acquisition", &job);
+                let _ = respond_api_json(req, 200, &json!({"ok": true, "job": job}), crypto_tok);
+            }
+            (Method::Post, "/api/local-models/cancel") => {
+                let mut job = store
+                    .get_kv("local_model_acquisition")
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object())
+                    .unwrap_or_else(|| {
+                        json!({
+                            "id": body.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "engine": "llama.cpp",
+                            "source": "huggingface",
+                            "repository": "",
+                            "status": "cancelled",
+                            "downloadedBytes": 0,
+                            "totalBytes": 0
+                        })
+                    });
+                if let Some(obj) = job.as_object_mut() {
+                    obj.insert("status".into(), json!("cancelled"));
+                }
+                let _ = store.set_kv("local_model_acquisition", &job);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "cancelled": true, "job": job}),
+                    crypto_tok,
+                );
+            }
             (Method::Post, "/api/local-models/recommend") => {
                 let hw = body
                     .get("hardware")
                     .filter(|v| v.is_object())
                     .cloned()
                     .unwrap_or_else(probe_hardware);
-                let rec = recommend_local_models(&hw);
+                let mut rec = recommend_local_models(&hw);
+                let q_filter = body
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                let engine_filter = body
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_ascii_lowercase());
+                let source_filter = body
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_ascii_lowercase());
+                if let Some(cands) = rec.get_mut("candidates").and_then(|v| v.as_array_mut()) {
+                    cands.retain_mut(|item| {
+                        if let Some(ref eng) = engine_filter {
+                            let item_eng = item
+                                .pointer("/plan/engine")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("llama.cpp")
+                                .to_ascii_lowercase();
+                            if item_eng != *eng {
+                                return false;
+                            }
+                        }
+                        if let Some(ref src) = source_filter {
+                            if let Some(item_src) = item
+                                .pointer("/plan/source")
+                                .or_else(|| item.get("source"))
+                                .and_then(|v| v.as_str())
+                            {
+                                if !item_src.eq_ignore_ascii_case(src) {
+                                    return false;
+                                }
+                            } else if let Some(plan_obj) =
+                                item.get_mut("plan").and_then(|v| v.as_object_mut())
+                            {
+                                plan_obj.insert("source".into(), json!(src));
+                            }
+                        }
+                        if !q_filter.is_empty() {
+                            let repo = item
+                                .get("repository")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let variant = item
+                                .get("variant")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let hay = format!("{repo} {variant}").to_ascii_lowercase();
+                            if !hay.contains(&q_filter) {
+                                return false;
+                            }
+                        }
+                        true
+                    });
+                }
                 let _ = respond_api_json(req, 200, &rec, crypto_tok);
             }
             (Method::Post, p) if p.starts_with("/api/local-models/") && p.ends_with("/start") => {
@@ -2779,10 +3447,17 @@ pub fn run_web_server(
                         })
                     });
                 if let (Some(dst), Some(src)) = (existing.as_object_mut(), body.as_object()) {
+                    let prev_rev = dst
+                        .get("configurationRevision")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1);
                     for (k, v) in src {
-                        dst.insert(k.clone(), v.clone());
+                        if k != "expectedRevision" && k != "configurationRevision" {
+                            dst.insert(k.clone(), v.clone());
+                        }
                     }
                     dst.insert("id".into(), json!(id));
+                    dst.insert("configurationRevision".into(), json!(prev_rev + 1));
                     dst.insert("updated_at_ms".into(), json!(now_ms()));
                 }
                 match suite.upsert_record("local_model", &id, &existing) {
@@ -2811,14 +3486,93 @@ pub fn run_web_server(
                 );
             }
 
-            // --- Model Connections, Real Probe, & Gateway ---
+            // --- Model Connections, Real Probe, Import & Gateway ---
             (Method::Get, "/api/model-connections") => {
                 let inventory = build_model_connections_inventory(&store, &suite);
                 let _ = respond_api_json(req, 200, &inventory, crypto_tok);
             }
+            (Method::Post, "/api/model-connections/discover") => {
+                let conn_id = body
+                    .get("connection_id")
+                    .or_else(|| body.get("connectionId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mut cfg = load_active_config(&store);
+                if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
+                    let models = discover_endpoint_models(conn);
+                    for mid in &models {
+                        if !conn.models.iter().any(|m| m.id == *mid) {
+                            conn.models.push(ModelEntry {
+                                id: mid.clone(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            });
+                        }
+                    }
+                    if !models.is_empty() {
+                        let _ = save_applied_config(&store, &cfg);
+                    }
+                    let inventory = build_model_connections_inventory(&store, &suite);
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "ok": true,
+                            "connection_id": conn_id,
+                            "models": models,
+                            "inventory": inventory
+                        }),
+                        crypto_tok,
+                    );
+                } else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"error": "connection_not_found", "connection_id": conn_id}),
+                        crypto_tok,
+                    );
+                }
+            }
+            (Method::Post, "/api/model-connections/discover/cancel") => {
+                let _ = respond_api_json(req, 200, &json!({"cancelled": true}), crypto_tok);
+            }
             (Method::Post, "/api/model-connections") => {
                 let cmd_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                if cmd_type == "configure_connection_models" {
+                if cmd_type == "set_connection_capability_override" {
+                    let conn_id = body
+                        .get("connection_id")
+                        .or_else(|| body.get("connectionId"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let model_id = body
+                        .get("model_id")
+                        .or_else(|| body.get("modelId"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let protocol = body
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("chat_completions");
+                    let caps = body.get("capabilities").cloned().unwrap_or(Value::Null);
+                    let kv_key = format!("model_cap_override:{conn_id}:{model_id}");
+                    if caps.is_null() {
+                        let _ = store.set_kv(&kv_key, &Value::Null);
+                    } else {
+                        let _ = store.set_kv(
+                            &kv_key,
+                            &json!({
+                                "model_id": model_id,
+                                "protocol": protocol,
+                                "user_override": caps,
+                                "updated_at_ms": now_ms()
+                            }),
+                        );
+                    }
+                } else if cmd_type == "configure_connection_models" {
                     let conn_id = body
                         .get("connection_id")
                         .and_then(|v| v.as_str())
@@ -2932,6 +3686,195 @@ pub fn run_web_server(
                 let probe_res = run_real_model_connection_probe(&store, &body);
                 let _ = respond_api_json(req, 200, &probe_res, crypto_tok);
             }
+            (Method::Post, "/api/model-import/plan") => {
+                let plan_id = new_id();
+                let expires_at_ms = now_ms().saturating_add(300_000);
+                let source = body
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("open_code");
+                let path_str = body
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let mut candidates: Vec<Value> = Vec::new();
+                if !path_str.is_empty() {
+                    if let Ok(raw) = fs::read_to_string(path_str) {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
+                            if let Some(providers) =
+                                parsed.get("provider").and_then(|v| v.as_object())
+                            {
+                                for (prov_id, prov_val) in providers {
+                                    let base_url = prov_val
+                                        .pointer("/options/baseURL")
+                                        .or_else(|| prov_val.get("baseURL"))
+                                        .or_else(|| prov_val.get("base_url"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    if base_url.is_empty() {
+                                        continue;
+                                    }
+                                    let models: Vec<Value> = prov_val
+                                        .get("models")
+                                        .and_then(|v| v.as_object())
+                                        .map(|m_map| {
+                                            m_map
+                                                .keys()
+                                                .map(|mid| {
+                                                    json!({
+                                                        "model_id": mid,
+                                                        "display_name": mid,
+                                                        "protocol": "chat_completions",
+                                                        "context_window": Value::Null,
+                                                        "modalities": ["text"],
+                                                        "reasoning_levels": []
+                                                    })
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    candidates.push(json!({
+                                        "candidate_id": format!("imp-{prov_id}"),
+                                        "connection": {
+                                            "id": prov_id,
+                                            "display_name": prov_id,
+                                            "base_url": base_url,
+                                            "protocols": ["chat_completions"],
+                                            "source": source,
+                                            "source_id": Value::Null,
+                                            "account_id": Value::Null,
+                                            "enabled": true
+                                        },
+                                        "models": models,
+                                        "credential_status": "not_requested",
+                                        "issue": Value::Null,
+                                        "existing_revision": Value::Null
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                let plan = json!({
+                    "plan_id": plan_id,
+                    "expires_at_ms": expires_at_ms,
+                    "candidates": candidates
+                });
+                let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan);
+                let _ = respond_api_json(req, 200, &plan, crypto_tok);
+            }
+            (Method::Post, "/api/model-import/commit") => {
+                let plan_id = body
+                    .get("plan_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let plan = store
+                    .get_kv(&format!("model_import_plan:{plan_id}"))
+                    .ok()
+                    .flatten();
+                let Some(plan_val) = plan else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"error": "import_plan_not_found"}),
+                        crypto_tok,
+                    );
+                    continue;
+                };
+                let candidates = plan_val
+                    .get("candidates")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let selections = body
+                    .get("selections")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut cfg = load_active_config(&store);
+                let mut results: Vec<Value> = Vec::new();
+                for sel in selections {
+                    let cid = sel
+                        .get("candidate_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if let Some(cand) = candidates
+                        .iter()
+                        .find(|c| c.get("candidate_id").and_then(|v| v.as_str()) == Some(cid))
+                    {
+                        let conn_id = cand
+                            .pointer("/connection/id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(cid)
+                            .to_string();
+                        let base_url = cand
+                            .pointer("/connection/base_url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let models: Vec<ModelEntry> = cand
+                            .get("models")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|m| {
+                                        m.get("model_id").and_then(|v| v.as_str()).map(|id| {
+                                            ModelEntry {
+                                                id: id.to_string(),
+                                                context_window: None,
+                                                max_output_tokens: None,
+                                                temperature: None,
+                                                top_p: None,
+                                                reasoning_effort: None,
+                                                capabilities: None,
+                                            }
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if let Some(existing) =
+                            cfg.llm.connections.iter_mut().find(|c| c.id == conn_id)
+                        {
+                            existing.endpoint = base_url;
+                            for m in models {
+                                if !existing.models.iter().any(|e| e.id == m.id) {
+                                    existing.models.push(m);
+                                }
+                            }
+                        } else {
+                            cfg.llm.connections.push(ConnectionConfig {
+                                id: conn_id.clone(),
+                                endpoint: base_url,
+                                protocol: Some("chat_completions".into()),
+                                provider: Some("import".into()),
+                                api_key: None,
+                                api_key_env: None,
+                                models,
+                            });
+                        }
+                        results.push(json!({
+                            "candidate_id": cid,
+                            "connection_id": conn_id,
+                            "status": "imported",
+                            "error": Value::Null
+                        }));
+                    } else {
+                        results.push(json!({
+                            "candidate_id": cid,
+                            "connection_id": Value::Null,
+                            "status": "skipped",
+                            "error": "candidate_not_found"
+                        }));
+                    }
+                }
+                if !results.is_empty() {
+                    let _ = save_applied_config(&store, &cfg);
+                }
+                let _ = respond_api_json(req, 200, &Value::Array(results), crypto_tok);
+            }
             (Method::Post, p)
                 if p.starts_with("/api/model-endpoints/") && p.ends_with("/discover") =>
             {
@@ -2941,37 +3884,7 @@ pub fn run_web_server(
                 );
                 let cfg = load_active_config(&store);
                 if let Some(conn) = cfg.llm.connections.iter().find(|c| c.id == ep_id) {
-                    let base = conn.endpoint.trim_end_matches('/');
-                    let url = if base.ends_with("/models") {
-                        base.to_string()
-                    } else {
-                        format!("{base}/models")
-                    };
-                    let mut models: Vec<String> = Vec::new();
-                    let mut builder =
-                        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10));
-                    if is_loopback_url(&url) {
-                        builder = builder.no_proxy();
-                    }
-                    if let Ok(client) = builder.build() {
-                        let mut rb = client.get(&url);
-                        if let Some(ref key) = conn.api_key {
-                            if !key.trim().is_empty() && !key.starts_with("env:") {
-                                rb = rb.bearer_auth(key.trim());
-                            }
-                        }
-                        if let Ok(resp) = rb.send() {
-                            if let Ok(val) = resp.json::<Value>() {
-                                if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
-                                    for item in arr {
-                                        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
-                                            models.push(id.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    let models = discover_endpoint_models(conn);
                     let _ = respond_api_json(req, 200, &json!({"models": models}), crypto_tok);
                 } else {
                     let _ = respond_api_json(req, 404, &json!({"error": "endpoint_not_found"}), crypto_tok);
@@ -2984,19 +3897,11 @@ pub fn run_web_server(
                     p.trim_start_matches("/api/model-endpoints/")
                         .trim_end_matches("/credential"),
                 );
-                let cfg = load_active_config(&store);
-                let configured = cfg
-                    .llm
-                    .connections
-                    .iter()
-                    .find(|c| c.id == ep_id)
-                    .is_some_and(connection_has_api_key);
-                let _ = respond_api_json(
-                    req,
-                    200,
-                    &json!({"endpointId": ep_id, "configured": configured, "hasApiKey": configured}),
-                    crypto_tok,
-                );
+                if let Some(payload) = build_endpoint_credential_response(&store, &ep_id) {
+                    let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                } else {
+                    let _ = respond_api_json(req, 404, &json!({"error": "endpoint_not_found"}), crypto_tok);
+                }
             }
             (Method::Post, p) | (Method::Put, p)
                 if p.starts_with("/api/model-endpoints/") && p.ends_with("/credential") =>
@@ -3005,6 +3910,11 @@ pub fn run_web_server(
                     p.trim_start_matches("/api/model-endpoints/")
                         .trim_end_matches("/credential"),
                 );
+                let action = body
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
                 let api_key = body
                     .get("apiKey")
                     .or_else(|| body.get("api_key"))
@@ -3013,17 +3923,18 @@ pub fn run_web_server(
                     .map(|s| s.trim().to_string());
                 let mut cfg = load_active_config(&store);
                 if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
-                    conn.api_key = api_key.filter(|s| !s.is_empty());
-                    let configured = conn.api_key.is_some();
+                    if action == "clear" {
+                        conn.api_key = None;
+                    } else {
+                        conn.api_key = api_key.filter(|s| !s.is_empty());
+                    }
                     if let Err(e) = save_applied_config(&store, &cfg) {
                         let _ = respond_api_json(req, 500, &json!({"error": e}), crypto_tok);
                     } else {
-                        let _ = respond_api_json(
-                            req,
-                            200,
-                            &json!({"ok": true, "endpointId": ep_id, "configured": configured}),
-                            crypto_tok,
-                        );
+                        bump_endpoint_credential_revision(&store, &ep_id);
+                        let payload = build_endpoint_credential_response(&store, &ep_id)
+                            .unwrap_or_else(|| json!({"ok": true, "endpointID": ep_id}));
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                 } else {
                     let _ = respond_api_json(req, 404, &json!({"error": "endpoint_not_found"}), crypto_tok);
@@ -3040,13 +3951,25 @@ pub fn run_web_server(
                 if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
                     conn.api_key = None;
                     let _ = save_applied_config(&store, &cfg);
+                    bump_endpoint_credential_revision(&store, &ep_id);
                 }
-                let _ = respond_api_json(
-                    req,
-                    200,
-                    &json!({"ok": true, "endpointId": ep_id, "configured": false}),
-                    crypto_tok,
+                let payload = build_endpoint_credential_response(&store, &ep_id).unwrap_or_else(
+                    || {
+                        json!({
+                            "ok": true,
+                            "endpointID": ep_id,
+                            "endpointId": ep_id,
+                            "baseURL": "",
+                            "wireProtocol": "chat_completions",
+                            "hasCredential": false,
+                            "credentialRevision": 1,
+                            "expectedRevisions": { &ep_id: 1 },
+                            "configured": false,
+                            "hasApiKey": false
+                        })
+                    },
                 );
+                let _ = respond_api_json(req, 200, &payload, crypto_tok);
             }
             (Method::Post, p) | (Method::Patch, p)
                 if p.starts_with("/api/model-endpoints/") && p.ends_with("/configuration") =>
@@ -3055,13 +3978,25 @@ pub fn run_web_server(
                     p.trim_start_matches("/api/model-endpoints/")
                         .trim_end_matches("/configuration"),
                 );
+                let new_name = body.get("name").and_then(|v| v.as_str()).map(ToString::to_string);
+                let new_enabled = body.get("enabled").and_then(|v| v.as_bool());
+                let new_url = body
+                    .get("baseURL")
+                    .or_else(|| body.get("url"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let new_proto = body
+                    .get("wireProtocol")
+                    .or_else(|| body.get("protocol"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
                 let mut cfg = load_active_config(&store);
                 if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == ep_id) {
-                    if let Some(url) = body.get("baseURL").or_else(|| body.get("url")).and_then(|v| v.as_str()) {
-                        conn.endpoint = url.to_string();
+                    if let Some(ref url) = new_url {
+                        conn.endpoint = url.clone();
                     }
-                    if let Some(proto) = body.get("wireProtocol").or_else(|| body.get("protocol")).and_then(|v| v.as_str()) {
-                        conn.protocol = Some(match proto {
+                    if let Some(ref proto) = new_proto {
+                        conn.protocol = Some(match proto.as_str() {
                             "anthropic" => "anthropic".into(),
                             "responses" | "siwc_responses" => "openai_responses".into(),
                             "gemini" => "gemini".into(),
@@ -3069,6 +4004,47 @@ pub fn run_web_server(
                         });
                     }
                     let _ = save_applied_config(&store, &cfg);
+                }
+                if let Ok(Some(Value::Array(mut profiles))) = store.get_kv("web_model_profiles") {
+                    let mut changed = false;
+                    for p_val in &mut profiles {
+                        if p_val.pointer("/endpoint/id").and_then(|v| v.as_str())
+                            == Some(ep_id.as_str())
+                        {
+                            changed = true;
+                            if let Some(ep_obj) =
+                                p_val.get_mut("endpoint").and_then(|v| v.as_object_mut())
+                            {
+                                if let Some(ref n) = new_name {
+                                    ep_obj.insert("name".into(), json!(n));
+                                }
+                                if let Some(en) = new_enabled {
+                                    ep_obj.insert("enabled".into(), json!(en));
+                                }
+                                if let Some(ref url) = new_url {
+                                    ep_obj.insert("baseURL".into(), json!(url));
+                                    ep_obj.insert("url".into(), json!(url));
+                                }
+                                if let Some(ref proto) = new_proto {
+                                    ep_obj.insert("wireProtocol".into(), json!(proto));
+                                    ep_obj.insert("protocol".into(), json!(proto));
+                                }
+                            }
+                            if let Some(p_obj) = p_val.as_object_mut() {
+                                if let Some(ref proto) = new_proto {
+                                    p_obj.insert("protocol".into(), json!(proto));
+                                }
+                                let rev = p_obj
+                                    .get("revision")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1);
+                                p_obj.insert("revision".into(), json!(rev + 1));
+                            }
+                        }
+                    }
+                    if changed {
+                        let _ = store.set_kv("web_model_profiles", &Value::Array(profiles));
+                    }
                 }
                 let _ = respond_api_json(req, 200, &build_model_profiles_response(&store), crypto_tok);
             }
@@ -3079,6 +4055,90 @@ pub fn run_web_server(
                     .flatten()
                     .unwrap_or_else(|| json!([]));
                 let _ = respond_api_json(req, 200, &clients, crypto_tok);
+            }
+            (Method::Post, "/api/model-gateway/clients/plan") => {
+                let source = body
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("open_code");
+                let path_str = body
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let model_id = body
+                    .get("model_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let plan_id = new_id();
+                let expires_at_ms = now_ms().saturating_add(300_000);
+                let plan = json!({
+                    "plan_id": plan_id,
+                    "source": source,
+                    "path": path_str,
+                    "model_id": model_id,
+                    "owned_fields": ["base_url", "api_key", "model"],
+                    "expires_at_ms": expires_at_ms
+                });
+                let _ = store.set_kv(&format!("gateway_client_plan:{plan_id}"), &plan);
+                let _ = respond_api_json(req, 200, &plan, crypto_tok);
+            }
+            (Method::Post, "/api/model-gateway/clients/commit") => {
+                let plan_id = body
+                    .get("plan_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let Some(plan) = store
+                    .get_kv(&format!("gateway_client_plan:{plan_id}"))
+                    .ok()
+                    .flatten()
+                else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"error": "gateway_client_plan_not_found"}),
+                        crypto_tok,
+                    );
+                    continue;
+                };
+                let receipt = json!({
+                    "receipt_id": new_id(),
+                    "source": plan.get("source").cloned().unwrap_or_else(|| json!("open_code")),
+                    "path": plan.get("path").cloned().unwrap_or_else(|| json!("")),
+                    "model_id": plan.get("model_id").cloned().unwrap_or_else(|| json!("")),
+                    "owned_fields": plan.get("owned_fields").cloned().unwrap_or_else(|| json!(["base_url", "api_key", "model"]))
+                });
+                let mut clients: Vec<Value> = store
+                    .get_kv("model_gateway_clients")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                clients.push(receipt.clone());
+                let _ = store.set_kv("model_gateway_clients", &Value::Array(clients));
+                let _ = respond_api_json(req, 200, &receipt, crypto_tok);
+            }
+            (Method::Post, "/api/model-gateway/clients/disconnect") => {
+                let receipt_id = body
+                    .get("receipt_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mut clients: Vec<Value> = store
+                    .get_kv("model_gateway_clients")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let before = clients.len();
+                clients.retain(|c| c.get("receipt_id").and_then(|v| v.as_str()) != Some(receipt_id));
+                let removed = clients.len() < before;
+                let _ = store.set_kv("model_gateway_clients", &Value::Array(clients));
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "disconnected": removed, "receipt_id": receipt_id}),
+                    crypto_tok,
+                );
             }
             (Method::Get, "/api/model-gateway/access") => {
                 let access = store
@@ -3128,7 +4188,13 @@ pub fn run_web_server(
                 let _ = respond_api_json(
                     req,
                     200,
-                    &json!({"pending": false, "expected_revision": 1, "items": []}),
+                    &json!({
+                        "pending": false,
+                        "expected_revision": 1,
+                        "previous": Value::Null,
+                        "current": [],
+                        "items": []
+                    }),
                     crypto_tok,
                 );
             }
@@ -3150,6 +4216,53 @@ pub fn run_web_server(
                             crypto_tok,
                         );
                         continue;
+                    }
+                }
+                if let Some(mcp_arr) = body.get("mcp_servers").and_then(|v| v.as_array()) {
+                    let mut kept_ids: HashSet<String> = HashSet::new();
+                    for entry in mcp_arr {
+                        let cfg = parse_mcp_server_config(entry, None);
+                        kept_ids.insert(cfg.id.clone());
+                        if store.upsert_mcp_server(&cfg).is_ok() {
+                            mcp_manager.evict(&cfg.id);
+                        }
+                    }
+                    for existing in store.list_mcp_servers().unwrap_or_default() {
+                        if !kept_ids.contains(&existing.id) {
+                            mcp_manager.disconnect(&existing.id);
+                            let _ = store.delete_mcp_server(&existing.id);
+                        }
+                    }
+                }
+                if let Some(skills_arr) = body.get("skills").and_then(|v| v.as_array()) {
+                    for sk in skills_arr {
+                        if let Some(name) = sk
+                            .get("name")
+                            .or_else(|| sk.get("id"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            let enabled = sk.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                            let _ = nola_modules::skills::set_skill_enabled(&store, name, enabled);
+                        }
+                    }
+                }
+                if let Some(disabled_arr) = body.get("disabled_skills").and_then(|v| v.as_array()) {
+                    let disabled_set: HashSet<String> = disabled_arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.trim().to_ascii_lowercase()))
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    for sk in nola_modules::skills::discover_skills(
+                        &suite.workspace_root,
+                        suite.user_home.as_deref(),
+                    ) {
+                        let enabled = !disabled_set.contains(&sk.name.to_ascii_lowercase());
+                        let _ = nola_modules::skills::set_skill_enabled(&store, &sk.name, enabled);
+                    }
+                    for name in &disabled_set {
+                        let _ = nola_modules::skills::set_skill_enabled(&store, name, false);
                     }
                 }
                 let mut merged = build_agent_settings_snapshot(&store, &suite);
@@ -3195,16 +4308,27 @@ pub fn run_web_server(
                 let _ = respond_api_json(req, 200, &json!({"count": flat.len(), "tools": flat}), crypto_tok);
             }
             (Method::Get, "/api/assistant/memory-default") => {
-                let val = store
+                let enabled = store
                     .get_kv("assistant_memory_default")
                     .ok()
                     .flatten()
-                    .unwrap_or_else(|| json!({"enabled": true}));
-                let _ = respond_api_json(req, 200, &val, crypto_tok);
+                    .and_then(|v| v.get("enabled").and_then(|b| b.as_bool()).or_else(|| v.as_bool()))
+                    .unwrap_or(true);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"enabled": enabled, "hostAllowed": true}),
+                    crypto_tok,
+                );
             }
             (Method::Put, "/api/assistant/memory-default") => {
-                let _ = store.set_kv("assistant_memory_default", &body);
-                let _ = respond_api_json(req, 200, &body, crypto_tok);
+                let enabled = body
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let saved = json!({"enabled": enabled, "hostAllowed": true});
+                let _ = store.set_kv("assistant_memory_default", &saved);
+                let _ = respond_api_json(req, 200, &saved, crypto_tok);
             }
             (Method::Get, "/api/assistant/retrieval-default") => {
                 let val = store
@@ -3221,10 +4345,21 @@ pub fn run_web_server(
 
             // --- Business Modules (Skills, Memory, Goals, Rooms, Experts, Automations, DataSources, MCP) ---
             (Method::Get, "/api/skills") | (Method::Get, "/api/automation-skills") => {
-                let skills = nola_modules::skills::discover_skills(
+                let skills: Vec<Value> = nola_modules::skills::discover_skills(
                     &suite.workspace_root,
                     suite.user_home.as_deref(),
-                );
+                )
+                .into_iter()
+                .map(|s| {
+                    json!({
+                        "id": s.name,
+                        "name": s.name,
+                        "description": s.description,
+                        "path": s.path,
+                        "body": s.body
+                    })
+                })
+                .collect();
                 let _ = respond_api_json(req, 200, &json!({"skills": skills}), crypto_tok);
             }
             (Method::Get, "/api/memory") => {
@@ -3447,7 +4582,12 @@ pub fn run_web_server(
                 let id = norm["id"].as_str().unwrap_or("").to_string();
                 match suite.upsert_record("automation", &id, &norm) {
                     Ok(()) => {
-                        let _ = respond_api_json(req, 200, &json!({"ok": true, "action": norm}), crypto_tok);
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"success": true, "ok": true, "action": norm}),
+                            crypto_tok,
+                        );
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -3458,25 +4598,64 @@ pub fn run_web_server(
                 if p.starts_with("/api/scheduled-actions/")
                     && !p.trim_start_matches("/api/scheduled-actions/").contains('/') =>
             {
-                let id = p.trim_start_matches("/api/scheduled-actions/");
-                let mut existing = suite
+                let id = percent_decode_path(p.trim_start_matches("/api/scheduled-actions/"));
+                let existing_opt = suite
                     .list_records::<Value>("automation")
                     .unwrap_or_default()
                     .into_iter()
-                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id))
-                    .unwrap_or_else(|| json!({"id": id}));
-                if let (Some(dst), Some(src)) = (existing.as_object_mut(), body.as_object()) {
-                    for (k, v) in src {
-                        dst.insert(k.clone(), v.clone());
+                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id.as_str()));
+                let mut existing = existing_opt.unwrap_or_else(|| json!({"id": id, "revision": 1}));
+                let current_rev = existing
+                    .get("revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                if let Some(expected_rev) = body
+                    .get("expectedRevision")
+                    .or_else(|| body.get("expected_revision"))
+                    .and_then(|v| v.as_i64())
+                {
+                    if expected_rev != current_rev {
+                        let _ = respond_api_json(
+                            req,
+                            409,
+                            &json!({
+                                "error": "revision_conflict",
+                                "code": "automation_revision_conflict",
+                                "expectedRevision": expected_rev,
+                                "actualRevision": current_rev
+                            }),
+                            crypto_tok,
+                        );
+                        continue;
                     }
-                    let rev = dst.get("revision").and_then(|v| v.as_i64()).unwrap_or(1) + 1;
-                    dst.insert("revision".into(), json!(rev));
+                }
+                let patch_src = body
+                    .get("definition")
+                    .filter(|v| v.is_object())
+                    .unwrap_or(&body);
+                let script_updated = patch_src.get("script").and_then(|v| v.as_str()).is_some();
+                if let (Some(dst), Some(src)) = (existing.as_object_mut(), patch_src.as_object()) {
+                    for (k, v) in src {
+                        if k != "expectedRevision" && k != "expected_revision" && k != "revision" {
+                            dst.insert(k.clone(), v.clone());
+                        }
+                    }
+                    if script_updated && !src.contains_key("scriptApproved") {
+                        dst.insert("scriptApproved".into(), json!(false));
+                    }
+                    dst.insert("id".into(), json!(id));
+                    dst.insert("revision".into(), json!(current_rev + 1));
                     dst.insert("updatedAt".into(), json!(Utc::now().to_rfc3339()));
                 }
                 let norm = normalize_automation_record(&existing);
-                match suite.upsert_record("automation", id, &norm) {
+                match suite.upsert_record("automation", &id, &norm) {
                     Ok(()) => {
-                        let _ = respond_api_json(req, 200, &json!({"ok": true, "action": norm}), crypto_tok);
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"success": true, "ok": true, "action": norm}),
+                            crypto_tok,
+                        );
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -3487,9 +4666,93 @@ pub fn run_web_server(
                 if p.starts_with("/api/scheduled-actions/")
                     && !p.trim_start_matches("/api/scheduled-actions/").contains('/') =>
             {
-                let id = p.trim_start_matches("/api/scheduled-actions/");
-                let deleted = suite.delete_record("automation", id).unwrap_or(false);
-                let _ = respond_api_json(req, 200, &json!({"ok": true, "deleted": deleted, "id": id}), crypto_tok);
+                let id = percent_decode_path(p.trim_start_matches("/api/scheduled-actions/"));
+                let deleted = suite.delete_record("automation", &id).unwrap_or(false);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"success": true, "ok": true, "deleted": deleted, "id": id}),
+                    crypto_tok,
+                );
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/scheduled-actions/") && p.ends_with("/approve-script") =>
+            {
+                let id = percent_decode_path(
+                    p.trim_start_matches("/api/scheduled-actions/")
+                        .trim_end_matches("/approve-script"),
+                );
+                let confirmed = body
+                    .get("confirmSafety")
+                    .or_else(|| body.get("confirm_safety"))
+                    .and_then(|v| v.as_bool())
+                    == Some(true);
+                if !confirmed {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({"error": "confirm_safety_required", "message": "confirmSafety must be true"}),
+                        crypto_tok,
+                    );
+                    continue;
+                }
+                let Some(mut existing) = suite
+                    .list_records::<Value>("automation")
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|v| v.get("id").and_then(|s| s.as_str()) == Some(id.as_str()))
+                else {
+                    let _ = respond_api_json(
+                        req,
+                        404,
+                        &json!({"error": "action_not_found"}),
+                        crypto_tok,
+                    );
+                    continue;
+                };
+                let current_rev = existing
+                    .get("revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                if let Some(expected_rev) = body
+                    .get("expectedRevision")
+                    .or_else(|| body.get("expected_revision"))
+                    .and_then(|v| v.as_i64())
+                {
+                    if expected_rev != current_rev {
+                        let _ = respond_api_json(
+                            req,
+                            409,
+                            &json!({
+                                "error": "revision_conflict",
+                                "code": "automation_revision_conflict",
+                                "expectedRevision": expected_rev,
+                                "actualRevision": current_rev
+                            }),
+                            crypto_tok,
+                        );
+                        continue;
+                    }
+                }
+                if let Some(dst) = existing.as_object_mut() {
+                    dst.insert("scriptApproved".into(), json!(true));
+                    dst.insert("revision".into(), json!(current_rev + 1));
+                    dst.insert("updatedAt".into(), json!(Utc::now().to_rfc3339()));
+                }
+                let norm = normalize_automation_record(&existing);
+                match suite.upsert_record("automation", &id, &norm) {
+                    Ok(()) => {
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"success": true, "ok": true, "action": norm}),
+                            crypto_tok,
+                        );
+                    }
+                    Err(e) => {
+                        let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
+                    }
+                }
             }
             (Method::Post, p)
                 if p.starts_with("/api/scheduled-actions/") && p.ends_with("/run-now") =>
@@ -3522,11 +4785,17 @@ pub fn run_web_server(
                         .and_then(|v| v.as_str())
                         .unwrap_or(&action_id)
                         .to_string();
+                    let rev = action
+                        .get("revision")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1)
+                        .max(1);
                     let schedule = nola_modules::scheduler::parse_automation_value(&action, &suite_c.workspace_root)
                         .map(|r| r.schedule)
                         .unwrap_or_else(|| "0 9 * * *".into());
                     let cfg = load_active_config(&store_c);
                     let run_id = new_id();
+                    let occ_id = format!("occ-{run_id}");
                     let conv_id = format!("auto-{run_id}");
                     let now_dt = Utc::now();
                     let now_iso = now_dt.to_rfc3339();
@@ -3604,7 +4873,31 @@ pub fn run_web_server(
                                 "events": []
                             });
                             let _ = suite_c.upsert_record("automation_result", &result_id, &rec);
-                            let _ = respond_json(req, 200, &json!({"ok": true, "result": rec}));
+                            let binding = json!({
+                                "occurrence_id": occ_id,
+                                "definition_revision": rev,
+                                "conversation_id": conv_id,
+                                "run_id": run_id
+                            });
+                            let _ = respond_json(
+                                req,
+                                200,
+                                &json!({
+                                    "success": true,
+                                    "ok": true,
+                                    "occurrenceId": occ_id,
+                                    "execution": { "binding": binding },
+                                    "receipt": {
+                                        "binding": binding,
+                                        "terminal": {
+                                            "result": {
+                                                "value": { "kind": "answered" }
+                                            }
+                                        }
+                                    },
+                                    "result": rec
+                                }),
+                            );
                         }
                         Err(e) => {
                             let _ = nola_modules::scheduler::record_automation_run_stats(
@@ -3623,7 +4916,73 @@ pub fn run_web_server(
 
             // --- Data Sources (Real Usage + Real Connection Probing) ---
             (Method::Get, "/api/data-sources/usage") => {
-                let usage = list_data_source_usage(&store);
+                let sources: Vec<Value> = suite.list_records("data_source").unwrap_or_default();
+                let title_by_id: BTreeMap<String, String> = sources
+                    .iter()
+                    .filter_map(|s| {
+                        let sid = s.get("id").and_then(|v| v.as_str())?.to_string();
+                        let title = s
+                            .get("title")
+                            .or_else(|| s.get("name"))
+                            .and_then(|v| v.as_str())
+                            .filter(|t| !t.trim().is_empty())
+                            .unwrap_or(&sid)
+                            .to_string();
+                        Some((sid, title))
+                    })
+                    .collect();
+                let usage: Vec<Value> = list_data_source_usage(&store)
+                    .into_iter()
+                    .map(|r| {
+                        let rec_id = r
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let source_id = r
+                            .get("source_id")
+                            .or_else(|| r.get("sourceId"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let summary = r
+                            .get("summary")
+                            .or_else(|| r.get("purpose"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let conv_id = r
+                            .get("conversation_id")
+                            .or_else(|| r.get("conversationId"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let used_at = r
+                            .get("used_at_ms")
+                            .and_then(|v| v.as_i64())
+                            .map(ms_to_rfc3339)
+                            .or_else(|| {
+                                r.get("usedAt")
+                                    .and_then(|v| v.as_str())
+                                    .map(ToString::to_string)
+                            })
+                            .unwrap_or_else(|| Utc::now().to_rfc3339());
+                        let title = title_by_id
+                            .get(&source_id)
+                            .cloned()
+                            .unwrap_or_else(|| source_id.clone());
+                        json!({
+                            "id": rec_id,
+                            "sourceId": source_id,
+                            "sourceTitle": title,
+                            "consumer": "agent",
+                            "purpose": summary,
+                            "conversationId": conv_id,
+                            "usedAt": used_at,
+                            "disclosedToCloud": Value::Null
+                        })
+                    })
+                    .collect();
                 let _ = respond_api_json(req, 200, &json!({"usageRecords": usage}), crypto_tok);
             }
             (Method::Get, "/api/data-sources") => {
@@ -3645,10 +5004,15 @@ pub fn run_web_server(
                     .map(ToString::to_string)
                     .unwrap_or_else(new_id);
                 ds_body["id"] = json!(id);
-                ds_body["updatedAt"] = json!(Utc::now().to_rfc3339());
+                let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
                 match suite.upsert_record("data_source", &id, &ds_body) {
                     Ok(()) => {
-                        let _ = respond_api_json(req, 200, &json!({"source": ds_body, "tested": false}), crypto_tok);
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"source": ds_body, "tested": true, "ok": ok, "probe": probe}),
+                            crypto_tok,
+                        );
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -3659,13 +5023,18 @@ pub fn run_web_server(
                 if p.starts_with("/api/data-sources/")
                     && !p.trim_start_matches("/api/data-sources/").contains('/') =>
             {
-                let id = p.trim_start_matches("/api/data-sources/");
+                let id = percent_decode_path(p.trim_start_matches("/api/data-sources/"));
                 let mut ds_body = body;
                 ds_body["id"] = json!(id);
-                ds_body["updatedAt"] = json!(Utc::now().to_rfc3339());
-                match suite.upsert_record("data_source", id, &ds_body) {
+                let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
+                match suite.upsert_record("data_source", &id, &ds_body) {
                     Ok(()) => {
-                        let _ = respond_api_json(req, 200, &json!({"source": ds_body, "tested": false}), crypto_tok);
+                        let _ = respond_api_json(
+                            req,
+                            200,
+                            &json!({"source": ds_body, "tested": true, "ok": ok, "probe": probe}),
+                            crypto_tok,
+                        );
                     }
                     Err(e) => {
                         let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
@@ -3676,8 +5045,8 @@ pub fn run_web_server(
                 if p.starts_with("/api/data-sources/")
                     && !p.trim_start_matches("/api/data-sources/").contains('/') =>
             {
-                let id = p.trim_start_matches("/api/data-sources/");
-                let deleted = suite.delete_record("data_source", id).unwrap_or(false);
+                let id = percent_decode_path(p.trim_start_matches("/api/data-sources/"));
+                let deleted = suite.delete_record("data_source", &id).unwrap_or(false);
                 let _ = respond_api_json(req, 200, &json!({"deleted": deleted, "id": id}), crypto_tok);
             }
             (Method::Post, p) if p.starts_with("/api/data-sources/") && p.ends_with("/test") => {
@@ -3693,65 +5062,7 @@ pub fn run_web_server(
                     .unwrap_or_else(|| {
                         json!({"id": id, "name": id, "kind": "localFile", "location": "", "accessPolicy": "conversationOptIn"})
                     });
-                // Resolve relative local file/folder paths against workspace_root before probing
-                let mut probe_rec = existing.clone();
-                let kind_lc = probe_rec
-                    .get("kind")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if matches!(
-                    kind_lc.as_str(),
-                    "localfile" | "local_file" | "file" | "localfolder" | "local_folder" | "folder" | "dir" | "directory"
-                ) {
-                    if let Some(loc) = probe_rec.get("location").and_then(|v| v.as_str()) {
-                        let loc_trimmed = loc.trim();
-                        if !loc_trimmed.is_empty() && !Path::new(loc_trimmed).is_absolute() {
-                            probe_rec["location"] =
-                                json!(suite.workspace_root.join(loc_trimmed).display().to_string());
-                        }
-                    }
-                }
-                let probe = test_data_source_connection(&probe_rec);
-                let ok = probe.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let state = probe
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(if ok { "verified" } else { "failed" });
-                let sample = probe
-                    .get("preview")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let record_count = probe
-                    .get("entryCount")
-                    .or_else(|| probe.get("bytesRead"))
-                    .or_else(|| probe.get("sizeBytes"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(if ok { 1 } else { 0 });
-                let err_msg = probe.get("error").cloned().unwrap_or(Value::Null);
-                let max_age = existing
-                    .get("maximumAgeMinutes")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(60)
-                    .max(1);
-                let kind = existing
-                    .get("kind")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-
-                existing["validationContract"] = json!({
-                    "sourceId": id,
-                    "readerDescription": format!("{kind} reader"),
-                    "schemaFields": ["content"],
-                    "redactedSample": sample,
-                    "recordCount": record_count,
-                    "maximumAgeMinutes": max_age,
-                    "validationState": state,
-                    "validatedAt": Utc::now().to_rfc3339(),
-                    "errorMessage": err_msg
-                });
-                existing["updatedAt"] = json!(Utc::now().to_rfc3339());
+                let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut existing);
                 let _ = suite.upsert_record("data_source", &id, &existing);
                 let _ = respond_api_json(
                     req,
@@ -3803,6 +5114,19 @@ pub fn run_web_server(
                         let _ = respond_api_json(req, 200, &norm, crypto_tok);
                     }
                 }
+            }
+            (Method::Delete, p)
+                if p.starts_with("/api/messaging-channels/")
+                    && !p.trim_start_matches("/api/messaging-channels/").contains('/') =>
+            {
+                let id = percent_decode_path(p.trim_start_matches("/api/messaging-channels/"));
+                let deleted = suite.delete_record("messaging_channel", &id).unwrap_or(false);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "deleted": deleted, "id": id}),
+                    crypto_tok,
+                );
             }
             (Method::Post, p)
                 if p.starts_with("/api/messaging-channels/") && p.ends_with("/inbound") =>
@@ -3913,13 +5237,29 @@ pub fn run_web_server(
 
             // --- Agent Rooms & Expert Prompt Templates ---
             (Method::Get, "/api/agent-rooms") => {
-                let items: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
-                let _ = respond_api_json(req, 200, &json!({"rooms": items}), crypto_tok);
+                let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
+                let experts: Vec<Value> = suite.list_records("expert_peer").unwrap_or_default();
+                let role_templates = built_in_role_templates();
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({
+                        "host_id": host_id,
+                        "rooms": rooms,
+                        "experts": experts,
+                        "roleTemplates": role_templates
+                    }),
+                    crypto_tok,
+                );
             }
             (Method::Post, "/api/agent-rooms") => {
-                let action = body
+                let cmd = body
+                    .get("command")
+                    .filter(|v| v.is_object())
+                    .unwrap_or(&body);
+                let action = cmd
                     .get("type")
-                    .or_else(|| body.get("action"))
+                    .or_else(|| cmd.get("action"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let mut mutated_item: Option<Value> = None;
@@ -3927,22 +5267,22 @@ pub fn run_web_server(
                 match action {
                     "create_room" => {
                         let now = now_ms();
-                        let id = body
+                        let id = cmd
                             .get("id")
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.trim().is_empty())
                             .map(ToString::to_string)
                             .unwrap_or_else(new_id);
-                        let name = body
+                        let name = cmd
                             .get("name")
-                            .or_else(|| body.get("title"))
+                            .or_else(|| cmd.get("title"))
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.trim().is_empty())
                             .unwrap_or("Collaboration Room")
                             .to_string();
-                        let participants: Vec<String> = body
+                        let participants: Vec<String> = cmd
                             .get("participant_expert_ids")
-                            .or_else(|| body.get("participantExpertIds"))
+                            .or_else(|| cmd.get("participantExpertIds"))
                             .and_then(|v| v.as_array())
                             .map(|a| {
                                 a.iter()
@@ -3965,21 +5305,21 @@ pub fn run_web_server(
                         }
                     }
                     "update_room" => {
-                        let id = body
+                        let id = cmd
                             .get("id")
-                            .or_else(|| body.get("room_id"))
-                            .or_else(|| body.get("roomId"))
+                            .or_else(|| cmd.get("room_id"))
+                            .or_else(|| cmd.get("roomId"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         if id.is_empty() {
                             mutation_err = Some("missing room id".into());
                         } else if let Ok(Some(mut room)) = suite.get_record::<AgentRoom>("agent_room", id) {
-                            if let Some(name) = body.get("name").or_else(|| body.get("title")).and_then(|v| v.as_str()) {
+                            if let Some(name) = cmd.get("name").or_else(|| cmd.get("title")).and_then(|v| v.as_str()) {
                                 room.name = name.to_string();
                             }
-                            if let Some(arr) = body
+                            if let Some(arr) = cmd
                                 .get("participant_expert_ids")
-                                .or_else(|| body.get("participantExpertIds"))
+                                .or_else(|| cmd.get("participantExpertIds"))
                                 .and_then(|v| v.as_array())
                             {
                                 room.participant_expert_ids = arr
@@ -3997,47 +5337,47 @@ pub fn run_web_server(
                         }
                     }
                     "delete_room" => {
-                        let id = body
+                        let id = cmd
                             .get("id")
-                            .or_else(|| body.get("room_id"))
-                            .or_else(|| body.get("roomId"))
+                            .or_else(|| cmd.get("room_id"))
+                            .or_else(|| cmd.get("roomId"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         let _ = suite.delete_record("agent_room", id);
                     }
                     "create_expert" => {
-                        let id = body
+                        let id = cmd
                             .get("id")
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.trim().is_empty())
                             .map(ToString::to_string)
                             .unwrap_or_else(new_id);
-                        let name = body
+                        let name = cmd
                             .get("name")
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.trim().is_empty())
                             .unwrap_or("Expert")
                             .to_string();
-                        let role = body
+                        let role = cmd
                             .get("role")
                             .and_then(|v| v.as_str())
                             .unwrap_or("specialist")
                             .to_string();
-                        let system_prompt = body
+                        let system_prompt = cmd
                             .get("system_prompt")
-                            .or_else(|| body.get("systemPrompt"))
+                            .or_else(|| cmd.get("systemPrompt"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let model_override = body
+                        let model_override = cmd
                             .get("model_override")
-                            .or_else(|| body.get("modelOverride"))
+                            .or_else(|| cmd.get("modelOverride"))
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.trim().is_empty())
                             .map(ToString::to_string);
-                        let allowed_tools: Vec<String> = body
+                        let allowed_tools: Vec<String> = cmd
                             .get("allowed_tools")
-                            .or_else(|| body.get("allowedTools"))
+                            .or_else(|| cmd.get("allowedTools"))
                             .and_then(|v| v.as_array())
                             .map(|a| {
                                 a.iter()
@@ -4060,10 +5400,10 @@ pub fn run_web_server(
                         }
                     }
                     "delete_expert" => {
-                        let id = body
+                        let id = cmd
                             .get("id")
-                            .or_else(|| body.get("expert_id"))
-                            .or_else(|| body.get("expertId"))
+                            .or_else(|| cmd.get("expert_id"))
+                            .or_else(|| cmd.get("expertId"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         let _ = suite.delete_record("expert_peer", id);
@@ -4081,11 +5421,12 @@ pub fn run_web_server(
                         200,
                         &json!({
                             "ok": true,
+                            "host_id": host_id,
                             "rooms": rooms,
                             "experts": experts,
                             "roleTemplates": role_templates,
                             "item": mutated_item,
-                            "requestType": body.get("type").cloned().unwrap_or(Value::Null)
+                            "requestType": cmd.get("type").cloned().unwrap_or(Value::Null)
                         }),
                         crypto_tok,
                     );
@@ -4342,11 +5683,182 @@ fn is_read_only_post(body: &Value) -> bool {
         "selectedModelSource",
         "selectedModelId",
         "permissionProfile",
+        "permission_profile",
         "reasoningEffort",
         "knowledge",
         "expectedRevision",
+        "expected_revision",
     ];
     !mutation_keys.iter().any(|k| obj.contains_key(*k))
+}
+
+fn discover_endpoint_models(conn: &ConnectionConfig) -> Vec<String> {
+    let base = conn.endpoint.trim_end_matches('/');
+    if base.is_empty() {
+        return Vec::new();
+    }
+    let url = if base.ends_with("/models") {
+        base.to_string()
+    } else {
+        format!("{base}/models")
+    };
+    let mut models: Vec<String> = Vec::new();
+    let mut builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10));
+    if is_loopback_url(&url) {
+        builder = builder.no_proxy();
+    }
+    if let Ok(client) = builder.build() {
+        let mut rb = client.get(&url);
+        if let Some(ref key) = conn.api_key {
+            if !key.trim().is_empty() && !key.starts_with("env:") {
+                rb = rb.bearer_auth(key.trim());
+            }
+        }
+        if let Ok(resp) = rb.send() {
+            if let Ok(val) = resp.json::<Value>() {
+                if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
+                    for item in arr {
+                        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                            models.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    models
+}
+
+fn bump_endpoint_credential_revision(store: &Store, ep_id: &str) -> i64 {
+    let key = format!("endpoint_cred_rev:{ep_id}");
+    let prev = store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1);
+    let next = prev + 1;
+    let _ = store.set_kv(&key, &json!(next));
+    next
+}
+
+fn build_endpoint_credential_response(store: &Store, ep_id: &str) -> Option<Value> {
+    let cfg = load_active_config(store);
+    let conn = cfg.llm.connections.iter().find(|c| c.id == ep_id)?;
+    let wire_proto = match conn.protocol.as_deref().unwrap_or("chat_completions") {
+        "anthropic" | "anthropic_messages" => "anthropic",
+        "responses" | "openai_responses" => "responses",
+        "siwc_responses" => "siwc_responses",
+        "gemini" | "google_gemini" => "gemini",
+        _ => "chat_completions",
+    };
+    let configured = connection_has_api_key(conn);
+    let rev = store
+        .get_kv(&format!("endpoint_cred_rev:{ep_id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1);
+    let mut expected_revs = serde_json::Map::new();
+    let profiles_resp = build_model_profiles_response(store);
+    if let Some(arr) = profiles_resp.get("profiles").and_then(|v| v.as_array()) {
+        for p in arr {
+            if p.pointer("/endpoint/id").and_then(|v| v.as_str()) == Some(ep_id) {
+                if let Some(pid) = p.get("id").and_then(|v| v.as_str()) {
+                    let prev = p.get("revision").and_then(|v| v.as_i64()).unwrap_or(1).max(0);
+                    expected_revs.insert(pid.to_string(), json!(prev));
+                }
+            }
+        }
+    }
+    if expected_revs.is_empty() {
+        expected_revs.insert(ep_id.to_string(), json!(1));
+    }
+    Some(json!({
+        "ok": true,
+        "endpointID": ep_id,
+        "endpointId": ep_id,
+        "baseURL": conn.endpoint,
+        "wireProtocol": wire_proto,
+        "hasCredential": configured,
+        "credentialRevision": rev,
+        "expectedRevisions": Value::Object(expected_revs),
+        "configured": configured,
+        "hasApiKey": configured
+    }))
+}
+
+fn probe_and_attach_data_source_validation(
+    suite: &ModulesSuite,
+    id: &str,
+    record: &mut Value,
+) -> (bool, Value) {
+    let mut probe_rec = record.clone();
+    let kind_lc = probe_rec
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        kind_lc.as_str(),
+        "localfile"
+            | "local_file"
+            | "file"
+            | "localfolder"
+            | "local_folder"
+            | "folder"
+            | "dir"
+            | "directory"
+    ) {
+        if let Some(loc) = probe_rec.get("location").and_then(|v| v.as_str()) {
+            let loc_trimmed = loc.trim();
+            if !loc_trimmed.is_empty() && !Path::new(loc_trimmed).is_absolute() {
+                probe_rec["location"] =
+                    json!(suite.workspace_root.join(loc_trimmed).display().to_string());
+            }
+        }
+    }
+    let probe = test_data_source_connection(&probe_rec);
+    let ok = probe.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let state = probe
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if ok { "verified" } else { "failed" });
+    let sample = probe
+        .get("preview")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let record_count = probe
+        .get("entryCount")
+        .or_else(|| probe.get("bytesRead"))
+        .or_else(|| probe.get("sizeBytes"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(if ok { 1 } else { 0 });
+    let err_msg = probe.get("error").cloned().unwrap_or(Value::Null);
+    let max_age = record
+        .get("maximumAgeMinutes")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(60)
+        .max(1);
+    let kind = record
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let now_iso = Utc::now().to_rfc3339();
+    record["validationContract"] = json!({
+        "sourceId": id,
+        "readerDescription": format!("{kind} reader"),
+        "schemaFields": ["content"],
+        "redactedSample": sample,
+        "recordCount": record_count,
+        "maximumAgeMinutes": max_age,
+        "validationState": state,
+        "validatedAt": now_iso,
+        "errorMessage": err_msg
+    });
+    record["updatedAt"] = json!(now_iso);
+    (ok, probe)
 }
 
 fn parse_message_seq(body: &Value) -> Option<i64> {
@@ -4743,7 +6255,18 @@ fn build_model_connections_inventory(store: &Store, suite: &ModulesSuite) -> Val
             _ => "chat_completions",
         };
         let configured = connection_has_api_key(conn);
+        let saved_sel_enabled: Option<HashSet<String>> = store
+            .get_kv(&format!("model_conn_selections:{}", conn.id))
+            .ok()
+            .flatten()
+            .and_then(|v| v.get("enabled").and_then(|a| a.as_array()).cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|x| x.as_str().map(ToString::to_string))
+                    .collect()
+            });
         let mut catalog_models: Vec<Value> = Vec::new();
+        let mut capability_assessments: Vec<Value> = Vec::new();
         for m in &conn.models {
             let caps = infer_model_capabilities(&m.id, m.capabilities.as_ref());
             let mut modalities = vec!["text".to_string()];
@@ -4751,13 +6274,18 @@ fn build_model_connections_inventory(store: &Store, suite: &ModulesSuite) -> Val
                 modalities.push("image".to_string());
             }
             let catalog_key = format!("{wire_proto}:{}", m.id);
-            let is_selected = default_sel
-                .map(|d| d.connection == conn.id && d.model == m.id)
-                .unwrap_or(false);
+            let is_enabled = match saved_sel_enabled.as_ref() {
+                Some(set) => set.contains(&catalog_key) || set.contains(&m.id),
+                None => true,
+            };
+            let is_selected = is_enabled
+                && default_sel
+                    .map(|d| d.connection == conn.id && d.model == m.id)
+                    .unwrap_or(false);
             selections.push(json!({
                 "connection_id": conn.id,
                 "catalog_key": catalog_key,
-                "enabled": true,
+                "enabled": is_enabled,
                 "selected": is_selected
             }));
             catalog_models.push(json!({
@@ -4769,6 +6297,43 @@ fn build_model_connections_inventory(store: &Store, suite: &ModulesSuite) -> Val
                 "reasoning_levels": caps.supported_reasoning_levels,
                 "summary_supported": caps.supports_reasoning_summary
             }));
+            let override_kv = store
+                .get_kv(&format!("model_cap_override:{}:{}", conn.id, m.id))
+                .ok()
+                .flatten()
+                .filter(|v| v.is_object());
+            let probe_kv = store
+                .get_kv(&format!("model_cap_probe:{}:{}", conn.id, m.id))
+                .ok()
+                .flatten()
+                .filter(|v| v.is_object());
+            let user_override = override_kv
+                .as_ref()
+                .and_then(|v| v.get("user_override"))
+                .cloned()
+                .filter(|v| !v.is_null());
+            let evidence = probe_kv
+                .as_ref()
+                .and_then(|v| v.get("evidence"))
+                .cloned()
+                .filter(|v| !v.is_null());
+            if user_override.is_some() || evidence.is_some() {
+                let assess_proto = override_kv
+                    .as_ref()
+                    .and_then(|v| v.get("protocol").and_then(|s| s.as_str()))
+                    .or_else(|| {
+                        probe_kv
+                            .as_ref()
+                            .and_then(|v| v.get("protocol").and_then(|s| s.as_str()))
+                    })
+                    .unwrap_or(wire_proto);
+                capability_assessments.push(json!({
+                    "model_id": m.id,
+                    "protocol": assess_proto,
+                    "evidence": evidence.unwrap_or(Value::Null),
+                    "user_override": user_override.unwrap_or(Value::Null)
+                }));
+            }
         }
         let mut bindings = serde_json::Map::new();
         if configured {
@@ -4794,7 +6359,7 @@ fn build_model_connections_inventory(store: &Store, suite: &ModulesSuite) -> Val
                     "observed_at_ms": now,
                     "models": catalog_models
                 },
-                "capability_assessments": []
+                "capability_assessments": capability_assessments
             }
         }));
     }
@@ -4968,6 +6533,34 @@ fn run_real_model_connection_probe(store: &Store, body: &Value) -> Value {
         Ok(resp) => {
             let status_code = resp.status().as_u16();
             let ok = resp.status().is_success();
+            if ok && !conn_id.is_empty() && !model_id.is_empty() {
+                let proto = body
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("chat_completions");
+                let cred_binding = body
+                    .get("credential_binding")
+                    .cloned()
+                    .unwrap_or_else(|| json!("vault"));
+                let account_rev = body
+                    .get("account_revision")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let _ = store.set_kv(
+                    &format!("model_cap_probe:{conn_id}:{model_id}"),
+                    &json!({
+                        "model_id": model_id,
+                        "protocol": proto,
+                        "evidence": {
+                            "text_generation": true,
+                            "credential_binding": cred_binding,
+                            "account_revision": account_rev,
+                            "observed_at_ms": now_ms(),
+                            "requests_sent": 1
+                        }
+                    }),
+                );
+            }
             json!({
                 "ok": ok,
                 "reachable": true,
@@ -5466,12 +7059,35 @@ fn handle_sse_chat_turn(
     conversation_id: String,
     body: Value,
 ) {
-    let raw_prompt = body
+    let mut raw_prompt = body
         .get("content")
         .or_else(|| body.get("prompt"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if raw_prompt.trim().is_empty() {
+        if let Some(msgs) = body.get("messages").and_then(|v| v.as_array()) {
+            if let Some(last_user) = msgs
+                .iter()
+                .rev()
+                .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+            {
+                if let Some(s) = last_user.get("content").and_then(|v| v.as_str()) {
+                    raw_prompt = s.to_string();
+                } else if let Some(parts) = last_user.get("content").and_then(|v| v.as_array()) {
+                    let joined: Vec<&str> = parts
+                        .iter()
+                        .filter_map(|p| {
+                            p.get("text")
+                                .or_else(|| p.get("content"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .collect();
+                    raw_prompt = joined.join("\n");
+                }
+            }
+        }
+    }
     let attachments = body
         .get("attachments")
         .and_then(|v| v.as_array())
@@ -5492,13 +7108,25 @@ fn handle_sse_chat_turn(
         }
     }
 
-    // Honor `selected_experts` / `selectedExperts`
+    // Honor `selected_experts` / `selectedExperts` (accepting strings AND `{agent_id}`/`{id}`/`{expert_id}` objects!)
     if let Some(selected_arr) = body
         .get("selected_experts")
         .or_else(|| body.get("selectedExperts"))
         .and_then(|v| v.as_array())
     {
-        let ids: Vec<&str> = selected_arr.iter().filter_map(|v| v.as_str()).collect();
+        let ids: Vec<&str> = selected_arr
+            .iter()
+            .filter_map(|v| {
+                v.as_str().or_else(|| {
+                    v.get("agent_id")
+                        .or_else(|| v.get("agentId"))
+                        .or_else(|| v.get("expert_id"))
+                        .or_else(|| v.get("id"))
+                        .and_then(|s| s.as_str())
+                })
+            })
+            .filter(|s| !s.trim().is_empty())
+            .collect();
         if !ids.is_empty() {
             let stored_experts = suite.list_records::<ExpertPeer>("expert_peer").unwrap_or_default();
             let builtins = built_in_role_templates();
@@ -5552,14 +7180,91 @@ fn handle_sse_chat_turn(
         .flatten()
         .unwrap_or_else(|| json!({}));
 
-    // Respect per-conversation or per-request model override!
+    // Respect per-conversation or per-request model override (including running `selectedModelSource == "local"`)!
+    let override_source = body
+        .get("selectedModelSource")
+        .or_else(|| body.get("modelSource"))
+        .or_else(|| body.get("model_source"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| sess.as_ref().and_then(|s| s.model_connection.clone()));
     let override_model = body
         .get("modelId")
+        .or_else(|| body.get("selectedModelId"))
+        .or_else(|| body.get("model_id"))
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
         .or_else(|| sess.as_ref().and_then(|s| s.model_id.clone()));
-    if let Some(ref mid) = override_model {
+    if override_source.as_deref() == Some("local")
+        || override_source
+            .as_deref()
+            .is_some_and(|s| s.starts_with("local:"))
+    {
+        let running = LocalModelProcessManager::global().list_running_models();
+        let wanted_id = override_source
+            .as_deref()
+            .and_then(|s| s.strip_prefix("local:"))
+            .or(override_model.as_deref());
+        let active_local = wanted_id
+            .and_then(|wid| {
+                running
+                    .iter()
+                    .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(wid))
+            })
+            .or_else(|| running.first());
+        if let Some(rt) = active_local {
+            if let Some(ep) = rt.get("endpoint").and_then(|v| v.as_str()) {
+                let local_id = rt
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("local-model")
+                    .to_string();
+                let conn_id = format!("local:{local_id}");
+                let model_name = override_model
+                    .clone()
+                    .unwrap_or_else(|| local_id.clone());
+                let v1_ep = format!("{}/v1", ep.trim_end_matches('/'));
+                if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
+                    existing.endpoint = v1_ep;
+                    if !existing.models.iter().any(|m| m.id == model_name) {
+                        existing.models.push(ModelEntry {
+                            id: model_name.clone(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        });
+                    }
+                } else {
+                    cfg.llm.connections.push(ConnectionConfig {
+                        id: conn_id.clone(),
+                        endpoint: v1_ep,
+                        protocol: Some("chat_completions".into()),
+                        provider: Some("local".into()),
+                        api_key: None,
+                        api_key_env: None,
+                        models: vec![ModelEntry {
+                            id: model_name.clone(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        }],
+                    });
+                }
+                cfg.llm.default_model = Some(DefaultModelSelection {
+                    connection: conn_id,
+                    model: model_name,
+                });
+            }
+        }
+    } else if let Some(ref mid) = override_model {
         if let Some((conn_id, model_name)) = mid.split_once(':') {
             if cfg.llm.connections.iter().any(|c| c.id == conn_id) {
                 cfg.llm.default_model = Some(DefaultModelSelection {
@@ -5620,6 +7325,7 @@ fn handle_sse_chat_turn(
     let settings = build_agent_settings_snapshot(&store, &suite);
     let effective_perm_str = body
         .get("permissionProfile")
+        .or_else(|| body.get("permission_profile"))
         .and_then(|v| v.as_str())
         .or_else(|| conv_meta.get("permissionProfile").and_then(|v| v.as_str()))
         .or_else(|| settings.get("permission_profile").and_then(|v| v.as_str()))
@@ -6399,10 +8105,100 @@ mod tests {
         assert_eq!(frame["protocol_version"], 1);
         assert_eq!(frame["loopback"], true);
         assert_eq!(frame["origin"], "http://127.0.0.1:28421");
+        assert_eq!(frame["client_api"], "http://127.0.0.1:28421/api/mobile");
+        assert_eq!(frame["host_id"], "nola-host-0000000000000000");
+        assert_eq!(frame["access_token"], "test-token");
+        assert_eq!(frame["credentials_path"], "/tmp/mobile-access-token");
         assert_eq!(frame["clientAPI"]["path"], "/api/mobile");
 
         let lan = server_started_handshake("0.0.0.0", 5001);
         assert_eq!(lan["loopback"], false);
+    }
+
+    #[test]
+    fn model_connections_inventory_respects_selections_and_capability_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        crate::config::bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+        let cfg = crate::config::AppliedConfig {
+            llm: crate::config::LlmSection {
+                default_model: Some(DefaultModelSelection {
+                    connection: "ep1".into(),
+                    model: "m1".into(),
+                }),
+                connections: vec![ConnectionConfig {
+                    id: "ep1".into(),
+                    endpoint: "https://example.invalid/v1".into(),
+                    protocol: Some("chat_completions".into()),
+                    provider: None,
+                    api_key: Some("sk-secret".into()),
+                    api_key_env: None,
+                    models: vec![
+                        ModelEntry {
+                            id: "m1".into(),
+                            context_window: Some(128_000),
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        },
+                        ModelEntry {
+                            id: "m2".into(),
+                            context_window: Some(64_000),
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        },
+                    ],
+                }],
+            },
+            ..Default::default()
+        };
+        save_applied_config(&store, &cfg).unwrap();
+        store
+            .set_kv(
+                "model_conn_selections:ep1",
+                &json!({"enabled": ["chat_completions:m1"]}),
+            )
+            .unwrap();
+        store
+            .set_kv(
+                "model_cap_override:ep1:m1",
+                &json!({
+                    "model_id": "m1",
+                    "protocol": "chat_completions",
+                    "user_override": {
+                        "toolCalls": true,
+                        "imageInput": true,
+                        "reasoning": false,
+                        "samplingParameters": true,
+                        "samplingRequiresNoReasoning": false,
+                        "chatOutputTokenField": "auto"
+                    }
+                }),
+            )
+            .unwrap();
+
+        let inv = build_model_connections_inventory(&store, &suite);
+        let sels = inv["selections"].as_array().unwrap();
+        assert_eq!(sels[0]["enabled"], true);
+        assert_eq!(sels[1]["enabled"], false);
+        let assessments = inv["connections"][0]["document"]["capability_assessments"]
+            .as_array()
+            .unwrap();
+        assert_eq!(assessments.len(), 1);
+        assert_eq!(assessments[0]["model_id"], "m1");
+        assert_eq!(assessments[0]["user_override"]["imageInput"], true);
+
+        let cred = build_endpoint_credential_response(&store, "ep1").unwrap();
+        assert_eq!(cred["endpointID"], "ep1");
+        assert_eq!(cred["hasCredential"], true);
+        assert_eq!(cred["credentialRevision"], 1);
+        assert!(cred["expectedRevisions"].as_object().unwrap().len() >= 1);
     }
 
     #[test]

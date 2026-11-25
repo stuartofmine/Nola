@@ -587,10 +587,25 @@ class WebAgentProvider @Inject constructor(
         )
     }
 
+    suspend fun v2CancelConversation(conversationId: String, configuration: Config? = config) {
+        cancelV2Conversation(conversationId, configuration)
+    }
+
+    suspend fun v2CompactConversation(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2CompactConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
     suspend fun v2RespondPermission(
         conversationId: String,
         requestId: String,
         allow: Boolean,
+        scope: String = "once",
         configuration: Config? = config,
     ): JsonObject {
         val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
@@ -600,6 +615,7 @@ class WebAgentProvider @Inject constructor(
             conversationId = conversationId,
             requestId = requestId,
             allow = allow,
+            scope = scope,
             pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
         )
     }

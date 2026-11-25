@@ -7988,18 +7988,20 @@ final class MacWorkspaceModel {
         var list = v2UISurfacesByConversation[conversationID, default: []]
         let surfaceID: String? = {
             guard let data = snapshotJSON.data(using: .utf8),
-                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let identity = root["identity"] as? [String: Any],
-                  let sid = identity["surface_id"] as? String, !sid.isEmpty else { return nil }
-            return sid
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            if let sid = root["surface_id"] as? String, !sid.isEmpty { return sid }
+            if let identity = root["identity"] as? [String: Any],
+               let sid = identity["surface_id"] as? String, !sid.isEmpty { return sid }
+            return nil
         }()
         if let surfaceID,
            let index = list.firstIndex(where: { existing in
                guard let data = existing.data(using: .utf8),
-                     let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                     let identity = root["identity"] as? [String: Any],
-                     let sid = identity["surface_id"] as? String else { return false }
-               return sid == surfaceID
+                     let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+               if let sid = root["surface_id"] as? String, sid == surfaceID { return true }
+               if let identity = root["identity"] as? [String: Any],
+                  let sid = identity["surface_id"] as? String, sid == surfaceID { return true }
+               return false
            }) {
             list[index] = snapshotJSON
         } else {
@@ -8112,6 +8114,14 @@ final class MacWorkspaceModel {
                     ) { message in
                         message.text = finalText
                     }
+                }
+                if let runID = runCoordinator.identity?.runID {
+                    _ = confirmCommittedTerminal(
+                        conversationID: conversationID,
+                        runID: runID,
+                        generationID: generationID,
+                        status: .answered
+                    )
                 }
                 succeeded = true
             }

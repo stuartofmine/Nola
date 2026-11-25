@@ -2,7 +2,7 @@
     import { onMount, tick } from 'svelte';
     import { locale, t } from '../lib/i18n';
     import { darkAppearance, toggleAppearance } from '../lib/appearance';
-    import { errorMessage } from '../lib/api';
+    import { ApiError, errorMessage } from '../lib/api';
     import { workspaceContentNavigationEvent, navigateWorkspace } from '../lib/workspaceNavigation';
     import {
         emptyContentTabs,
@@ -314,6 +314,36 @@
         }
     }
 
+    async function handleModelChange(nextModelId: string) {
+        selectedModelId = nextModelId;
+        if (!active) return;
+        const targetId = active.conversationId;
+        try {
+            await patchV2ConversationConfiguration(targetId, { selectedModelId: nextModelId });
+            if (active?.conversationId === targetId) {
+                active = { ...active, selectedModelId: nextModelId };
+            }
+        } catch (cause) {
+            if (active?.conversationId === targetId) {
+                error = errorMessage(cause);
+            }
+        }
+    }
+
+    async function handleReasoningEffortChange(nextEffort: V2ReasoningEffort) {
+        const normalized = normalizeV2ReasoningEffort(nextEffort);
+        reasoningEffort = normalized;
+        if (!active) return;
+        const targetId = active.conversationId;
+        try {
+            await patchV2ConversationConfiguration(targetId, { reasoningEffort: normalized });
+        } catch (cause) {
+            if (active?.conversationId === targetId) {
+                error = errorMessage(cause);
+            }
+        }
+    }
+
     async function openConversation(conv: ChatConversation, preserveTab = false) {
         // Persist draft for the outgoing conversation, then detach SSE WITHOUT killing Host runs.
         saveDraftForKey(currentDraftKey(), draft);
@@ -355,6 +385,9 @@
             if (cfgResult.status === 'fulfilled') {
                 permissionProfile = normalizeV2PermissionProfile(cfgResult.value.permissionProfile);
                 reasoningEffort = normalizeV2ReasoningEffort(cfgResult.value.reasoningEffort);
+                if (cfgResult.value.selectedModelId) {
+                    selectedModelId = cfgResult.value.selectedModelId;
+                }
             }
             await scrollToBottom(true);
         } catch (cause) {
@@ -599,7 +632,7 @@
                     },
                     onError: msg => {
                         if (serial !== generation) return;
-                        if (msg.includes('no_model_configured') || msg.includes('model')) {
+                        if (msg.includes('model_not_configured') || msg.includes('no_model_configured') || msg.includes('model')) {
                             needsModelConfig = true;
                         }
                         error = msg;
@@ -633,7 +666,12 @@
             if (serial !== generation) return;
             if (!controller.signal.aborted) {
                 const msg = errorMessage(cause);
-                if (msg.includes('no_model_configured')) {
+                const missingModel =
+                    (cause instanceof ApiError &&
+                        (cause.code === 'model_not_configured' || cause.code === 'no_model_configured')) ||
+                    msg.includes('model_not_configured') ||
+                    msg.includes('no_model_configured');
+                if (missingModel) {
                     needsModelConfig = true;
                     draft = sentText;
                     saveDraftForKey(conv.conversationId, sentText);
@@ -1312,8 +1350,9 @@
                                 <select
                                     class="toolbar-select"
                                     aria-label={t($locale, 'chatSession.model')}
-                                    bind:value={selectedModelId}
+                                    value={selectedModelId}
                                     disabled={streaming}
+                                    onchange={e => void handleModelChange(e.currentTarget.value)}
                                 >
                                     {#each modelChoices as choice (choice.id)}
                                         <option value={choice.id}>{choice.displayName}</option>
@@ -1333,8 +1372,9 @@
                             <select
                                 class="toolbar-select"
                                 aria-label={t($locale, 'chatSession.reasoning')}
-                                bind:value={reasoningEffort}
+                                value={reasoningEffort}
                                 disabled={streaming}
+                                onchange={e => void handleReasoningEffortChange(e.currentTarget.value as V2ReasoningEffort)}
                             >
                                 <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
                                 <option value="none">{t($locale, 'chatSession.none')}</option>

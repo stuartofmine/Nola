@@ -21,9 +21,13 @@
         const active = {request_id:randomId(), connection_id:snapshot.document.connection.id, expected_revision:snapshot.revision};
         request = active;
         try {
-            await api('/api/model-connections/probe', {method:'POST', body:JSON.stringify(
+            const result = await api<{ ok?: boolean; error?: string; message?: string }>('/api/model-connections/probe', {method:'POST', body:JSON.stringify(
                 modelProbeConfirmation(snapshot, model, accountRevision, active.request_id, confirmed))});
-            message = t($locale, 'connections.probeVerified');
+            if (result?.ok === false) {
+                message = result.error || result.message || t($locale, 'connections.probeUnconfirmed');
+            } else {
+                message = t($locale, 'connections.probeVerified');
+            }
         } catch {
             message = t($locale, 'connections.probeUnconfirmed');
         } finally {

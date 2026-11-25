@@ -141,6 +141,11 @@ interface WebHostApiService {
         conversationId: String,
         content: String,
         pinnedCertificateSha256: String = "",
+        attachments: kotlinx.serialization.json.JsonArray? = null,
+        modelId: String? = null,
+        reasoningEffort: String? = null,
+        permissionProfile: String? = null,
+        selectedExperts: kotlinx.serialization.json.JsonArray? = null,
     ): kotlinx.coroutines.flow.Flow<SseEvent> {
         error("v2 SSE message streaming is unavailable")
     }
@@ -158,6 +163,7 @@ interface WebHostApiService {
         conversationId: String,
         requestId: String,
         allow: Boolean,
+        scope: String = "once",
         pinnedCertificateSha256: String = "",
     ): JsonObject = error("v2 permission response is unavailable")
 

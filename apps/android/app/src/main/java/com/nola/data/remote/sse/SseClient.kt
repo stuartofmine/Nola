@@ -192,6 +192,7 @@ internal fun decodeSsePayload(
         throw IllegalStateException("Failed to decrypt Web host SSE event", e)
     }
     return try {
+        decodeV2AgentEvent(eventObject)?.let { return it }
         validateControlTrace(eventObject)
         decodeCoreProjectionHint(eventObject) ?: json.decodeFromJsonElement<SseEventDto>(eventObject).toDomain(eventObject)
     } catch (e: Exception) {
@@ -222,9 +223,17 @@ private fun decodeV2AgentEvent(envelope: kotlinx.serialization.json.JsonObject):
             isError = envelope["is_error"]?.jsonPrimitive?.contentOrNull == "true",
             summary = envelope["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
         )
-        "compacted" -> SseEvent.V2Compacted(
-            summary = envelope["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        )
+        "compacted" -> {
+            val explicitSummary = envelope["summary"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            val tokensBefore = envelope["tokens_before"]?.jsonPrimitive?.contentOrNull
+            val tokensAfter = envelope["tokens_after"]?.jsonPrimitive?.contentOrNull
+            val summary = explicitSummary ?: when {
+                tokensBefore != null && tokensAfter != null -> "Context compacted ($tokensBefore → $tokensAfter tokens)"
+                tokensAfter != null -> "Context compacted ($tokensAfter tokens)"
+                else -> "Context compacted"
+            }
+            SseEvent.V2Compacted(summary = summary)
+        }
         "ui_surface" -> (envelope["snapshot"] as? kotlinx.serialization.json.JsonObject)?.let {
             SseEvent.V2UiSurface(snapshot = it)
         }

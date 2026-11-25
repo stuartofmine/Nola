@@ -293,6 +293,8 @@ pub unsafe extern "C" fn nola_core_application_submit(
 }
 
 /// Dispatch trusted expert-host operations against the application store.
+/// Handles both `{request_id, operation}` (Android/iOS/macOS) and `{request_id, command}` envelopes,
+/// returning `{"ok": true, "request_id": ..., "result": ...}`.
 ///
 /// # Safety
 /// `app` must be valid; `json_ptr` must point to `json_len` readable bytes.
@@ -302,7 +304,113 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
     json_ptr: *const u8,
     json_len: usize,
 ) -> *mut c_char {
-    unsafe { nola_core_application_execute(app, json_ptr, json_len) }
+    if app.is_null() || json_ptr.is_null() {
+        return to_owned_c_string(
+            json!({
+                "ok": false,
+                "request_id": "",
+                "error": {"code": "null_pointer", "message": "null application or request pointer"}
+            })
+            .to_string(),
+        );
+    }
+    let app_ref = unsafe { &*app };
+    let Some(req) = (unsafe { parse_json_slice(json_ptr, json_len) }) else {
+        return to_owned_c_string(
+            json!({
+                "ok": false,
+                "request_id": "",
+                "error": {"code": "invalid_json", "message": "invalid json request"}
+            })
+            .to_string(),
+        );
+    };
+    let req_id = req
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_id = req
+        .get("client_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let envelope_resp = if req.get("command").is_some() {
+        handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &req)
+    } else if let Some(op_val) = req.get("operation") {
+        let wrapped_native = json!({
+            "request_id": req_id,
+            "client_id": client_id,
+            "command": {
+                "type": "native_expert_host_operation",
+                "operation": op_val
+            }
+        });
+        if let Some(op_type) = op_val.get("type").and_then(|v| v.as_str()) {
+            let is_template_subop = matches!(
+                op_type,
+                "list" | "list_templates" | "get" | "upsert" | "create" | "update" | "delete"
+            );
+            if is_template_subop {
+                handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &wrapped_native)
+            } else {
+                let direct_env = json!({
+                    "request_id": req_id,
+                    "client_id": client_id,
+                    "command": op_val
+                });
+                let direct_resp =
+                    handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &direct_env);
+                let is_unsupported = direct_resp
+                    .get("error")
+                    .and_then(|e| e.get("code"))
+                    .and_then(|c| c.as_str())
+                    == Some("unsupported_command");
+                if is_unsupported {
+                    handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &wrapped_native)
+                } else {
+                    direct_resp
+                }
+            }
+        } else {
+            let fallback_env = json!({
+                "request_id": req_id,
+                "client_id": client_id,
+                "command": {
+                    "type": "native_expert_host_operation",
+                    "arguments": req
+                }
+            });
+            handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &fallback_env)
+        }
+    } else {
+        handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &req)
+    };
+
+    if envelope_resp.get("status").and_then(|v| v.as_str()) == Some("committed") {
+        let res = envelope_resp.get("result").cloned().unwrap_or(Value::Null);
+        to_owned_c_string(
+            json!({
+                "ok": true,
+                "request_id": req_id,
+                "result": res
+            })
+            .to_string(),
+        )
+    } else {
+        let err = envelope_resp
+            .get("error")
+            .cloned()
+            .unwrap_or_else(|| json!({"code": "rejected", "message": "operation rejected"}));
+        to_owned_c_string(
+            json!({
+                "ok": false,
+                "request_id": req_id,
+                "error": err
+            })
+            .to_string(),
+        )
+    }
 }
 
 /// Attest an edited resend host policy against the application store.
@@ -580,7 +688,7 @@ pub unsafe extern "C" fn nola_core_application_intelligence_snapshot(
                     .first()
                     .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
                     .unwrap_or_else(|| {
-                        json!({"id": m.id, "title": m.title, "statement": m.content, "content": m.content})
+                        json!({"id": m.id, "title": m.title, "statement": m.content, "content": m.content, "status": "active"})
                     })
             })
             .collect()
@@ -2118,15 +2226,201 @@ pub unsafe extern "C" fn nola_mobile_github_skill_package_json(
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(root_str));
+    let operation = req
+        .get("operation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("prepare");
     let query_or_url = req
         .get("url")
         .or_else(|| req.get("query"))
         .or_else(|| req.get("repo"))
+        .or_else(|| req.get("spec"))
+        .or_else(|| req.get("id"))
+        .or_else(|| req.get("name"))
+        .or_else(|| req.get("instructions_ref"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    match nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir) {
-        Ok(pkg) => to_owned_c_string(json!({"ok": true, "value": pkg}).to_string()),
-        Err(err) => to_owned_c_string(json!({"ok": false, "error": err}).to_string()),
+
+    let format_prepared = |pkg: &Value| -> Value {
+        let name = pkg
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("skill");
+        let id = pkg
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| {
+                match (
+                    pkg.get("owner").and_then(|v| v.as_str()),
+                    pkg.get("repo").and_then(|v| v.as_str()),
+                ) {
+                    (Some(o), Some(r)) => format!("{o}/{r}"),
+                    _ => name.to_string(),
+                }
+            });
+        let dest_file = pkg
+            .get("dest_file")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+        let content = dest_file
+            .as_deref()
+            .filter(|p| {
+                std::fs::symlink_metadata(p)
+                    .map(|m| !m.file_type().is_symlink() && m.is_file())
+                    .unwrap_or(false)
+            })
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        let description = pkg
+            .get("description")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("GitHub skill package {name}"));
+        let mut out = pkg.clone();
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("status".into(), json!("prepared"));
+            obj.insert("id".into(), json!(id));
+            obj.insert("name".into(), json!(name));
+            obj.insert("description".into(), json!(description));
+            obj.insert("version".into(), json!("1.0.0"));
+            obj.insert(
+                "instructions_ref".into(),
+                json!(format!("nola://github-skills/{name}")),
+            );
+            obj.insert("content".into(), json!(content));
+        }
+        out
+    };
+
+    match operation {
+        "prepare" | "resolve" => {
+            match nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir) {
+                Ok(pkg) => {
+                    let val = format_prepared(&pkg);
+                    to_owned_c_string(json!({"ok": true, "value": val}).to_string())
+                }
+                Err(err) => to_owned_c_string(json!({"ok": false, "error": err}).to_string()),
+            }
+        }
+        "find" => {
+            let q = query_or_url.trim().to_ascii_lowercase();
+            let mut entries: Vec<Value> =
+                nola_modules::skills::discover_skills(&skills_dir, Some(&skills_dir))
+                    .into_iter()
+                    .filter(|s| {
+                        q.is_empty()
+                            || s.name.to_ascii_lowercase().contains(&q)
+                            || s.description.to_ascii_lowercase().contains(&q)
+                            || s.body.to_ascii_lowercase().contains(&q)
+                    })
+                    .map(|s| {
+                        json!({
+                            "status": "prepared",
+                            "id": s.name,
+                            "name": s.name,
+                            "description": s.description,
+                            "version": "1.0.0",
+                            "instructions_ref": format!("nola://github-skills/{}", s.name),
+                            "content": s.body
+                        })
+                    })
+                    .collect();
+            if entries.is_empty() && !query_or_url.trim().is_empty() {
+                if let Ok(pkg) =
+                    nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir)
+                {
+                    entries.push(format_prepared(&pkg));
+                }
+            }
+            let first = entries.first().cloned().unwrap_or_else(|| {
+                let fallback_name = query_or_url.trim();
+                json!({
+                    "status": "prepared",
+                    "id": fallback_name,
+                    "name": fallback_name,
+                    "description": "",
+                    "version": "1.0.0",
+                    "instructions_ref": format!("nola://github-skills/{fallback_name}"),
+                    "content": ""
+                })
+            });
+            let mut val = first;
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("items".into(), json!(entries));
+                obj.insert("packages".into(), json!(entries));
+            }
+            to_owned_c_string(json!({"ok": true, "value": val}).to_string())
+        }
+        "read" => {
+            let raw_name = query_or_url
+                .trim()
+                .strip_prefix("nola://github-skills/")
+                .unwrap_or(query_or_url.trim());
+            if raw_name.is_empty() {
+                return to_owned_c_string(
+                    json!({"ok": false, "error": "missing skill id, name, or instructions_ref"})
+                        .to_string(),
+                );
+            }
+            let discovered = nola_modules::skills::discover_skills(&skills_dir, Some(&skills_dir));
+            if let Some(found) = discovered
+                .into_iter()
+                .find(|s| s.name.eq_ignore_ascii_case(raw_name))
+            {
+                let val = json!({
+                    "status": "prepared",
+                    "id": found.name,
+                    "name": found.name,
+                    "description": found.description,
+                    "version": "1.0.0",
+                    "instructions_ref": format!("nola://github-skills/{}", found.name),
+                    "content": found.body
+                });
+                return to_owned_c_string(json!({"ok": true, "value": val}).to_string());
+            }
+            if let Ok(pkg) =
+                nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir)
+            {
+                let val = format_prepared(&pkg);
+                return to_owned_c_string(json!({"ok": true, "value": val}).to_string());
+            }
+            let safe_name: String = raw_name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            let candidate = skills_dir.join(&safe_name).join("SKILL.md");
+            let content = if !safe_name.is_empty()
+                && std::fs::symlink_metadata(&candidate)
+                    .map(|m| !m.file_type().is_symlink() && m.is_file())
+                    .unwrap_or(false)
+            {
+                std::fs::read_to_string(&candidate).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let name = if safe_name.is_empty() {
+                raw_name.to_string()
+            } else {
+                safe_name
+            };
+            let val = json!({
+                "status": "prepared",
+                "id": name,
+                "name": name,
+                "description": format!("GitHub skill package {name}"),
+                "version": "1.0.0",
+                "instructions_ref": format!("nola://github-skills/{name}"),
+                "content": content
+            });
+            to_owned_c_string(json!({"ok": true, "value": val}).to_string())
+        }
+        other => to_owned_c_string(
+            json!({"ok": false, "error": format!("unsupported github skill operation '{other}'")})
+                .to_string(),
+        ),
     }
 }
 
@@ -2237,6 +2531,7 @@ pub unsafe extern "C" fn nola_core_software_update_json(
         let dest_dir = req
             .get("dest_dir")
             .or_else(|| req.get("destination_dir"))
+            .or_else(|| req.get("directory"))
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from)
@@ -2300,6 +2595,11 @@ pub unsafe extern "C" fn nola_core_software_update_json(
                     .map(ToString::to_string)
                     .unwrap_or_else(|| update.target.clone())
             };
+            let artifact_kind = if effective_target.eq_ignore_ascii_case("ios") {
+                "store"
+            } else {
+                "archive"
+            };
             let release = match (update.update_available, update.latest) {
                 (true, Some(rel)) => json!({
                     "release_id": rel.version,
@@ -2307,7 +2607,7 @@ pub unsafe extern "C" fn nola_core_software_update_json(
                     "build": current_build + 1,
                     "notes": rel.notes,
                     "artifact": {
-                        "kind": "archive",
+                        "kind": artifact_kind,
                         "url": rel.download_url,
                         "filename": Value::Null,
                         "size": Value::Null,

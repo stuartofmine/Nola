@@ -127,6 +127,30 @@
         } catch (cause) { if (!disposed) editorError = messagingErrorKey(cause); }
         finally { if (!disposed) saving = false; }
     }
+    async function deleteChannel() {
+        if (busy || !baseline) return;
+        const target = $state.snapshot(baseline);
+        const version = editorVersion;
+        confirming = true;
+        const approved = await confirmation.ask({
+            title: t($locale, 'messaging.deleteTitle'),
+            description: t($locale, 'messaging.deleteBody', { name: target.display_name || target.connection_id }),
+            confirmLabel: t($locale, 'messaging.delete'),
+            destructive: true,
+        });
+        confirming = false;
+        if (!approved || disposed || version !== editorVersion) return;
+        saving = true; editorError = ''; channelsRead.cancel(); ++channelsVersion; channelsLoading = false;
+        try {
+            await api(`/api/messaging-channels/${encodeURIComponent(target.connection_id)}`, { method: 'DELETE' });
+            if (disposed) return;
+            channels = channels.filter(channel => channel.connection_id !== target.connection_id);
+            connectionNotice = 'messaging.deleted';
+            dialog.close(); editing = undefined; baseline = undefined; ++editorVersion;
+            await loadChannels();
+        } catch (cause) { if (!disposed) editorError = messagingErrorKey(cause); }
+        finally { if (!disposed) saving = false; }
+    }
     function beforeUnload(event: BeforeUnloadEvent) {
         if (!acceptsWorkspaceUnload(event)) return; if (workerDirty || editorDirty || saving) { event.preventDefault(); event.returnValue = ''; } }
 </script>
@@ -172,7 +196,7 @@
             {#each Object.hasOwn(providerFields, editing.kind) ? providerFields[editing.kind] : [] as field}<label>{t($locale, `messaging.${field}`)}<input value={typeof editing.provider_config[field] === 'string' ? editing.provider_config[field] : ''} oninput={event => { if (editing) editing.provider_config[field] = event.currentTarget.value; }} autocomplete="off" /></label>{/each}
         </div><label class="toggle"><input type="checkbox" role="switch" bind:checked={editing.enabled} />{t($locale, 'messaging.enableConnection')}</label></fieldset>
         {#if callback}<div><p class="muted">{t($locale, 'messaging.callback')}</p><code>{callback}</code><button type="button" onclick={copyCallback}>{t($locale, 'shell.markdown.copy')}</button>{#if copyNotice}<p role="status">{t($locale, copyNotice)}</p>{/if}</div>{/if}
-        <p class="muted">{t($locale, 'messaging.applyHint')}</p><div class="actions"><button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button class="primary" disabled={busy}>{t($locale, saving ? 'models.saving' : editing.enabled ? 'messaging.apply' : 'models.save')}</button></div>
+        <p class="muted">{t($locale, 'messaging.applyHint')}</p><div class="actions">{#if baseline}<button type="button" class="danger" disabled={busy} onclick={() => void deleteChannel()}>{t($locale, 'messaging.delete')}</button>{/if}<button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button class="primary" disabled={busy}>{t($locale, saving ? 'models.saving' : editing.enabled ? 'messaging.apply' : 'models.save')}</button></div>
     </form>{/if}
 </dialog>
 <style>

@@ -81,10 +81,23 @@ pub struct ModelEntry {
     pub capabilities: Option<ModelCapabilities>,
 }
 
+fn resolve_home_dir_from_lookup<F>(lookup: F) -> PathBuf
+where
+    F: Fn(&str) -> Option<String>,
+{
+    for key in ["NOLA_HOME", "HOME", "USERPROFILE"] {
+        if let Some(val) = lookup(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
+    PathBuf::from(".")
+}
+
 pub fn default_home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+    resolve_home_dir_from_lookup(|k| std::env::var(k).ok())
 }
 
 pub fn default_db_path() -> PathBuf {
@@ -751,5 +764,35 @@ mod tests {
         let huge = dir.path().join("huge.json");
         fs::write(&huge, vec![b' '; (MAX_CONFIG_FILE_BYTES as usize) + 16]).unwrap();
         assert!(read_config_file_safe(&huge).unwrap_err().contains("limit"));
+    }
+
+    #[test]
+    fn resolve_home_dir_prefers_nola_home_then_home_then_userprofile() {
+        assert_eq!(
+            resolve_home_dir_from_lookup(|k| match k {
+                "NOLA_HOME" => Some("/custom/nola".into()),
+                "HOME" => Some("/home/alice".into()),
+                "USERPROFILE" => Some(r"C:\Users\Alice".into()),
+                _ => None,
+            }),
+            PathBuf::from("/custom/nola")
+        );
+        assert_eq!(
+            resolve_home_dir_from_lookup(|k| match k {
+                "NOLA_HOME" => Some("   ".into()),
+                "HOME" => Some("/home/alice".into()),
+                "USERPROFILE" => Some(r"C:\Users\Alice".into()),
+                _ => None,
+            }),
+            PathBuf::from("/home/alice")
+        );
+        assert_eq!(
+            resolve_home_dir_from_lookup(|k| match k {
+                "USERPROFILE" => Some(r"C:\Users\Alice".into()),
+                _ => None,
+            }),
+            PathBuf::from(r"C:\Users\Alice")
+        );
+        assert_eq!(resolve_home_dir_from_lookup(|_| None), PathBuf::from("."));
     }
 }

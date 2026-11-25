@@ -3557,17 +3557,23 @@ nonisolated final class MacApplicationPort:
     }
 
     func listConversations() throws -> [MacCanonicalConversationSummary] {
-        let snapshot: ConversationListProjectionSnapshot = try execute(
-            ProjectionSnapshotCommand(
-                type: "projection_snapshot",
-                scope: .init(type: "conversations", conversationID: nil),
-                page: nil
-            )
+        let command = ProjectionSnapshotCommand(
+            type: "projection_snapshot",
+            scope: .init(type: "conversations", conversationID: nil),
+            page: nil
         )
-        return snapshot.records.compactMap { record in
-            guard record.entityType == "conversation_summary" else { return nil }
-            return record.payload
+        let data = try Self.makeEncoder().encode(command)
+        let response = try serviceClient.execute(commandData: data)
+        if let snapshot = try? Self.makeDecoder().decode(ConversationListProjectionSnapshot.self, from: response) {
+            return snapshot.records.compactMap { record in
+                guard record.entityType == "conversation_summary" else { return nil }
+                return record.payload
+            }
         }
+        return try Self.decodeListResponse(
+            response,
+            wrapperKeys: ["conversations", "sessions", "items", "records"]
+        )
     }
 
     func renameConversation(_ conversationID: String, title: String, source: MacConversationTitleSource = .user,
@@ -3579,13 +3585,11 @@ nonisolated final class MacApplicationPort:
             titleSource: source,
             updatedAtMs: updatedAtMs
         )
-        let data = try Self.makeEncoder().encode(command)
-        let response = try serviceClient.execute(commandData: data, expectedRevision: expectedRevision)
-        return try Self.makeDecoder().decode(Bool.self, from: response)
+        return try executeBool(command, expectedRevision: expectedRevision)
     }
 
     func deleteConversation(_ conversationID: String) throws -> Bool {
-        try execute(LoadConversationCommand(
+        try executeBool(LoadConversationCommand(
             type: "delete_conversation",
             conversationID: conversationID
         ))
@@ -3728,11 +3732,14 @@ nonisolated final class MacApplicationPort:
     }
 
     func listModelProfiles() throws -> [MacCanonicalModelProfile] {
-        try execute(MacModelCommandEnvelope(command: TypeOnlyCommand(type: "list_profiles")))
+        try executeList(
+            MacModelCommandEnvelope(command: TypeOnlyCommand(type: "list_profiles")),
+            wrapperKeys: ["profiles", "items", "records"]
+        )
     }
 
     func deleteModelProfile(_ id: String, deletedAtMs: Int64) throws -> Bool {
-        try execute(MacModelCommandEnvelope(command: DeleteModelProfileCommand(
+        try executeBool(MacModelCommandEnvelope(command: DeleteModelProfileCommand(
             type: "delete_profile",
             id: id,
             deletedAtMs: deletedAtMs
@@ -3790,7 +3797,10 @@ nonisolated final class MacApplicationPort:
         struct Payload: Encodable {
             let type = "list_editors"
         }
-        return try execute(MacSkillCommandEnvelope(command: Payload()))
+        return try executeList(
+            MacSkillCommandEnvelope(command: Payload()),
+            wrapperKeys: ["skills", "items", "records"]
+        )
     }
 
     func skillEditor(_ id: String) throws -> MacCanonicalSkillEditor? {
@@ -3842,7 +3852,10 @@ nonisolated final class MacApplicationPort:
     }
 
     func listSkills() throws -> [MacCanonicalSkill] {
-        try execute(MacSkillCommandEnvelope(command: MacListSkillsCommand(type: "list")))
+        try executeList(
+            MacSkillCommandEnvelope(command: MacListSkillsCommand(type: "list")),
+            wrapperKeys: ["skills", "items", "records"]
+        )
     }
 
     func restoreBuiltInSkills(
@@ -3911,7 +3924,7 @@ nonisolated final class MacApplicationPort:
             let expectedRevision: Int64
             let deletedAtMs: Int64
         }
-        return try execute(MacSkillCommandEnvelope(command: Payload(
+        return try executeBool(MacSkillCommandEnvelope(command: Payload(
             id: expected.record.id, expectedRevision: expected.revision, deletedAtMs: deletedAtMs
         )))
     }
@@ -3978,13 +3991,16 @@ nonisolated final class MacApplicationPort:
                 case deletedAtMs = "deleted_at_ms"
             }
         }
-        return try execute(MacMCPCommandEnvelope(command: Payload(
+        return try executeBool(MacMCPCommandEnvelope(command: Payload(
             id: expected.id, expectedRevision: expected.revision, deletedAtMs: deletedAtMs
         )))
     }
 
     func listMCPServers() throws -> [MacCanonicalMCPServer] {
-        try execute(MacMCPCommandEnvelope(command: MacListMCPCommand(type: "list")))
+        try executeList(
+            MacMCPCommandEnvelope(command: MacListMCPCommand(type: "list")),
+            wrapperKeys: ["servers", "items", "records"]
+        )
     }
 
     func upsertAutomation(
@@ -4163,11 +4179,14 @@ nonisolated final class MacApplicationPort:
     }
 
     func listDataSources() throws -> [MacCanonicalDataSource] {
-        try execute(MacDataSourceCommandEnvelope(command: MacListDataSourceCommand(type: "list")))
+        try executeList(
+            MacDataSourceCommandEnvelope(command: MacListDataSourceCommand(type: "list")),
+            wrapperKeys: ["sources", "data_sources", "items", "records"]
+        )
     }
 
     func deleteDataSource(_ id: String, expectedRevision: Int64, deletedAtMs: Int64) throws -> Bool {
-        try execute(MacDataSourceCommandEnvelope(command: DeleteDataSourceCommand(
+        try executeBool(MacDataSourceCommandEnvelope(command: DeleteDataSourceCommand(
             type: "delete",
             id: id,
             expectedRevision: expectedRevision,
@@ -4181,7 +4200,7 @@ nonisolated final class MacApplicationPort:
         value: MacCanonicalDataSourceOverride,
         updatedAtMs: Int64
     ) throws -> Bool {
-        try execute(MacDataSourceCommandEnvelope(command: SetDataSourceOverrideCommand(
+        try executeBool(MacDataSourceCommandEnvelope(command: SetDataSourceOverrideCommand(
             type: "set_conversation_override",
             conversationID: conversationID,
             sourceID: sourceID,
@@ -4202,15 +4221,21 @@ nonisolated final class MacApplicationPort:
     }
 
     func appendDataSourceUsage(_ input: MacCanonicalDataSourceUsageInput) throws -> Bool {
-        try execute(MacDataSourceCommandEnvelope(command: Command(type: "record_usage", input: input)))
+        try executeBool(MacDataSourceCommandEnvelope(command: Command(type: "record_usage", input: input)))
     }
 
     func listDataSourceUsage(limit: Int = 500) throws -> [MacCanonicalDataSourceUsageInput] {
-        try execute(MacDataSourceCommandEnvelope(command: ListDataSourceUsageCommand(type: "list_usage", limit: max(1, limit))))
+        try executeList(
+            MacDataSourceCommandEnvelope(command: ListDataSourceUsageCommand(type: "list_usage", limit: max(1, limit))),
+            wrapperKeys: ["usage", "items", "records"]
+        )
     }
 
     func listMemories(limit: Int = 100) throws -> [MacCanonicalMemoryRecord] {
-        try execute(MacMemoryCommandEnvelope(command: ListMemoriesCommand(type: "list", limit: max(1, limit))))
+        try executeList(
+            MacMemoryCommandEnvelope(command: ListMemoriesCommand(type: "list", limit: max(1, limit))),
+            wrapperKeys: ["memories", "items", "records"]
+        )
     }
 
     func putProductSetting(
@@ -4263,11 +4288,14 @@ nonisolated final class MacApplicationPort:
 
     @discardableResult
     func deleteProductSetting(key: String) throws -> Bool {
-        try execute(ProductSettingKeyCommand(type: "delete_product_setting", key: key))
+        try executeBool(ProductSettingKeyCommand(type: "delete_product_setting", key: key))
     }
 
     func pendingSyncChanges(limit: Int = 100) throws -> [MacCanonicalPendingSyncChange] {
-        try execute(PendingSyncChangesCommand(type: "pending_sync_changes", limit: max(1, limit)))
+        try executeList(
+            PendingSyncChangesCommand(type: "pending_sync_changes", limit: max(1, limit)),
+            wrapperKeys: ["changes", "items", "records"]
+        )
     }
 
     @discardableResult
@@ -4277,7 +4305,7 @@ nonisolated final class MacApplicationPort:
         remoteCursor: Int64?,
         resolvedAtMs: Int64
     ) throws -> Bool {
-        try execute(ResolveSyncChangeCommand(
+        try executeBool(ResolveSyncChangeCommand(
             type: "resolve_sync_change",
             operationID: operationID,
             status: status,
@@ -4514,6 +4542,51 @@ nonisolated final class MacApplicationPort:
         let data = try Self.makeEncoder().encode(command)
         let response = try serviceClient.execute(commandData: data)
         return try Self.makeDecoder().decode(Optional<Result>.self, from: response)
+    }
+
+    private func executeList<CommandValue: Encodable, Element: Decodable>(
+        _ command: CommandValue,
+        wrapperKeys: [String]
+    ) throws -> [Element] {
+        let data = try Self.makeEncoder().encode(command)
+        let response = try serviceClient.execute(commandData: data)
+        return try Self.decodeListResponse(response, wrapperKeys: wrapperKeys)
+    }
+
+    private static func decodeListResponse<Element: Decodable>(
+        _ response: Data,
+        wrapperKeys: [String]
+    ) throws -> [Element] {
+        let decoder = Self.makeDecoder()
+        if let list = try? decoder.decode([Element].self, from: response) {
+            return list
+        }
+        if let object = try? JSONSerialization.jsonObject(with: response) as? [String: Any] {
+            for key in wrapperKeys {
+                if let array = object[key] as? [Any] {
+                    let arrayData = try JSONSerialization.data(withJSONObject: array, options: [.fragmentsAllowed])
+                    return try decoder.decode([Element].self, from: arrayData)
+                }
+            }
+            return []
+        }
+        return try decoder.decode([Element].self, from: response)
+    }
+
+    private func executeBool<CommandValue: Encodable>(
+        _ command: CommandValue,
+        expectedRevision: UInt64? = nil
+    ) throws -> Bool {
+        let data = try Self.makeEncoder().encode(command)
+        let response = try serviceClient.execute(commandData: data, expectedRevision: expectedRevision)
+        let decoder = Self.makeDecoder()
+        if let boolValue = try? decoder.decode(Bool.self, from: response) {
+            return boolValue
+        }
+        if let object = try? JSONSerialization.jsonObject(with: response) as? [String: Any] {
+            return (object["ok"] as? Bool) ?? true
+        }
+        return try decoder.decode(Bool.self, from: response)
     }
 
     private struct Command<Input: Encodable>: Encodable {

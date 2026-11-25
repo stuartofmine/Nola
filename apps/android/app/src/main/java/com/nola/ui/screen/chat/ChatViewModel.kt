@@ -3588,7 +3588,38 @@ class ChatViewModel @Inject constructor(
         val state = _uiState.value
         if (state.processingState.blocksInput) return
         val convId = state.conversationId ?: return
-        checkAutoCompact(convId, mode = "force_summary")
+        val isRemote = state.currentModel?.source == ModelInfo.ModelSource.WebHost || state.executionHostBinding != null
+        try {
+            val result = withContext(Dispatchers.IO) {
+                if (isRemote) {
+                    val cfg = state.executionHostBinding?.let { resolveBoundHost(it) }
+                        ?: remoteObservationConfiguration
+                        ?: webAgentProvider.config
+                        ?: error("Web Agent Host is not configured")
+                    webAgentProvider.v2CompactConversation(convId, cfg)
+                } else {
+                    applicationRuntime.v2CompactConversation(convId)
+                }
+            }
+            val explicitSummary = result["summary"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            val tokensBefore = result["tokens_before"]?.jsonPrimitive?.contentOrNull
+            val tokensAfter = result["tokens_after"]?.jsonPrimitive?.contentOrNull
+            val summary = explicitSummary ?: when {
+                tokensBefore != null && tokensAfter != null -> "Context compacted ($tokensBefore → $tokensAfter tokens)"
+                tokensAfter != null -> "Context compacted ($tokensAfter tokens)"
+                else -> "Context compacted"
+            }
+            _uiState.update { it.copy(v2CompactionSummary = summary, error = null) }
+            reloadContextState()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _uiState.update { it.copy(error = error.localizedMessage ?: error.message ?: "Context compaction failed") }
+        }
+    }
+
+    fun dismissV2CompactionSummary() {
+        _uiState.update { it.copy(v2CompactionSummary = null) }
     }
 
     fun reloadContextState() {
@@ -5123,14 +5154,19 @@ class ChatViewModel @Inject constructor(
                 val argsMap: Map<String, Any> = (event.arguments as? JsonObject)
                     ?.mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull ?: v.toString() }
                     .orEmpty()
+                val toolLabel = event.tool.ifBlank { "tool" }
+                val reviewDetail = event.reason.takeIf { it.isNotBlank() }
+                    ?: event.arguments?.toString()?.takeIf { it.isNotBlank() && it != "null" && it != "{}" }
+                val safeReviewText = if (reviewDetail != null) "$toolLabel: $reviewDetail" else toolLabel
                 val request = HostAgentPermissionRequest(
-                    allowConversation = false,
+                    allowConversation = true,
                     id = requestId,
-                    toolName = event.tool.ifBlank { "tool" },
+                    toolName = toolLabel,
                     args = argsMap,
                     reason = event.reason,
-                    message = event.reason.ifBlank { event.tool },
+                    message = event.reason.ifBlank { toolLabel },
                     sessionId = convId,
+                    safeReviewText = safeReviewText,
                 )
                 v2PermissionRequestIds.add(requestId)
                 permissionSession.enqueueHostRequest(request)
@@ -5409,6 +5445,7 @@ class ChatViewModel @Inject constructor(
                         conversationId = targetConversationId,
                         requestId = request.id,
                         allow = allow,
+                        scope = if (rememberForConversation) "session" else "once",
                         configuration = configuration,
                     )
                 } else {
@@ -5508,7 +5545,8 @@ class ChatViewModel @Inject constructor(
             remoteUiWakeSuppressed.add(conversationId)
             if (remoteUiWakeConversation == conversationId) remoteUiWakeJob?.cancel()
         }
-        if (!executionSession.dispatchStarted && remoteSubmissionIntent == null) {
+        if (!executionSession.dispatchStarted && remoteSubmissionIntent == null &&
+            _uiState.value.currentModel?.source != ModelInfo.ModelSource.WebHost) {
             val session = executionSession
             val visible = displayedState.value.activeResponseId == responseId
             session.runtime.cancelGeneration()
@@ -5573,7 +5611,7 @@ class ChatViewModel @Inject constructor(
         val cancelIdentity = remoteAdmissionReceipt?.identity ?: pending?.takeIf {
             it.phase == com.nola.data.remote.api.RemoteSubmissionPhase.Admitted }?.identity
         val localCoordinator = turnRuntime.deviceCoordinator()
-        if (localCoordinator == null && !usedWebHost) turnRuntime.cancelGeneration()
+        if (localCoordinator == null && (!usedWebHost || cancelIdentity == null)) turnRuntime.cancelGeneration()
         permissionSession.clear()
         _uiState.update { it.copy(permissionRequest = null, pendingPermissionRequests = emptyList()) }
         executionScope.launch {
@@ -5583,11 +5621,21 @@ class ChatViewModel @Inject constructor(
             }
             if (usedWebHost && convId != null) {
                 try {
-                    require(cancelIdentity?.conversationId == convId)
-                    webAgentProvider.cancelAdmittedSubmission(checkNotNull(cancelIdentity), capturedConfiguration)
+                    if (cancelIdentity != null && cancelIdentity.conversationId == convId) {
+                        webAgentProvider.cancelAdmittedSubmission(cancelIdentity, capturedConfiguration)
+                    } else {
+                        val cfg = capturedConfiguration ?: webAgentProvider.config
+                        if (cfg != null) {
+                            webAgentProvider.v2CancelConversation(convId, cfg)
+                        }
+                        _uiState.update {
+                            if (it.conversationId == convId) it.copy(processingState = ProcessingState.Idle) else it
+                        }
+                    }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                 catch (failure: Exception) {
-                    if (_uiState.value.conversationId == convId && remoteAdmissionReceipt?.identity == cancelIdentity)
+                    if (_uiState.value.conversationId == convId &&
+                        (cancelIdentity == null || remoteAdmissionReceipt?.identity == cancelIdentity))
                         _uiState.update { it.copy(error = failure.message) }
                 }
                 return@launch

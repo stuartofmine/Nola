@@ -7,6 +7,7 @@ test('settings distinguish browser authentication from local host trust', () => 
     assert.equal(local.sessionAuthenticated, false);
     assert.equal('token' in local, false);
     assert.equal(settingsSession({ authenticated: true, sessionAuthenticated: true, localTrust: false, hostId: 'remote', transportIngress: 'tailcat' }).localTrust, false);
+    assert.equal(settingsSession({ authenticated: true, sessionAuthenticated: true, localTrust: false, hostId: 'lan-host', transportIngress: 'lan' }).transportIngress, 'lan');
     assert.equal(settingsSession({ authenticated: false, sessionAuthenticated: false, localTrust: false, hostId: 'remote', transportIngress: 'tailcat' }).authenticated, false);
     for (const value of [null, [], {}, { ...local, authenticated: false }, { ...local, hostId: '' }, { ...local, sessionAuthenticated: 'true' }, { ...local, transportIngress: 'tailcat' }, { ...local, transportIngress: 'unknown' }]) {
         assert.throws(() => settingsSession(value));

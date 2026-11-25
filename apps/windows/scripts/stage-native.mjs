@@ -38,6 +38,10 @@ for (const entry of readdirSync(llamaDirectory)) {
 
 const licenseDirectory = path.join(windowsRoot, "resources", "licenses");
 mkdirSync(licenseDirectory, { recursive: true });
+const rootLicense = path.join(repoRoot, "LICENSE");
+if (existsSync(rootLicense)) {
+    copyFileSync(rootLicense, path.join(licenseDirectory, "LICENSE.txt"));
+}
 const llamaSource = process.env.NOLA_LLAMA_CPP_SOURCE;
 if (llamaSource) {
     const llamaLicense = path.join(path.resolve(llamaSource), "LICENSE");

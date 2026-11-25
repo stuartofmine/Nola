@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** A malformed projection is an error, never a partially successful catalog. */
 internal fun decodeAndroidUserSkills(value: JsonElement): List<UploadedContent> =
-    value.jsonArray.mapNotNull { entry ->
+    value.extractJsonArray("skills", "items", "records").mapNotNull { entry ->
         val envelope = entry.jsonObject
         val record = envelope.getValue("record").jsonObject
         val revision = envelope.getValue("revision").jsonPrimitive.content.toLong()

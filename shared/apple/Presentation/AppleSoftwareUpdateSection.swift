@@ -45,10 +45,21 @@ nonisolated enum AppleSoftwareUpdateClient {
         "macos-x86_64"
         #endif
     }
-    static func call<T: Decodable & Sendable>(_ operation: String, id: String? = nil, directory: URL? = nil) async throws -> T {
+    static func call<T: Decodable & Sendable>(
+        _ operation: String,
+        id: String? = nil,
+        directory: URL? = nil,
+        url: String? = nil,
+        sha256: String? = nil
+    ) async throws -> T {
         var request: [String: String] = ["operation": operation, "target": target]
         if let id { request["expected_release_id"] = id }
-        if let directory { request["directory"] = directory.path }
+        if let url { request["url"] = url }
+        if let sha256 { request["sha256"] = sha256 }
+        if let directory {
+            request["directory"] = directory.path
+            request["dest_dir"] = directory.path
+        }
         let input = try JSONSerialization.data(withJSONObject: request)
         let output = try await Task.detached(priority: .utility) {
             try input.withUnsafeBytes { bytes -> Data in
@@ -141,7 +152,13 @@ struct AppleSoftwareUpdateSection: View {
                 struct Download: Decodable, Sendable { let path: String }
                 let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     .appendingPathComponent("Nola/SoftwareUpdates/\(UUID().uuidString)", isDirectory: true)
-                let result: Download = try await AppleSoftwareUpdateClient.call("download", id: release.release_id, directory: directory)
+                let result: Download = try await AppleSoftwareUpdateClient.call(
+                    "download",
+                    id: release.release_id,
+                    directory: directory,
+                    url: release.artifact.url,
+                    sha256: release.artifact.sha256
+                )
                 try Task.checkCancellation()
                 let url = URL(fileURLWithPath: result.path)
                 // Mark this as an internet download so the normal macOS security

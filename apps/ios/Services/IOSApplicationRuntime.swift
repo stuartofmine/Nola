@@ -914,7 +914,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listDataSources() throws -> [IOSCanonicalDataSource] {
-        try execute(DataSourceCommandEnvelope(command: TypeCommand(type: "list")))
+        try executeList(
+            DataSourceCommandEnvelope(command: TypeCommand(type: "list")),
+            wrapperKeys: ["sources", "data_sources", "items", "records"]
+        )
     }
 
     func putProductSetting(key: String, valueJSON: String, updatedAtMs: Int64) throws -> IOSCanonicalProductSetting {
@@ -970,7 +973,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteProductSetting(key: String) throws -> Bool {
-        try executeMutation(ProductSettingKeyCommand(type: "delete_product_setting", key: key))
+        try executeBoolMutation(ProductSettingKeyCommand(type: "delete_product_setting", key: key))
     }
 
     func upsertModelProfile(_ input: IOSCanonicalModelProfile) throws {
@@ -1576,12 +1579,15 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listModelProfiles() throws -> [IOSCanonicalModelProfile] {
-        try execute(ModelCommandEnvelope(command: TypeCommand(type: "list_profiles")))
+        try executeList(
+            ModelCommandEnvelope(command: TypeCommand(type: "list_profiles")),
+            wrapperKeys: ["profiles", "items", "records"]
+        )
     }
 
     @discardableResult
     func deleteModelProfile(id: String) throws -> Bool {
-        try execute(ModelCommandEnvelope(command: DeleteCommand(
+        try executeBoolMutation(ModelCommandEnvelope(command: DeleteCommand(
             type: "delete_profile",
             id: id,
             deletedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
@@ -1589,7 +1595,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func pendingSyncChanges(limit: Int = 100) throws -> [IOSCanonicalSyncChange] {
-        try execute(LimitCommand(type: "pending_sync_changes", limit: max(1, limit)))
+        try executeList(
+            LimitCommand(type: "pending_sync_changes", limit: max(1, limit)),
+            wrapperKeys: ["changes", "items", "records"]
+        )
     }
 
     @discardableResult
@@ -1599,7 +1608,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         remoteCursor: Int64?,
         resolvedAtMs: Int64
     ) throws -> Bool {
-        try execute(ResolveSyncChangeCommand(
+        try executeBoolMutation(ResolveSyncChangeCommand(
             type: "resolve_sync_change",
             operationID: operationID,
             status: status,
@@ -1640,7 +1649,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteDataSource(id: String, expectedRevision: Int64, deletedAtMs: Int64) throws -> Bool {
-        return try execute(DataSourceCommandEnvelope(command: DeleteDataSourceCommand(
+        return try executeBoolMutation(DataSourceCommandEnvelope(command: DeleteDataSourceCommand(
             type: "delete",
             id: id,
             expectedRevision: expectedRevision,
@@ -1649,11 +1658,14 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func appendDataSourceUsage(_ input: IOSCanonicalDataSourceUsage) throws {
-        let _: Bool = try execute(DataSourceCommandEnvelope(command: DataSourceInputCommand(type: "record_usage", input: input)))
+        let _ = try executeBoolMutation(DataSourceCommandEnvelope(command: DataSourceInputCommand(type: "record_usage", input: input)))
     }
 
     func listDataSourceUsage(limit: Int = 200) throws -> [IOSCanonicalDataSourceUsage] {
-        try execute(DataSourceCommandEnvelope(command: ListUsageCommand(type: "list_usage", limit: limit)))
+        try executeList(
+            DataSourceCommandEnvelope(command: ListUsageCommand(type: "list_usage", limit: limit)),
+            wrapperKeys: ["usage", "items", "records"]
+        )
     }
 
     func recallProfileMemories(query: String, limit: Int) throws -> [IOSCanonicalMemoryRecord] {
@@ -1673,7 +1685,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
             [ChatMemoryNamespace.longTerm, .userPreferences].map { IOSCanonicalMemoryNamespace(kind: "custom", name: $0.rawValue) }
         return try namespaces.flatMap { namespace in
             let input = Query(namespace: namespace, query: query, now_iso: ISO8601DateFormatter().string(from: Date()), limit: limit)
-            let records: [IOSCanonicalMemoryRecord] = try execute(MemoryCommandEnvelope(command: MemoryInputCommand(type: "recall", input: input)))
+            let records: [IOSCanonicalMemoryRecord] = try executeList(
+                MemoryCommandEnvelope(command: MemoryInputCommand(type: "recall", input: input)),
+                wrapperKeys: ["memories", "items", "records"]
+            )
             return records
         }
     }
@@ -1685,7 +1700,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func listMemories(limit: Int = 1_000) throws -> [IOSCanonicalMemoryRecord] {
-        try execute(MemoryCommandEnvelope(command: LimitCommand(type: "list", limit: limit)))
+        try executeList(
+            MemoryCommandEnvelope(command: LimitCommand(type: "list", limit: limit)),
+            wrapperKeys: ["memories", "items", "records"]
+        )
     }
 
     func replaceMemories(expected: [IOSCanonicalMemoryRecord], candidates: [IOSCanonicalMemoryCandidate],
@@ -1790,7 +1808,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteMemory(id: String, deletedAtMs: Int64) throws -> Bool {
-        try executeMutation(MemoryCommandEnvelope(command: DeleteCommand(type: "delete", id: id, deletedAtMs: deletedAtMs)))
+        try executeBoolMutation(MemoryCommandEnvelope(command: DeleteCommand(type: "delete", id: id, deletedAtMs: deletedAtMs)))
     }
 
     func upsertSkill(_ input: IOSCanonicalSkill) throws -> IOSCanonicalSkill {
@@ -1823,19 +1841,22 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteUserSkill(expected: IOSCanonicalSkillEditor, deletedAtMs: Int64) throws -> Bool {
-        try executeMutation(SkillCommandEnvelope(command: RevisionDeleteCommand(
+        try executeBoolMutation(SkillCommandEnvelope(command: RevisionDeleteCommand(
             type: "delete_user_checked", id: expected.record.id,
             expectedRevision: expected.revision, deletedAtMs: deletedAtMs
         )))
     }
 
     func listSkills() throws -> [IOSCanonicalSkill] {
-        try execute(SkillCommandEnvelope(command: TypeCommand(type: "list")))
+        try executeList(
+            SkillCommandEnvelope(command: TypeCommand(type: "list")),
+            wrapperKeys: ["skills", "items", "records"]
+        )
     }
 
     @discardableResult
     func deleteUserSkill(id: String, deletedAtMs: Int64) throws -> Bool {
-        try executeMutation(SkillCommandEnvelope(command: DeleteCommand(type: "delete_user", id: id, deletedAtMs: deletedAtMs)))
+        try executeBoolMutation(SkillCommandEnvelope(command: DeleteCommand(type: "delete_user", id: id, deletedAtMs: deletedAtMs)))
     }
 
     func upsertMCPServer(_ input: IOSCanonicalMCPServer) throws -> IOSCanonicalMCPServer {
@@ -1863,13 +1884,16 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteMCPServer(expected: IOSCanonicalMCPServer, deletedAtMs: Int64) throws -> Bool {
-        try executeMutation(MCPCommandEnvelope(command: RevisionDeleteCommand(
+        try executeBoolMutation(MCPCommandEnvelope(command: RevisionDeleteCommand(
             type: "delete_checked", id: expected.id, expectedRevision: expected.revision, deletedAtMs: deletedAtMs
         )))
     }
 
     func listMCPServers() throws -> [IOSCanonicalMCPServer] {
-        try execute(MCPCommandEnvelope(command: TypeCommand(type: "list")))
+        try executeList(
+            MCPCommandEnvelope(command: TypeCommand(type: "list")),
+            wrapperKeys: ["servers", "items", "records"]
+        )
     }
 
     func createConversation(
@@ -1965,7 +1989,10 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         }
         var result: [IOSCanonicalConversationSummary] = []
         while true {
-            let page: [IOSCanonicalConversationSummary] = try execute(Command(type: commandType, query: Query(offset: result.count)))
+            let page: [IOSCanonicalConversationSummary] = try executeList(
+                Command(type: commandType, query: Query(offset: result.count)),
+                wrapperKeys: ["conversations", "sessions", "items", "records"]
+            )
             result.append(contentsOf: page)
             if page.count < 1024 { return result }
         }
@@ -1991,7 +2018,16 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
         let command = RenameConversationCommand(type: "rename_conversation", conversationID: id,
             title: title, titleSource: firstMessageAtRevision == nil ? "user" : "first_message", updatedAtMs: updatedAtMs)
         let receipt = try submitReceipt(command, expectedRevision: firstMessageAtRevision, requestID: UUID().uuidString.lowercased())
-        guard (receipt["result"] as? Bool) == true else { throw IOSApplicationRuntimeError.invalidResponse }
+        let rawResult = receipt["result"]
+        let ok: Bool
+        if let boolValue = rawResult as? Bool {
+            ok = boolValue
+        } else if let object = rawResult as? [String: Any] {
+            ok = (object["ok"] as? Bool) ?? true
+        } else {
+            ok = false
+        }
+        guard ok else { throw IOSApplicationRuntimeError.invalidResponse }
     }
 
     func prepareContextMaintenance(source: IOSContextCompactionSource, input: AgentCoreContextPrepareInput) throws -> IOSContextMaintenancePlan {
@@ -2061,12 +2097,12 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     @discardableResult
     func deleteConversation(id: String) throws -> Bool {
-        try execute(ConversationIDCommand(type: "delete_conversation", conversationID: id))
+        try executeBoolMutation(ConversationIDCommand(type: "delete_conversation", conversationID: id))
     }
 
     @discardableResult
     func deleteMCPServer(id: String, deletedAtMs: Int64) throws -> Bool {
-        try executeMutation(MCPCommandEnvelope(command: DeleteCommand(type: "delete", id: id, deletedAtMs: deletedAtMs)))
+        try executeBoolMutation(MCPCommandEnvelope(command: DeleteCommand(type: "delete", id: id, deletedAtMs: deletedAtMs)))
     }
 
     /// Internal typed adapters build the command; UI and feature services do
@@ -2242,6 +2278,38 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
 
     private func execute<Command: Encodable, Result: Decodable>(_ command: Command) throws -> Result {
         try executeMutation(command)
+    }
+
+    private func executeList<Command: Encodable, Element: Decodable>(
+        _ command: Command,
+        wrapperKeys: [String]
+    ) throws -> [Element] {
+        let receipt = try submitReceipt(command, requestID: UUID().uuidString.lowercased())
+        guard let result = receipt["result"] else { throw IOSApplicationRuntimeError.invalidResponse }
+        if let array = result as? [Any] {
+            let data = try JSONSerialization.data(withJSONObject: array, options: [.fragmentsAllowed])
+            return try JSONDecoder().decode([Element].self, from: data)
+        }
+        if let object = result as? [String: Any] {
+            for key in wrapperKeys {
+                if let array = object[key] as? [Any] {
+                    let data = try JSONSerialization.data(withJSONObject: array, options: [.fragmentsAllowed])
+                    return try JSONDecoder().decode([Element].self, from: data)
+                }
+            }
+            return []
+        }
+        throw IOSApplicationRuntimeError.invalidResponse
+    }
+
+    private func executeBoolMutation<Command: Encodable>(_ command: Command) throws -> Bool {
+        let receipt = try submitReceipt(command, requestID: UUID().uuidString.lowercased())
+        guard let result = receipt["result"] else { throw IOSApplicationRuntimeError.invalidResponse }
+        if let boolValue = result as? Bool { return boolValue }
+        if let object = result as? [String: Any] {
+            return (object["ok"] as? Bool) ?? true
+        }
+        throw IOSApplicationRuntimeError.invalidResponse
     }
 
     private func executeOptional<Command: Encodable, Result: Decodable>(_ command: Command) throws -> Result? {

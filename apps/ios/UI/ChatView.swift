@@ -344,6 +344,9 @@ struct ChatView: View {
     @State private var remoteRunObservationError: String?
     @State private var pendingHostPermissionRequest: HostAgentPermissionRequest? = nil
     @State private var pendingHostPermissionConversationID: UUID? = nil
+    @State private var pendingV2UserQuestion: ChatManager.V2UserQuestionPrompt? = nil
+    @State private var v2UiSurfaces: [AgentCoreJSONValue] = []
+    @State private var v2CompactionSummary: String? = nil
     @State private var pendingLocalAgentPermissionRequest: IOSAgentPermissionRequest? = nil
     @State private var pendingLocalScopedResourceRequest: IOSAgentPermissionRequest? = nil
     @State private var presentedLocalScopedResourceRequest: IOSAgentPermissionRequest? = nil
@@ -861,6 +864,27 @@ struct ChatView: View {
             }
             .store(in: &stateObservers)
 
+        container.chatManager.$pendingV2UserQuestion
+            .receive(on: DispatchQueue.main)
+            .sink { prompt in
+                pendingV2UserQuestion = prompt
+            }
+            .store(in: &stateObservers)
+
+        container.chatManager.$v2UiSurfaces
+            .receive(on: DispatchQueue.main)
+            .sink { surfaces in
+                v2UiSurfaces = surfaces
+            }
+            .store(in: &stateObservers)
+
+        container.chatManager.$v2CompactionSummary
+            .receive(on: DispatchQueue.main)
+            .sink { summary in
+                v2CompactionSummary = summary
+            }
+            .store(in: &stateObservers)
+
         container.chatManager.$submittingHostPermissionRequestID
             .receive(on: DispatchQueue.main)
             .sink { submittingHostPermissionRequestID = $0 }
@@ -1342,6 +1366,71 @@ struct ChatView: View {
                 .padding(.horizontal, 16)
                 .accessibilityIdentifier("chat.history.load_error")
             }
+            if let summary = v2CompactionSummary, !summary.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        container.chatManager.dismissV2CompactionSummary()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                        .stroke(DesignTokens.borderColor, lineWidth: 1)
+                )
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("chat.v2.compactionBanner")
+            }
+
+            if !v2UiSurfaces.isEmpty {
+                let activeConvID = container.chatManager.currentConversationId?.uuidString ?? ""
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(v2UiSurfaces.enumerated()), id: \.offset) { _, surface in
+                        IOSV2UISurfaceCard(
+                            snapshotValue: surface,
+                            conversationID: activeConvID,
+                            onSubmit: { convID, interaction in
+                                try await container.chatManager.submitV2UIInteraction(
+                                    conversationId: convID,
+                                    interaction: interaction
+                                )
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.vertical, 4)
+            }
+
+            if let questionPrompt = pendingV2UserQuestion {
+                IOSV2UserQuestionCard(
+                    prompt: questionPrompt,
+                    onRespond: { requestID, answer in
+                        Task {
+                            try? await container.chatManager.respondToV2UserQuestion(
+                                requestID: requestID,
+                                answer: answer
+                            )
+                        }
+                    }
+                )
+                .padding(.horizontal, DesignTokens.spacing_lg)
+                .padding(.vertical, 4)
+            }
+
             if let message = hostPermissionSubmissionError, pendingHostPermissionRequest != nil {
                 Text(message)
                     .font(.caption)
@@ -3266,4 +3355,191 @@ struct ChatView: View {
         }
     }
 
+}
+
+private struct IOSV2UserQuestionCard: View {
+    let prompt: ChatManager.V2UserQuestionPrompt
+    let onRespond: (String, String?) -> Void
+    @State private var answerText: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "questionmark.bubble")
+                    .foregroundStyle(Color.accentColor)
+                Text(prompt.question)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+            }
+            if !prompt.options.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(prompt.options, id: \.self) { option in
+                            Button(option) {
+                                onRespond(prompt.requestID, option)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Type your answer...", text: $answerText)
+                    .textFieldStyle(.roundedBorder)
+                Button("Submit") {
+                    let trimmed = answerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    onRespond(prompt.requestID, trimmed)
+                    answerText = ""
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
+        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityIdentifier("chat.v2.userQuestionCard")
+    }
+}
+
+private struct IOSV2UISurfaceCard: View {
+    let snapshotValue: AgentCoreJSONValue
+    let conversationID: String
+    let onSubmit: (String, [String: Any]) async throws -> [String: Any]
+    @State private var fieldValues: [String: String] = [:]
+    @State private var isSubmitting = false
+    @State private var submissionError: String?
+
+    private var decodedSnapshot: AppleUISnapshot<AgentCoreJSONValue>? {
+        guard let data = try? JSONEncoder().encode(snapshotValue) else { return nil }
+        return try? JSONDecoder().decode(AppleUISnapshot<AgentCoreJSONValue>.self, from: data)
+    }
+
+    var body: some View {
+        Group {
+            if let snapshot = decodedSnapshot {
+                let targetConvID = conversationID.isEmpty ? snapshot.identity.owner.conversation_id : conversationID
+                AppleUISurfaceView(
+                    snapshot: snapshot,
+                    submit: { submission in
+                        do {
+                            let encoded = try JSONEncoder().encode(submission)
+                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? [:]
+                            let payload: [String: Any] = [
+                                "surface_id": submission.interaction.identity.surface_id,
+                                "action_id": submission.interaction.action?.action_id ?? "",
+                                "submission_id": submission.submission_id,
+                                "interaction": interactionObj,
+                            ]
+                            let result = try await onSubmit(targetConvID, payload)
+                            if let rawSnap = result["snapshot"],
+                               JSONSerialization.isValidJSONObject(rawSnap),
+                               let snapData = try? JSONSerialization.data(withJSONObject: rawSnap),
+                               let updated = try? JSONDecoder().decode(AppleUISnapshot<AgentCoreJSONValue>.self, from: snapData) {
+                                return .committed(AppleUIInteractionReceipt(snapshot: updated, queued_submission_id: submission.submission_id))
+                            }
+                            return .committed(AppleUIInteractionReceipt(snapshot: snapshot, queued_submission_id: submission.submission_id))
+                        } catch {
+                            return .rejected(error.localizedDescription)
+                        }
+                    },
+                    accepted: { _ in }
+                )
+                .id(snapshot.identity)
+            } else if case .object(let root) = snapshotValue {
+                rawSurfaceBody(root: root)
+            }
+        }
+        .padding(12)
+        .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                .stroke(DesignTokens.borderColor, lineWidth: 1)
+        )
+        .accessibilityIdentifier("chat.v2.uiSurface")
+    }
+
+    @ViewBuilder
+    private func rawSurfaceBody(root: [String: AgentCoreJSONValue]) -> some View {
+        let surfaceID: String = {
+            if case .string(let s)? = root["surface_id"] { return s }
+            return ""
+        }()
+        let summary: String = {
+            if case .string(let s)? = root["summary"] { return s }
+            return ""
+        }()
+        let components: [[String: AgentCoreJSONValue]] = {
+            if case .array(let items)? = root["components"] {
+                return items.compactMap { item in
+                    if case .object(let dict) = item { return dict }
+                    return nil
+                }
+            }
+            return []
+        }()
+        VStack(alignment: .leading, spacing: 8) {
+            if !summary.isEmpty {
+                Text(summary).font(.subheadline).fontWeight(.medium)
+            }
+            ForEach(Array(components.enumerated()), id: \.offset) { _, comp in
+                let kind = Self.stringValue(comp["component"]) ?? Self.stringValue(comp["type"]) ?? ""
+                let id = Self.stringValue(comp["id"]) ?? ""
+                let props: [String: AgentCoreJSONValue] = {
+                    if case .object(let p)? = comp["props"] { return p }
+                    return comp
+                }()
+                let text = Self.stringValue(props["text"]) ?? Self.stringValue(props["label"]) ?? Self.stringValue(props["title"]) ?? ""
+                let actionID = Self.stringValue(props["action_id"]) ?? Self.stringValue(props["action"]) ?? id
+                switch kind.lowercased() {
+                case "button", "action":
+                    Button(text.isEmpty ? (actionID.isEmpty ? "Submit" : actionID) : text) {
+                        guard !conversationID.isEmpty else { return }
+                        isSubmitting = true
+                        submissionError = nil
+                        Task {
+                            defer { isSubmitting = false }
+                            do {
+                                _ = try await onSubmit(conversationID, [
+                                    "surface_id": surfaceID,
+                                    "action_id": actionID,
+                                    "data_model": fieldValues,
+                                ])
+                            } catch {
+                                submissionError = error.localizedDescription
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSubmitting || conversationID.isEmpty)
+                case "textfield", "text_field", "input":
+                    let bindingKey = Self.stringValue(props["binding"]) ?? (id.isEmpty ? "input" : id)
+                    TextField(text.isEmpty ? bindingKey : text, text: Binding(
+                        get: { fieldValues[bindingKey] ?? "" },
+                        set: { fieldValues[bindingKey] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                default:
+                    if !text.isEmpty {
+                        Text(text).font(.body)
+                    }
+                }
+            }
+            if isSubmitting {
+                ProgressView().controlSize(.small)
+            }
+            if let submissionError {
+                Text(submissionError).font(.caption).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private static func stringValue(_ value: AgentCoreJSONValue?) -> String? {
+        if case .string(let s)? = value { return s }
+        return nil
+    }
 }

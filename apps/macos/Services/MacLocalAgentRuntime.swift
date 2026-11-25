@@ -694,7 +694,8 @@ nonisolated struct MacLocalAgentEvent: Sendable {
             contextWindowTokens: contextWindowTokens,
             contextPromptLimit: contextPromptLimit,
             artifactURLs: merged,
-            trace: trace
+            trace: trace,
+            v2Event: self.v2Event
         ).bindingCanonicalRun(canonicalRunID)
             .bindingSubmissionIntent(remoteSubmissionIntent)
             .bindingCoreSession(conversationID: validatedCoreConversationID,
@@ -2795,6 +2796,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let type = optionalString(in: nestedEvent ?? object, keys: ["type"])
             ?? optionalString(in: object, keys: ["type"])
             ?? "unknown"
+        if let v2Event = decodeV2LocalEvent(object: nestedEvent ?? object, type: type, conversationID: conversationID) {
+            return v2Event
+        }
         if requiresCoreSessionWitness(type: type),
            coreSessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             return protocolFailure(
@@ -2851,6 +2855,197 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             return decodeContextUsage(object: object, conversationID: conversationID)
         default:
             return decodeTraceEvent(object: object, conversationID: conversationID, type: type)
+        }
+    }
+
+    private static func decodeV2LocalEvent(
+        object: [String: Any],
+        type: String,
+        conversationID: String
+    ) -> MacLocalAgentEvent? {
+        switch type {
+        case "session_started":
+            let sessionID = (object["session_id"] as? String) ?? conversationID
+            let model = (object["model"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: "",
+                title: "session_started",
+                detail: sessionID,
+                isError: false,
+                v2Event: .sessionStarted(sessionID: sessionID, model: model)
+            )
+        case "text_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_text_delta",
+                isError: false,
+                v2Event: .textDelta(delta)
+            )
+        case "reasoning_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_reasoning_delta",
+                isError: false,
+                v2Event: .reasoningDelta(delta)
+            )
+        case "tool_started":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            return MacLocalAgentEvent(
+                kind: .toolStarted,
+                text: "",
+                title: name,
+                detail: nil,
+                isError: false,
+                toolCallID: callID,
+                v2Event: .toolStarted(callID: callID, name: name)
+            )
+        case "tool_finished":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            let isError = (object["is_error"] as? Bool) ?? false
+            let summary = (object["summary"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .toolFinished,
+                text: summary,
+                title: name,
+                detail: summary,
+                isError: isError,
+                toolCallID: callID,
+                v2Event: .toolFinished(callID: callID, name: name, isError: isError, summary: summary)
+            )
+        case "compacted":
+            let explicitSummary = (object["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary: String
+            if let explicitSummary, !explicitSummary.isEmpty {
+                summary = explicitSummary
+            } else if let before = object["tokens_before"], let after = object["tokens_after"] {
+                summary = "Context compacted (\(before) → \(after) tokens)"
+            } else if let after = object["tokens_after"] {
+                summary = "Context compacted (\(after) tokens)"
+            } else {
+                summary = "Context compacted"
+            }
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: summary,
+                title: "compacted",
+                detail: summary,
+                isError: false,
+                v2Event: .compacted(summary: summary)
+            )
+        case "ui_surface":
+            let snapshotObject = object["snapshot"]
+            let snapshotJSON: String = {
+                guard let snapshotObject,
+                      JSONSerialization.isValidJSONObject(snapshotObject),
+                      let data = try? JSONSerialization.data(withJSONObject: snapshotObject, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return "{}"
+                }
+                return text
+            }()
+            let phase = (snapshotObject as? [String: Any])?["phase"] as? String
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: snapshotJSON,
+                title: "ui_surface",
+                detail: phase,
+                isError: false,
+                v2Event: .uiSurface(snapshotJSON: snapshotJSON)
+            )
+        case "permission_requested":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let tool = (object["tool"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "tool"
+            let reason = (object["reason"] as? String) ?? ""
+            let argsJSON: String = {
+                guard let rawArgs = object["arguments"],
+                      JSONSerialization.isValidJSONObject(rawArgs),
+                      let data = try? JSONSerialization.data(withJSONObject: rawArgs, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return ""
+                }
+                return text
+            }()
+            let request = MacRemotePermissionRequest(
+                id: requestID,
+                allowConversation: true,
+                protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
+                nonce: "v2-\(requestID)",
+                hostID: "local",
+                clientID: "nola-macos",
+                sessionID: conversationID,
+                toolName: tool,
+                arguments: argsJSON,
+                callID: requestID,
+                reason: reason,
+                message: reason.isEmpty ? "Allow \(tool)?" : reason,
+                expiresAt: nil
+            )
+            return MacLocalAgentEvent(
+                kind: .permissionRequested,
+                text: reason,
+                title: tool,
+                detail: reason,
+                isError: false,
+                toolCallID: requestID,
+                permissionRequest: request,
+                v2Event: .permissionRequested(requestID: requestID, tool: tool, reason: reason, argumentsJSON: argsJSON)
+            )
+        case "user_question":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let questionText = (object["question"] as? String) ?? ""
+            let rawOptions = (object["options"] as? [String]) ?? []
+            let mappedOptions = rawOptions.enumerated().map { index, label in
+                MacRemoteUserInputOption(id: "opt-\(index)", label: label, detail: "")
+            }
+            let question = MacRemoteUserInputQuestion(
+                id: requestID,
+                prompt: questionText,
+                options: mappedOptions,
+                allowsFreeform: true,
+                required: true,
+                maxTextCharacters: 4096
+            )
+            let userInput = MacRemoteUserInputRequest(
+                id: requestID,
+                conversationID: conversationID,
+                runID: conversationID,
+                sessionID: conversationID,
+                revision: 1,
+                schemaDigest: "",
+                state: "open",
+                questions: [question]
+            )
+            return MacLocalAgentEvent(
+                kind: .userInputRequested,
+                text: questionText,
+                title: "user_question",
+                detail: rawOptions.joined(separator: ", "),
+                isError: false,
+                userInputRequest: userInput,
+                v2Event: .userQuestion(requestID: requestID, question: questionText, options: rawOptions)
+            )
+        case "turn_completed" where object["protocol_version"] == nil:
+            let sessionID = (object["session_id"] as? String) ?? conversationID
+            let finalText = (object["final_text"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .finished,
+                text: finalText,
+                title: nil,
+                detail: "v2_turn_completed",
+                isError: false,
+                v2Event: .turnCompleted(sessionID: sessionID, finalText: finalText)
+            )
+        default:
+            return nil
         }
     }
 

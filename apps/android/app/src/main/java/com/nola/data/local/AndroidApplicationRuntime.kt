@@ -511,7 +511,7 @@ class AndroidApplicationRuntime(
     fun deleteProductSetting(key: String): Boolean = submitMutation(buildJsonObject {
         put("type", "delete_product_setting")
         put("key", key)
-    }).jsonPrimitive.content.toBoolean()
+    }).extractOkBoolean()
 
     fun upsertModelProfile(profile: CanonicalModelProfile) {
         execute(buildJsonObject {
@@ -597,7 +597,7 @@ class AndroidApplicationRuntime(
     fun listModelProfiles(): List<CanonicalModelProfile> = execute(buildJsonObject {
         put("type", "model")
         put("command", buildJsonObject { put("type", "list_profiles") })
-    }).jsonArray.map { json.decodeFromJsonElement(CanonicalModelProfile.serializer(), it) }
+    }).extractJsonArray("profiles", "items", "records").map { json.decodeFromJsonElement(CanonicalModelProfile.serializer(), it) }
 
     fun deleteModelProfile(id: String, deletedAtMs: Long): Boolean = execute(buildJsonObject {
         put("type", "model")
@@ -606,12 +606,12 @@ class AndroidApplicationRuntime(
             put("id", id)
             put("deleted_at_ms", deletedAtMs)
         })
-    }).jsonPrimitive.content.toBoolean()
+    }).extractOkBoolean()
 
     fun pendingSyncChanges(limit: Int = 100): List<CanonicalSyncChange> = execute(buildJsonObject {
         put("type", "pending_sync_changes")
         put("limit", limit.coerceAtLeast(1))
-    }).jsonArray.map { value -> value.jsonObject.toCanonicalSyncChange() }
+    }).extractJsonArray("changes", "items", "records").map { value -> value.jsonObject.toCanonicalSyncChange() }
 
     fun resolveSyncChange(operationId: String, status: String, remoteCursor: Long?, resolvedAtMs: Long): Boolean =
         execute(buildJsonObject {
@@ -620,7 +620,7 @@ class AndroidApplicationRuntime(
             put("status", status)
             put("remote_cursor", remoteCursor)
             put("resolved_at_ms", resolvedAtMs)
-        }).jsonPrimitive.content.toBoolean()
+        }).extractOkBoolean()
 
     fun syncCursor(replicaId: String): CanonicalSyncCursor? {
         val result = execute(buildJsonObject {
@@ -704,7 +704,7 @@ class AndroidApplicationRuntime(
                 put("limit", limit)
             })
         }
-    ).jsonArray.map { value ->
+    ).extractJsonArray("usage", "items", "records").map { value ->
         val record = value.jsonObject
         DataSourceUsageRecord(
                 id = record.getValue("id").jsonPrimitive.content,
@@ -738,7 +738,7 @@ class AndroidApplicationRuntime(
                         put("limit", limit.coerceIn(1, 50))
                     })
                 })
-            }).jsonArray.map(::decodeMemory)
+            }).extractJsonArray("memories", "items", "records").map(::decodeMemory)
         }
 
     private fun memoryCommitCommand(record: StructuredMemoryRecord): JsonObject {
@@ -810,7 +810,7 @@ class AndroidApplicationRuntime(
                 put("type", "list")
                 put("limit", limit)
             })
-        }).jsonArray
+        }).extractJsonArray("memories", "items", "records")
         return MemorySnapshot(canonical, canonical.map(::decodeMemory))
     }
 
@@ -1015,7 +1015,7 @@ class AndroidApplicationRuntime(
             put("type", "skill")
             put("command", buildJsonObject { put("type", "list_editors") })
         }
-    ))
+    ).extractJsonArray("skills", "items", "records"))
 
     fun createMcpServer(server: McpServerConfig): McpEditorSnapshot =
         decodeMcpSnapshot(submitMutation(buildJsonObject {
@@ -1039,7 +1039,7 @@ class AndroidApplicationRuntime(
             put("type", "mcp")
             put("command", buildJsonObject { put("type", "list") })
         }
-    ).jsonArray.map(::decodeMcpSnapshot)
+    ).extractJsonArray("servers", "items", "records").map(::decodeMcpSnapshot)
 
     private fun decodeMcpSnapshot(value: JsonElement): McpEditorSnapshot {
         val record = value.jsonObject
@@ -1388,7 +1388,7 @@ class AndroidApplicationRuntime(
                     put("limit", 1024)
                     put("offset", result.size)
                 })
-            }).jsonArray
+            }).extractJsonArray("sessions", "conversations", "items", "records")
             result += page.map { value ->
                 val record = value.jsonObject
                 CanonicalConversationSummary(
@@ -1429,7 +1429,7 @@ class AndroidApplicationRuntime(
                 put("title", title)
                 put("title_source", "first_message")
                 put("updated_at_ms", System.currentTimeMillis())
-            }, expectedRevision = conversation.revision).jsonPrimitive.boolean
+            }, expectedRevision = conversation.revision).extractOkBoolean()
         } catch (_: RevisionConflict) {
             false
         }
@@ -1447,7 +1447,7 @@ class AndroidApplicationRuntime(
                 put("type", "replace_summary"); put("source", source); put("summary", summary)
                 put("committed_at_ms", System.currentTimeMillis())
             })
-        }).jsonPrimitive.content.toBoolean())
+        }).extractOkBoolean())
     }
 
 
@@ -1597,6 +1597,18 @@ class AndroidApplicationRuntime(
             handle = 0L
         }
     }
+}
+
+internal fun JsonElement.extractJsonArray(vararg keys: String): JsonArray = when (this) {
+    is JsonArray -> this
+    is JsonObject -> keys.firstNotNullOfOrNull { key -> this[key] as? JsonArray } ?: JsonArray(emptyList())
+    else -> JsonArray(emptyList())
+}
+
+internal fun JsonElement.extractOkBoolean(): Boolean = when (this) {
+    is JsonPrimitive -> this.content.toBoolean()
+    is JsonObject -> (this["ok"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true
+    else -> false
 }
 
 data class CanonicalConversationMessage(

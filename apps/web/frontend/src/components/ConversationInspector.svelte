@@ -290,7 +290,9 @@
         knowledgeError = '';
         knowledgeNotice = '';
         try {
-            await patchV2ConversationConfiguration(convId, { knowledge: knowledgeDraft });
+            await patchV2ConversationConfiguration(convId, {
+                knowledge: { keyPointsMarkdown: knowledgeDraft, summary: knowledgeDraft },
+            });
             if (conversationId !== convId) return;
             savedKnowledge = knowledgeDraft;
             knowledgeNotice = t($locale, 'chatKnowledge.saved');

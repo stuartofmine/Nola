@@ -46,6 +46,7 @@ import kotlinx.serialization.json.put
 internal data class SoftwareUpdateArtifact(
     val kind: String,
     val url: String?,
+    val sha256: String? = null,
 )
 
 internal data class SoftwareUpdateRelease(
@@ -77,6 +78,7 @@ internal fun parseSoftwareUpdateSnapshot(value: JsonObject): SoftwareUpdateSnaps
         val kind = artifactObj.nonBlankString("kind")
             ?: throw IOException("Update metadata is missing artifact kind")
         val url = artifactObj.nonBlankString("url")
+        val sha256 = artifactObj.nonBlankString("sha256")
         if (kind == "store" && url == null) {
             throw IOException("Update metadata is missing store URL")
         }
@@ -90,7 +92,7 @@ internal fun parseSoftwareUpdateSnapshot(value: JsonObject): SoftwareUpdateSnaps
             version = version,
             build = build,
             notes = notes,
-            artifact = SoftwareUpdateArtifact(kind = kind, url = url),
+            artifact = SoftwareUpdateArtifact(kind = kind, url = url, sha256 = sha256),
         )
     }
     return SoftwareUpdateSnapshot(status = status, release = release)
@@ -101,12 +103,24 @@ internal fun softwareUpdateTarget(context: Context? = null): String = if (BuildC
     "x86_64" -> "android-x86_64"
     else -> throw IOException(context?.getString(R.string.software_update_error_unsupported_arch) ?: "Unsupported update architecture")
 }
-private suspend fun updateCall(context: Context, operation: String, releaseId: String? = null, directory: File? = null): JsonObject = withContext(Dispatchers.IO) {
+private suspend fun updateCall(
+    context: Context,
+    operation: String,
+    releaseId: String? = null,
+    directory: File? = null,
+    url: String? = null,
+    sha256: String? = null,
+): JsonObject = withContext(Dispatchers.IO) {
     val request = buildJsonObject {
         put("operation", operation)
         put("target", softwareUpdateTarget(context))
         releaseId?.let { put("expected_release_id", it) }
-        directory?.let { put("directory", it.absolutePath) }
+        url?.let { put("url", it) }
+        sha256?.let { put("sha256", it) }
+        directory?.let {
+            put("directory", it.absolutePath)
+            put("dest_dir", it.absolutePath)
+        }
     }
     val data = AgentCoreNative.nativeSoftwareUpdate(request.toString().toByteArray(Charsets.UTF_8))
         ?: throw IOException(context.getString(R.string.software_update_error_service_unavailable))
@@ -199,7 +213,14 @@ internal fun SoftwareUpdateControls() {
                     scope.launch {
                         try {
                             val directory = File(context.cacheDir, "software-updates/${UUID.randomUUID()}")
-                            val result = updateCall(context, "download", release.releaseId, directory)
+                            val result = updateCall(
+                                context = context,
+                                operation = "download",
+                                releaseId = release.releaseId,
+                                directory = directory,
+                                url = release.artifact.url,
+                                sha256 = release.artifact.sha256,
+                            )
                             val path = result.nonBlankString("path")
                                 ?: throw IOException(context.getString(R.string.software_update_error_check_failed))
                             val file = File(path)

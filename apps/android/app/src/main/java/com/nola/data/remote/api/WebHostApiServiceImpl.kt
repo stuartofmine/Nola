@@ -154,9 +154,21 @@ class WebHostApiServiceImpl @Inject constructor(
         conversationId: String,
         content: String,
         pinnedCertificateSha256: String,
+        attachments: kotlinx.serialization.json.JsonArray?,
+        modelId: String?,
+        reasoningEffort: String?,
+        permissionProfile: String?,
+        selectedExperts: kotlinx.serialization.json.JsonArray?,
     ): Flow<SseEvent> {
         val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId/messages")
-        val bodyJson = buildJsonObject { put("content", content) }.toString()
+        val bodyJson = buildJsonObject {
+            put("content", content)
+            if (attachments != null && attachments.isNotEmpty()) put("attachments", attachments)
+            if (!modelId.isNullOrBlank()) put("modelId", modelId)
+            if (!reasoningEffort.isNullOrBlank()) put("reasoningEffort", reasoningEffort)
+            if (!permissionProfile.isNullOrBlank()) put("permissionProfile", permissionProfile)
+            if (selectedExperts != null && selectedExperts.isNotEmpty()) put("selected_experts", selectedExperts)
+        }.toString()
         val headers = v2Headers(token) + mapOf("Accept" to "text/event-stream")
         return sseClient.stream(
             url = url,
@@ -188,6 +200,7 @@ class WebHostApiServiceImpl @Inject constructor(
         conversationId: String,
         requestId: String,
         allow: Boolean,
+        scope: String,
         pinnedCertificateSha256: String,
     ): JsonObject = postV2Json(
         hostBaseUrl,
@@ -196,6 +209,7 @@ class WebHostApiServiceImpl @Inject constructor(
         buildJsonObject {
             put("request_id", requestId)
             put("allow", allow)
+            put("scope", scope)
         },
         pinnedCertificateSha256,
     )
@@ -436,12 +450,15 @@ class WebHostApiServiceImpl @Inject constructor(
         val allow = (payload["allow"] as? Boolean)
             ?: (payload["approved"] as? Boolean)
             ?: (decisionStr == "allow" || decisionStr == "approve" || decisionStr == "allow_once" || decisionStr == "allow_conversation")
+        val scope = payload["scope"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: if (decisionStr == "allow_conversation" || payload["remember_for_conversation"] == true) "session" else "once"
         v2RespondPermission(
             hostBaseUrl = hostBaseUrl,
             token = token,
             conversationId = convId,
             requestId = reqId,
             allow = allow,
+            scope = scope,
             pinnedCertificateSha256 = pinnedCertificateSha256,
         )
     }
@@ -509,17 +526,33 @@ class WebHostApiServiceImpl @Inject constructor(
         submission: FrozenRemoteSubmission,
         pinnedCertificateSha256: String,
     ): Flow<SseEvent> {
-        val prompt = ((submission.request["messages"] as? kotlinx.serialization.json.JsonArray)
-            ?.lastOrNull() as? JsonObject)
+        val lastMessage = (submission.request["messages"] as? kotlinx.serialization.json.JsonArray)
+            ?.lastOrNull() as? JsonObject
+        val prompt = lastMessage
             ?.get("content")
             ?.let { (it as? JsonPrimitive)?.content }
             .orEmpty()
+        val attachments = (submission.request["attachments"] as? kotlinx.serialization.json.JsonArray)
+            ?: (lastMessage?.get("attachments") as? kotlinx.serialization.json.JsonArray)
+        val modelId = (submission.request["modelId"] as? JsonPrimitive)?.content
+            ?: (submission.request["model_id"] as? JsonPrimitive)?.content
+            ?: ((submission.request["model_intent"] as? JsonObject)?.get("model_id") as? JsonPrimitive)?.content
+        val reasoningEffort = (submission.request["reasoningEffort"] as? JsonPrimitive)?.content
+            ?: (submission.request["reasoning_effort"] as? JsonPrimitive)?.content
+        val permissionProfile = (submission.request["permissionProfile"] as? JsonPrimitive)?.content
+            ?: (submission.request["permission_profile"] as? JsonPrimitive)?.content
+        val selectedExperts = submission.request["selected_experts"] as? kotlinx.serialization.json.JsonArray
         return v2StreamMessage(
             hostBaseUrl = hostBaseUrl,
             token = token,
             conversationId = submission.identity.conversationId,
             content = prompt,
             pinnedCertificateSha256 = pinnedCertificateSha256,
+            attachments = attachments,
+            modelId = modelId,
+            reasoningEffort = reasoningEffort,
+            permissionProfile = permissionProfile,
+            selectedExperts = selectedExperts,
         )
     }
 

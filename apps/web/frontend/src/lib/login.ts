@@ -11,7 +11,7 @@ export function safeLoginNext(value: string | null): string {
 
 export function validHostToken(value: string): boolean {
     const length = value.trim().length;
-    return length >= 32 && length <= 256;
+    return length >= 1 && length <= 256;
 }
 
 export function loginLanguage(languages: readonly string[]): 'zh' | 'en' {

@@ -1490,6 +1490,10 @@ public final class ChatManager: ObservableObject {
             hostToolEvents = []
             pendingHostPermissionRequest = nil
             pendingHostPermissionConversationId = nil
+            pendingV2UserQuestion = nil
+            v2UiSurfaces = []
+            v2SessionID = nil
+            v2CompactionSummary = nil
             localAgentPermissionRequest = nil
             localAgentScopedResourceRequest = nil
             committedAssistantProjection = nil
@@ -1647,6 +1651,22 @@ public final class ChatManager: ObservableObject {
         session.$remoteSubmissionPending.sink { [weak self, weak session] value in
             guard let self, let session, self.selectedExecution === session else { return }
             self.remoteSubmissionPending = value
+        }.store(in: &selectedExecutionSubscriptions)
+        session.$pendingV2UserQuestion.sink { [weak self, weak session] value in
+            guard let self, let session, self.selectedExecution === session else { return }
+            self.pendingV2UserQuestion = value
+        }.store(in: &selectedExecutionSubscriptions)
+        session.$v2UiSurfaces.sink { [weak self, weak session] value in
+            guard let self, let session, self.selectedExecution === session else { return }
+            self.v2UiSurfaces = value
+        }.store(in: &selectedExecutionSubscriptions)
+        session.$v2CompactionSummary.sink { [weak self, weak session] value in
+            guard let self, let session, self.selectedExecution === session else { return }
+            self.v2CompactionSummary = value
+        }.store(in: &selectedExecutionSubscriptions)
+        session.$v2SessionID.sink { [weak self, weak session] value in
+            guard let self, let session, self.selectedExecution === session else { return }
+            self.v2SessionID = value
         }.store(in: &selectedExecutionSubscriptions)
         if session.selectedModelInfo?.isWebBackend != true {
             session.refreshPermissionOwnerProjection(conversationID: id)
@@ -2288,21 +2308,29 @@ public final class ChatManager: ObservableObject {
 
     private func upsertV2UiSurface(_ snapshot: AgentCoreJSONValue) {
         var surfaceID: String?
-        if case .object(let root) = snapshot,
-           case .object(let identity) = root["identity"],
-           case .string(let sid) = identity["surface_id"],
-           !sid.isEmpty {
-            surfaceID = sid
+        if case .object(let root) = snapshot {
+            if case .string(let sid) = root["surface_id"], !sid.isEmpty {
+                surfaceID = sid
+            } else if case .object(let identity) = root["identity"],
+                      case .string(let sid) = identity["surface_id"],
+                      !sid.isEmpty {
+                surfaceID = sid
+            }
         }
         guard let surfaceID else {
             v2UiSurfaces.append(snapshot)
             return
         }
         if let index = v2UiSurfaces.firstIndex(where: { existing in
-            if case .object(let root) = existing,
-               case .object(let identity) = root["identity"],
-               case .string(let sid) = identity["surface_id"] {
-                return sid == surfaceID
+            if case .object(let root) = existing {
+                if case .string(let sid) = root["surface_id"], sid == surfaceID {
+                    return true
+                }
+                if case .object(let identity) = root["identity"],
+                   case .string(let sid) = identity["surface_id"],
+                   sid == surfaceID {
+                    return true
+                }
             }
             return false
         }) {
@@ -2310,6 +2338,14 @@ public final class ChatManager: ObservableObject {
         } else {
             v2UiSurfaces.append(snapshot)
         }
+    }
+
+    public func dismissV2CompactionSummary() {
+        if !isConversationExecution, let selectedExecution {
+            selectedExecution.dismissV2CompactionSummary()
+            return
+        }
+        v2CompactionSummary = nil
     }
 
     public func respondToV2UserQuestion(requestID: String, answer: String?) async throws {
@@ -4838,10 +4874,11 @@ public final class ChatManager: ObservableObject {
                             self.processingState = .streaming(progress: min(0.98, Double(hostToolEvents.count) * 0.10))
                             let v2Request = HostAgentPermissionRequest(
                                 id: id,
-                                allowConversation: false,
+                                allowConversation: true,
                                 toolName: tool,
                                 reason: reason,
                                 message: reason.isEmpty ? tool : reason,
+                                hostId: journalProvider.journalSourceHostID,
                                 sessionId: conversationID
                             )
                             startHostPermissionInteraction(
@@ -4853,10 +4890,14 @@ public final class ChatManager: ObservableObject {
                                     let decision = (payload["decision"] as? String) ?? resolutionDecision
                                     let allow = (payload["allow"] as? Bool)
                                         ?? (decision == "allow_once" || decision == "allow_conversation" || decision == "allow")
+                                    let rememberForConversation = (payload["remember_for_conversation"] as? Bool) == true
+                                    let scope = (payload["scope"] as? String)
+                                        ?? ((decision == "allow_conversation" || rememberForConversation) ? "session" : "once")
                                     try await journalProvider.v2RespondPermission(
                                         conversationID: conversationID,
                                         requestID: id,
-                                        allow: allow
+                                        allow: allow,
+                                        scope: scope
                                     )
                                 },
                                 onSubmitted: { [weak self] permissionDecision in

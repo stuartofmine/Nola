@@ -159,6 +159,7 @@ export interface V2ConversationConfiguration {
     permissionProfile: V2PermissionProfile;
     reasoningEffort: V2ReasoningEffort;
     knowledge: string;
+    selectedModelId?: string;
     configurationRevision?: number;
 }
 
@@ -310,13 +311,37 @@ export async function listV2ModelChoices(signal?: AbortSignal): Promise<V2ModelC
 
 function extractUsageFromEvents(events: unknown[]): V2TokenUsage {
     let total = emptyV2TokenUsage();
+    // WebHost emits `chat_assistant` right after `AgentEngine`'s `turn_completed`
+    // for the same turn. Deduplicate paired events so turn tokens are never counted twice.
+    let lastUsageKind: 'turn_completed' | 'chat_assistant' | null = null;
     for (const raw of events) {
         if (!raw || typeof raw !== 'object') continue;
         const ev = raw as Record<string, unknown>;
+        const kind = String(ev.kind ?? ev.type ?? '');
+        if (kind === 'user_message' || kind === 'chat_user' || kind === 'turn_started') {
+            lastUsageKind = null;
+            continue;
+        }
         const payload = (ev.payload && typeof ev.payload === 'object' ? ev.payload : ev) as Record<string, unknown>;
         const usage = parseV2TokenUsage(payload.usage ?? ev.usage);
-        if (usage) {
+        if (!usage) continue;
+        if (kind === 'turn_completed') {
+            if (lastUsageKind === 'chat_assistant') {
+                lastUsageKind = null;
+                continue;
+            }
             total = mergeV2TokenUsage(total, usage);
+            lastUsageKind = 'turn_completed';
+        } else if (kind === 'chat_assistant' || kind === 'assistant_message') {
+            if (lastUsageKind === 'turn_completed') {
+                lastUsageKind = null;
+                continue;
+            }
+            total = mergeV2TokenUsage(total, usage);
+            lastUsageKind = 'chat_assistant';
+        } else {
+            total = mergeV2TokenUsage(total, usage);
+            lastUsageKind = null;
         }
     }
     return total;
@@ -382,15 +407,22 @@ export async function getV2ConversationConfiguration(
         knowledge = rawKnowledge;
     } else if (rawKnowledge && typeof rawKnowledge === 'object') {
         const kObj = rawKnowledge as Record<string, unknown>;
-        const summary = typeof kObj.summary === 'string' ? kObj.summary : '';
-        const wiki = typeof kObj.wiki === 'string' ? kObj.wiki : '';
-        const points = typeof kObj.points === 'string' ? kObj.points : '';
-        knowledge = summary || [points, wiki].filter(Boolean).join('\n\n');
+        const nonEmpty = (value: unknown): string | undefined =>
+            typeof value === 'string' && value.length > 0 ? value : undefined;
+        knowledge =
+            nonEmpty(kObj.keyPointsMarkdown) ??
+            nonEmpty(kObj.wikiMarkdown) ??
+            nonEmpty(kObj.summary) ??
+            nonEmpty(kObj.points) ??
+            nonEmpty(kObj.wiki) ??
+            '';
     }
+    const rawModelId = res.selectedModelId ?? res.selected_model_id;
     return {
         permissionProfile: normalizeV2PermissionProfile(res.permissionProfile ?? res.permission_profile),
         reasoningEffort: normalizeV2ReasoningEffort(res.reasoningEffort ?? res.reasoning_effort),
         knowledge,
+        selectedModelId: typeof rawModelId === 'string' && rawModelId ? rawModelId : undefined,
         configurationRevision:
             typeof res.configurationRevision === 'number' ? res.configurationRevision : undefined,
     };
@@ -401,7 +433,7 @@ export async function patchV2ConversationConfiguration(
     patch: {
         permissionProfile?: V2PermissionProfile;
         reasoningEffort?: V2ReasoningEffort;
-        knowledge?: string;
+        knowledge?: string | { keyPointsMarkdown?: string; wikiMarkdown?: string; summary?: string };
         selectedModelId?: string;
     },
     signal?: AbortSignal,
@@ -447,16 +479,7 @@ export async function saveV2ConversationGoal(
         status: goal.status ?? 'active',
     });
     const url = `${conversationUrl(conversationId)}/goal`;
-    let res: { goal?: unknown };
-    try {
-        res = await api<{ goal?: unknown }>(url, { method: 'PUT', body: payload, signal });
-    } catch (cause) {
-        if (cause instanceof ApiError && (cause.status === 404 || cause.status === 405)) {
-            res = await api<{ goal?: unknown }>(url, { method: 'POST', body: payload, signal });
-        } else {
-            throw cause;
-        }
-    }
+    const res = await api<{ goal?: unknown }>(url, { method: 'POST', body: payload, signal });
     const raw = res.goal;
     if (!raw || typeof raw !== 'object') {
         return { title: goal.title.trim(), description: goal.description?.trim() || undefined, status: goal.status ?? 'active' };
@@ -472,32 +495,14 @@ export async function saveV2ConversationGoal(
 }
 
 export async function clearV2ConversationGoal(conversationId: string, signal?: AbortSignal): Promise<void> {
-    const url = `${conversationUrl(conversationId)}/goal`;
-    try {
-        await api(url, { method: 'DELETE', signal });
-    } catch (cause) {
-        if (cause instanceof ApiError && (cause.status === 404 || cause.status === 405)) {
-            await api(url, { method: 'PUT', body: JSON.stringify({ title: '', status: 'cleared' }), signal });
-        } else {
-            throw cause;
-        }
-    }
+    await api(`${conversationUrl(conversationId)}/goal`, { method: 'DELETE', signal });
 }
 
 export async function getV2WorkspaceDiff(
     conversationId: string,
     signal?: AbortSignal,
 ): Promise<V2WorkspaceDiffSnapshot> {
-    let raw: Record<string, unknown>;
-    try {
-        raw = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace/diff`, { signal });
-    } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404) {
-            raw = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace-review`, { signal });
-        } else {
-            throw cause;
-        }
-    }
+    const raw = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace-review`, { signal });
     const root = typeof raw.workspace_root === 'string' ? raw.workspace_root : typeof raw.root === 'string' ? raw.root : '';
     const isGitRepository = raw.is_git_repository !== false && raw.isGitRepository !== false;
     const review = (raw.review && typeof raw.review === 'object' ? raw.review : raw) as Record<string, unknown>;
@@ -536,22 +541,10 @@ export async function getV2WorkspaceDiff(
 }
 
 export async function listV2WorkspaceCheckpoints(
-    conversationId: string,
+    _conversationId: string,
     signal?: AbortSignal,
 ): Promise<V2WorkspaceCheckpoint[]> {
-    let res: { checkpoints?: unknown[] };
-    try {
-        res = await api<{ checkpoints?: unknown[] }>(
-            `${conversationUrl(conversationId)}/workspace/checkpoints`,
-            { signal },
-        );
-    } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404) {
-            res = await api<{ checkpoints?: unknown[] }>('/api/workspace/checkpoints', { signal });
-        } else {
-            throw cause;
-        }
-    }
+    const res = await api<{ checkpoints?: unknown[] }>('/api/workspace/checkpoints', { signal });
     const items = Array.isArray(res.checkpoints) ? res.checkpoints : [];
     return items.map((raw, idx) => {
         const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -571,27 +564,14 @@ export async function listV2WorkspaceCheckpoints(
 }
 
 export async function undoV2Workspace(
-    conversationId: string,
+    _conversationId: string,
     signal?: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
-    let res: Record<string, unknown>;
-    try {
-        res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace/undo`, {
-            method: 'POST',
-            body: '{}',
-            signal,
-        });
-    } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404) {
-            res = await api<Record<string, unknown>>('/api/workspace/undo', {
-                method: 'POST',
-                body: '{}',
-                signal,
-            });
-        } else {
-            throw cause;
-        }
-    }
+    const res = await api<Record<string, unknown>>('/api/workspace/undo', {
+        method: 'POST',
+        body: '{}',
+        signal,
+    });
     return {
         ok: res.ok !== false,
         message: typeof res.stdout === 'string' ? res.stdout.trim() : typeof res.message === 'string' ? res.message : undefined,
@@ -599,27 +579,14 @@ export async function undoV2Workspace(
 }
 
 export async function redoV2Workspace(
-    conversationId: string,
+    _conversationId: string,
     signal?: AbortSignal,
 ): Promise<{ ok: boolean; message?: string }> {
-    let res: Record<string, unknown>;
-    try {
-        res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/workspace/redo`, {
-            method: 'POST',
-            body: '{}',
-            signal,
-        });
-    } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 404) {
-            res = await api<Record<string, unknown>>('/api/workspace/redo', {
-                method: 'POST',
-                body: '{}',
-                signal,
-            });
-        } else {
-            throw cause;
-        }
-    }
+    const res = await api<Record<string, unknown>>('/api/workspace/redo', {
+        method: 'POST',
+        body: '{}',
+        signal,
+    });
     return {
         ok: res.ok !== false,
         message: typeof res.stdout === 'string' ? res.stdout.trim() : typeof res.message === 'string' ? res.message : undefined,
@@ -708,15 +675,7 @@ export async function saveV2ConversationDataSources(
 ): Promise<void> {
     const url = `${conversationUrl(conversationId)}/data-sources`;
     const body = JSON.stringify({ enabledIds, sources: enabledIds });
-    try {
-        await api(url, { method: 'PUT', body, signal });
-    } catch (cause) {
-        if (cause instanceof ApiError && (cause.status === 404 || cause.status === 405)) {
-            await api(url, { method: 'POST', body, signal });
-        } else {
-            throw cause;
-        }
-    }
+    await api(url, { method: 'POST', body, signal });
 }
 
 let cachedExperts: V2Expert[] | null = null;
@@ -751,6 +710,12 @@ export async function listV2Experts(forceRefresh = false, signal?: AbortSignal):
 
         if (Array.isArray(res.experts)) {
             for (const exp of res.experts) ingest(exp);
+        }
+        if (Array.isArray(res.roleTemplates)) {
+            for (const tmpl of res.roleTemplates) ingest(tmpl);
+        }
+        if (Array.isArray(res.role_templates)) {
+            for (const tmpl of res.role_templates) ingest(tmpl);
         }
         if (Array.isArray(res.rooms)) {
             for (const room of res.rooms) {

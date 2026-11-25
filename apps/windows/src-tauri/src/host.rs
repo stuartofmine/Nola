@@ -225,6 +225,28 @@ fn stop_child_gracefully(child: &mut Child, stdin: &mut Option<ChildStdin>, grac
     let _ = child.wait();
 }
 
+struct StartFailure {
+    message: String,
+    port_bind_error: bool,
+}
+
+fn is_port_bind_diagnostic(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("already in use")
+        || lower.contains("addrinuse")
+        || lower.contains("failed to bind")
+        || lower.contains("cannot assign requested address")
+}
+
+fn log_indicates_port_bind_error(log_path: &Path) -> bool {
+    fs::read_to_string(log_path)
+        .map(|content| {
+            content.contains("Saved Host port is already in use")
+                || content.contains("Local Host could not bind its loopback address")
+        })
+        .unwrap_or(false)
+}
+
 impl Host {
     pub fn exited(&mut self) -> bool {
         !matches!(self.child.try_wait(), Ok(None))
@@ -243,8 +265,10 @@ impl Host {
         let (host, origin) = match Self::spawn_and_handshake(resources, data, workspace, target_port)
         {
             Ok(started) => started,
-            Err(_) if target_port != 0 => Self::spawn_and_handshake(resources, data, workspace, 0)?,
-            Err(err) => return Err(err),
+            Err(failure) if target_port != 0 && failure.port_bind_error => {
+                Self::spawn_and_handshake(resources, data, workspace, 0).map_err(|e| e.message)?
+            }
+            Err(failure) => return Err(failure.message),
         };
         let bound_port = origin.port().unwrap();
         if bound_port != saved_port || read_port(&port_file).ok() != Some(bound_port) {
@@ -259,8 +283,10 @@ impl Host {
         data: &Path,
         workspace: &Path,
         port: u16,
-    ) -> Result<(Self, Url), String> {
+    ) -> Result<(Self, Url), StartFailure> {
         let log_path = data.join("host-startup.log");
+        // Truncate/create synchronously before any failure recording or background stderr capture.
+        let _ = fs::File::create(&log_path);
         let bin = resources.join("bin");
         let mut command = Command::new(bin.join("nola.exe"));
         #[cfg(windows)]
@@ -277,24 +303,36 @@ impl Host {
                 &log_path,
                 &format!("Startup failed: missing native-runtime.json ({:?})", e.kind()),
             );
-            crate::native::label("hostRuntimeMissing").to_string()
+            StartFailure {
+                message: crate::native::label("hostRuntimeMissing").to_string(),
+                port_bind_error: false,
+            }
         })?;
         let native: Value = serde_json::from_slice(&native_bytes).map_err(|_| {
             record_startup_outcome(
                 &log_path,
                 "Startup failed: native-runtime.json is malformed",
             );
-            crate::native::label("hostRuntimeMissing").to_string()
+            StartFailure {
+                message: crate::native::label("hostRuntimeMissing").to_string(),
+                port_bind_error: false,
+            }
         })?;
         let raw_backend = native["backend"].as_str().ok_or_else(|| {
             record_startup_outcome(
                 &log_path,
                 "Startup failed: native-runtime.json is missing inference backend",
             );
-            crate::native::label("hostRuntimeMissing").to_string()
+            StartFailure {
+                message: crate::native::label("hostRuntimeMissing").to_string(),
+                port_bind_error: false,
+            }
         })?;
         let backend = canonical_backend(raw_backend).unwrap_or("cpu");
         let update_target = update_target_for_backend(std::env::consts::ARCH, backend);
+        if std::env::var_os("NOLA_DB_PATH").is_none() {
+            command.env("NOLA_DB_PATH", data.join("nola-v2.db"));
+        }
         let mut child = command
             .args([
                 "web",
@@ -320,7 +358,10 @@ impl Host {
                     &log_path,
                     &format!("Startup failed: could not launch packaged Host ({:?})", e.kind()),
                 );
-                crate::native::label("hostLaunchFailed").to_string()
+                StartFailure {
+                    message: crate::native::label("hostLaunchFailed").to_string(),
+                    port_bind_error: false,
+                }
             })?;
         #[cfg(windows)]
         let job = own_tree(&child).map_err(|e| {
@@ -330,7 +371,10 @@ impl Host {
                 &log_path,
                 &format!("Startup failed: could not supervise Host ({:?})", e.kind()),
             );
-            crate::native::label("hostSupervisionFailed").to_string()
+            StartFailure {
+                message: crate::native::label("hostSupervisionFailed").to_string(),
+                port_bind_error: false,
+            }
         })?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().unwrap();
@@ -357,15 +401,19 @@ impl Host {
             let _ = std::io::copy(&mut reader, &mut std::io::sink());
         });
         let startup_complete = Arc::new(AtomicBool::new(false));
+        let port_bind_seen = Arc::new(AtomicBool::new(false));
         let diag_complete = Arc::clone(&startup_complete);
+        let diag_port_bind = Arc::clone(&port_bind_seen);
         let diag_log = log_path.clone();
-        thread::spawn(move || capture_diagnostics(stderr, diag_log, diag_complete));
+        thread::spawn(move || capture_diagnostics(stderr, diag_log, diag_complete, diag_port_bind));
         let origin = match rx.recv_timeout(Duration::from_secs(45)) {
             Ok(Some(origin)) => {
                 startup_complete.store(true, Ordering::Release);
                 origin
             }
             Ok(None) => {
+                // Give the stderr reader a brief moment to record final bind diagnostics before closing.
+                thread::sleep(Duration::from_millis(50));
                 startup_complete.store(true, Ordering::Release);
                 let outcome = match host.child.try_wait() {
                     Ok(Some(status)) => match status.code() {
@@ -377,7 +425,12 @@ impl Host {
                     _ => "Startup failed: Host closed stdout without a valid handshake".to_string(),
                 };
                 record_startup_outcome(&log_path, &outcome);
-                return Err(crate::native::label("hostStartFailed").into());
+                let is_port_err = port_bind_seen.load(Ordering::Acquire)
+                    || log_indicates_port_bind_error(&log_path);
+                return Err(StartFailure {
+                    message: crate::native::label("hostStartFailed").into(),
+                    port_bind_error: is_port_err,
+                });
             }
             Err(_) => {
                 startup_complete.store(true, Ordering::Release);
@@ -385,7 +438,10 @@ impl Host {
                     &log_path,
                     "Startup failed: timed out waiting for Host startup handshake",
                 );
-                return Err(crate::native::label("hostStartFailed").into());
+                return Err(StartFailure {
+                    message: crate::native::label("hostStartFailed").into(),
+                    port_bind_error: false,
+                });
             }
         };
         Ok((host, origin))
@@ -429,11 +485,21 @@ fn record_startup_outcome(path: &Path, outcome: &str) {
     }
 }
 
-fn capture_diagnostics(stderr: impl Read, path: PathBuf, startup_complete: Arc<AtomicBool>) {
-    // Persist only known startup failure categories, never raw process output.
-    let mut log = fs::File::create(path).ok();
-    let mut bytes_written = 0usize;
+fn capture_diagnostics(
+    stderr: impl Read,
+    path: PathBuf,
+    startup_complete: Arc<AtomicBool>,
+    port_bind_seen: Arc<AtomicBool>,
+) {
     let mut reader = BufReader::new(stderr);
+    if startup_complete.load(Ordering::Acquire) {
+        let _ = std::io::copy(&mut reader, &mut std::io::sink());
+        return;
+    }
+    // Persist only known startup failure categories, never raw process output.
+    // Open in append mode so we never truncate a startup outcome written synchronously.
+    let mut log = fs::OpenOptions::new().create(true).append(true).open(&path).ok();
+    let mut bytes_written = fs::metadata(&path).map(|meta| meta.len() as usize).unwrap_or(0);
     let mut line = String::new();
     loop {
         line.clear();
@@ -446,6 +512,9 @@ fn capture_diagnostics(stderr: impl Read, path: PathBuf, startup_complete: Arc<A
             drop(log.take());
             let _ = std::io::copy(&mut reader, &mut std::io::sink());
             break;
+        }
+        if is_port_bind_diagnostic(&line) {
+            port_bind_seen.store(true, Ordering::Release);
         }
         let Some(category) = classify_diagnostic_line(&line) else {
             continue;
@@ -515,24 +584,53 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         let log_path = dir.join("host-startup.log");
+        let _ = fs::File::create(&log_path).unwrap();
 
         let sample = "thread 'main' panicked at foo\nSQLITE error: locked\n";
         let complete = Arc::new(AtomicBool::new(false));
-        capture_diagnostics(sample.as_bytes(), log_path.clone(), Arc::clone(&complete));
+        let port_bind = Arc::new(AtomicBool::new(false));
+        capture_diagnostics(
+            sample.as_bytes(),
+            log_path.clone(),
+            Arc::clone(&complete),
+            Arc::clone(&port_bind),
+        );
         let content = fs::read_to_string(&log_path).unwrap();
         assert!(content.contains("Local Host terminated due to an internal panic"));
         assert!(content.contains("Local database could not be opened"));
+        assert!(!port_bind.load(Ordering::Acquire));
 
-        // When startup is already complete, nothing is written to the log.
+        // When startup is already complete, existing log is neither truncated nor appended.
         complete.store(true, Ordering::Release);
-        capture_diagnostics("access denied\n".as_bytes(), log_path.clone(), complete);
-        assert_eq!(fs::read_to_string(&log_path).unwrap(), "");
+        capture_diagnostics(
+            "access denied\n".as_bytes(),
+            log_path.clone(),
+            complete,
+            Arc::clone(&port_bind),
+        );
+        let after_complete = fs::read_to_string(&log_path).unwrap();
+        assert_eq!(after_complete, content);
+        assert!(!after_complete.contains("Local resource access was denied"));
 
         // Outcome recording ensures non-empty diagnostics on failure.
         record_startup_outcome(&log_path, "Startup failed: timed out");
         assert!(fs::read_to_string(&log_path)
             .unwrap()
             .contains("Startup failed: timed out"));
+
+        // Port bind diagnostics set the retryable flag.
+        let bind_log = dir.join("bind-startup.log");
+        let _ = fs::File::create(&bind_log).unwrap();
+        let bind_complete = Arc::new(AtomicBool::new(false));
+        let bind_seen = Arc::new(AtomicBool::new(false));
+        capture_diagnostics(
+            "failed to bind 127.0.0.1:28420: AddrInUse\n".as_bytes(),
+            bind_log.clone(),
+            bind_complete,
+            Arc::clone(&bind_seen),
+        );
+        assert!(bind_seen.load(Ordering::Acquire));
+        assert!(log_indicates_port_bind_error(&bind_log));
 
         let _ = fs::remove_dir_all(&dir);
     }
