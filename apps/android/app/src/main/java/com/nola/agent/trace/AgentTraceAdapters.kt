@@ -56,6 +56,9 @@ class AgentTraceSession(
         is SseEvent.V2TextDelta,
         is SseEvent.V2ReasoningDelta,
         is SseEvent.V2Compacted,
+        is SseEvent.V2UiSurface,
+        is SseEvent.V2PermissionRequested,
+        is SseEvent.V2UserQuestion,
         is SseEvent.V2TurnCompleted -> null
         is SseEvent.V2ToolStarted -> event(
             kind = "tool.started",

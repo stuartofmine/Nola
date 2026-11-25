@@ -151,4 +151,74 @@ interface WebHostApiService {
         conversationId: String,
         pinnedCertificateSha256: String = "",
     ) {}
+
+    suspend fun v2RespondPermission(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 permission response is unavailable")
+
+    suspend fun v2RespondUserInput(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 user-input response is unavailable")
+
+    suspend fun v2ListUiSurfaces(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI surfaces are unavailable")
+
+    suspend fun v2PreviewUiSurface(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        input: JsonObject,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI preview is unavailable")
+
+    suspend fun v2SubmitUiInteraction(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        interaction: JsonObject,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI interaction is unavailable")
+
+    suspend fun v2TruncateConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        fromSeq: Long,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 truncate is unavailable")
+
+    suspend fun v2CompactConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 compact is unavailable")
+
+    suspend fun v2BranchConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 branch is unavailable")
+
+    suspend fun v2WorkspaceReview(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 workspace review is unavailable")
 }

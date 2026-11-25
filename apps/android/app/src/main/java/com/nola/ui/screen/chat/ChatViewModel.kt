@@ -5020,6 +5020,9 @@ class ChatViewModel @Inject constructor(
             is SseEvent.V2ToolStarted,
             is SseEvent.V2ToolFinished,
             is SseEvent.V2Compacted,
+            is SseEvent.V2UiSurface,
+            is SseEvent.V2PermissionRequested,
+            is SseEvent.V2UserQuestion,
             is SseEvent.V2TurnCompleted -> Unit
             is SseEvent.TurnLifecycle -> {
                 // Core lifecycle is only a hint; exact Run seal proves completion.

@@ -4663,6 +4663,9 @@ public final class ChatManager: ObservableObject {
                             conversation.externalExecutionSessions[backendID] = sessionID
                             conversation.lastActiveAt = Date()
                             try store.upsertConversation(conversation)
+                        case .v2TextDelta, .v2ReasoningDelta, .v2ToolStarted, .v2ToolFinished,
+                             .v2UiSurface, .v2PermissionRequested, .v2UserQuestion, .v2TurnCompleted:
+                            break
                         case .error(let message):
                             // Keep the source failure until its durable rejection
                             // arrives; the generic receipt must not erase the

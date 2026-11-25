@@ -16,6 +16,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use nola_modules::a2ui::{
+    build_nodes_from_spec, commit_ui_interaction, delete_ui_surface, list_conversation_surfaces,
+    preview_ui_surface, read_ui_surface_changes, read_ui_surface_revision, upsert_ui_surface,
+    UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceOwner, UiSurfaceRevisionRef,
+};
 use nola_modules::ModulesSuite;
 use nola_store::{default_socket_path, EventPage, ServiceLock, Store, PROTOCOL_VERSION};
 use nola_types::{new_id, now_ms, MemoryItem, Session};
@@ -234,7 +239,7 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
         .unwrap_or("");
     let cmd_args = req
         .get("command")
-        .and_then(|c| c.get("arguments"))
+        .and_then(|c| c.get("arguments").or(Some(c)))
         .cloned()
         .unwrap_or_else(|| json!({}));
 
@@ -246,6 +251,12 @@ pub fn handle_envelope(store: &Store, suite: &ModulesSuite, req: &Value) -> Valu
             | "patch_conversation_configuration"
             | "session_delete"
             | "delete_conversation"
+            | "truncate_conversation"
+            | "compact_conversation"
+            | "branch_conversation"
+            | "render_ui_surface"
+            | "submit_ui_interaction"
+            | "delete_ui_surface"
             | "module_upsert"
             | "module_delete"
             | "memory_save"
@@ -544,12 +555,238 @@ pub fn dispatch_command(
             let mode = args
                 .get("permission_mode")
                 .or_else(|| args.get("mode"))
+                .or_else(|| args.get("permission_profile"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("cautious");
             store
                 .set_kv(&format!("conv_perm:{id}"), &json!(mode))
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"conversation_id": id, "permission_mode": mode, "ok": true}))
+            let meta_key = crate::web_api::session_meta_key(id);
+            let mut meta = store
+                .get_kv(&meta_key)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| json!({"isPinned": false, "revision": 1, "configurationRevision": 1}));
+            meta["permissionProfile"] = json!(mode);
+            let next_cfg = meta
+                .get("configurationRevision")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1)
+                + 1;
+            meta["configurationRevision"] = json!(next_cfg);
+            let _ = store.set_kv(&meta_key, &meta);
+            Ok(json!({
+                "conversation_id": id,
+                "permission_mode": mode,
+                "permission_profile": mode,
+                "configuration_revision": next_cfg,
+                "ok": true
+            }))
+        }
+        "truncate_conversation" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let from_seq = args
+                .get("from_seq")
+                .or_else(|| args.get("fromSeq"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            let deleted = store
+                .truncate_events_from(id, from_seq)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({"ok": true, "conversation_id": id, "from_seq": from_seq, "deleted_events": deleted}))
+        }
+        "compact_conversation" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let (messages, _) = crate::web_api::reconstruct_v2_messages(store, id);
+            let summary = format!("Compacted {} message(s)", messages.len());
+            let _ = store.append_event(
+                id,
+                "compaction_marker",
+                json!({"summary": &summary, "messageCount": messages.len()}),
+                50_000,
+            );
+            Ok(json!({"ok": true, "conversation_id": id, "summary": summary}))
+        }
+        "branch_conversation" => {
+            let id = args
+                .get("conversation_id")
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let parent = store
+                .get_session(id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let ts = now_ms();
+            let new_conv_id = new_id();
+            let sess = Session {
+                id: new_conv_id.clone(),
+                title: parent
+                    .as_ref()
+                    .map(|s| format!("{} (copy)", s.title))
+                    .unwrap_or_else(|| "Branched conversation".into()),
+                workspace_root: parent
+                    .as_ref()
+                    .map(|s| s.workspace_root.clone())
+                    .unwrap_or_else(|| suite.workspace_root.display().to_string()),
+                model_connection: parent.as_ref().and_then(|s| s.model_connection.clone()),
+                model_id: parent.as_ref().and_then(|s| s.model_id.clone()),
+                created_at_ms: ts,
+                updated_at_ms: ts,
+            };
+            store
+                .upsert_session(&sess)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Ok(EventPage::Events(ev)) = store.events_after(id, 0, 500) {
+                for e in ev {
+                    let _ = store.append_event(&new_conv_id, &e.kind, e.payload, 50_000);
+                }
+            }
+            Ok(json!({"conversation": crate::web_api::session_to_conversation_json(store, &sess)}))
+        }
+        "workspace_review" => {
+            let id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("workspace");
+            let host_id = store
+                .get_kv("host_id")
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_str().map(ToString::to_string))
+                .unwrap_or_else(|| "local-host".into());
+            let ws_root = store
+                .get_session(id)
+                .ok()
+                .flatten()
+                .map(|s| std::path::PathBuf::from(s.workspace_root))
+                .filter(|p| p.is_dir())
+                .unwrap_or_else(|| suite.workspace_root.clone());
+            Ok(crate::web_api::build_workspace_review(&host_id, id, &ws_root))
+        }
+        "render_ui_surface" => {
+            let conv_id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("default");
+            let surface_id = args
+                .get("surface_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'surface_id'".into()))?;
+            let summary = args
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Interactive UI Surface");
+            let data_model = args.get("data_model").cloned().unwrap_or_else(|| json!({}));
+            let (root_id, nodes) = build_nodes_from_spec(args)
+                .map_err(|e| ("invalid_ui_spec", e))?;
+            let authority_id = args
+                .get("authority_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    store
+                        .get_kv("host_id")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.as_str().map(ToString::to_string))
+                })
+                .unwrap_or_else(|| "local-host".into());
+            let owner = UiSurfaceOwner {
+                authority_id,
+                conversation_id: conv_id.to_string(),
+                participant_id: "assistant".into(),
+                context_id: "conversation".into(),
+                originating_run_id: new_id(),
+                message_id: args
+                    .get("message_id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("ui-{}", now_ms())),
+                part_id: format!("part-{surface_id}"),
+            };
+            let snap = upsert_ui_surface(store, owner, surface_id, summary, root_id, nodes, data_model)
+                .map_err(|e| ("ui_surface_error", e))?;
+            Ok(serde_json::to_value(snap).unwrap_or(json!({})))
+        }
+        "list_ui_surfaces" => {
+            let conv_id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let surfaces = list_conversation_surfaces(store, conv_id);
+            Ok(serde_json::to_value(surfaces).unwrap_or_else(|_| json!([])))
+        }
+        "read_ui_surface_revision" => {
+            let identity: UiSurfaceIdentity = serde_json::from_value(
+                args.get("identity").cloned().unwrap_or(Value::Null),
+            )
+            .map_err(|e| ("invalid_argument", format!("invalid identity: {e}")))?;
+            let revision = args
+                .get("revision")
+                .and_then(|v| v.as_u64())
+                .ok_or(("invalid_argument", "missing 'revision'".into()))?;
+            let snap = read_ui_surface_revision(store, &UiSurfaceRevisionRef { identity, revision })
+                .map_err(|e| ("ui_surface_error", e))?;
+            Ok(serde_json::to_value(snap).unwrap_or(Value::Null))
+        }
+        "read_ui_surface_changes" => {
+            let identity: UiSurfaceIdentity = serde_json::from_value(
+                args.get("identity").cloned().unwrap_or(Value::Null),
+            )
+            .map_err(|e| ("invalid_argument", format!("invalid identity: {e}")))?;
+            let base_revision = args.get("base_revision").and_then(|v| v.as_u64());
+            read_ui_surface_changes(store, &identity, base_revision)
+                .map_err(|e| ("ui_surface_error", e))
+        }
+        "preview_ui_surface" => {
+            let raw_input = args.get("input").unwrap_or(args).clone();
+            let input: UiDraftPreviewInput = serde_json::from_value(raw_input)
+                .map_err(|e| ("invalid_argument", format!("invalid preview input: {e}")))?;
+            let preview = preview_ui_surface(store, &input)
+                .map_err(|e| ("ui_preview_error", e))?;
+            Ok(serde_json::to_value(preview).unwrap_or(json!({})))
+        }
+        "submit_ui_interaction" => {
+            let raw_input = args.get("input").unwrap_or(args);
+            let raw_interaction = raw_input.get("interaction").unwrap_or(raw_input).clone();
+            let submission_id = raw_input
+                .get("submission_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let interaction: UiInteraction = serde_json::from_value(raw_interaction)
+                .map_err(|e| ("invalid_argument", format!("invalid UI interaction: {e}")))?;
+            let committed = commit_ui_interaction(store, &interaction)
+                .map_err(|e| ("ui_interaction_rejected", e))?;
+            Ok(json!({
+                "snapshot": committed.snapshot,
+                "queued_submission_id": if committed.action_id.is_some() { submission_id } else { None },
+                "action_id": committed.action_id,
+                "summary": committed.summary,
+                "data_model": committed.data_model
+            }))
+        }
+        "delete_ui_surface" => {
+            let conv_id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let surface_id = args
+                .get("surface_id")
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing 'surface_id'".into()))?;
+            let snap = delete_ui_surface(store, conv_id, surface_id)
+                .map_err(|e| ("ui_surface_error", e))?;
+            Ok(serde_json::to_value(snap).unwrap_or(Value::Null))
         }
         "module_list" => {
             let kind = args.get("kind").and_then(|v| v.as_str()).unwrap_or("goal");

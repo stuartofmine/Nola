@@ -668,9 +668,9 @@ nonisolated public enum AgentTraceAdapter {
             return []
         case .delegatedPermissionRequest:
             return []
-        case .externalSessionStarted:
-            // Session continuity is persisted by ChatManager. It is transport
-            // metadata, not a user-visible reasoning or tool event.
+        case .externalSessionStarted,
+             .v2TextDelta, .v2ReasoningDelta, .v2ToolStarted, .v2ToolFinished,
+             .v2UiSurface, .v2PermissionRequested, .v2UserQuestion, .v2TurnCompleted:
             return []
         case .trace(let trace):
             context.adopt(trace)

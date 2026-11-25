@@ -182,6 +182,134 @@ class WebHostApiServiceImpl @Inject constructor(
         )
     }
 
+    override suspend fun v2RespondPermission(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/permission",
+        buildJsonObject {
+            put("request_id", requestId)
+            put("allow", allow)
+        },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2RespondUserInput(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/user-input",
+        buildJsonObject {
+            put("request_id", requestId)
+            if (answer != null) put("answer", answer)
+        },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2ListUiSurfaces(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = getV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-surfaces",
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2PreviewUiSurface(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        input: JsonObject,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-surface-preview",
+        input,
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2SubmitUiInteraction(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        interaction: JsonObject,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-interactions",
+        interaction,
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2TruncateConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        fromSeq: Long,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/truncate",
+        buildJsonObject { put("fromSeq", fromSeq) },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2CompactConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/compact",
+        JsonObject(emptyMap()),
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2BranchConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/branch",
+        JsonObject(emptyMap()),
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2WorkspaceReview(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = getV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/workspace-review",
+        pinnedCertificateSha256,
+    )
+
     override suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
         require(operation in setOf("parent", "admit", "manifest"))
@@ -235,8 +363,18 @@ class WebHostApiServiceImpl @Inject constructor(
     override suspend fun generativeUi(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
         require(operation in GENERATIVE_UI_OPERATIONS)
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/events", pinnedCertificateSha256)
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content
+            ?: ((request["identity"] as? JsonObject)?.get("owner") as? JsonObject)
+                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
+            ?: ""
+        return when (operation) {
+            "surfaces" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surfaces", pinnedCertificateSha256)
+            "preview" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-preview", request, pinnedCertificateSha256)
+            "changes" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-changes", request, pinnedCertificateSha256)
+            "revision" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-revision", request, pinnedCertificateSha256)
+            "interactions" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
+            else -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
+        }
     }
 
     override suspend fun readAssistantJournal(hostBaseUrl: String, token: String, request: JsonObject,
@@ -285,12 +423,23 @@ class WebHostApiServiceImpl @Inject constructor(
         payload: Map<String, Any>,
         pinnedCertificateSha256: String
     ) {
-        postV2Json(
-            hostBaseUrl,
-            token,
-            "agent/settings",
-            MobileCrypto.payloadJsonObject(payload),
-            pinnedCertificateSha256,
+        val convId = payload["session_id"]?.toString()
+            ?: payload["conversation_id"]?.toString()
+            ?: "default"
+        val reqId = payload["request_id"]?.toString()
+            ?: payload["id"]?.toString()
+            ?: ""
+        val decisionStr = payload["decision"]?.toString()?.lowercase()
+        val allow = (payload["allow"] as? Boolean)
+            ?: (payload["approved"] as? Boolean)
+            ?: (decisionStr == "allow" || decisionStr == "approve" || decisionStr == "allow_once" || decisionStr == "allow_conversation")
+        v2RespondPermission(
+            hostBaseUrl = hostBaseUrl,
+            token = token,
+            conversationId = convId,
+            requestId = reqId,
+            allow = allow,
+            pinnedCertificateSha256 = pinnedCertificateSha256,
         )
     }
 

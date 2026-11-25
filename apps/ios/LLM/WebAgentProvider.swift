@@ -518,6 +518,14 @@ public enum WebAgentStreamEvent {
     case delegatedPermissionRequest(HostAgentPermissionRequest)
     case deviceToolRequest(HostDeviceToolRequest, trace: AgentTraceEvent)
     case externalSessionStarted(backendID: String, sessionID: String)
+    case v2TextDelta(String)
+    case v2ReasoningDelta(String)
+    case v2ToolStarted(callID: String, name: String)
+    case v2ToolFinished(callID: String, name: String, isError: Bool, summary: String)
+    case v2UiSurface(AgentCoreJSONValue)
+    case v2PermissionRequested(requestID: String, tool: String, reason: String)
+    case v2UserQuestion(requestID: String, question: String, options: [String])
+    case v2TurnCompleted(sessionID: String, finalText: String)
     case error(String)
 }
 
@@ -2315,14 +2323,14 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard let source = config.expectedHostId else { throw IOSApplicationRuntimeError.invalidResponse }
         return try await pairedReadRequest(Request(expected_host_id: source, identity: input.identity,
             expected_surface_revision: input.expected_surface_revision, edits: input.edits, draft_generation: input.draft_generation),
-            path: "chat/conversations/\(input.identity.owner.conversation_id)/events", responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(input.identity.owner.conversation_id)/ui-surface-preview", responseByteLimit: 2 * 1024 * 1024)
     }
 
     func readUISurfaceChanges(identity: AppleUISurfaceIdentity, baseRevision: UInt64?) async throws -> AppleUISurfaceUpdate<AgentCoreJSONValue> {
         struct Request: Encodable { let expected_host_id: String; let identity: AppleUISurfaceIdentity; let base_revision: UInt64? }
         guard let source = config.expectedHostId else { throw IOSApplicationRuntimeError.invalidResponse }
         return try await pairedReadRequest(Request(expected_host_id: source, identity: identity, base_revision: baseRevision),
-            path: "chat/conversations/\(identity.owner.conversation_id)/events", responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(identity.owner.conversation_id)/ui-surface-changes", responseByteLimit: 2 * 1024 * 1024)
     }
 
     func readUISurfaceRevision(_ reference: AppleUISurfaceReference) async throws -> AppleUISnapshot<AgentCoreJSONValue>? {
@@ -2334,7 +2342,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard let source = config.expectedHostId, !source.isEmpty else { throw IOSApplicationRuntimeError.invalidResponse }
         let snapshot: AppleUISnapshot<AgentCoreJSONValue>? = try await pairedReadRequest(
             Request(expected_host_id: source, identity: reference.identity, revision: reference.revision),
-            path: "chat/conversations/\(reference.identity.owner.conversation_id)/events", responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(reference.identity.owner.conversation_id)/ui-surface-revision", responseByteLimit: 2 * 1024 * 1024)
         guard snapshot == nil || (snapshot?.identity == reference.identity && snapshot?.revision == reference.revision
             && (snapshot?.phase == .readOnly || snapshot?.phase == .deleted)) else { throw IOSApplicationRuntimeError.invalidResponse }
         return snapshot
@@ -2348,12 +2356,56 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         struct Query: Encodable { let expected_host_id: String; let expected_source_store_epoch: String; let conversation_id: String }
         let surfaces: [AppleUISnapshot<AgentCoreJSONValue>] = try await pairedReadRequest(
             Query(expected_host_id: source, expected_source_store_epoch: expectedSourceStoreEpoch, conversation_id: conversationID),
-            path: "chat/conversations/\(conversationID)/events", responseByteLimit: 16 * 1024 * 1024)
+            path: "chat/conversations/\(conversationID)/ui-surfaces", responseByteLimit: 16 * 1024 * 1024)
         guard surfaces.count <= 8,
               surfaces.allSatisfy({ $0.identity.owner.conversation_id == conversationID && $0.identity.owner.authority_id == expectedSourceStoreEpoch }) else {
             throw IOSApplicationRuntimeError.rejected("UI projection belongs to another conversation or exceeds its budget")
         }
         return surfaces
+    }
+
+    public func v2RespondPermission(conversationID: String, requestID: String, allow: Bool) async throws {
+        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/permission"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow])
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        Self.applyMobileAuth(to: &req, token: config.token)
+        let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
+        defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
+        let (_, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw NolaError.llm(.invalidResponse(reason: "Permission response failed (\(http.statusCode))"))
+        }
+    }
+
+    public func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
+        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/user-input"))
+        req.httpMethod = "POST"
+        var body: [String: Any] = ["request_id": requestID]
+        if let answer { body["answer"] = answer }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        Self.applyMobileAuth(to: &req, token: config.token)
+        let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
+        defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
+        let (_, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw NolaError.llm(.invalidResponse(reason: "User input response failed (\(http.statusCode))"))
+        }
+    }
+
+    public func v2TruncateConversation(conversationID: String, fromSeq: Int64) async throws {
+        var req = URLRequest(url: Self.mobileURL(baseURL: config.baseURL, path: "chat/conversations/\(conversationID)/truncate"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["fromSeq": fromSeq])
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        Self.applyMobileAuth(to: &req, token: config.token)
+        let session = Self.makeURLSession(pinnedCertificateSHA256: config.pinnedCertificateSHA256)
+        defer { if session !== URLSession.shared { session.finishTasksAndInvalidate() } }
+        let (_, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw NolaError.llm(.invalidResponse(reason: "Truncate failed (\(http.statusCode))"))
+        }
     }
 
     func observeRun(_ input: IOSRunObservationRequest) async throws -> IOSRunObservation? {
@@ -3041,6 +3093,43 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         }
         if let type = object["type"] as? String {
             switch type {
+            case "text_delta":
+                return .v2TextDelta(object["delta"] as? String ?? "")
+            case "reasoning_delta":
+                return .v2ReasoningDelta(object["delta"] as? String ?? "")
+            case "tool_started":
+                return .v2ToolStarted(
+                    callID: object["call_id"] as? String ?? "",
+                    name: object["name"] as? String ?? "tool"
+                )
+            case "tool_finished":
+                return .v2ToolFinished(
+                    callID: object["call_id"] as? String ?? "",
+                    name: object["name"] as? String ?? "tool",
+                    isError: (object["is_error"] as? Bool) ?? false,
+                    summary: object["summary"] as? String ?? ""
+                )
+            case "ui_surface":
+                if let snap = object["snapshot"], let val = coreJSONValue(from: snap) {
+                    return .v2UiSurface(val)
+                }
+            case "permission_requested":
+                return .v2PermissionRequested(
+                    requestID: object["request_id"] as? String ?? "",
+                    tool: object["tool"] as? String ?? "tool",
+                    reason: object["reason"] as? String ?? ""
+                )
+            case "user_question":
+                return .v2UserQuestion(
+                    requestID: object["request_id"] as? String ?? "",
+                    question: object["question"] as? String ?? "",
+                    options: (object["options"] as? [String]) ?? []
+                )
+            case "turn_completed" where object["protocol_version"] == nil:
+                return .v2TurnCompleted(
+                    sessionID: object["session_id"] as? String ?? "",
+                    finalText: object["final_text"] as? String ?? ""
+                )
             case "core_task_updated":
                 guard let value = coreJSONValue(from: object),
                       let envelope = AgentCoreTaskEventEnvelope.decodeHost(from: value) else {
@@ -3377,6 +3466,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         let key = SymmetricKey(data: Data(token.utf8))
         let signature = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
         request.setValue(nil, forHTTPHeaderField: "Authorization")
+        request.setValue("nola-ios", forHTTPHeaderField: "X-Nola-Client")
         request.setValue(String(timestamp), forHTTPHeaderField: "X-Nola-Mobile-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "X-Nola-Mobile-Nonce")
         request.setValue(bodyDigest, forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256")

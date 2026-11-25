@@ -81,6 +81,18 @@ sealed class SseEvent {
     data class V2ToolStarted(val callId: String, val name: String) : SseEvent()
     data class V2ToolFinished(val callId: String, val name: String, val isError: Boolean, val summary: String) : SseEvent()
     data class V2Compacted(val summary: String) : SseEvent()
+    data class V2UiSurface(val snapshot: kotlinx.serialization.json.JsonObject) : SseEvent()
+    data class V2PermissionRequested(
+        val requestId: String,
+        val tool: String,
+        val reason: String,
+        val arguments: kotlinx.serialization.json.JsonElement? = null,
+    ) : SseEvent()
+    data class V2UserQuestion(
+        val requestId: String,
+        val question: String,
+        val options: List<String> = emptyList(),
+    ) : SseEvent()
     data class V2TurnCompleted(val sessionId: String, val finalText: String) : SseEvent()
     data class Error(val message: String, val code: String? = null) : SseEvent()
 }
@@ -212,6 +224,22 @@ private fun decodeV2AgentEvent(envelope: kotlinx.serialization.json.JsonObject):
         )
         "compacted" -> SseEvent.V2Compacted(
             summary = envelope["summary"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "ui_surface" -> (envelope["snapshot"] as? kotlinx.serialization.json.JsonObject)?.let {
+            SseEvent.V2UiSurface(snapshot = it)
+        }
+        "permission_requested" -> SseEvent.V2PermissionRequested(
+            requestId = envelope["request_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            tool = envelope["tool"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            reason = envelope["reason"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            arguments = envelope["arguments"],
+        )
+        "user_question" -> SseEvent.V2UserQuestion(
+            requestId = envelope["request_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            question = envelope["question"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            options = (envelope["options"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }
+                ?: emptyList(),
         )
         "turn_completed" -> SseEvent.V2TurnCompleted(
             sessionId = envelope["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),

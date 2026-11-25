@@ -1691,7 +1691,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let snapshots: [AppleUISnapshot<MacCanonicalJSONValue>] = try await authenticatedRead(
-            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/conversations/\(conversationID)/events",
+            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/conversations/\(conversationID)/ui-surfaces",
             configuration: target.configuration, responseByteLimit: 16 * 1024 * 1024)
         guard snapshots.count <= 8, snapshots.allSatisfy({ $0.identity.owner.conversation_id == conversationID && $0.identity.owner.authority_id == epoch }) else { throw MacRemoteHostError.invalidResponse }
         return snapshots
@@ -1701,7 +1701,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID,
               var payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: Any] else { throw MacRemoteHostError.invalidResponse }
         payload["expected_host_id"] = host
-        return try await authenticatedRead(payload, path: "chat/conversations/\(input.identity.owner.conversation_id)/events",
+        return try await authenticatedRead(payload, path: "chat/conversations/\(input.identity.owner.conversation_id)/ui-surface-preview",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
@@ -1710,14 +1710,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let owner = try JSONSerialization.jsonObject(with: JSONEncoder().encode(identity))
         return try await authenticatedRead(["expected_host_id": host, "identity": owner,
             "base_revision": baseRevision.map { NSNumber(value: $0) as Any } ?? NSNull()],
-            path: "chat/conversations/\(identity.owner.conversation_id)/events", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(identity.owner.conversation_id)/ui-surface-changes", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
     func readUISurfaceRevision(_ reference: AppleUISurfaceReference, target: MacRemoteSubmissionTarget) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         let identity = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reference.identity))
         let snapshot: AppleUISnapshot<MacCanonicalJSONValue>? = try await authenticatedRead(
-            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/conversations/\(reference.identity.owner.conversation_id)/events",
+            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/conversations/\(reference.identity.owner.conversation_id)/ui-surface-revision",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
         guard snapshot == nil || (snapshot?.identity == reference.identity && snapshot?.revision == reference.revision
             && (snapshot?.phase == .readOnly || snapshot?.phase == .deleted)) else { throw MacRemoteHostError.invalidResponse }
@@ -1734,7 +1734,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         do {
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input))
             let response: Response = try await authenticatedRead(["expected_host_id": host, "input": object],
-                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/events", configuration: target.configuration,
+                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/ui-interactions", configuration: target.configuration,
                 responseByteLimit: 2 * 1024 * 1024, requestByteLimit: 128 * 1024)
             switch response.status {
             case "committed":
@@ -3141,10 +3141,49 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             for: Data(message.utf8),
             using: SymmetricKey(data: Data(token.utf8))
         )
+        request.setValue("nola-macos", forHTTPHeaderField: "X-Nola-Client")
         request.setValue(String(timestamp), forHTTPHeaderField: "X-Nola-Mobile-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "X-Nola-Mobile-Nonce")
         request.setValue(bodyDigest, forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256")
         request.setValue(base64URL(Data(signature)), forHTTPHeaderField: "X-Nola-Mobile-Auth")
+    }
+
+    func v2RespondPermission(conversationID: String, requestID: String, allow: Bool, configuration: MacRemoteHostConfiguration) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["request_id": requestID, "allow": allow])
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+    }
+
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?, configuration: MacRemoteHostConfiguration) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/user-input"))
+        req.httpMethod = "POST"
+        var body: [String: Any] = ["request_id": requestID]
+        if let answer { body["answer"] = answer }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+    }
+
+    func v2TruncateConversation(conversationID: String, fromSeq: Int64, configuration: MacRemoteHostConfiguration) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/truncate"))
+        req.httpMethod = "POST"
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["fromSeq": fromSeq])
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
     }
 
     private func base64URL(_ data: Data) -> String {

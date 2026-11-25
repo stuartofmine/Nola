@@ -46,6 +46,29 @@ class RemoteObservationTransportTest {
         assertEquals(false, toolEnd.isError)
         assertEquals("ok", toolEnd.summary)
 
+        val uiSurface = decodeSsePayload(
+            """{"type":"ui_surface","snapshot":{"revision":1,"phase":"ready","summary":"Deploy Form"}}""",
+            null,
+        )
+        assertIs<SseEvent.V2UiSurface>(uiSurface)
+        assertEquals("ready", (uiSurface.snapshot["phase"] as? kotlinx.serialization.json.JsonPrimitive)?.content)
+
+        val perm = decodeSsePayload(
+            """{"type":"permission_requested","request_id":"req-1","tool":"write_file","reason":"Requires confirmation","arguments":{"path":"a.txt"}}""",
+            null,
+        )
+        assertIs<SseEvent.V2PermissionRequested>(perm)
+        assertEquals("req-1", perm.requestId)
+        assertEquals("write_file", perm.tool)
+
+        val question = decodeSsePayload(
+            """{"type":"user_question","request_id":"q-1","question":"Target env?","options":["Staging","Production"]}""",
+            null,
+        )
+        assertIs<SseEvent.V2UserQuestion>(question)
+        assertEquals("q-1", question.requestId)
+        assertEquals(listOf("Staging", "Production"), question.options)
+
         val completed = decodeSsePayload(
             """{"type":"turn_completed","session_id":"conv-1","final_text":"hello v2"}""",
             null,

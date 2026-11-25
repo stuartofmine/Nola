@@ -1533,6 +1533,64 @@ class AndroidApplicationRuntime(
             }
         }
 
+    fun v2RenderUiSurface(
+        conversationId: String,
+        surfaceId: String,
+        summary: String,
+        rootId: String,
+        components: kotlinx.serialization.json.JsonArray,
+        dataModel: JsonObject = JsonObject(emptyMap()),
+    ): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "render_ui_surface")
+            put("conversation_id", conversationId)
+            put("surface_id", surfaceId)
+            put("summary", summary)
+            put("root_id", rootId)
+            put("components", components)
+            put("data_model", dataModel)
+        },
+        "v2-ui-render:$conversationId:$surfaceId:${System.nanoTime()}",
+    ).jsonObject
+
+    fun v2DeleteUiSurface(conversationId: String, surfaceId: String): JsonElement =
+        submitMutation(
+            buildJsonObject {
+                put("type", "delete_ui_surface")
+                put("conversation_id", conversationId)
+                put("surface_id", surfaceId)
+            },
+            "v2-ui-delete:$conversationId:$surfaceId:${System.nanoTime()}",
+        )
+
+    fun v2TruncateConversation(conversationId: String, fromSeq: Long): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "truncate_conversation")
+                put("conversation_id", conversationId)
+                put("from_seq", fromSeq)
+            },
+            "v2-truncate:$conversationId:$fromSeq:${System.nanoTime()}",
+        ).jsonObject
+
+    fun v2CompactConversation(conversationId: String): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "compact_conversation")
+                put("conversation_id", conversationId)
+            },
+            "v2-compact:$conversationId:${System.nanoTime()}",
+        ).jsonObject
+
+    fun v2BranchConversation(conversationId: String): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "branch_conversation")
+                put("conversation_id", conversationId)
+            },
+            "v2-branch:$conversationId:${System.nanoTime()}",
+        ).jsonObject
+
     override fun close() = synchronized(lock) {
         if (handle != 0L) {
             AgentCoreNative.nativeApplicationFree(handle)
