@@ -69,9 +69,27 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                 println!("nola 2.0.0");
                 return Ok(0);
             }
+            "--list-execution-backends" => {
+                println!(
+                    "{}",
+                    json!([{
+                        "id": "nola-v2",
+                        "display_name": "Nola v2 Rust Engine",
+                        "available": true,
+                        "capabilities": {
+                            "supports_permission_bridge": true
+                        }
+                    }])
+                );
+                return Ok(0);
+            }
             "model" => return handle_model_cmd(&store, &opts.positional[1..]),
             "mcp" => return handle_mcp_cmd(&store, &db_path, &opts.positional[1..]),
-            "sessions" => return handle_sessions_cmd(&store, &opts.positional[1..]),
+            "memory" => return handle_memory_cmd(&store, &opts.positional[1..]),
+            "sessions" | "session" => {
+                return handle_sessions_cmd(&store, &opts.positional[1..], opts.json_mode)
+            }
+            "plugin" => return handle_plugin_cmd(&opts.positional[1..]),
             "modules" => return handle_modules_cmd(&suite, &opts.positional[1..]),
             "goal" => return handle_goal_cmd(&store, &suite, &opts, &opts.positional[1..]),
             "room" => return handle_room_cmd(&store, &suite, &opts, &opts.positional[1..]),
@@ -85,8 +103,18 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                     opts.json_mode,
                 )
             }
-            "server" => return crate::daemon::run_daemon(store, suite, &db_path, &opts.positional[1..]),
+            "server" => {
+                let rest = &opts.positional[1..];
+                let wants_http = rest.iter().any(|a| a == "--host" || a == "--port");
+                if wants_http {
+                    return crate::web_server::run_web_server(store, suite, rest, opts.json_mode);
+                }
+                return crate::daemon::run_daemon(store, suite, &db_path, rest);
+            }
             "tui" => return crate::tui::run_tui(store, suite, &workspace),
+            other if other.starts_with("--") => {
+                return Err(format!("unknown option '{other}'. Run 'nola --help' for usage."));
+            }
             _ => {}
         }
     }
@@ -411,17 +439,119 @@ fn handle_mcp_cmd(store: &Store, db_path: &std::path::Path, args: &[String]) -> 
     }
 }
 
-fn handle_sessions_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
+fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
     match args.first().map(String::as_str) {
         Some("list") | None => {
-            let sessions = store.list_sessions(50).map_err(|e| e.to_string())?;
-            println!("{}", serde_json::to_string_pretty(&sessions).unwrap());
+            let items = store.search_memory("", None, 200).map_err(|e| e.to_string())?;
+            let records: Vec<Value> = items
+                .iter()
+                .map(crate::web_api::memory_item_to_record)
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"records": records})).unwrap()
+            );
+            Ok(0)
+        }
+        Some("create") | Some("revise") => {
+            let is_revise = args.first().map(String::as_str) == Some("revise");
+            let explicit_id = if is_revise {
+                args.get(1).cloned()
+            } else {
+                None
+            };
+            let mut raw = String::new();
+            io::stdin()
+                .read_to_string(&mut raw)
+                .map_err(|e| format!("failed to read memory JSON from stdin: {e}"))?;
+            let draft: Value =
+                serde_json::from_str(raw.trim()).map_err(|e| format!("invalid memory JSON: {e}"))?;
+            let ts = nola_types::now_ms();
+            let id = explicit_id
+                .or_else(|| draft.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
+                .unwrap_or_else(nola_types::new_id);
+            let scope = draft.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
+            let kind = draft.get("kind").and_then(|v| v.as_str()).unwrap_or("other");
+            let content = draft.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let title = draft
+                .get("summary")
+                .or_else(|| draft.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(kind)
+                .to_string();
+            let tags: Vec<String> = draft
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(ToString::to_string)).collect())
+                .unwrap_or_default();
+            let item = nola_types::MemoryItem {
+                id,
+                namespace: format!("{scope}:{kind}"),
+                title,
+                content,
+                tags,
+                created_at_ms: ts,
+                updated_at_ms: ts,
+            };
+            store.upsert_memory(&item).map_err(|e| e.to_string())?;
+            let record = crate::web_api::memory_item_to_record(&item);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"record": record})).unwrap()
+            );
+            Ok(0)
+        }
+        Some("delete") => {
+            let id = args.get(1).ok_or("usage: nola memory delete <id>")?;
+            store.delete_memory(id).map_err(|e| e.to_string())?;
+            println!("{}", json!({"ok": true, "deleted": id}));
+            Ok(0)
+        }
+        Some(other) => Err(format!("unknown memory subcommand '{other}'")),
+    }
+}
+
+fn handle_plugin_cmd(args: &[String]) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("list") | None => {
+            println!("{}", json!({"plugins": []}));
+            Ok(0)
+        }
+        Some(other) => Err(format!("unknown plugin subcommand '{other}'")),
+    }
+}
+
+fn handle_sessions_cmd(store: &Store, args: &[String], json_mode: bool) -> Result<u8, String> {
+    match args.first().map(String::as_str) {
+        Some("list") | None => {
+            let sessions = store.list_sessions(200).map_err(|e| e.to_string())?;
+            if json_mode {
+                let summaries: Vec<Value> = sessions
+                    .iter()
+                    .map(|s| {
+                        let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, &s.id);
+                        json!({
+                            "id": s.id,
+                            "title": s.title,
+                            "updated_at": crate::web_api::ms_to_rfc3339(s.updated_at_ms),
+                            "created_at": crate::web_api::ms_to_rfc3339(s.created_at_ms),
+                            "message_count": msgs.len()
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({"sessions": summaries})).unwrap()
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&sessions).unwrap());
+            }
             Ok(0)
         }
         Some("delete") => {
             let id = args.get(1).ok_or("usage: nola sessions delete <id>")?;
             store.delete_session(id).map_err(|e| e.to_string())?;
-            println!("{}", json!({"deleted": id}));
+            println!("{}", json!({"ok": true, "deleted": id}));
             Ok(0)
         }
         Some("backup") => {

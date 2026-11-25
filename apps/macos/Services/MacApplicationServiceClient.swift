@@ -282,6 +282,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         let isProjectionQuery: Bool
         switch commandType {
         case "projection_cursor_wait", "projection_event_suffix", "projection_snapshot",
+             "sessions_list", "events_after", "module_list", "memory_search", "get_product_setting",
              "command_receipt", "health", "resolve_model_reasoning", "resolve_remote_model_profile", "query_automation_occurrences", "resolve_chat_model", "canonical_run_terminal", "inspect_run_recovery", "read_permission_configuration", "inspect_unknown_effect_recovery",
              "load_conversation_projection_window_v1", "load_conversation_projection_window_update_v1",
              "read_conversation_text_range",
