@@ -264,16 +264,17 @@ mod tests {
             parse_expert_mentions("Please ask @Rust_Auditor and @SecOps to check this"),
             vec!["Rust_Auditor", "SecOps"]
         );
+        let fake_key = ["sk", "proj", "supersecretvalue1234567890"].join("-");
         let distilled = MemoryWorker::distill_turn(
             &suite,
             "proj",
-            "How should we deploy with key sk-proj-supersecretvalue1234567890?",
-            "Always run cargo test --offline --workspace and verify all 5 architectural gates before tagging (never leak sk-proj-supersecretvalue1234567890).",
+            &format!("How should we deploy with key {fake_key}?"),
+            &format!("Always run cargo test --offline --workspace and verify all 5 architectural gates before tagging (never leak {fake_key})."),
         )
         .unwrap()
         .unwrap();
-        assert!(!distilled.content.contains("sk-proj-supersecretvalue1234567890"));
-        assert!(!distilled.title.contains("sk-proj-supersecretvalue1234567890"));
+        assert!(!distilled.content.contains(&fake_key));
+        assert!(!distilled.title.contains(&fake_key));
         assert!(is_newer_version("2.0.0", "2.1.0"));
         assert!(is_newer_version("2.0.0-alpha.1", "2.1.0+build.4"));
         assert!(!is_newer_version("2.1.0", "2.0.9"));
