@@ -18,13 +18,15 @@ def main():
     actual = {path.name for path in ROOT.iterdir()}
     for old in sorted(actual & OLD_ROOTS):
         errors.append(f'Obsolete source root remains: {old}')
-    for folder in ['apps/ios', 'apps/macos', 'apps/android', 'apps/web', 'apps/windows', 'apps/cli', 'shared/apple', 'shared/apple-core', 'shared/design-tokens', 'shared/mlx-runtime', 'tests/apple/ios', 'tests/apple/macos', 'tests/apple/ios-ui', 'tests/apple/mlx']:
+    for folder in ['apps/ios', 'apps/macos', 'apps/android', 'apps/web', 'apps/windows', 'crates/nola-app', 'shared/apple', 'shared/apple-core', 'shared/design-tokens', 'shared/mlx-runtime', 'tests/apple/ios', 'tests/apple/macos', 'tests/apple/ios-ui', 'tests/apple/mlx']:
         if not (ROOT / folder).is_dir():
             errors.append(f'Missing source root: {folder}')
-    for fixture in (ROOT / 'tests/apple/macos/SourceFixtures').iterdir():
-        if fixture.is_symlink():
-            if not fixture.is_file() or not fixture.resolve().is_relative_to(ROOT):
-                errors.append(f'Invalid source fixture symlink: {fixture.relative_to(ROOT)}')
+    source_fixtures = ROOT / 'tests/apple/macos/SourceFixtures'
+    if source_fixtures.is_dir():
+        for fixture in source_fixtures.iterdir():
+            if fixture.is_symlink():
+                if not fixture.is_file() or not fixture.resolve().is_relative_to(ROOT):
+                    errors.append(f'Invalid source fixture symlink: {fixture.relative_to(ROOT)}')
     manifest = tomllib.loads((ROOT / 'Cargo.toml').read_text())
     cargo_paths = 0
     for member in manifest['workspace']['members']:

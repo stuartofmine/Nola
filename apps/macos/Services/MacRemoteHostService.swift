@@ -636,6 +636,7 @@ nonisolated enum MacPermissionGrantScope: String, Sendable {
 
 nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case cautious
+    case acceptEdits = "accept_edits"
     case allowAll = "allow_all"
 
     var id: String { rawValue }
@@ -643,6 +644,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
     var title: String {
         switch self {
         case .cautious: return String(localized: "Cautious", table: "Permissions")
+        case .acceptEdits: return String(localized: "Accept Edits", table: "Permissions")
         case .allowAll: return String(localized: "Allow All")
         }
     }
@@ -651,6 +653,8 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         switch self {
         case .cautious:
             return String(localized: "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.", table: "Permissions")
+        case .acceptEdits:
+            return String(localized: "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.", table: "Permissions")
         case .allowAll:
             return String(localized: "No Nola approval prompts in this conversation. System permissions still apply.", table: "Permissions")
         }
@@ -660,10 +664,18 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         rawValue
     }
 
+    private var rank: Int {
+        switch self {
+        case .cautious: return 0
+        case .acceptEdits: return 1
+        case .allowAll: return 2
+        }
+    }
+
     /// Recovery keeps the original mode. A more permissive preference for the
     /// next message does not revoke it; a new restriction still blocks resume.
     func permitsResuming(frozen: Self) -> Bool {
-        self == frozen || self == .allowAll
+        rank >= frozen.rank
     }
 
     var networkPolicy: String { self == .allowAll ? "allow" : "ask" }
@@ -673,7 +685,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         guard let value else { return .cautious }
         guard let mode = Self(rawValue: value) else {
             throw DecodingError.dataCorrupted(.init(codingPath: [],
-                debugDescription: "Permission mode must be cautious or allow_all."))
+                debugDescription: "Permission mode must be cautious, accept_edits, or allow_all."))
         }
         return mode
     }
@@ -1156,6 +1168,8 @@ protocol MacRemoteAgentRunning: MacRemoteHostManaging {
         scope: MacPermissionGrantScope
     ) async throws
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data
     func sendTaskGuidance(
         conversationID: String,
         parentRunID: String,
@@ -1600,7 +1614,35 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
               let payload = try JSONSerialization.jsonObject(with: inputData) as? [String: Any] else {
             throw MacRemoteHostError.invalidResponse
         }
-        return try await authenticatedRead(payload, path: "chat/agent/v2/journal", configuration: configuration)
+        return try await authenticatedRead(payload, path: "chat/conversations", configuration: configuration)
+    }
+
+    private func authenticatedGetRead<Result: Decodable & Sendable>(
+        queryItems: [URLQueryItem],
+        path: String,
+        configuration: MacRemoteHostConfiguration,
+        responseByteLimit: Int = 512 * 1024,
+        expertRoomEnvelope: Bool = false
+    ) async throws -> Result {
+        guard let expectedHostID = configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
+        let baseURL = mobileURL(baseURL: configuration.baseURL, path: path)
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        if !queryItems.isEmpty {
+            components?.queryItems = queryItems
+        }
+        var request = URLRequest(url: components?.url ?? baseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        applyAuthentication(to: &request, token: configuration.token)
+        return try await executeAuthenticatedRead(
+            request,
+            configuration: configuration,
+            expectedHostID: expectedHostID,
+            responseByteLimit: responseByteLimit,
+            expertRoomEnvelope: expertRoomEnvelope
+        )
     }
 
     private func authenticatedRead<Result: Decodable & Sendable>(_ payload: [String: Any], path: String,
@@ -1613,7 +1655,24 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.httpBody = try JSONSerialization.data(withJSONObject: encrypt(payload, token: configuration.token))
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
+        return try await executeAuthenticatedRead(
+            request,
+            configuration: configuration,
+            expectedHostID: expectedHostID,
+            responseByteLimit: responseByteLimit,
+            expertRoomEnvelope: expertRoomEnvelope
+        )
+    }
+
+    private func executeAuthenticatedRead<Result: Decodable & Sendable>(
+        _ request: URLRequest,
+        configuration: MacRemoteHostConfiguration,
+        expectedHostID: String,
+        responseByteLimit: Int,
+        expertRoomEnvelope: Bool
+    ) async throws -> Result {
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw MacRemoteHostError.invalidResponse }
         var data = Data()
@@ -1672,7 +1731,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let state: MacUIQueueState = try await authenticatedRead(["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID,
-            "client_id": target.clientID], path: "chat/agent/v2/ui/queued-input", configuration: target.configuration)
+            "client_id": target.clientID], path: "chat/conversations/\(conversationID)/events", configuration: target.configuration)
         try state.validate(hostID: host, clientID: target.clientID, conversationID: conversationID)
         return state
     }
@@ -1683,7 +1742,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let result: Result = try await authenticatedRead(["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID,
             "client_id": target.clientID, "command_id": commandID, "request_digest": requestDigest],
-            path: "chat/agent/v2/ui/queued-input/cancel", configuration: target.configuration)
+            path: "chat/conversations/\(conversationID)/cancel", configuration: target.configuration)
         guard result.cancelled, result.command_id == commandID else { throw MacRemoteHostError.invalidResponse }
     }
 
@@ -1691,7 +1750,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         guard let epoch = target.expectedSourceStoreEpoch, !epoch.isEmpty else { throw MacRemoteHostError.invalidResponse }
         let snapshots: [AppleUISnapshot<MacCanonicalJSONValue>] = try await authenticatedRead(
-            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/agent/v2/ui/surfaces",
+            ["expected_host_id": host, "expected_source_store_epoch": epoch, "conversation_id": conversationID], path: "chat/conversations/\(conversationID)/ui-surfaces",
             configuration: target.configuration, responseByteLimit: 16 * 1024 * 1024)
         guard snapshots.count <= 8, snapshots.allSatisfy({ $0.identity.owner.conversation_id == conversationID && $0.identity.owner.authority_id == epoch }) else { throw MacRemoteHostError.invalidResponse }
         return snapshots
@@ -1701,7 +1760,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let host = target.configuration.expectedHostID,
               var payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as? [String: Any] else { throw MacRemoteHostError.invalidResponse }
         payload["expected_host_id"] = host
-        return try await authenticatedRead(payload, path: "chat/agent/v2/ui/preview",
+        return try await authenticatedRead(payload, path: "chat/conversations/\(input.identity.owner.conversation_id)/ui-surface-preview",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
@@ -1710,14 +1769,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let owner = try JSONSerialization.jsonObject(with: JSONEncoder().encode(identity))
         return try await authenticatedRead(["expected_host_id": host, "identity": owner,
             "base_revision": baseRevision.map { NSNumber(value: $0) as Any } ?? NSNull()],
-            path: "chat/agent/v2/ui/changes", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
+            path: "chat/conversations/\(identity.owner.conversation_id)/ui-surface-changes", configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
     }
 
     func readUISurfaceRevision(_ reference: AppleUISurfaceReference, target: MacRemoteSubmissionTarget) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
         let identity = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reference.identity))
         let snapshot: AppleUISnapshot<MacCanonicalJSONValue>? = try await authenticatedRead(
-            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/agent/v2/ui/revision",
+            ["expected_host_id": host, "identity": identity, "revision": reference.revision], path: "chat/conversations/\(reference.identity.owner.conversation_id)/ui-surface-revision",
             configuration: target.configuration, responseByteLimit: 2 * 1024 * 1024)
         guard snapshot == nil || (snapshot?.identity == reference.identity && snapshot?.revision == reference.revision
             && (snapshot?.phase == .readOnly || snapshot?.phase == .deleted)) else { throw MacRemoteHostError.invalidResponse }
@@ -1730,11 +1789,13 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             let receipt: AppleUIInteractionReceipt<MacCanonicalJSONValue>?
             let message: String?
         }
-        guard let host = target.configuration.expectedHostID else { return .rejected("请重新连接会话的 Host。") }
+        guard let host = target.configuration.expectedHostID else {
+            return .rejected(NSLocalizedString("Please reconnect to the conversation's Host.", comment: "Missing host ID when submitting UI interaction"))
+        }
         do {
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input))
             let response: Response = try await authenticatedRead(["expected_host_id": host, "input": object],
-                path: "chat/agent/v2/ui/interactions", configuration: target.configuration,
+                path: "chat/conversations/\(input.interaction.identity.owner.conversation_id)/ui-interactions", configuration: target.configuration,
                 responseByteLimit: 2 * 1024 * 1024, requestByteLimit: 128 * 1024)
             switch response.status {
             case "committed":
@@ -1742,11 +1803,13 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                       receipt.snapshot.revision > input.interaction.expected_surface_revision,
                       receipt.snapshot.revision - input.interaction.expected_surface_revision == 1,
                       receipt.queued_submission_id == nil || receipt.queued_submission_id == input.submission_id else {
-                    return .unknown("表单提交结果归属或版本不匹配。")
+                    return .unknown(NSLocalizedString("Form submission result ownership or version mismatch.", comment: "UI interaction receipt mismatch error"))
                 }
                 return .committed(receipt)
-            case "rejected", "conflict": return .rejected(response.message ?? "表单已更新，请重新确认。")
-            default: return .unknown(response.message ?? "表单提交结果尚未确认。")
+            case "rejected", "conflict":
+                return .rejected(response.message ?? NSLocalizedString("The form has been updated. Please review and confirm again.", comment: "UI interaction conflict or rejected error"))
+            default:
+                return .unknown(response.message ?? NSLocalizedString("Form submission result could not be confirmed.", comment: "UI interaction unknown status error"))
             }
         } catch { return .unknown(error.localizedDescription) }
     }
@@ -1767,7 +1830,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         }
         if let minimumPolicyRevision { payload["minimum_policy_revision"] = minimumPolicyRevision }
         let result: MacRemotePermissionConfiguration = try await authenticatedRead(payload,
-            path: "chat/agent/v2/configuration", configuration: target.configuration)
+            path: "chat/conversations/\(identity.conversation_id)/configuration", configuration: target.configuration)
         try result.validate(identity: identity)
         if let expectedRevision, let profile {
             guard result.configuration_revision == expectedRevision + 1,
@@ -1781,14 +1844,21 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let configuration = target.configuration
         guard let hostID = configuration.expectedHostID,
               (expectedRunID == nil) == (assistantMessageID == nil) else { throw MacRemoteHostError.invalidResponse }
-        var payload: [String: Any] = ["operation": expectedRunID == nil ? "discover" : "observe",
-            "conversation_id": conversationID, "expected_host_id": hostID, "client_id": target.clientID]
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "operation", value: expectedRunID == nil ? "discover" : "observe"),
+            URLQueryItem(name: "conversation_id", value: conversationID),
+            URLQueryItem(name: "expected_host_id", value: hostID),
+            URLQueryItem(name: "client_id", value: target.clientID),
+        ]
         if let expectedRunID, let assistantMessageID {
-            payload["expected_run_id"] = expectedRunID
-            payload["assistant_message_id"] = assistantMessageID
+            queryItems.append(URLQueryItem(name: "expected_run_id", value: expectedRunID))
+            queryItems.append(URLQueryItem(name: "assistant_message_id", value: assistantMessageID))
         }
-        let observation: MacRemoteRunObservation? = try await authenticatedRead(payload,
-            path: "chat/agent/v2/observe", configuration: configuration)
+        let observation: MacRemoteRunObservation? = try await authenticatedGetRead(
+            queryItems: queryItems,
+            path: "chat/conversations/\(conversationID)/observe",
+            configuration: configuration
+        )
         try Task.checkCancellation()
         guard let observation else {
             guard expectedRunID == nil else { throw MacRemoteHostError.invalidResponse }
@@ -1887,7 +1957,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         let identity = try JSONSerialization.jsonObject(with: JSONEncoder().encode(intent.identity))
         let receipt: MacSourceSubmissionReceipt? = try await authenticatedRead(
             ["operation":cancel ? "cancel" : "observe", "identity":identity, "request_digest":digest],
-            path: "chat/agent/v2/submission", configuration: target.configuration)
+            path: "chat/conversations/\(conversationID)", configuration: target.configuration)
         try Task.checkCancellation()
         guard let receipt else { return intent }
         guard receipt.identity == intent.identity, receipt.request_digest == digest else { throw MacRemoteHostError.invalidResponse }
@@ -2159,7 +2229,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             "expected_host_id": host, "client_id": target.clientID, "conversation_id": conversationID,
             "expected_run_id": identity?.run_id as Any? ?? NSNull(),
             "assistant_message_id": admittedAssistant as Any? ?? NSNull()
-        ], path: "chat/agent/v2/submission-frontier", configuration: target.configuration)
+        ], path: "chat/conversations/\(conversationID)/configuration", configuration: target.configuration)
         try frontier.validate(host: host, client: target.clientID, conversation: conversationID, observedParent: parent)
         return frontier
     }
@@ -2217,7 +2287,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     payload["request_digest"] = digest
                     runTargets[identity.conversation_id] = target
                     activeToolPlanOwners[identity.conversation_id] = ToolPlanOwner(runID: identity.submission_id)
-                    try await streamAgentPayload(payload, path: "chat/agent/v2/stream",
+                    try await streamAgentPayload(payload, path: "chat/conversations/\(identity.conversation_id)/messages",
                         conversationID: identity.conversation_id, configuration: target.configuration, continuation: continuation)
                 } catch {
                     // Cold Room replay has no new submission ticket. Observe
@@ -2311,7 +2381,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
            !externalSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["external_session_id"] = externalSessionID
         }
-        try await streamAgentPayload(payload, path: "chat/agent/v2/stream", conversationID: conversationID,
+        try await streamAgentPayload(payload, path: "chat/conversations/\(conversationID)/messages", conversationID: conversationID,
                                      configuration: configuration, continuation: continuation,
                                      submission: submission, preparedToolPlan: toolPlan)
     }
@@ -2359,7 +2429,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                         configuration: configuration, clientID: clientID)
                     activeToolPlans[conversationID] = preparedPlan
                     activeToolPlanOwners[conversationID] = ToolPlanOwner(runID: expectedRunID)
-                    try await streamAgentPayload(payload, path: "chat/agent/v2/resume",
+                    try await streamAgentPayload(payload, path: "chat/conversations/\(conversationID)/messages",
                         conversationID: conversationID, configuration: configuration, continuation: continuation)
                 } catch { continuation.finish(throwing: error) }
             }
@@ -2408,6 +2478,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2437,6 +2508,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     if event.canonicalRunID == submission?.ticket.identity.submissionID {
                         submission?.ticket.markAccepted()
                     }
+                    if case .turnCompleted = event.v2Event {
+                        activeToolPlans.removeValue(forKey: conversationID)
+                        activeToolPlanOwners.removeValue(forKey: conversationID)
+                        receivedTerminalEvent = true
+                        continuation.yield(event)
+                        continuation.finish()
+                        return
+                    }
                     if terminalRetiresToolPlan(event, conversationID: conversationID,
                                               owner: planOwner, hostID: configuration.expectedHostID) {
                         // This execution stream ends at its durable, exact-Run
@@ -2459,6 +2538,11 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         ) {
             if event.canonicalRunID == submission?.ticket.identity.submissionID {
                 submission?.ticket.markAccepted()
+            }
+            if case .turnCompleted = event.v2Event {
+                activeToolPlans.removeValue(forKey: conversationID)
+                activeToolPlanOwners.removeValue(forKey: conversationID)
+                receivedTerminalEvent = true
             }
             if terminalRetiresToolPlan(event, conversationID: conversationID,
                                       owner: planOwner, hostID: configuration.expectedHostID) {
@@ -2517,10 +2601,43 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         allow: Bool,
         scope: MacPermissionGrantScope = .once
     ) async throws {
+        if permissionRequest.nonce.hasPrefix("v2-") {
+            guard let configuration = configuration(for: permissionRequest.sessionID)
+                ?? (try? configurationStore.load()) else {
+                throw MacRemoteHostError.notConfigured
+            }
+            try await v2RespondPermission(
+                conversationID: permissionRequest.sessionID,
+                requestID: permissionRequest.id,
+                allow: allow,
+                scope: scope == .conversation ? "session" : "once",
+                configuration: configuration
+            )
+            return
+        }
         try await sendPermissionDecision(request: permissionRequest, decision: permissionRequest.decision(allow: allow, scope: scope))
     }
 
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws {
+        if request.nonce.hasPrefix("v2-") {
+            let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, text.utf8.count <= 4096 else {
+                throw MacPermissionInstructionError.invalidInstruction
+            }
+            guard let configuration = configuration(for: request.sessionID)
+                ?? (try? configurationStore.load()) else {
+                throw MacRemoteHostError.notConfigured
+            }
+            try await v2RespondPermission(
+                conversationID: request.sessionID,
+                requestID: request.id,
+                allow: true,
+                scope: "once",
+                instruction: text,
+                configuration: configuration
+            )
+            return
+        }
         try await sendPermissionDecision(request: request, decision: request.instructionDecision(instruction))
     }
 
@@ -2572,10 +2689,15 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         // Core validates this exact nonce/call/resource and the current user decision.
         let url = mobileURL(
             baseURL: configuration.baseURL,
-            path: "chat/agent/v2/permission"
+            path: "chat/conversations/\(permissionRequest.sessionID)/permission"
         )
+        var decisionPayload = decision.payload
+        if case .authorization(let allow, let scope) = decision.resolution {
+            decisionPayload["allow"] = allow
+            decisionPayload["scope"] = scope == .conversation ? "session" : "once"
+        }
         let envelope = try encrypt(
-            decision.payload,
+            decisionPayload,
             token: configuration.token
         )
         let body = try JSONSerialization.data(withJSONObject: envelope)
@@ -2584,6 +2706,8 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.httpBody = body
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (data, response) = try await NolaTailcatTransport.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2654,7 +2778,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         )
         let body = try JSONSerialization.data(withJSONObject: envelope)
         var request = URLRequest(
-            url: mobileURL(baseURL: configuration.baseURL, path: "chat/agent/v2/cancel")
+            url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(identity.conversation_id)/cancel")
         )
         request.httpMethod = "POST"
         request.httpBody = body
@@ -2712,26 +2836,21 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                     try await self.postTaskPayload(configuration: targetConfiguration, path: path, data: data)
                 }
         }
-        let envelope = try encrypt(
-            [
-                "conversationId": conversationID,
-                "afterCursor": max(0, afterCursor),
-                "timeoutMs": 25_000,
-            ],
-            token: configuration.token
+        let baseEventsURL = mobileURL(
+            baseURL: configuration.baseURL,
+            path: "chat/conversations/\(conversationID)/tasks/events"
         )
-        let body = try JSONSerialization.data(withJSONObject: envelope)
-        var request = URLRequest(
-            url: mobileURL(
-                baseURL: configuration.baseURL,
-                path: "chat/agent/v2/task/events"
-            )
-        )
-        request.httpMethod = "POST"
-        request.httpBody = body
+        var components = URLComponents(url: baseEventsURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "conversationId", value: conversationID),
+            URLQueryItem(name: "afterCursor", value: String(max(0, afterCursor))),
+            URLQueryItem(name: "timeoutMs", value: "25000"),
+        ]
+        var request = URLRequest(url: components?.url ?? baseEventsURL)
+        request.httpMethod = "GET"
         request.timeoutInterval = 35
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (bytes, response) = try await NolaTailcatTransport.session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -2818,7 +2937,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
             let body = try JSONSerialization.data(withJSONObject: ["expected_host_id":host,
                 "conversation_id":conversationID, "action":action])
             let data = try await postTaskPayload(configuration: target.configuration,
-                path: "chat/agent/v2/execution-selection", data: body)
+                path: "chat/conversations/\(conversationID)/configuration", data: body)
             guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   value["source_host_id"] as? String == host, value["conversation_id"] as? String == conversationID,
                   let result = value["result"] as? [String: Any] else { throw MacRemoteHostError.invalidResponse }
@@ -2849,8 +2968,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
 
     func conversationProgress(conversationID: String, target: MacRemoteSubmissionTarget) async throws -> MacRemoteConversationProgress {
         guard let host = target.configuration.expectedHostID else { throw MacRemoteHostError.invalidResponse }
-        let data = try await postTaskPayload(configuration: target.configuration, path: "chat/agent/v2/progress",
-            data: JSONSerialization.data(withJSONObject: ["expected_host_id": host, "conversation_id": conversationID]))
+        let data = try await getTaskPayload(
+            configuration: target.configuration,
+            path: "chat/conversations/\(conversationID)/progress",
+            queryItems: [
+                URLQueryItem(name: "expected_host_id", value: host),
+                URLQueryItem(name: "conversation_id", value: conversationID),
+            ]
+        )
         let value = try JSONDecoder().decode(MacRemoteConversationProgress.self, from: data)
         guard value.source_host_id == host, value.conversation_id == conversationID,
               value.plan.map({ $0.conversationID == conversationID }) ?? true else {
@@ -2862,10 +2987,42 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     func goalControl(_ intent: AppleGoalControlIntent, target: MacRemoteSubmissionTarget) async throws -> AppleGoalControlResponse {
         guard target.configuration.expectedHostID == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         let data = try await postTaskPayload(configuration: target.configuration,
-            path: "chat/agent/v2/goal", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
+            path: "chat/conversations/\(intent.conversation_id)/goal", data: JSONEncoder().encode(intent), acceptedStatuses: [200, 202, 409])
         let response = try JSONDecoder().decode(AppleGoalControlResponse.self, from: data)
         guard response.source_host_id == intent.expected_host_id else { throw MacRemoteHostError.invalidResponse }
         return response
+    }
+
+    private func getTaskPayload(
+        configuration: MacRemoteHostConfiguration,
+        path: String,
+        queryItems: [URLQueryItem],
+        acceptedStatuses: Set<Int>? = nil
+    ) async throws -> Data {
+        let baseURL = mobileURL(baseURL: configuration.baseURL, path: path)
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        if !queryItems.isEmpty {
+            components?.queryItems = queryItems
+        }
+        var request = URLRequest(url: components?.url ?? baseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        applyAuthentication(to: &request, token: configuration.token)
+        let (data, response) = try await NolaTailcatTransport.session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        guard acceptedStatuses?.contains(http.statusCode) ?? (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.http(http.statusCode, String(decoding: data.prefix(1_000), as: UTF8.self))
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        let decoded = root["type"] as? String == "encrypted"
+            ? try decrypt(root, token: configuration.token) : root
+        return try JSONSerialization.data(withJSONObject: decoded)
     }
 
     private func postTaskPayload(configuration: MacRemoteHostConfiguration, path: String, data: Data, acceptedStatuses: Set<Int>? = nil) async throws -> Data {
@@ -2880,6 +3037,7 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         applyAuthentication(to: &request, token: configuration.token)
         let (data, response) = try await NolaTailcatTransport.session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -3002,6 +3160,14 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
                 assistantJournalCursor: notification.through).bindingCanonicalRun(notification.through.identity.run_id)
         }
         object["source_host_id"] = sourceHostID
+        if let v2Event = decodeV2Event(
+            from: object,
+            sourceHostID: sourceHostID,
+            expectedConversationID: expectedConversationID,
+            expectedRunID: expectedRunID
+        ) {
+            return v2Event
+        }
         if object["type"] as? String == "permission_request" {
             guard object["host_id"] as? String == sourceHostID,
                   object["client_id"] as? String == (try configurationStore.clientID()),
@@ -3093,6 +3259,10 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
 
     private func encrypt(_ payload: [String: Any], token: String) throws -> [String: Any] {
         let plaintext = try JSONSerialization.data(withJSONObject: payload)
+        return try encryptData(plaintext, token: token)
+    }
+
+    private func encryptData(_ plaintext: Data, token: String) throws -> [String: Any] {
         let key = SymmetricKey(data: Data(SHA256.hash(data: Data(token.utf8))))
         let nonce = AES.GCM.Nonce()
         let sealed = try AES.GCM.seal(plaintext, using: key, nonce: nonce, authenticating: cryptoAAD)
@@ -3131,20 +3301,349 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         guard let url = request.url else { return }
         let timestamp = UInt64(Date().timeIntervalSince1970)
         let nonce = UUID().uuidString.lowercased()
-        let path = url.path + (url.query.map { "?\($0)" } ?? "")
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (comps?.percentEncodedPath ?? url.path) + (comps?.percentEncodedQuery.map { "?\($0)" } ?? "")
         let bodyDigest = SHA256.hash(data: request.httpBody ?? Data())
             .map { String(format: "%02x", $0) }
             .joined()
-        let method = request.httpMethod ?? "GET"
+        let method = (request.httpMethod ?? "GET").uppercased()
         let message = "v1\n\(method)\n\(path)\n\(timestamp)\n\(nonce)\n\(bodyDigest)"
         let signature = HMAC<SHA256>.authenticationCode(
             for: Data(message.utf8),
             using: SymmetricKey(data: Data(token.utf8))
         )
+        request.setValue("nola-macos", forHTTPHeaderField: "X-Nola-Client")
         request.setValue(String(timestamp), forHTTPHeaderField: "X-Nola-Mobile-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "X-Nola-Mobile-Nonce")
         request.setValue(bodyDigest, forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256")
         request.setValue(base64URL(Data(signature)), forHTTPHeaderField: "X-Nola-Mobile-Auth")
+    }
+
+    private func decodeV2Event(
+        from object: [String: Any],
+        sourceHostID: String,
+        expectedConversationID: String,
+        expectedRunID: String?
+    ) -> MacLocalAgentEvent? {
+        guard let type = object["type"] as? String else { return nil }
+        // Optional session/conversation consistency check: delta frames omit session_id/conversation_id,
+        // while frames that carry one must match if non-empty.
+        let frameConversationID = (object["conversation_id"] as? String)
+            ?? (object["session_id"] as? String)
+        if let frameConversationID, !frameConversationID.isEmpty, frameConversationID != expectedConversationID {
+            // Allow turn_completed / session_started whose session_id may be the server-assigned session
+            if type != "session_started" && type != "turn_completed" {
+                return nil
+            }
+        }
+        switch type {
+        case "session_started":
+            let sessionID = (object["session_id"] as? String) ?? expectedConversationID
+            let model = (object["model"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: "",
+                title: "session_started",
+                detail: sessionID,
+                isError: false,
+                v2Event: .sessionStarted(sessionID: sessionID, model: model)
+            ).bindingCanonicalRun(expectedRunID)
+        case "text_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_text_delta",
+                isError: false,
+                v2Event: .textDelta(delta)
+            ).bindingCanonicalRun(expectedRunID)
+        case "reasoning_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_reasoning_delta",
+                isError: false,
+                v2Event: .reasoningDelta(delta)
+            ).bindingCanonicalRun(expectedRunID)
+        case "tool_started":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            return MacLocalAgentEvent(
+                kind: .toolStarted,
+                text: "",
+                title: name,
+                detail: nil,
+                isError: false,
+                toolCallID: callID,
+                v2Event: .toolStarted(callID: callID, name: name)
+            ).bindingCanonicalRun(expectedRunID)
+        case "tool_finished":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            let isError = (object["is_error"] as? Bool) ?? false
+            let summary = (object["summary"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .toolFinished,
+                text: summary,
+                title: name,
+                detail: summary,
+                isError: isError,
+                toolCallID: callID,
+                v2Event: .toolFinished(callID: callID, name: name, isError: isError, summary: summary)
+            ).bindingCanonicalRun(expectedRunID)
+        case "compacted":
+            let explicitSummary = (object["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary: String
+            if let explicitSummary, !explicitSummary.isEmpty {
+                summary = explicitSummary
+            } else if let before = object["tokens_before"], let after = object["tokens_after"] {
+                summary = "Context compacted (\(before) → \(after) tokens)"
+            } else if let after = object["tokens_after"] {
+                summary = "Context compacted (\(after) tokens)"
+            } else {
+                summary = "Context compacted"
+            }
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: summary,
+                title: "compacted",
+                detail: summary,
+                isError: false,
+                v2Event: .compacted(summary: summary)
+            ).bindingCanonicalRun(expectedRunID)
+        case "ui_surface":
+            let snapshotObject = object["snapshot"]
+            let snapshotJSON: String = {
+                guard let snapshotObject,
+                      JSONSerialization.isValidJSONObject(snapshotObject),
+                      let data = try? JSONSerialization.data(withJSONObject: snapshotObject, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return "{}"
+                }
+                return text
+            }()
+            let phase = (snapshotObject as? [String: Any])?["phase"] as? String
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: snapshotJSON,
+                title: "ui_surface",
+                detail: phase,
+                isError: false,
+                v2Event: .uiSurface(snapshotJSON: snapshotJSON)
+            ).bindingCanonicalRun(expectedRunID)
+        case "permission_requested":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let tool = (object["tool"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "tool"
+            let reason = (object["reason"] as? String) ?? ""
+            let argsJSON: String = {
+                guard let rawArgs = object["arguments"],
+                      JSONSerialization.isValidJSONObject(rawArgs),
+                      let data = try? JSONSerialization.data(withJSONObject: rawArgs, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return ""
+                }
+                return text
+            }()
+            let clientID = (try? configurationStore.clientID()) ?? "nola-macos"
+            let request = MacRemotePermissionRequest(
+                id: requestID,
+                allowConversation: true,
+                protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
+                nonce: "v2-\(requestID)",
+                hostID: sourceHostID,
+                clientID: clientID,
+                sessionID: expectedConversationID,
+                toolName: tool,
+                arguments: argsJSON,
+                callID: requestID,
+                reason: reason,
+                message: reason.isEmpty ? "Allow \(tool)?" : reason,
+                expiresAt: nil
+            )
+            return MacLocalAgentEvent(
+                kind: .permissionRequested,
+                text: reason,
+                title: tool,
+                detail: reason,
+                isError: false,
+                toolCallID: requestID,
+                permissionRequest: request,
+                v2Event: .permissionRequested(requestID: requestID, tool: tool, reason: reason, argumentsJSON: argsJSON)
+            ).bindingCanonicalRun(expectedRunID)
+        case "user_question":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let questionText = (object["question"] as? String) ?? ""
+            let rawOptions = (object["options"] as? [String]) ?? []
+            let mappedOptions = rawOptions.enumerated().map { index, label in
+                MacRemoteUserInputOption(id: "opt-\(index)", label: label, detail: "")
+            }
+            let question = MacRemoteUserInputQuestion(
+                id: requestID,
+                prompt: questionText,
+                options: mappedOptions,
+                allowsFreeform: true,
+                required: true,
+                maxTextCharacters: 4096
+            )
+            let userInput = MacRemoteUserInputRequest(
+                id: requestID,
+                conversationID: expectedConversationID,
+                runID: expectedRunID ?? expectedConversationID,
+                sessionID: expectedConversationID,
+                revision: 1,
+                schemaDigest: "",
+                state: "open",
+                questions: [question]
+            )
+            return MacLocalAgentEvent(
+                kind: .userInputRequested,
+                text: questionText,
+                title: "user_question",
+                detail: rawOptions.joined(separator: ", "),
+                isError: false,
+                userInputRequest: userInput,
+                v2Event: .userQuestion(requestID: requestID, question: questionText, options: rawOptions)
+            ).bindingCanonicalRun(expectedRunID)
+        case "turn_completed" where object["protocol_version"] == nil:
+            let sessionID = (object["session_id"] as? String) ?? expectedConversationID
+            let finalText = (object["final_text"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .finished,
+                text: finalText,
+                title: nil,
+                detail: "v2_turn_completed",
+                isError: false,
+                v2Event: .turnCompleted(sessionID: sessionID, finalText: finalText)
+            ).bindingCanonicalRun(expectedRunID)
+        default:
+            return nil
+        }
+    }
+
+    func v2RespondPermission(
+        conversationID: String,
+        requestID: String,
+        allow: Bool,
+        scope: String = "once",
+        instruction: String? = nil,
+        configuration: MacRemoteHostConfiguration
+    ) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
+        req.httpMethod = "POST"
+        var payload: [String: Any] = ["request_id": requestID, "allow": allow, "scope": scope]
+        if let instruction, !instruction.isEmpty {
+            payload["instruction"] = instruction
+        }
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(payload, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+    }
+
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
+        guard let configuration = configuration(for: conversationID) ?? (try? configurationStore.load()) else {
+            throw MacRemoteHostError.notConfigured
+        }
+        try await v2RespondUserInput(
+            conversationID: conversationID,
+            requestID: requestID,
+            answer: answer,
+            configuration: configuration
+        )
+    }
+
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?, configuration: MacRemoteHostConfiguration) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/user-input"))
+        req.httpMethod = "POST"
+        var body: [String: Any] = ["request_id": requestID]
+        if let answer { body["answer"] = answer }
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(body, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+    }
+
+    @discardableResult
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data {
+        guard let configuration = configuration(for: conversationId) ?? (try? configurationStore.load()) else {
+            throw MacRemoteHostError.notConfigured
+        }
+        return try await v2SubmitUiInteraction(
+            conversationId: conversationId,
+            interactionData: interactionData,
+            configuration: configuration
+        )
+    }
+
+    @discardableResult
+    func v2SubmitUiInteraction(
+        conversationId: String,
+        interactionData: Data,
+        configuration: MacRemoteHostConfiguration
+    ) async throws -> Data {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationId)/ui-interactions"))
+        req.httpMethod = "POST"
+        if !configuration.token.isEmpty {
+            let envelope = try encryptData(interactionData, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = interactionData
+        }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (data, resp) = try await NolaTailcatTransport.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
+        if !configuration.token.isEmpty,
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           root["type"] as? String == "encrypted" {
+            let decrypted = try decrypt(root, token: configuration.token)
+            return try JSONSerialization.data(withJSONObject: decrypted)
+        }
+        return data
+    }
+
+    func v2TruncateConversation(conversationID: String, fromSeq: Int64, configuration: MacRemoteHostConfiguration) async throws {
+        var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/truncate"))
+        req.httpMethod = "POST"
+        let payload: [String: Any] = ["fromSeq": fromSeq]
+        if !configuration.token.isEmpty {
+            let envelope = try encrypt(payload, token: configuration.token)
+            req.httpBody = try JSONSerialization.data(withJSONObject: envelope)
+            req.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
+        } else {
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthentication(to: &req, token: configuration.token)
+        let (_, resp) = try await NolaTailcatTransport.session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw MacRemoteHostError.invalidResponse
+        }
     }
 
     private func base64URL(_ data: Data) -> String {
@@ -3176,5 +3675,11 @@ extension MacRemoteAgentRunning {
     }
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws {
         throw MacPermissionInstructionError.unsupported
+    }
+    func v2RespondUserInput(conversationID: String, requestID: String, answer: String?) async throws {
+        throw MacRemoteHostError.invalidResponse
+    }
+    func v2SubmitUiInteraction(conversationId: String, interactionData: Data) async throws -> Data {
+        throw MacRemoteHostError.invalidResponse
     }
 }

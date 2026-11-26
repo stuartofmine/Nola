@@ -182,8 +182,10 @@
     <string name="chat_execution_context_section">执行、Host 与上下文窗口</string>
     <string name="chat_permission_mode">权限模式</string>
     <string name="chat_permission_mode_cautious">谨慎</string>
+    <string name="chat_permission_mode_accept_edits">自动接受编辑</string>
     <string name="chat_permission_mode_allow_all">全部允许</string>
     <string name="chat_permission_mode_cautious_detail">删除、覆盖、敏感数据访问、外发内容和新连接先确认；普通读取与新建直接执行。</string>
+    <string name="chat_permission_mode_accept_edits_detail">工作区内文件编辑自动放行；Shell 命令、工作区外写入、外发内容和新连接仍需确认。</string>
     <string name="chat_permission_mode_allow_all_detail">此会话内无需 Nola 确认，系统权限仍然生效。</string>
     <string name="chat_execution_host_footer">连接 Web Host 时，安卓只是输入与确认界面。Agent 可在宿主机上使用文件、grep、bash、真 Chrome 和桌面 computer-use 工具；截图、鼠标、键盘、剪贴板、登录、OAuth、凭据、授权变更或删除等动作需要确认。</string>
     <string name="chat_steps_count">%1$d 步</string>
@@ -1476,4 +1478,23 @@
     <string name="permission_from_subagent">来自子任务：%1$s</string>
     <string name="permission_queue_pending">第 1 / %1$d 项待处理</string>
     <string name="chat_response_failed_empty">回复失败。</string>
+    <string name="chat_v2_question_placeholder">输入你的回答…</string>
+    <string name="chat_v2_question_skip">跳过</string>
+    <string name="chat_v2_question_submit">提交</string>
+    <string name="chat_v2_ui_unavailable">交互界面暂不可用</string>
+    <string name="chat_v2_ui_interaction_failed">交互失败</string>
+    <string name="chat_v2_context_compacted">上下文已压缩</string>
+    <string name="chat_v2_context_compacted_range">上下文已压缩（%1$s → %2$s tokens）</string>
+    <string name="chat_v2_context_compacted_after">上下文已压缩（%1$s tokens）</string>
+    <string name="chat_v2_context_compaction_failed">上下文压缩失败</string>
+    <string name="chat_v2_branch_conversation">分支对话</string>
+    <string name="chat_v2_branch_failed">无法分支对话</string>
+    <string name="chat_v2_workspace_review">工作区变更审阅</string>
+    <string name="chat_v2_workspace_review_empty">未检测到工作区变更</string>
+    <string name="chat_v2_workspace_review_host_required">连接 Web Agent Host 后可查看工作区变更</string>
+    <string name="chat_v2_workspace_review_staged">已暂存差异</string>
+    <string name="chat_v2_workspace_review_unstaged">未暂存差异</string>
+    <string name="chat_v2_workspace_review_files">工作区文件</string>
+    <string name="chat_v2_workspace_review_truncated">预览内容已截断</string>
+    <string name="chat_v2_edit_resend_failed">无法截断并重新发送消息</string>
 </resources>

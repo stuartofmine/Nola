@@ -22,6 +22,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -155,6 +156,45 @@ class AndroidApplicationRuntime(
         require(ApplicationCommandEffect.isObservation(command)) { "Command is not an explicitly classified query" }
         terminalResult(transmitEnvelope(transportEnvelope(command), readOnly = true))
     }
+
+    /** Lean v2 Application queries & mutations routed directly to Rust v2 `daemon::dispatch_command`. */
+    fun v2Health(): JsonObject = executeQuery(buildJsonObject { put("type", "health") }).jsonObject
+
+    fun v2ListSessions(): JsonObject = executeQuery(buildJsonObject { put("type", "sessions_list") }).jsonObject
+
+    fun v2CreateSession(title: String = "New conversation", id: String? = null): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "session_create")
+            put("title", title)
+            if (!id.isNullOrBlank()) put("id", id)
+        }
+    ).jsonObject
+
+    fun v2DeleteSession(id: String): JsonObject = submitMutation(
+        buildJsonObject { put("type", "session_delete"); put("id", id) }
+    ).jsonObject
+
+    fun v2SearchMemory(query: String = "", limit: Int = 50): JsonObject = executeQuery(
+        buildJsonObject { put("type", "memory_search"); put("query", query); put("limit", limit) }
+    ).jsonObject
+
+    fun v2SaveMemory(title: String, content: String, namespace: String = "default", id: String? = null): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "memory_save")
+            put("title", title)
+            put("content", content)
+            put("namespace", namespace)
+            if (!id.isNullOrBlank()) put("id", id)
+        }
+    ).jsonObject
+
+    fun v2ListModuleRecords(kind: String): JsonObject = executeQuery(
+        buildJsonObject { put("type", "module_list"); put("kind", kind) }
+    ).jsonObject
+
+    fun v2UpsertModuleRecord(kind: String, record: JsonObject): JsonObject = submitMutation(
+        buildJsonObject { put("type", "module_upsert"); put("kind", kind); put("record", record) }
+    ).jsonObject
 
     /** Only the native fresh Host factory calls this with its actual complete config. */
     internal fun attestEditedResendHostPolicy(target: String, config: JsonObject, submission: JsonObject): JsonObject = synchronized(lock) {
@@ -472,7 +512,7 @@ class AndroidApplicationRuntime(
     fun deleteProductSetting(key: String): Boolean = submitMutation(buildJsonObject {
         put("type", "delete_product_setting")
         put("key", key)
-    }).jsonPrimitive.content.toBoolean()
+    }).extractOkBoolean()
 
     fun upsertModelProfile(profile: CanonicalModelProfile) {
         execute(buildJsonObject {
@@ -558,7 +598,7 @@ class AndroidApplicationRuntime(
     fun listModelProfiles(): List<CanonicalModelProfile> = execute(buildJsonObject {
         put("type", "model")
         put("command", buildJsonObject { put("type", "list_profiles") })
-    }).jsonArray.map { json.decodeFromJsonElement(CanonicalModelProfile.serializer(), it) }
+    }).extractJsonArray("profiles", "items", "records").map { json.decodeFromJsonElement(CanonicalModelProfile.serializer(), it) }
 
     fun deleteModelProfile(id: String, deletedAtMs: Long): Boolean = execute(buildJsonObject {
         put("type", "model")
@@ -567,12 +607,12 @@ class AndroidApplicationRuntime(
             put("id", id)
             put("deleted_at_ms", deletedAtMs)
         })
-    }).jsonPrimitive.content.toBoolean()
+    }).extractOkBoolean()
 
     fun pendingSyncChanges(limit: Int = 100): List<CanonicalSyncChange> = execute(buildJsonObject {
         put("type", "pending_sync_changes")
         put("limit", limit.coerceAtLeast(1))
-    }).jsonArray.map { value -> value.jsonObject.toCanonicalSyncChange() }
+    }).extractJsonArray("changes", "items", "records").map { value -> value.jsonObject.toCanonicalSyncChange() }
 
     fun resolveSyncChange(operationId: String, status: String, remoteCursor: Long?, resolvedAtMs: Long): Boolean =
         execute(buildJsonObject {
@@ -581,7 +621,7 @@ class AndroidApplicationRuntime(
             put("status", status)
             put("remote_cursor", remoteCursor)
             put("resolved_at_ms", resolvedAtMs)
-        }).jsonPrimitive.content.toBoolean()
+        }).extractOkBoolean()
 
     fun syncCursor(replicaId: String): CanonicalSyncCursor? {
         val result = execute(buildJsonObject {
@@ -665,7 +705,7 @@ class AndroidApplicationRuntime(
                 put("limit", limit)
             })
         }
-    ).jsonArray.map { value ->
+    ).extractJsonArray("usage", "items", "records").map { value ->
         val record = value.jsonObject
         DataSourceUsageRecord(
                 id = record.getValue("id").jsonPrimitive.content,
@@ -699,7 +739,7 @@ class AndroidApplicationRuntime(
                         put("limit", limit.coerceIn(1, 50))
                     })
                 })
-            }).jsonArray.map(::decodeMemory)
+            }).extractJsonArray("memories", "items", "records").map(::decodeMemory)
         }
 
     private fun memoryCommitCommand(record: StructuredMemoryRecord): JsonObject {
@@ -771,7 +811,7 @@ class AndroidApplicationRuntime(
                 put("type", "list")
                 put("limit", limit)
             })
-        }).jsonArray
+        }).extractJsonArray("memories", "items", "records")
         return MemorySnapshot(canonical, canonical.map(::decodeMemory))
     }
 
@@ -800,38 +840,82 @@ class AndroidApplicationRuntime(
                 put("intent", "explicit_user")
                 put("deleted_at_ms", System.currentTimeMillis())
             })
-        }).jsonArray
+        }).extractJsonArray("memories", "items", "records")
         return MemorySnapshot(committed, committed.map(::decodeMemory))
     }
 
     private fun decodeMemory(value: JsonElement): StructuredMemoryRecord {
         val envelope = value.jsonObject
-        val record = envelope.getValue("record").jsonObject
-        val namespace = record.getValue("namespace").jsonObject
-        val provenance = record.getValue("provenance").jsonObject
-        val retention = record.getValue("retention").jsonObject
-        fun instant(value: JsonElement?): Long? = value?.takeUnless { it == JsonNull }?.let {
-            java.time.Instant.parse(it.jsonPrimitive.content).toEpochMilli()
+        fun instant(v: JsonElement?): Long? = v?.takeUnless { it == JsonNull }?.let { elem ->
+            val raw = (elem as? JsonPrimitive)?.contentOrNull ?: return@let null
+            raw.toLongOrNull() ?: runCatching { java.time.Instant.parse(raw).toEpochMilli() }.getOrNull()
         }
+        val record = (envelope["record"] as? JsonObject) ?: envelope
+        val isWrapped = envelope["record"] is JsonObject
+        if (isWrapped) {
+            val namespace = record.getValue("namespace").jsonObject
+            val provenance = record.getValue("provenance").jsonObject
+            val retention = record.getValue("retention").jsonObject
+            return StructuredMemoryRecord(
+                id = record.getValue("id").jsonPrimitive.content,
+                owner = record.getValue("owner").jsonObject,
+                namespace = if (namespace.getValue("kind").jsonPrimitive.content == "custom")
+                    namespace.getValue("name").jsonPrimitive.content else namespace.getValue("kind").jsonPrimitive.content,
+                scope = record.getValue("scope").jsonPrimitive.content,
+                kind = record.getValue("kind").jsonPrimitive.content,
+                content = record.getValue("content").jsonPrimitive.content,
+                confidence = record.getValue("confidence").jsonPrimitive.content.toDouble(),
+                sensitivity = record["sensitivity"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content,
+                provenanceKind = provenance.getValue("kind").jsonPrimitive.content,
+                sourceReference = provenance.getValue("source").jsonPrimitive.content,
+                observedAt = instant(provenance["observed_at"]),
+                createdAt = envelope.getValue("created_at_ms").jsonPrimitive.content.toLong(),
+                updatedAt = envelope.getValue("updated_at_ms").jsonPrimitive.content.toLong(),
+                retention = retention.getValue("mode").jsonPrimitive.content,
+                expiresAt = instant(retention["expires_at"]),
+                tags = record.getValue("tags").jsonArray.map { it.jsonPrimitive.content },
+                supersedes = record.getValue("supersedes").jsonArray.map { it.jsonPrimitive.content },
+            )
+        }
+        val namespace = when (val ns = record["namespace"]) {
+            is JsonObject -> if (ns["kind"]?.jsonPrimitive?.contentOrNull == "custom")
+                ns["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            else ns["kind"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            is JsonPrimitive -> ns.contentOrNull.orEmpty()
+            else -> "general"
+        }.ifBlank { "general" }
+        val provenance = record["provenance"] as? JsonObject
+        val retentionObj = record["retention"] as? JsonObject
+        val createdAt = (record["created_at_ms"] ?: record["createdAtMs"])?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+            ?: instant(record["created_at"])
+            ?: 0L
+        val updatedAt = (record["updated_at_ms"] ?: record["updatedAtMs"])?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+            ?: instant(record["updated_at"])
+            ?: createdAt
         return StructuredMemoryRecord(
-            id = record.getValue("id").jsonPrimitive.content,
-            owner = record.getValue("owner").jsonObject,
-            namespace = if (namespace.getValue("kind").jsonPrimitive.content == "custom")
-                namespace.getValue("name").jsonPrimitive.content else namespace.getValue("kind").jsonPrimitive.content,
-            scope = record.getValue("scope").jsonPrimitive.content,
-            kind = record.getValue("kind").jsonPrimitive.content,
-            content = record.getValue("content").jsonPrimitive.content,
-            confidence = record.getValue("confidence").jsonPrimitive.content.toDouble(),
-            sensitivity = record["sensitivity"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content,
-            provenanceKind = provenance.getValue("kind").jsonPrimitive.content,
-            sourceReference = provenance.getValue("source").jsonPrimitive.content,
-            observedAt = instant(provenance["observed_at"]),
-            createdAt = envelope.getValue("created_at_ms").jsonPrimitive.content.toLong(),
-            updatedAt = envelope.getValue("updated_at_ms").jsonPrimitive.content.toLong(),
-            retention = retention.getValue("mode").jsonPrimitive.content,
-            expiresAt = instant(retention["expires_at"]),
-            tags = record.getValue("tags").jsonArray.map { it.jsonPrimitive.content },
-            supersedes = record.getValue("supersedes").jsonArray.map { it.jsonPrimitive.content },
+            id = record["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            owner = (record["owner"] as? JsonObject) ?: JsonObject(emptyMap()),
+            namespace = namespace,
+            scope = record["scope"]?.jsonPrimitive?.contentOrNull ?: "user",
+            kind = record["kind"]?.jsonPrimitive?.contentOrNull ?: "fact",
+            content = record["content"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            confidence = record["confidence"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 1.0,
+            sensitivity = record["sensitivity"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.contentOrNull,
+            provenanceKind = provenance?.get("kind")?.jsonPrimitive?.contentOrNull
+                ?: record["provenance_kind"]?.jsonPrimitive?.contentOrNull
+                ?: "user",
+            sourceReference = provenance?.get("source")?.jsonPrimitive?.contentOrNull
+                ?: record["source"]?.jsonPrimitive?.contentOrNull
+                ?: "",
+            observedAt = instant(provenance?.get("observed_at") ?: record["observed_at"]),
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            retention = retentionObj?.get("mode")?.jsonPrimitive?.contentOrNull
+                ?: (record["retention"] as? JsonPrimitive)?.contentOrNull
+                ?: "persistent",
+            expiresAt = instant(retentionObj?.get("expires_at") ?: record["expires_at"]),
+            tags = (record["tags"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
+            supersedes = (record["supersedes"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty(),
         )
     }
 
@@ -976,7 +1060,7 @@ class AndroidApplicationRuntime(
             put("type", "skill")
             put("command", buildJsonObject { put("type", "list_editors") })
         }
-    ))
+    ).extractJsonArray("skills", "items", "records"))
 
     fun createMcpServer(server: McpServerConfig): McpEditorSnapshot =
         decodeMcpSnapshot(submitMutation(buildJsonObject {
@@ -1000,7 +1084,7 @@ class AndroidApplicationRuntime(
             put("type", "mcp")
             put("command", buildJsonObject { put("type", "list") })
         }
-    ).jsonArray.map(::decodeMcpSnapshot)
+    ).extractJsonArray("servers", "items", "records").map(::decodeMcpSnapshot)
 
     private fun decodeMcpSnapshot(value: JsonElement): McpEditorSnapshot {
         val record = value.jsonObject
@@ -1349,7 +1433,7 @@ class AndroidApplicationRuntime(
                     put("limit", 1024)
                     put("offset", result.size)
                 })
-            }).jsonArray
+            }).extractJsonArray("sessions", "conversations", "items", "records")
             result += page.map { value ->
                 val record = value.jsonObject
                 CanonicalConversationSummary(
@@ -1390,7 +1474,7 @@ class AndroidApplicationRuntime(
                 put("title", title)
                 put("title_source", "first_message")
                 put("updated_at_ms", System.currentTimeMillis())
-            }, expectedRevision = conversation.revision).jsonPrimitive.boolean
+            }, expectedRevision = conversation.revision).extractOkBoolean()
         } catch (_: RevisionConflict) {
             false
         }
@@ -1408,7 +1492,7 @@ class AndroidApplicationRuntime(
                 put("type", "replace_summary"); put("source", source); put("summary", summary)
                 put("committed_at_ms", System.currentTimeMillis())
             })
-        }).jsonPrimitive.content.toBoolean())
+        }).extractOkBoolean())
     }
 
 
@@ -1494,12 +1578,82 @@ class AndroidApplicationRuntime(
             }
         }
 
+    fun v2RenderUiSurface(
+        conversationId: String,
+        surfaceId: String,
+        summary: String,
+        rootId: String,
+        components: kotlinx.serialization.json.JsonArray,
+        dataModel: JsonObject = JsonObject(emptyMap()),
+    ): JsonObject = submitMutation(
+        buildJsonObject {
+            put("type", "render_ui_surface")
+            put("conversation_id", conversationId)
+            put("surface_id", surfaceId)
+            put("summary", summary)
+            put("root_id", rootId)
+            put("components", components)
+            put("data_model", dataModel)
+        },
+        "v2-ui-render:$conversationId:$surfaceId:${System.nanoTime()}",
+    ).jsonObject
+
+    fun v2DeleteUiSurface(conversationId: String, surfaceId: String): JsonElement =
+        submitMutation(
+            buildJsonObject {
+                put("type", "delete_ui_surface")
+                put("conversation_id", conversationId)
+                put("surface_id", surfaceId)
+            },
+            "v2-ui-delete:$conversationId:$surfaceId:${System.nanoTime()}",
+        )
+
+    fun v2TruncateConversation(conversationId: String, fromSeq: Long): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "truncate_conversation")
+                put("conversation_id", conversationId)
+                put("from_seq", fromSeq)
+            },
+            "v2-truncate:$conversationId:$fromSeq:${System.nanoTime()}",
+        ).jsonObject
+
+    fun v2CompactConversation(conversationId: String): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "compact_conversation")
+                put("conversation_id", conversationId)
+            },
+            "v2-compact:$conversationId:${System.nanoTime()}",
+        ).jsonObject
+
+    fun v2BranchConversation(conversationId: String): JsonObject =
+        submitMutation(
+            buildJsonObject {
+                put("type", "branch_conversation")
+                put("conversation_id", conversationId)
+            },
+            "v2-branch:$conversationId:${System.nanoTime()}",
+        ).jsonObject
+
     override fun close() = synchronized(lock) {
         if (handle != 0L) {
             AgentCoreNative.nativeApplicationFree(handle)
             handle = 0L
         }
     }
+}
+
+internal fun JsonElement.extractJsonArray(vararg keys: String): JsonArray = when (this) {
+    is JsonArray -> this
+    is JsonObject -> keys.firstNotNullOfOrNull { key -> this[key] as? JsonArray } ?: JsonArray(emptyList())
+    else -> JsonArray(emptyList())
+}
+
+internal fun JsonElement.extractOkBoolean(): Boolean = when (this) {
+    is JsonPrimitive -> this.content.toBoolean()
+    is JsonObject -> (this["ok"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true
+    else -> false
 }
 
 data class CanonicalConversationMessage(
@@ -1658,28 +1812,39 @@ private fun JsonObject.toCanonicalAutomationRun() = CanonicalAutomationRun(
     errorJson = get("error_json")?.takeUnless { it.toString() == "null" }?.jsonPrimitive?.content,
 )
 
-private fun JsonObject.toCanonicalConversation(): CanonicalConversation = CanonicalConversation(
-    id = getValue("id").jsonPrimitive.content,
-    title = getValue("title").jsonPrimitive.content,
-    revision = getValue("revision").jsonPrimitive.content.toLong(),
-    configurationRevision = getValue("configuration_revision").jsonPrimitive.content.toLong(),
-    createdAtMs = getValue("created_at_ms").jsonPrimitive.content.toLong(),
-    updatedAtMs = getValue("updated_at_ms").jsonPrimitive.content.toLong(),
-    settingsJson = get("settings_json")?.let { value ->
-        if (value.toString() == "null") null else value.jsonPrimitive.content
-    },
-    messages = getValue("messages").jsonArray.map { messageValue ->
-        val message = messageValue.jsonObject
-        val textPart = message.getValue("parts").jsonArray.map { it.jsonObject }
-            .firstOrNull { it["kind"]?.jsonPrimitive?.content == "text" }
-        CanonicalConversationMessage(
-            id = message.getValue("id").jsonPrimitive.content,
-            role = message.getValue("role").jsonPrimitive.content,
-            text = textPart?.get("content_text")?.jsonPrimitive?.content.orEmpty(),
-            metadataJson = textPart?.get("content_json")?.let { value ->
-                if (value.toString() == "null") null else value.jsonPrimitive.content
-            },
-            createdAtMs = message.getValue("created_at_ms").jsonPrimitive.content.toLong(),
-        )
-    },
-)
+private fun JsonObject.toCanonicalConversation(): CanonicalConversation {
+    val root = (get("conversation") as? JsonObject) ?: this
+    val rawMessages = ((get("messages") ?: root["messages"]) as? JsonArray).orEmpty()
+    return CanonicalConversation(
+        id = root.getValue("id").jsonPrimitive.content,
+        title = root["title"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.contentOrNull.orEmpty(),
+        revision = root["revision"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
+        configurationRevision = (root["configuration_revision"] ?: root["configurationRevision"])
+            ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
+        createdAtMs = (root["created_at_ms"] ?: root["createdAtMs"])
+            ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
+        updatedAtMs = (root["updated_at_ms"] ?: root["updatedAtMs"])
+            ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
+        settingsJson = (root["settings_json"] ?: root["settingsJson"])?.let { value ->
+            if (value == JsonNull || value.toString() == "null") null else value.jsonPrimitive.content
+        },
+        messages = rawMessages.map { messageValue ->
+            val message = messageValue.jsonObject
+            val textPart = (message["parts"] as? JsonArray)
+                ?.mapNotNull { it as? JsonObject }
+                ?.firstOrNull { it["kind"]?.jsonPrimitive?.contentOrNull == "text" }
+            val text = textPart?.get("content_text")?.jsonPrimitive?.contentOrNull
+                ?: message["content"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.contentOrNull.orEmpty()
+            CanonicalConversationMessage(
+                id = message.getValue("id").jsonPrimitive.content,
+                role = message.getValue("role").jsonPrimitive.content,
+                text = text,
+                metadataJson = textPart?.get("content_json")?.let { value ->
+                    if (value == JsonNull || value.toString() == "null") null else value.jsonPrimitive.content
+                },
+                createdAtMs = (message["created_at_ms"] ?: message["createdAtMs"])
+                    ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
+            )
+        },
+    )
+}

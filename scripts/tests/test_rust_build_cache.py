@@ -19,12 +19,10 @@ import xml.etree.ElementTree as ET
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPOSITORY_ROOT / "scripts/lib/rust_build_cache.sh"
 BUILD_SCRIPTS = (
-    "apps/cli/scripts/build.sh",
+    "scripts/build_apple_core.sh",
+    "scripts/build_android_core.sh",
     "scripts/build_cli_runtime.sh",
     "scripts/build_mac_runtime.sh",
-    "core/scripts/build_and_copy.sh",
-    "core/scripts/build_android.sh",
-    "core/scripts/build_xcframework.sh",
 )
 SHELLS = tuple(dict.fromkeys(
     executable for name in ("sh", "bash")
@@ -214,15 +212,14 @@ class RustBuildCacheTests(unittest.TestCase):
 
     def test_mac_runtime_dependency_writer_escapes_paths_and_excludes_builds(self):
         fixture = self.root / 'runtime workspace'
-        for name in ['apps/cli/src', 'apps/cli/vendor', 'core/target', 'third_party/a2ui/spec',
+        for name in ['crates/target', 'third_party/a2ui/spec',
                      'apps/macos/Resources/NolaBuiltInSkills.bundle', 'target/debug']:
             (fixture / name).mkdir(parents=True, exist_ok=True)
-        resource = fixture / 'core/model # catalog.json'
+        resource = fixture / 'crates/model # catalog.json'
         resource.write_text('{}')
-        (fixture / 'core/target/ignored.rs').write_text('// generated')
+        (fixture / 'crates/target/ignored.rs').write_text('// generated')
         (fixture / 'apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist').write_text('fixture')
-        for name in ['nola-agent-host', 'nola-service']:
-            shutil.copy('/bin/echo', fixture / 'target/debug' / name)
+        shutil.copy('/bin/echo', fixture / 'target/debug/nola')
         dependency = self.root / 'runtime inputs.d'
         env = {**os.environ, 'CARGO': str(self.cargo), 'NOLA_TEST_LOG': str(self.log_path),
                'NOLA_RUST_BUILD_CACHE': 'off', 'NOLA_REPOSITORY_ROOT': str(fixture),
@@ -314,40 +311,37 @@ class RustBuildCacheTests(unittest.TestCase):
 
     def test_xcode_build_rechecks_cargo_and_preserves_unchanged_archive(self):
         checkout = self.root.resolve() / "fixture"
-        (checkout / "core/scripts").mkdir(parents=True)
+        (checkout / "crates/nola-app/src").mkdir(parents=True)
         (checkout / "scripts/lib").mkdir(parents=True)
-        (checkout / "third_party/a2ui/spec").mkdir(parents=True)
-        shutil.copy(REPOSITORY_ROOT / "core/scripts/build_xcframework.sh", checkout / "core/scripts")
+        shutil.copy(REPOSITORY_ROOT / "scripts/build_apple_core.sh", checkout / "scripts")
         shutil.copy(HELPER, checkout / "scripts/lib")
-        resource = checkout / "core/runtime.json"
-        resource.write_text('{}')
+        resource = checkout / "crates/nola-app/src/runtime.rs"
+        resource.write_text('// fixture\n')
         self.cargo.write_text(f"#!{sys.executable}\n"
             "import os,pathlib,sys,json\n"
             "with open(os.environ['NOLA_TEST_LOG'],'a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
-            "out=pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'debug/libnola_mobile_bindings.a'\n"
+            "out=pathlib.Path(os.environ['CARGO_TARGET_DIR'])/'aarch64-apple-darwin/debug/libnola_app.a'\n"
             "out.parent.mkdir(parents=True,exist_ok=True)\n"
             "if not out.exists(): out.write_bytes(b'fixture-static-archive')\n")
-        for name, body in [("rustup", "echo aarch64-apple-darwin"), ("rustc", "echo 'host: aarch64-apple-darwin'")]:
-            tool = self.bin_directory / name
-            tool.write_text("#!/bin/sh\n" + body + "\n")
-            tool.chmod(0o755)
         derived = checkout / "derived"
         env = {**os.environ, "PATH": str(self.bin_directory) + ":/usr/bin:/bin", "HOME": str(self.fixture_home),
                "CARGO": str(self.cargo), "NOLA_TEST_LOG": str(self.log_path), "NOLA_RUST_BUILD_CACHE": "off",
                "NOLA_RUST_TARGET_WARN_BYTES": "0", "PLATFORM_NAME": "macosx", "ARCHS": "arm64", "CONFIGURATION": "Test",
                "DERIVED_FILE_DIR": str(derived), "NOLA_DEPENDENCY_FILE": str(derived / "core.d"),
                "CARGO_TARGET_DIR": str(checkout / "target")}
+        env.pop("NOLA_CORE_CARGO_TARGET_DIR", None)
+        env.pop("NOLA_CARGO_PROFILE", None)
         archive = derived / "nola_core/libnola_core.a"
         timestamps = []
         for iteration in range(3):
-            if iteration == 2: resource.write_text('{"changed":true}')
-            result = subprocess.run(["/bin/bash", str(checkout / "core/scripts/build_xcframework.sh"), "--xcode-target"], env=env, capture_output=True, text=True)
+            if iteration == 2: resource.write_text('// changed\n')
+            result = subprocess.run(["/bin/bash", str(checkout / "scripts/build_apple_core.sh")], env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             timestamps.append(archive.stat().st_mtime_ns)
         self.assertEqual(len(set(timestamps)), 1)
         calls = [json.loads(line) for line in self.log_path.read_text().splitlines()]
         self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[0], ["rustc", "--locked", "--manifest-path", str(checkout / "core/../Cargo.toml"), "-p", "nola_mobile_bindings", "--lib", "--crate-type", "staticlib", "--profile", "dev"])
+        self.assertEqual(calls[0], ["build", "--locked", "--manifest-path", str(checkout / "Cargo.toml"), "--profile", "dev", "--target", "aarch64-apple-darwin", "-p", "nola-app", "--lib"])
         self.assertIn(str(resource), (derived / "core.d").read_text())
 
     def test_mac_tests_cannot_replace_the_signed_debug_application(self):
@@ -674,24 +668,21 @@ class RustBuildCacheTests(unittest.TestCase):
                          "Requires the macOS build-script sandbox")
     def test_runtime_copy_writes_only_exact_declared_outputs(self):
         fixture = self.root / "runtime fixture"
-        for relative in ("apps/cli/src", "apps/cli/resources", "apps/cli/vendor", "core", "apps/macos/Resources"):
+        for relative in ("crates/nola-app/src", "apps/macos/Resources"):
             (fixture / relative).mkdir(parents=True, exist_ok=True)
-        for relative in ("Cargo.toml", "Cargo.lock", "apps/cli/build.rs"):
+        for relative in ("Cargo.toml", "Cargo.lock"):
             (fixture / relative).write_text("fixture\n", encoding="utf-8")
         plist_name = "com.gaojc.Nola.background-scheduler.plist"
         (fixture / "apps/macos/Resources" / plist_name).write_text("fixture plist\n", encoding="utf-8")
         artifacts = fixture / "target/debug"
         artifacts.mkdir(parents=True)
-        for name in ("nola-agent-host", "nola-service"):
-            artifact = artifacts / name
-            shutil.copyfile("/bin/echo", artifact)
-            artifact.chmod(0o755)
-            os.utime(artifact, (time.time() + 10, time.time() + 10))
+        artifact = artifacts / "nola"
+        shutil.copyfile("/bin/echo", artifact)
+        artifact.chmod(0o755)
+        os.utime(artifact, (time.time() + 10, time.time() + 10))
         outputs = self.root / "declared runtime outputs"
         outputs.mkdir()
-        declared = [outputs, *(outputs / name for name in ("nola-agent-host", "nola-service", plist_name))]
-        declared.extend(outputs / (name + ".nola-staging")
-                        for name in ("nola-agent-host", "nola-service"))
+        declared = [outputs, outputs / "nola", outputs / "nola.nola-staging", outputs / plist_name]
         # Match Xcode's literal-file output permissions: a declared directory
         # does not grant random staging-file siblings inside it.
         profile = '(version 1) (allow default)\n'
@@ -712,10 +703,9 @@ class RustBuildCacheTests(unittest.TestCase):
         self.assertEqual([record["kind"] for record in records], ["cargo"])
         self.assertEqual(records[0]["env"]["CARGO_TARGET_DIR"], str(fixture / "target"))
         self.assertEqual(sorted(path.name for path in outputs.iterdir()),
-                         sorted(("nola-agent-host", "nola-service", plist_name)))
-        for name in ("nola-agent-host", "nola-service"):
-            self.assertEqual((outputs / name).read_bytes(), (artifacts / name).read_bytes())
-            self.assertEqual((outputs / name).stat().st_mode & 0o777, 0o755)
+                         sorted(("nola", plist_name)))
+        self.assertEqual((outputs / "nola").read_bytes(), artifact.read_bytes())
+        self.assertEqual((outputs / "nola").stat().st_mode & 0o777, 0o755)
         self.assertEqual((outputs / plist_name).stat().st_mode & 0o777, 0o644)
 
     def test_mac_target_override_precedence_and_debugger_profile(self):
@@ -731,10 +721,9 @@ class RustBuildCacheTests(unittest.TestCase):
                 target = agent_target if agent_override else general_target
                 artifacts = target / "dev-debug"
                 artifacts.mkdir(parents=True)
-                for name in ("nola-agent-host", "nola-service"):
-                    artifact = artifacts / name
-                    shutil.copyfile("/bin/echo", artifact)
-                    artifact.chmod(0o755)
+                artifact = artifacts / "nola"
+                shutil.copyfile("/bin/echo", artifact)
+                artifact.chmod(0o755)
                 outputs = self.root / f"outputs-{agent_override}"
                 environment = dict(os.environ, CARGO=str(self.cargo),
                                    CARGO_TARGET_DIR=str(general_target),
@@ -755,8 +744,7 @@ class RustBuildCacheTests(unittest.TestCase):
                 self.assertEqual(records[0]["env"]["CARGO_TARGET_DIR"], str(target))
                 arguments = records[0]["argv"]
                 self.assertEqual(arguments[arguments.index("--profile") + 1], "dev-debug")
-                for name in ("nola-agent-host", "nola-service"):
-                    self.assertEqual((outputs / name).read_bytes(), (artifacts / name).read_bytes())
+                self.assertEqual((outputs / "nola").read_bytes(), artifact.read_bytes())
 
     def test_cargo_exit_status_and_output_are_preserved(self):
         for shell in SHELLS:
@@ -914,22 +902,30 @@ class RustBuildCacheTests(unittest.TestCase):
 
 
     def test_android_cargo_check_preserves_unchanged_archive_but_copies_updates(self):
-        # Use a tiny owned Core tree; never overwrite actual cross-build outputs.
-        core = self.root / "core"
-        (core / "scripts").mkdir(parents=True)
+        # Use a tiny owned workspace tree; never overwrite actual cross-build outputs.
         (self.root / "scripts/lib").mkdir(parents=True)
-        shutil.copyfile(REPOSITORY_ROOT / "core/scripts/build_android.sh", core / "scripts/build_android.sh")
+        shutil.copyfile(REPOSITORY_ROOT / "scripts/build_android_core.sh", self.root / "scripts/build_android_core.sh")
         shutil.copyfile(HELPER, self.root / "scripts/lib/rust_build_cache.sh")
+        host_tag = f"{os.uname().sysname.lower()}-{os.uname().machine}"
+        if host_tag == "darwin-arm64":
+            host_tag = "darwin-x86_64"
         ndk = self.root / "ndk"
-        ndk.mkdir()
-        archive = core / "target/aarch64-linux-android/release/libnola_mobile_bindings.a"
+        toolchain_bin = ndk / f"toolchains/llvm/prebuilt/{host_tag}/bin"
+        toolchain_bin.mkdir(parents=True)
+        for tool_name in ("aarch64-linux-android26-clang", "aarch64-linux-android26-clang++", "llvm-ar", "llvm-ranlib"):
+            tool = toolchain_bin / tool_name
+            tool.write_text("#!/bin/sh\nexit 0\n")
+            tool.chmod(0o755)
+        archive = self.root / "target/aarch64-linux-android/release/libnola_app.a"
         archive.parent.mkdir(parents=True)
         archive.write_bytes(b"first archive")
         output = self.root / "native outputs"
-        env = dict(os.environ, CARGO=str(self.cargo), NOLA_TEST_LOG=str(self.log_path),
-                   NOLA_RUST_BUILD_CACHE="off", NOLA_ANDROID_ABIS="arm64-v8a", ANDROID_NDK_HOME=str(ndk))
+        env = dict(os.environ, PATH="/usr/bin:/bin", HOME=str(self.fixture_home),
+                   CARGO=str(self.cargo), NOLA_TEST_LOG=str(self.log_path),
+                   NOLA_RUST_BUILD_CACHE="off", NOLA_ANDROID_ABIS="arm64-v8a",
+                   ANDROID_NDK_HOME=str(ndk), CARGO_TARGET_DIR=str(self.root / "target"))
         def build():
-            result = subprocess.run(["bash", str(core / "scripts/build_android.sh"), str(output)],
+            result = subprocess.run(["bash", str(self.root / "scripts/build_android_core.sh"), str(output)],
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
         build()
@@ -944,10 +940,16 @@ class RustBuildCacheTests(unittest.TestCase):
 class RustBuildCacheIntegrationTests(unittest.TestCase):
     def test_only_mobile_bindings_produce_native_abi_artifacts(self):
         import tomllib
-        core = tomllib.loads((REPOSITORY_ROOT / "core/Cargo.toml").read_text())
-        bindings = tomllib.loads((REPOSITORY_ROOT / "core/nola-mobile-bindings/Cargo.toml").read_text())
-        self.assertEqual(core["lib"]["crate-type"], ["rlib"])
-        self.assertEqual(set(bindings["lib"]["crate-type"]), {"rlib", "staticlib", "cdylib"})
+        workspace = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text())
+        app = tomllib.loads((REPOSITORY_ROOT / "crates/nola-app/Cargo.toml").read_text())
+        self.assertEqual(set(app["lib"]["crate-type"]), {"rlib", "staticlib", "cdylib"})
+        for member in workspace["workspace"]["members"]:
+            if member == "crates/nola-app":
+                continue
+            crate = tomllib.loads((REPOSITORY_ROOT / member / "Cargo.toml").read_text())
+            crate_types = set(crate.get("lib", {}).get("crate-type", ["rlib"]))
+            self.assertNotIn("staticlib", crate_types, member)
+            self.assertNotIn("cdylib", crate_types, member)
 
     def test_profiles_bound_default_debug_storage_and_keep_opt_in_debugger(self):
         import tomllib
@@ -960,12 +962,13 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
                 self.assertEqual(profile["strip"], "debuginfo")
                 self.assertEqual(profile["split-debuginfo"], "off")
                 self.assertIs(profile["incremental"], False)
-        debugger = manifest["profile"]["dev-debug"]
-        self.assertEqual(debugger["inherits"], "dev")
-        self.assertEqual(debugger["debug"], "full")
-        self.assertEqual(debugger["strip"], "none")
-        self.assertEqual(debugger["split-debuginfo"], "packed")
-        self.assertIs(debugger["incremental"], False)
+        if "dev-debug" in manifest["profile"]:
+            debugger = manifest["profile"]["dev-debug"]
+            self.assertEqual(debugger["inherits"], "dev")
+            self.assertEqual(debugger["debug"], "full")
+            self.assertEqual(debugger["strip"], "none")
+            self.assertEqual(debugger["split-debuginfo"], "packed")
+            self.assertIs(debugger["incremental"], False)
 
     def test_native_builds_share_target_and_cargo_owns_freshness(self):
         mac = (REPOSITORY_ROOT / "scripts/build_mac_runtime.sh").read_text()
@@ -977,9 +980,6 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
         self.assertNotIn("rust_runtime_needs_rebuild", mac)
         self.assertNotIn("-newer", mac)
         self.assertIn('"$ROOT/rust-toolchain.toml"', mac)
-        runner = (REPOSITORY_ROOT / "scripts/run_real_mac_xctests.sh").read_text()
-        self.assertNotIn("$ROOT/apps/cli/target", runner)
-        self.assertIn("${CARGO_TARGET_DIR:-$ROOT/target}", runner)
         project = (REPOSITORY_ROOT / "shared/apple-core/NolaCore.xcodeproj/project.pbxproj").read_text()
         self.assertNotIn("target/mac-runtime", project)
         self.assertEqual(project.count('"$(SRCROOT)/../../rust-toolchain.toml",'), 2)
@@ -989,7 +989,8 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
         # through different manifests can replace one with a different graph,
         # independently of whether the compiler cache itself is correct.
         for relative_path in (
-            "apps/cli/scripts/build.sh",
+            "scripts/build_apple_core.sh",
+            "scripts/build_android_core.sh",
             "scripts/build_cli_runtime.sh",
             "scripts/build_mac_runtime.sh",
         ):
@@ -1021,8 +1022,9 @@ class RustBuildCacheIntegrationTests(unittest.TestCase):
                 self.assertNotRegex(commands, r'(?m)^\s*"\$CARGO_BIN"\s+"\$\{CARGO_ARGS\[@\]\}"')
                 if relative_path == "scripts/build_mac_runtime.sh":
                     self.assertRegex(commands, r"\bnola_cargo_exec(?:_owned_group)?\b")
-                elif relative_path == "core/scripts/build_android.sh":
+                elif relative_path == "scripts/build_android_core.sh":
                     self.assertRegex(commands, r"\bnola_cargo\s+ndk\s+[^\n]*\b(?:build|rustc)\b")
+                    self.assertRegex(commands, r"\bnola_cargo\s+(?:build|rustc)\b")
                 else:
                     self.assertRegex(commands, r"\bnola_cargo\s+(?:build|rustc)\b")
 

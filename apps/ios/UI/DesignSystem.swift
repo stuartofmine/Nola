@@ -41,7 +41,7 @@ struct DesignTokens {
     static let dangerColor = Color("NolaDanger")
     static let infoColor = mobileColor(0x2563EB, 0x78B4F8)
 
-    // Both Apple clients align fallback surfaces with canonical Warm Ink & Warm Paper tokens.
+    // Both Apple clients align fallback surfaces with canonical Monochrome Obsidian & Porcelain tokens.
     static let backgroundColor = mobileColor(0xFAFAFA, 0x0b0b0c)
     static let surfaceColor = mobileColor(0xFFFFFF, 0x131315)
     static let cardBackgroundColor = surfaceColor
@@ -69,9 +69,9 @@ struct DesignTokens {
     static let spacing_xl: CGFloat = 24
 
     static let radius_sm: CGFloat = 8
-    static let radius_md: CGFloat = 14
+    static let radius_md: CGFloat = 12
     static let radius_lg: CGFloat = 16
-    static let radius_xl: CGFloat = 16
+    static let radius_xl: CGFloat = 18
     static let radius_pill: CGFloat = 999
 
     static let rowHeightCompact: CGFloat = 44

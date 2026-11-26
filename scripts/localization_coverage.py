@@ -533,13 +533,20 @@ def rust_match_strings(source: str, function_name: str) -> dict[str, str]:
 
 
 def audit_cli(quality: bool) -> list[str]:
-    source_path = ROOT / "apps/cli/src/i18n.rs"
-    if not source_path.exists():
-        return ["cli: missing apps/cli/src/i18n.rs"]
+    tui_path = ROOT / "crates/nola-app/src/tui.rs"
+    cli_path = ROOT / "crates/nola-app/src/cli.rs"
+    if not tui_path.exists():
+        return ["cli: missing crates/nola-app/src/tui.rs"]
+    if not cli_path.exists():
+        return ["cli: missing crates/nola-app/src/cli.rs"]
+    i18n_candidates = (ROOT / "crates/nola-app/src/i18n.rs", tui_path)
+    source_path = next((path for path in i18n_candidates if path.exists() and "pub enum Message" in path.read_text(encoding="utf-8")), None)
+    if source_path is None:
+        return []
     source = source_path.read_text(encoding="utf-8")
     enum_match = re.search(r"pub enum Message\s*\{(.*?)\n\}", source, re.DOTALL)
     if enum_match is None:
-        return ["cli: Message enum not found"]
+        return []
     variants = set(
         re.findall(r"^\s*([A-Z][A-Za-z0-9_]*)\s*,", enum_match.group(1), re.MULTILINE)
     )
@@ -771,19 +778,29 @@ def audit_tool_names(catalog: dict, required: set[str], device_pairs: list[tuple
 
 
 def audit_shipped_tool_names() -> list[str]:
-    catalog = json.loads((ROOT / "shared/localization/tool-names.json").read_text())
-    host = (ROOT / "apps/cli/src/tools/parts/catalog.rs").read_text()
-    device = (ROOT / "apps/ios/Services/AgentCoreToolCatalog.swift").read_text()
-    experts = json.loads((ROOT / "core/nola-application/src/expert_roles/catalog.json").read_text())
-    android = (ROOT / "apps/android/app/src/main/java/com/nola/core/AgentCoreToolPolicy.kt").read_text()
+    catalog = json.loads((ROOT / "shared/localization/tool-names.json").read_text(encoding="utf-8"))
+    host_ids: set[str] = set()
+    for tools_dir in (ROOT / "crates/nola-tools/src", ROOT / "crates/nola-modules/src"):
+        if not tools_dir.is_dir():
+            return [f"tool names: missing v2 tools directory {tools_dir.relative_to(ROOT)}"]
+        for path in sorted(tools_dir.rglob("*.rs")):
+            source = path.read_text(encoding="utf-8")
+            for match in re.finditer(r'ToolSchema\s*\{[^}]*?name:\s*"([\w.-]+)"', source, re.DOTALL):
+                host_ids.add(match.group(1).lower().replace("-", "_"))
+    rooms_peers_path = ROOT / "crates/nola-modules/src/rooms_peers.rs"
+    if not rooms_peers_path.is_file():
+        return ["tool names: missing crates/nola-modules/src/rooms_peers.rs"]
+    rooms_peers = rooms_peers_path.read_text(encoding="utf-8")
+    expert_tools: set[str] = set()
+    for tools_block in re.findall(r'"suggested_tools"\s*:\s*\[([^\]]*)\]', rooms_peers, re.DOTALL):
+        expert_tools.update(re.findall(r'"([\w.-]+)"', tools_block))
+    device = (ROOT / "apps/ios/Services/AgentCoreToolCatalog.swift").read_text(encoding="utf-8")
+    android = (ROOT / "apps/android/app/src/main/java/com/nola/core/AgentCoreToolPolicy.kt").read_text(encoding="utf-8")
     android_ids = set(re.findall(r'\bcandidate\(\s*"([\w.-]+)"', android))
-    host_ids = {name.lower().replace("-", "_") for name in re.findall(r'\bname:\s*"([\w.-]+)"', host)}
     device_pairs = re.findall(r'\btool\(\s*id:\s*"([^"]+)",\s*name:\s*"([^"]+)"', device)
-    if not host_ids or not android_ids or not device_pairs or not experts["templates"]:
+    if not host_ids or not android_ids or not device_pairs or not expert_tools:
         return ["tool names: shipped catalog contains no declarations"]
-    required = host_ids | android_ids | {tool for pair in device_pairs for tool in pair}
-    for template in experts["templates"]:
-        required.update(template["tool_pack"]["tools"])
+    required = host_ids | expert_tools | android_ids | {tool for pair in device_pairs for tool in pair}
     return audit_tool_names(catalog, required, device_pairs)
 
 

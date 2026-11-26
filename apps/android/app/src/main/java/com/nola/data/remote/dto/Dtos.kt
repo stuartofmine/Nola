@@ -170,10 +170,10 @@ data class ExecutionBackendModelDto(
 data class ExecutionBackendDto(
     val id: String,
     @SerialName("display_name") val displayName: String,
-    val availability: String,
+    val availability: String = "available",
     @SerialName("executable_path") val executablePath: String? = null,
     val version: String? = null,
-    val capabilities: ExecutionBackendCapabilitiesDto,
+    val capabilities: ExecutionBackendCapabilitiesDto = ExecutionBackendCapabilitiesDto(),
     val models: List<ExecutionBackendModelDto> = emptyList(),
 ) {
     val availabilityState: ExecutionBackendAvailability
@@ -198,12 +198,12 @@ enum class ExecutionBackendAvailability {
 
 @Serializable
 data class ExecutionBackendCapabilitiesDto(
-    @SerialName("streams_text") val streamsText: Boolean,
-    @SerialName("streams_reasoning") val streamsReasoning: Boolean,
-    @SerialName("streams_tools") val streamsTools: Boolean,
-    @SerialName("supports_resume") val supportsResume: Boolean,
-    @SerialName("supports_cancel") val supportsCancel: Boolean,
-    @SerialName("supports_permission_bridge") val supportsPermissionBridge: Boolean
+    @SerialName("streams_text") val streamsText: Boolean = false,
+    @SerialName("streams_reasoning") val streamsReasoning: Boolean = false,
+    @SerialName("streams_tools") val streamsTools: Boolean = false,
+    @SerialName("supports_resume") val supportsResume: Boolean = false,
+    @SerialName("supports_cancel") val supportsCancel: Boolean = false,
+    @SerialName("supports_permission_bridge") val supportsPermissionBridge: Boolean = false,
 )
 
 @Serializable
@@ -285,18 +285,18 @@ data class UploadedContentDto(
 
 @Serializable
 data class HostModelProfileDto(
-    @SerialName("profile_id") val profileId: String,
-    val revision: Long,
-    @SerialName("display_name") val displayName: String,
-    @SerialName("model_name") val modelName: String,
+    @SerialName("profile_id") val profileId: String = "",
+    val revision: Long = 0L,
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("model_name") val modelName: String = "",
     val reasoning: HostModelReasoningDto? = null,
 )
 
 @Serializable
-data class HostModelReasoningDto(val control: String, val efforts: List<String> = emptyList())
+data class HostModelReasoningDto(val control: String = "none", val efforts: List<String> = emptyList())
 
 @Serializable
 data class HostModelResolutionDto(
-    val kind: String,
+    val kind: String = "default",
     @SerialName("profile_id") val profileId: String? = null,
 )

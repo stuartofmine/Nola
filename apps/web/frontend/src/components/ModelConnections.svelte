@@ -13,7 +13,7 @@
     import { randomId } from '../lib/randomId';
     import { loadConnections, modelSelectionCommand, type ConnectionInventory, type ConnectionSnapshot, type ImportPlan, type ImportResult } from '../lib/modelConnections';
     import type { RemoteProfile } from '../lib/modelProfiles';
-    let { openConnectionId = '', profiles, onChanged }: { openConnectionId?: string; profiles?: RemoteProfile[]; onChanged?: () => Promise<void> | void } = $props();
+    let { openConnectionId = '', profiles, onChanged, hideDuplicateConnections = false }: { openConnectionId?: string; profiles?: RemoteProfile[]; onChanged?: () => Promise<void> | void; hideDuplicateConnections?: boolean } = $props();
     let confirmation: ConfirmationHandle;
     function importCredentialLabel(status: string) {
         switch (status) {
@@ -62,6 +62,7 @@
     }
     let gatewayToken = $state('');
     let tokenCopied = $state(false);
+    let tokenCopyTimer: ReturnType<typeof setTimeout> | undefined;
     function attemptLabel(profileId: string) {
         const match = inventory.selections.find(item => `${item.connection_id}:${item.catalog_key}` === profileId);
         if (!match) return profileId;
@@ -74,7 +75,8 @@
         try {
             await navigator.clipboard?.writeText(gatewayToken);
             tokenCopied = true;
-            setTimeout(() => { if (alive) tokenCopied = false; }, 2000);
+            clearTimeout(tokenCopyTimer);
+            tokenCopyTimer = setTimeout(() => { tokenCopyTimer = undefined; if (alive) tokenCopied = false; }, 2000);
         } catch { tokenCopied = false; }
     }
     let attempts = $state<{record: {id: string; profile_id: string; outcome: string; usage: {input_tokens?: number | null; output_tokens?: number | null} | null}}[]>([]);
@@ -111,7 +113,7 @@
     function toggle(snapshot: ConnectionSnapshot, key: string, enabled: boolean) {
         void operation(async () => {
             await api('/api/model-connections', {method: 'POST', body: JSON.stringify(modelSelectionCommand(snapshot, inventory, key, enabled))});
-            if (alive) { await refresh(); await onChanged?.(); }
+            if (alive) { await refresh(); await onChanged?.(); window.dispatchEvent(new CustomEvent('nola:models-updated')); }
         });
     }
     function discover(snapshot: ConnectionSnapshot) {
@@ -160,7 +162,7 @@
         void operation(async () => {
             const value = await api<ImportResult[]>('/api/model-import/commit', {method: 'POST', body: JSON.stringify({plan_id: current.plan_id,
                 selections: selected.map(candidate_id => ({candidate_id, display_name: null, update_existing: updates.includes(candidate_id), enable_models: enableModels}))})});
-            if (alive) { results = value; plan = null; await refresh(); await onChanged?.(); }
+            if (alive) { results = value; plan = null; await refresh(); await onChanged?.(); window.dispatchEvent(new CustomEvent('nola:models-updated')); }
         });
     }
     async function configureGateway(revoke: boolean) {
@@ -176,17 +178,19 @@
         }
         void operation(async () => {
             const value = await api<{revision: number; token?: string}>('/api/model-gateway/access', {method: 'POST', body: JSON.stringify({expected_revision: gateway.revision, revoke})});
-            if (alive) { gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
+            if (alive) { clearTimeout(tokenCopyTimer); tokenCopyTimer = undefined; gatewayToken = value.token ?? ''; tokenCopied = false; gateway = {revision: value.revision, enabled: !revoke}; }
         });
     }
     function readAttempts() { void operation(async () => { const value = await api<typeof attempts>('/api/model-gateway/attempts'); if (alive) attempts = value; }); }
-    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(true); alive = false; gatewayToken = ''; controller?.abort(); }; });
+    onMount(() => { void refresh(); void api<typeof gateway>('/api/model-gateway/access').then(value => { if (alive) gateway = value; }).catch(() => { if (alive) failed = 'connections.loadFailed'; }); return () => { void cancelDiscovery(true); alive = false; gatewayToken = ''; clearTimeout(tokenCopyTimer); tokenCopyTimer = undefined; controller?.abort(); }; });
 </script>
 
 <ConfirmationDialog bind:this={confirmation} />
-<section class="connections"><div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
+<section class="connections">
+    {#if !hideDuplicateConnections}
+    <div class="row between connections-heading"><h2>{t($locale, 'connections.title')}</h2><button type="button" disabled={busy || loading} onclick={refresh}>{t($locale, 'rooms.refresh')}</button></div>
     {#if loading || busy}<p role="status">{t($locale, busy ? 'rooms.saving' : 'rooms.loading')}</p>{/if}
-    {#if discovery}<button disabled={cancellingDiscovery} onclick={() => void cancelDiscovery()}>{t($locale, 'rooms.cancel')}</button>{/if}
+    {#if discovery}<button type="button" disabled={cancellingDiscovery} onclick={() => void cancelDiscovery()}>{t($locale, 'rooms.cancel')}</button>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, failed)}</p>{/if}
     <label>{t($locale, 'connections.search')}<input type="search" bind:value={query} /></label>
     {#if !loading && !failed && !inventory.connections.length}<p class="muted">{t($locale, 'connections.empty')}</p>{/if}
@@ -196,7 +200,7 @@
         <details class="connection-detail" open={expanded[connection.id] ?? false}
             ontoggle={event => { expanded[connection.id] = event.currentTarget.open; }}><summary class="connection-summary"><svg class="connection-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg><span class="connection-identity"><strong>{connection.display_name}</strong><small title={connection.base_url}>{connection.base_url}</small></span><span class="connection-count">{snapshot.document.catalog?.models.length ?? 0} · {t($locale, connection.enabled ? 'connections.enabled' : 'connections.disabled')}</span></summary>
         <div class="connection-body">
-            <button disabled={busy} onclick={() => discover(snapshot)}>{t($locale, 'connections.discover')}</button>
+            <button type="button" aria-label={`${t($locale, 'connections.discover')}: ${connection.display_name}`} disabled={busy} onclick={() => discover(snapshot)}>{t($locale, 'connections.discover')}</button>
             {#each inventory.accounts.filter(item => item.account.id === connection.account_id) as item}<p class="muted">{item.account.display_name}</p>{/each}
             {#each snapshot.document.catalog?.models ?? [] as model (`${model.protocol}:${model.model_id}`)}
                 {@const key = `${model.protocol}:${model.model_id}`}
@@ -206,6 +210,10 @@
             {/each}
         </div></details>
     {/each}
+    {:else}
+    {#if busy}<p role="status">{t($locale, 'rooms.saving')}</p>{/if}
+    {#if failed}<p role="alert" class="error">{t($locale, failed)}</p>{/if}
+    {/if}
     <section class="integrations" aria-label={t($locale, 'connections.manage')}><h3>{t($locale, 'connections.manage')}</h3>
     <details><summary>{t($locale, 'connections.import')}</summary>
         <form onsubmit={event => { event.preventDefault(); preview(); }}>
@@ -214,7 +222,7 @@
             <label class="model"><input type="checkbox" bind:checked={includeCredentials} disabled={busy} />{t($locale, 'connections.credentials')}</label>
             {#if includeCredentials}<label>{t($locale, 'connections.credentialPath')}<input bind:value={credentialPath} disabled={busy} /></label>{/if}
             <label class="model"><input type="checkbox" bind:checked={allowEnvironment} disabled={busy} />{t($locale, 'connections.environment')}</label>
-            <button disabled={busy || !path.trim()}>{t($locale, 'connections.preview')}</button>
+            <button type="submit" aria-label={t($locale, 'connections.preview')} disabled={busy || !path.trim()}>{t($locale, 'connections.preview')}</button>
         </form>
         {#if expiredPlan}<p role="status">{t($locale, 'activity.importExpired')}</p>{/if}
         {#if plan}<div class="plan">
@@ -226,20 +234,20 @@
                 {#if candidate.existing_revision !== null}<label class="model"><input type="checkbox" bind:group={updates} value={candidate.candidate_id} disabled={busy} />{t($locale, 'connections.update')}</label>{/if}
             </article>{/each}
             <label class="model"><input type="checkbox" bind:checked={enableModels} disabled={busy} />{t($locale, 'connections.enable')}</label>
-            <button class="primary" disabled={busy || !selected.length} onclick={commit}>{t($locale, 'connections.confirm')}</button>
+            <button type="button" class="primary" aria-label={t($locale, 'connections.confirm')} disabled={busy || !selected.length} onclick={commit}>{t($locale, 'connections.confirm')}</button>
         </div>{/if}
         {#each results as result}<p role="status" class:error={result.status !== 'imported'}>{t($locale, result.status === 'imported' ? 'connections.imported' : 'connections.importFailed')} {result.error ?? ''}</p>{/each}
     </details>
     <details bind:this={accessPanel}><summary>{t($locale, 'connections.gateway')}</summary>
         <p>{t($locale, 'connections.gatewayHint')}</p><code>{typeof location === 'undefined' ? '' : location.origin}/gateway/v1</code>
-        <p><button disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
-        {#if gateway.enabled}<button class="danger" disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
-        {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
+        <p><button type="button" aria-label={t($locale, 'connections.issueToken')} disabled={busy} onclick={() => configureGateway(false)}>{t($locale, 'connections.issueToken')}</button>
+        {#if gateway.enabled}<button type="button" class="danger" aria-label={t($locale, 'connections.revokeToken')} disabled={busy} onclick={() => configureGateway(true)}>{t($locale, 'connections.revokeToken')}</button>{/if}</p>
+        {#if gatewayToken}<div class="gateway-token"><label>{t($locale, 'connections.tokenOnce')}<input readonly type="text" class="token-value" value={gatewayToken} onclick={event => event.currentTarget.select()} /></label><button type="button" aria-label={t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')} onclick={copyGatewayToken}>{t($locale, tokenCopied ? 'shell.login.copied' : 'shell.markdown.copy')}</button></div>{/if}
     </details>
     <GatewayClients {gateway} {profiles} openAccess={openGatewayAccess} />
     <SourceAccounts />
     <details><summary>{t($locale, 'connections.gatewayUsage')}</summary>
-        <button disabled={busy} onclick={readAttempts}>{t($locale, 'rooms.refresh')}</button>
+        <button type="button" aria-label={t($locale, 'rooms.refresh')} disabled={busy} onclick={readAttempts}>{t($locale, 'rooms.refresh')}</button>
         {#each attempts as attempt (attempt.record.id)}<p>{attemptLabel(attempt.record.profile_id)} · {attempt.record.outcome} · {attempt.record.usage?.input_tokens ?? '—'} / {attempt.record.usage?.output_tokens ?? '—'}</p>{/each}
     </details>
     </section>

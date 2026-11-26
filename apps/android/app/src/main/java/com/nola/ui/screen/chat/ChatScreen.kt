@@ -13,6 +13,8 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import com.nola.ui.components.NolaBadge
+import com.nola.ui.components.NolaCard
 import com.nola.ui.components.NolaIconButton
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
@@ -84,10 +86,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -113,9 +117,12 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.MoreVert
@@ -341,6 +348,8 @@ internal fun ChatScreen(
     var showActions by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var renameDraft by remember { mutableStateOf("") }
+    var v2EditTarget by remember(state.conversationId) { mutableStateOf<ConversationMessage?>(null) }
+    var v2EditDraft by remember(state.conversationId) { mutableStateOf("") }
     var showExecutionBackendMenu by remember { mutableStateOf(false) }
     // Opening an inspector is navigation within this conversation. Its panel reloads
     // the authoritative content when the asynchronous Host binding becomes available.
@@ -1171,6 +1180,24 @@ internal fun ChatScreen(
                                     showActions = false
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_v2_branch_conversation)) },
+                                modifier = Modifier.testTag("chat.v2.branch"),
+                                enabled = draftWritable && !state.processingState.blocksInput,
+                                onClick = {
+                                    showActions = false
+                                    viewModel.branchConversation()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_v2_workspace_review)) },
+                                modifier = Modifier.testTag("chat.v2.workspace_review"),
+                                enabled = presentationReady,
+                                onClick = {
+                                    showActions = false
+                                    viewModel.openWorkspaceReview()
+                                }
+                            )
                         }
                         DropdownMenuItem(text = { Text(stringResource(R.string.chat_experts)) },
                             modifier = Modifier.testTag("chat.experts.open"),
@@ -1234,7 +1261,14 @@ internal fun ChatScreen(
             ChatTranscript(
             state = state,
             onExpertMention = { mentionDetails = it },
-            onResendEditedMessage = if (state.expertContextOwner == null && state.currentModel?.source != ModelInfo.ModelSource.WebHost) viewModel::beginMessageEdit else null,
+            onResendEditedMessage = when {
+                state.expertContextOwner != null -> null
+                state.currentModel?.source == ModelInfo.ModelSource.WebHost -> { msg ->
+                    v2EditTarget = msg
+                    v2EditDraft = msg.text
+                }
+                else -> viewModel::beginMessageEdit
+            },
             expertReplies = expertReplies,
             resumableExpertMessages = resumableExpertMessages,
             resumingExpertMessage = resumingExpertMessage,
@@ -1264,6 +1298,9 @@ internal fun ChatScreen(
             onResolveLocalPermission = viewModel::resolveLocalAgentPermission,
             onHostPermissionInstruction = viewModel::provideHostPermissionInstruction,
             onLocalPermissionInstruction = viewModel::provideLocalPermissionInstruction,
+            onRespondV2UserQuestion = viewModel::respondToV2UserQuestion,
+            onSubmitV2UiInteraction = { convId, interaction -> viewModel.submitV2UiInteraction(convId, interaction) },
+            onDismissV2CompactionSummary = viewModel::dismissV2CompactionSummary,
             editingCurrentDraft = composerDraft.hasComposerContent,
             onEditAndRetry = if (state.error != null && draftWritable && !state.processingState.blocksInput &&
                 state.expertContextOwner == null && state.taskChildOwner == null &&
@@ -1325,6 +1362,7 @@ internal fun ChatScreen(
                     Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
                         when (state.permissionMode) {
                             com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
+                            com.nola.core.AndroidAgentPermissionMode.AcceptEdits -> R.string.chat_permission_mode_accept_edits
                             com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
                         }
                     ))
@@ -1735,6 +1773,46 @@ internal fun ChatScreen(
             }
         )
     }
+
+    v2EditTarget?.let { target ->
+        AlertDialog(
+            modifier = Modifier.dismissImeOnBlankTap(),
+            onDismissRequest = { v2EditTarget = null },
+            title = { Text(stringResource(R.string.chat_edit_resend)) },
+            text = {
+                OutlinedTextField(
+                    value = v2EditDraft,
+                    onValueChange = { v2EditDraft = it },
+                    minLines = 2,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth().testTag("chat.v2.edit.input")
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = v2EditDraft.isNotBlank() && !state.processingState.blocksInput,
+                    onClick = {
+                        val edited = v2EditDraft
+                        v2EditTarget = null
+                        viewModel.truncateAndResendV2Message(target, edited)
+                    },
+                ) { Text(stringResource(R.string.chat_edit_resend)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { v2EditTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    state.v2WorkspaceReview?.let { reviewState ->
+        V2WorkspaceReviewSheet(
+            review = reviewState,
+            onRefresh = viewModel::openWorkspaceReview,
+            onDismiss = viewModel::dismissWorkspaceReview,
+        )
+    }
 }
 
 
@@ -1762,6 +1840,9 @@ internal fun ChatTranscript(
     onResolveLocalPermission: (String, Boolean, Boolean) -> Unit = { _, _, _ -> },
     onHostPermissionInstruction: (String, String) -> Unit = { _, _ -> },
     onLocalPermissionInstruction: (String, String) -> Unit = { _, _ -> },
+    onRespondV2UserQuestion: (String, String?) -> Unit = { _, _ -> },
+    onSubmitV2UiInteraction: (suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject)? = null,
+    onDismissV2CompactionSummary: () -> Unit = {},
     editingCurrentDraft: Boolean = false,
     onEditAndRetry: (() -> Unit)? = null,
     onSwitchModel: () -> Unit = {},
@@ -2139,6 +2220,42 @@ internal fun ChatTranscript(
                         .height(12.dp)
                         .testTag(CHAT_TRANSCRIPT_TAIL_TEST_TAG)
                 )
+            }
+
+            state.v2CompactionSummary?.takeIf { it.isNotBlank() }?.let { summary ->
+                item(key = "v2_compaction_summary") {
+                    V2CompactionSummaryBanner(
+                        summary = summary,
+                        onDismiss = onDismissV2CompactionSummary,
+                    )
+                }
+            }
+
+            if (state.v2UiSurfaces.isNotEmpty()) {
+                itemsIndexed(
+                    items = state.v2UiSurfaces,
+                    key = { index, snapshot ->
+                        val surfaceId = (snapshot["surface_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                            ?: ((snapshot["identity"] as? kotlinx.serialization.json.JsonObject)
+                                ?.get("surface_id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                        if (surfaceId != null) "v2_ui_surface_$surfaceId" else "v2_ui_surface_${index}_${snapshot.hashCode()}"
+                    },
+                ) { _, snapshot ->
+                    V2UiSurfaceItem(
+                        snapshotJson = snapshot,
+                        conversationId = state.conversationId,
+                        onSubmitInteraction = onSubmitV2UiInteraction,
+                    )
+                }
+            }
+
+            state.pendingUserQuestion?.let { prompt ->
+                item(key = "v2_user_question_${prompt.requestId}") {
+                    V2UserQuestionCard(
+                        prompt = prompt,
+                        onRespond = onRespondV2UserQuestion,
+                    )
+                }
             }
 
             state.permissionRequest?.let { request ->
@@ -2790,7 +2907,7 @@ private fun AttachmentChip(
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable(enabled = enabled, onClick = onRemove),
+                .clickable(enabled = enabled, role = Role.Button, onClick = onRemove),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -2832,7 +2949,7 @@ private fun ComposerCircleButton(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -3025,7 +3142,406 @@ private fun HostPermissionCard(
         onAllow = { onDecision(request.id, true, false) }, onDeny = { onDecision(request.id, false, false) },
         permissionIdentity = request.id, permissionInstructions = request.permissionInstructions,
         taskAttribution = taskAttribution, pendingCount = pendingCount,
-        onProvideInstruction = if (!request.deviceBridge) ({ instruction -> onInstruction(request.id, instruction) }) else null)
+        onProvideInstruction = if (!request.deviceBridge && request.nonce != null) ({ instruction -> onInstruction(request.id, instruction) }) else null)
+}
+
+private val v2UiSnapshotJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true; isLenient = true }
+
+@Composable
+private fun V2CompactionSummaryBanner(
+    summary: String,
+    onDismiss: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.xs)
+            .testTag("chat.v2.compactionBanner"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
+        shape = RoundedCornerShape(NolaRadius.md),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.common_close),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun V2UserQuestionCard(
+    prompt: V2UserQuestionPrompt,
+    onRespond: (String, String?) -> Unit,
+) {
+    var answerText by remember(prompt.requestId) { mutableStateOf("") }
+    var submitting by remember(prompt.requestId) { mutableStateOf(false) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm)
+            .testTag("chat.v2.userQuestionCard"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+        shape = RoundedCornerShape(NolaRadius.lg),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.QuestionAnswer,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = prompt.question,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            if (prompt.options.isNotEmpty()) {
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    prompt.options.forEach { option ->
+                        FilterChip(
+                            selected = answerText == option,
+                            enabled = !submitting,
+                            onClick = {
+                                if (!submitting) {
+                                    submitting = true
+                                    onRespond(prompt.requestId, option)
+                                }
+                            },
+                            label = { Text(option) },
+                        )
+                    }
+                }
+            }
+            androidx.compose.material3.OutlinedTextField(
+                value = answerText,
+                onValueChange = { answerText = it },
+                enabled = !submitting,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.chat_v2_question_placeholder)) },
+                singleLine = false,
+                maxLines = 4,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.TextButton(
+                    enabled = !submitting,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    onClick = {
+                        if (!submitting) {
+                            submitting = true
+                            onRespond(prompt.requestId, null)
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.chat_v2_question_skip))
+                }
+                androidx.compose.material3.Button(
+                    enabled = !submitting && answerText.isNotBlank(),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    onClick = {
+                        if (!submitting) {
+                            submitting = true
+                            onRespond(prompt.requestId, answerText.trim())
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.chat_v2_question_submit))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun V2UiSurfaceItem(
+    snapshotJson: kotlinx.serialization.json.JsonObject,
+    conversationId: String?,
+    onSubmitInteraction: (suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject)?,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val parsedSnapshot = remember(snapshotJson) {
+        runCatching {
+            v2UiSnapshotJson.decodeFromString(
+                com.nola.data.local.UiSnapshot.serializer(),
+                snapshotJson.toString(),
+            )
+        }.getOrNull()
+    }
+    if (parsedSnapshot != null) {
+        var committedSnapshot by remember(parsedSnapshot.identity) {
+            mutableStateOf<com.nola.data.local.UiSnapshot?>(null)
+        }
+        val activeSnapshot = committedSnapshot?.takeIf {
+            it.identity == parsedSnapshot.identity && it.revision >= parsedSnapshot.revision
+        } ?: parsedSnapshot
+        val convId = conversationId ?: activeSnapshot.identity.owner.conversation_id
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm)
+                .testTag("chat.v2.uiSurface"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(NolaRadius.lg),
+        ) {
+            Box(modifier = Modifier.padding(14.dp)) {
+                com.nola.ui.generative.GenerativeUiSurface(
+                    snapshot = activeSnapshot,
+                    submit = { submission ->
+                        val handler = onSubmitInteraction
+                            ?: return@GenerativeUiSurface com.nola.ui.generative.UiSubmissionOutcome.Rejected(
+                                context.getString(R.string.chat_v2_ui_unavailable)
+                            )
+                        try {
+                            val payload = kotlinx.serialization.json.buildJsonObject {
+                                put("surface_id", kotlinx.serialization.json.JsonPrimitive(submission.interaction.identity.surface_id))
+                                put("action_id", kotlinx.serialization.json.JsonPrimitive(submission.interaction.action?.action_id.orEmpty()))
+                                put("submission_id", kotlinx.serialization.json.JsonPrimitive(submission.submission_id))
+                                put(
+                                    "interaction",
+                                    v2UiSnapshotJson.parseToJsonElement(
+                                        v2UiSnapshotJson.encodeToString(
+                                            com.nola.data.local.UiInteraction.serializer(),
+                                            submission.interaction,
+                                        )
+                                    )
+                                )
+                            }
+                            val result = handler(convId, payload)
+                            val updatedObj = (result["snapshot"] as? kotlinx.serialization.json.JsonObject) ?: snapshotJson
+                            val updatedSnapshot = runCatching {
+                                v2UiSnapshotJson.decodeFromString(
+                                    com.nola.data.local.UiSnapshot.serializer(),
+                                    updatedObj.toString(),
+                                )
+                            }.getOrDefault(activeSnapshot)
+                            com.nola.ui.generative.UiSubmissionOutcome.Committed(
+                                com.nola.data.local.UiInteractionReceipt(updatedSnapshot, submission.submission_id)
+                            )
+                        } catch (e: Exception) {
+                            com.nola.ui.generative.UiSubmissionOutcome.Rejected(
+                                e.message ?: context.getString(R.string.chat_v2_ui_interaction_failed)
+                            )
+                        }
+                    },
+                    accepted = { receipt ->
+                        if (receipt.snapshot.identity == parsedSnapshot.identity &&
+                            receipt.snapshot.revision >= activeSnapshot.revision
+                        ) {
+                            committedSnapshot = receipt.snapshot
+                        }
+                    },
+                )
+            }
+        }
+        return
+    }
+
+    val surfaceId = (snapshotJson["surface_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+    val summary = (snapshotJson["summary"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+    val components = (snapshotJson["components"] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { it as? kotlinx.serialization.json.JsonObject }
+        .orEmpty()
+    val scope = rememberCoroutineScope()
+    var submitting by remember(surfaceId) { mutableStateOf(false) }
+    var interactionError by remember(surfaceId) { mutableStateOf<String?>(null) }
+    val fieldValues = remember(surfaceId) { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = NolaSpacing.lg, vertical = NolaSpacing.sm)
+            .testTag("chat.v2.uiSurface"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(NolaRadius.lg),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (summary.isNotBlank()) {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            components.forEach { component ->
+                val kind = (component["component"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: (component["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: ""
+                val id = (component["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+                val props = (component["props"] as? kotlinx.serialization.json.JsonObject) ?: component
+                val text = (props["text"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: (props["label"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: (props["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: ""
+                val actionId = (props["action_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: (props["action"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    ?: id
+                when (kind.lowercase()) {
+                    "button", "action" -> {
+                        androidx.compose.material3.Button(
+                            enabled = !submitting && onSubmitInteraction != null && conversationId != null,
+                            onClick = {
+                                val handler = onSubmitInteraction ?: return@Button
+                                val convId = conversationId ?: return@Button
+                                submitting = true
+                                interactionError = null
+                                scope.launch {
+                                    try {
+                                        val dataModel = kotlinx.serialization.json.buildJsonObject {
+                                            fieldValues.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
+                                        }
+                                        val existingIdentity = snapshotJson["identity"] as? kotlinx.serialization.json.JsonObject
+                                        val existingOwner = existingIdentity?.get("owner") as? kotlinx.serialization.json.JsonObject
+                                        val resolvedSurfaceId = surfaceId.ifBlank {
+                                            (existingIdentity?.get("surface_id") as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+                                        }
+                                        val generation = (existingIdentity?.get("generation") as? kotlinx.serialization.json.JsonPrimitive)
+                                            ?.content?.toLongOrNull()
+                                            ?: (snapshotJson["generation"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                                            ?: 1L
+                                        val expectedRevision = (snapshotJson["revision"] as? kotlinx.serialization.json.JsonPrimitive)
+                                            ?.content?.toLongOrNull()
+                                            ?: (snapshotJson["expected_surface_revision"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+                                            ?: 0L
+                                        val ownerObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("authority_id", existingOwner?.get("authority_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("conversation_id", kotlinx.serialization.json.JsonPrimitive(convId))
+                                            put("participant_id", existingOwner?.get("participant_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("context_id", existingOwner?.get("context_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("originating_run_id", existingOwner?.get("originating_run_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("message_id", existingOwner?.get("message_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                            put("part_id", existingOwner?.get("part_id") ?: kotlinx.serialization.json.JsonPrimitive(""))
+                                        }
+                                        val identityObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("owner", ownerObj)
+                                            put("surface_id", kotlinx.serialization.json.JsonPrimitive(resolvedSurfaceId))
+                                            put("generation", kotlinx.serialization.json.JsonPrimitive(generation))
+                                        }
+                                        val editsArr = kotlinx.serialization.json.buildJsonArray {
+                                            fieldValues.forEach { (k, v) ->
+                                                add(kotlinx.serialization.json.buildJsonObject {
+                                                    put("type", kotlinx.serialization.json.JsonPrimitive("set"))
+                                                    put("instance_id", kotlinx.serialization.json.JsonPrimitive(k))
+                                                    put("binding", kotlinx.serialization.json.JsonPrimitive(k))
+                                                    put("value", kotlinx.serialization.json.JsonPrimitive(v))
+                                                })
+                                            }
+                                        }
+                                        val actionObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("instance_id", kotlinx.serialization.json.JsonPrimitive(id.ifBlank { actionId }))
+                                            put("action_id", kotlinx.serialization.json.JsonPrimitive(actionId))
+                                        }
+                                        val interactionObj = kotlinx.serialization.json.buildJsonObject {
+                                            put("identity", identityObj)
+                                            put("expected_surface_revision", kotlinx.serialization.json.JsonPrimitive(expectedRevision))
+                                            put("edits", editsArr)
+                                            put("action", actionObj)
+                                        }
+                                        handler(
+                                            convId,
+                                            kotlinx.serialization.json.buildJsonObject {
+                                                put("surface_id", kotlinx.serialization.json.JsonPrimitive(resolvedSurfaceId))
+                                                put("action_id", kotlinx.serialization.json.JsonPrimitive(actionId))
+                                                put("identity", identityObj)
+                                                put("expected_surface_revision", kotlinx.serialization.json.JsonPrimitive(expectedRevision))
+                                                put("interaction", interactionObj)
+                                                put("data_model", dataModel)
+                                            },
+                                        )
+                                    } catch (e: Exception) {
+                                        interactionError = e.message ?: context.getString(R.string.chat_v2_ui_interaction_failed)
+                                    } finally {
+                                        submitting = false
+                                    }
+                                }
+                            },
+                        ) {
+                            Text(text.ifBlank { actionId.ifBlank { stringResource(R.string.chat_v2_question_submit) } })
+                        }
+                    }
+                    "textfield", "text_field", "input" -> {
+                        val key = (props["binding"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                            ?: id.ifBlank { "input" }
+                        androidx.compose.material3.OutlinedTextField(
+                            value = fieldValues[key].orEmpty(),
+                            onValueChange = { fieldValues[key] = it },
+                            label = if (text.isNotBlank()) ({ Text(text) }) else null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    else -> {
+                        if (text.isNotBlank()) {
+                            Text(
+                                text = text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+            if (submitting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            interactionError?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -3187,7 +3703,7 @@ fun MessageBubble(
         }
         if (isUser) {
             if (visibleText.isNotBlank()) {
-                val userBubbleShape = RoundedCornerShape(20.dp)
+                val userBubbleShape = com.nola.ui.theme.NolaContinuousShape(NolaRadius.message)
                 Card(
                     modifier = Modifier.widthIn(max = 560.dp),
                     colors = CardDefaults.cardColors(
@@ -4450,6 +4966,132 @@ private fun StreamingActivityIndicator() {
                     .clip(CircleShape)
                     .background(dotColor)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun V2WorkspaceReviewSheet(
+    review: V2WorkspaceReviewState,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .testTag("chat.v2.workspace_review.sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onRefresh, enabled = !review.loading) {
+                    Text(stringResource(R.string.common_refresh))
+                }
+            }
+            if (review.workspaceRoot.isNotBlank()) {
+                Text(
+                    text = review.workspaceRoot,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (review.loading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            review.error?.takeIf { it.isNotBlank() }?.let { err ->
+                Text(
+                    text = err,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (!review.loading && review.error == null && review.entries.isEmpty() && review.stagedDiff.isBlank() && review.unstagedDiff.isBlank()) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (review.entries.isNotEmpty()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_files),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    review.entries.forEachIndexed { index, entry ->
+                        if (index > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (entry.status.isNotBlank()) {
+                                NolaBadge(text = entry.status, tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Text(
+                                text = if (entry.isDir) "${entry.path}/" else entry.path,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+            if (review.stagedDiff.isNotBlank()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_staged),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = review.stagedDiff,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                }
+            }
+            if (review.unstagedDiff.isNotBlank()) {
+                NolaCard {
+                    Text(
+                        text = stringResource(R.string.chat_v2_workspace_review_unstaged),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = review.unstagedDiff,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    )
+                }
+            }
+            if (review.truncated) {
+                Text(
+                    text = stringResource(R.string.chat_v2_workspace_review_truncated),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 }

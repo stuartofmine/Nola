@@ -355,6 +355,44 @@ struct MacConversationCanvas: View {
                             dismiss: { model.dismissPermissionResolutionError() }
                         )
                     }
+                    if let compactionSummary = model.v2CompactionSummary, !compactionSummary.isEmpty {
+                        MacInlineNotice(
+                            message: compactionSummary,
+                            kind: .information,
+                            dismiss: { model.dismissV2CompactionSummary() }
+                        )
+                        .accessibilityIdentifier("chat.v2.compactionBanner")
+                    }
+                    if let conversationID = model.selectedConversationID,
+                       let v2Surfaces = model.v2UISurfacesByConversation[conversationID],
+                       !v2Surfaces.isEmpty {
+                        let indexedSurfaces: [(key: String, json: String)] = v2Surfaces.enumerated().map { index, json in
+                            (key: MacV2UISurfaceCard.surfaceKey(for: json, index: index), json: json)
+                        }
+                        let surfaceStack = VStack(alignment: .leading, spacing: 8) {
+                            ForEach(indexedSurfaces, id: \.key) { item in
+                                MacV2UISurfaceCard(
+                                    snapshotJSON: item.json,
+                                    conversationID: conversationID,
+                                    onSubmit: { convID, interactionData in
+                                        try await model.submitV2UIInteraction(
+                                            conversationId: convID,
+                                            interactionData: interactionData
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                        ViewThatFits(in: .vertical) {
+                            surfaceStack
+                            ScrollView {
+                                surfaceStack
+                            }
+                            .frame(maxHeight: 320)
+                        }
+                        .frame(maxHeight: 320)
+                        .accessibilityIdentifier("chat.v2.uiSurfaces")
+                    }
                     if let request = model.selectedPendingRemotePermission {
                         MacHostPermissionCard(
                             request: request,
@@ -648,6 +686,199 @@ struct MacConversationCanvas: View {
             || model.hasDeferredUserInputWaits
             || model.selectedUserInputWaitError != nil
             || model.canCancelRejectedUIQueue
+            || model.v2CompactionSummary != nil
+            || !(model.selectedConversationID.flatMap { model.v2UISurfacesByConversation[$0] } ?? []).isEmpty
             || MacExpertPermissionDock.hasControls(workspace: expertWorkspace, conversationID: model.selectedConversationID)
+    }
+}
+
+private struct MacV2UISurfaceCard: View {
+    let snapshotJSON: String
+    let conversationID: String
+    let onSubmit: (String, Data) async throws -> Data
+    @State private var committedSnapshot: AppleUISnapshot<MacCanonicalJSONValue>?
+    @State private var fieldValues: [String: String] = [:]
+    @State private var isSubmitting = false
+    @State private var submissionError: String?
+
+    static func surfaceKey(for snapshotJSON: String, index: Int) -> String {
+        if let data = snapshotJSON.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let sid = root["surface_id"] as? String, !sid.isEmpty { return sid }
+            if let identity = root["identity"] as? [String: Any],
+               let sid = identity["surface_id"] as? String, !sid.isEmpty {
+                return sid
+            }
+        }
+        return "surface-\(index)"
+    }
+
+    private var decodedSnapshot: AppleUISnapshot<MacCanonicalJSONValue>? {
+        guard let data = snapshotJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AppleUISnapshot<MacCanonicalJSONValue>.self, from: data)
+    }
+
+    private var rawObject: [String: Any]? {
+        guard let data = snapshotJSON.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    var body: some View {
+        Group {
+            if let snapshot = decodedSnapshot {
+                let activeSnapshot: AppleUISnapshot<MacCanonicalJSONValue> = {
+                    if let committed = committedSnapshot,
+                       committed.identity == snapshot.identity,
+                       committed.revision >= snapshot.revision {
+                        return committed
+                    }
+                    return snapshot
+                }()
+                let targetConvID = conversationID.isEmpty ? activeSnapshot.identity.owner.conversation_id : conversationID
+                AppleUISurfaceView(
+                    snapshot: activeSnapshot,
+                    submit: { submission in
+                        do {
+                            let encoded = try JSONEncoder().encode(submission.interaction)
+                            let interactionObj = (try? JSONSerialization.jsonObject(with: encoded)) ?? ([String: Any]())
+                            let payload: [String: Any] = [
+                                "surface_id": submission.interaction.identity.surface_id,
+                                "action_id": submission.interaction.action?.action_id ?? "",
+                                "submission_id": submission.submission_id,
+                                "interaction": interactionObj,
+                            ]
+                            let payloadData = try JSONSerialization.data(withJSONObject: payload)
+                            let responseData = try await onSubmit(targetConvID, payloadData)
+                            if let root = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                               let rawSnap = root["snapshot"],
+                               JSONSerialization.isValidJSONObject(rawSnap),
+                               let snapData = try? JSONSerialization.data(withJSONObject: rawSnap),
+                               let updated = try? JSONDecoder().decode(AppleUISnapshot<MacCanonicalJSONValue>.self, from: snapData) {
+                                return .committed(AppleUIInteractionReceipt(snapshot: updated, queued_submission_id: submission.submission_id))
+                            }
+                            return .committed(AppleUIInteractionReceipt(snapshot: activeSnapshot, queued_submission_id: submission.submission_id))
+                        } catch {
+                            return .rejected(error.localizedDescription)
+                        }
+                    },
+                    accepted: { receipt in
+                        if receipt.snapshot.identity == snapshot.identity,
+                           receipt.snapshot.revision >= activeSnapshot.revision {
+                            committedSnapshot = receipt.snapshot
+                        }
+                    }
+                )
+                .id(activeSnapshot.identity)
+            } else if let root = rawObject {
+                rawSurfaceBody(root: root)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("chat.v2.uiSurface")
+    }
+
+    @ViewBuilder
+    private func rawSurfaceBody(root: [String: Any]) -> some View {
+        let surfaceID = (root["surface_id"] as? String) ?? ""
+        let summary = (root["summary"] as? String) ?? ""
+        let components = (root["components"] as? [[String: Any]]) ?? []
+        VStack(alignment: .leading, spacing: 8) {
+            if !summary.isEmpty {
+                Text(summary).font(.callout.weight(.semibold))
+            }
+            ForEach(Array(components.enumerated()), id: \.offset) { _, comp in
+                let kind = (comp["component"] as? String) ?? (comp["type"] as? String) ?? ""
+                let id = (comp["id"] as? String) ?? ""
+                let props = (comp["props"] as? [String: Any]) ?? comp
+                let text = (props["text"] as? String) ?? (props["label"] as? String) ?? (props["title"] as? String) ?? ""
+                let actionID = (props["action_id"] as? String) ?? (props["action"] as? String) ?? id
+                switch kind.lowercased() {
+                case "button", "action":
+                    Button(text.isEmpty ? (actionID.isEmpty ? String(localized: "Submit") : actionID) : text) {
+                        isSubmitting = true
+                        submissionError = nil
+                        Task {
+                            defer { isSubmitting = false }
+                            do {
+                                let existingIdentity = root["identity"] as? [String: Any]
+                                let existingOwner = existingIdentity?["owner"] as? [String: Any]
+                                let resolvedSurfaceID = surfaceID.isEmpty
+                                    ? ((existingIdentity?["surface_id"] as? String) ?? "")
+                                    : surfaceID
+                                let generation = (existingIdentity?["generation"] as? Int)
+                                    ?? (root["generation"] as? Int)
+                                    ?? 1
+                                let expectedRevision = (root["revision"] as? Int)
+                                    ?? (root["expected_surface_revision"] as? Int)
+                                    ?? 0
+                                let ownerObj: [String: Any] = [
+                                    "authority_id": (existingOwner?["authority_id"] as? String) ?? "",
+                                    "conversation_id": conversationID,
+                                    "participant_id": (existingOwner?["participant_id"] as? String) ?? "",
+                                    "context_id": (existingOwner?["context_id"] as? String) ?? "",
+                                    "originating_run_id": (existingOwner?["originating_run_id"] as? String) ?? "",
+                                    "message_id": (existingOwner?["message_id"] as? String) ?? "",
+                                    "part_id": (existingOwner?["part_id"] as? String) ?? "",
+                                ]
+                                let identityObj: [String: Any] = [
+                                    "owner": ownerObj,
+                                    "surface_id": resolvedSurfaceID,
+                                    "generation": generation,
+                                ]
+                                let edits: [[String: Any]] = fieldValues.map { key, value in
+                                    [
+                                        "type": "set",
+                                        "instance_id": key,
+                                        "binding": key,
+                                        "value": value,
+                                    ]
+                                }
+                                let interactionObj: [String: Any] = [
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "edits": edits,
+                                    "action": [
+                                        "instance_id": id.isEmpty ? actionID : id,
+                                        "action_id": actionID,
+                                    ],
+                                ]
+                                let payloadData = try JSONSerialization.data(withJSONObject: [
+                                    "surface_id": resolvedSurfaceID,
+                                    "action_id": actionID,
+                                    "identity": identityObj,
+                                    "expected_surface_revision": expectedRevision,
+                                    "interaction": interactionObj,
+                                    "data_model": fieldValues,
+                                ])
+                                _ = try await onSubmit(conversationID, payloadData)
+                            } catch {
+                                submissionError = error.localizedDescription
+                            }
+                        }
+                    }
+                    .buttonStyle(.nolaProminent)
+                    .disabled(isSubmitting)
+                case "textfield", "text_field", "input":
+                    let bindingKey = (props["binding"] as? String) ?? (id.isEmpty ? "input" : id)
+                    TextField(text.isEmpty ? bindingKey : text, text: Binding(
+                        get: { fieldValues[bindingKey] ?? "" },
+                        set: { fieldValues[bindingKey] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                default:
+                    if !text.isEmpty {
+                        Text(text).font(.body)
+                    }
+                }
+            }
+            if isSubmitting {
+                ProgressView().controlSize(.small)
+            }
+            if let submissionError {
+                Text(submissionError).font(.caption).foregroundStyle(MacDesignColor.danger)
+            }
+        }
     }
 }

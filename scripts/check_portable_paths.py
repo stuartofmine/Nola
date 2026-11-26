@@ -11,7 +11,7 @@ SPEC = importlib.util.spec_from_file_location('public_export', ROOT / 'scripts/r
 PUBLIC_EXPORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PUBLIC_EXPORT)
 # These anonymous identities exercise home lookup, redaction and permission boundaries.
-FIXTURE_IDENTITIES = {'example', 'person', 'me', 'real-user', 'fallback', 'user', 'fixture', 'u'}
+FIXTURE_IDENTITIES = {'example', 'person', 'me', 'real-user', 'fallback', 'user', 'fixture', 'u', 'alice', 'a', 'dev'}
 HOME = re.compile(r'/(?:Users|home)/([A-Za-z0-9_][A-Za-z0-9_.-]*)/')
 WINDOWS_HOME = re.compile(r'[A-Za-z]:[\\/]+Users[\\/]+([A-Za-z0-9_][A-Za-z0-9_.-]*)[\\/]+')
 MAC_SCRATCH = re.compile(r'/(?:private/)?var/folders/[A-Za-z0-9]{2}/[^/\s]+/(?:T|C)/')
@@ -31,7 +31,7 @@ def main():
     errors = []
     checked = 0
     for name in filter(None, names):
-        if PUBLIC_EXPORT.excluded(name) or name.startswith(('evals/benchmarks/terminal-bench/tasks/', 'evals/benchmarks/longmemeval/cases/', 'third_party/', 'apps/android/app/src/main/cpp/third_party/', 'apps/cli/vendor/')):
+        if PUBLIC_EXPORT.excluded(name) or name.startswith(('evals/benchmarks/terminal-bench/tasks/', 'evals/benchmarks/longmemeval/cases/', 'third_party/', 'apps/android/app/src/main/cpp/third_party/', 'vendor/')):
             continue
         path = ROOT / name
         if not path.is_file() or path.is_symlink():

@@ -59,9 +59,9 @@ ToolCall、ToolResult、ExecutionEvidence 各司其职；执行适配器不能�
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [tool_source.rs](../../../../core/nola-application/src/tool_source.rs) | 从原始 ToolCall/Result 建立来源提交 |
-| [tool_source.rs](../../../../core/nola-store/src/tool_source.rs) | 来源冷读、分支复制、归档正文 validator/installer |
-| [execution_evidence.rs](../../../../core/nola-domain/src/execution_evidence.rs) | 唯一执行回执类型，未知不伪装成功 |
+| [tool_source.rs](../../../../crates/nola-tools/src/lib.rs) | 从原始 ToolCall/Result 建立来源提交 |
+| [tool_source.rs](../../../../crates/nola-store/src/db.rs) | 来源冷读、分支复制、归档正文 validator/installer |
+| [execution_evidence.rs](../../../../crates/nola-types/src/tool.rs) | 唯一执行回执类型，未知不伪装成功 |
 
 归档 validator/installer 和当前来源端口已有实现，旧“未实现、暂停 Apple 编译”不是本次工作限制；是否可跨 replica 导入工具来源须读当前 installer，不能从普通 journal 复制推断。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

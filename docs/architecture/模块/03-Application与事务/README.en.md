@@ -14,9 +14,9 @@ Exercise duplicate submissions, conflicting payloads under one request ID, a lat
 
 ## Implementation
 
-- [nola-application/src/application_command.rs](../../../../core/nola-application/src/application_command.rs)
-- [nola-application/src/lib.rs](../../../../core/nola-application/src/lib.rs)
-- [nola-application-bootstrap/src/runtime_owner.rs](../../../../core/nola-application-bootstrap/src/runtime_owner.rs)
+- [nola-application/src/application_command.rs](../../../../crates/nola-app/src/daemon.rs)
+- [nola-application/src/lib.rs](../../../../crates/nola-modules/src/lib.rs)
+- [nola-application-bootstrap/src/runtime_owner.rs](../../../../crates/nola-app/src/daemon.rs)
 
 ## Detailed references
 

@@ -21,9 +21,13 @@
         const active = {request_id:randomId(), connection_id:snapshot.document.connection.id, expected_revision:snapshot.revision};
         request = active;
         try {
-            await api('/api/model-connections/probe', {method:'POST', body:JSON.stringify(
+            const result = await api<{ ok?: boolean; error?: string; message?: string }>('/api/model-connections/probe', {method:'POST', body:JSON.stringify(
                 modelProbeConfirmation(snapshot, model, accountRevision, active.request_id, confirmed))});
-            message = t($locale, 'connections.probeVerified');
+            if (result?.ok === false) {
+                message = result.error || result.message || t($locale, 'connections.probeUnconfirmed');
+            } else {
+                message = t($locale, 'connections.probeVerified');
+            }
         } catch {
             message = t($locale, 'connections.probeUnconfirmed');
         } finally {
@@ -64,8 +68,8 @@
     <p>{snapshot.document.connection.display_name} · {model.display_name} · {protocolTitle(model.protocol)}</p>
     <p>{t($locale, 'connections.probeCost')}</p>
     <label><input type="checkbox" bind:checked={confirmed} disabled={pending} /> {t($locale, 'connections.probeConsent')}</label>
-    <button disabled={!confirmed || pending || !credentialBinding || !snapshot.document.connection.enabled} onclick={() => void probe()}>{t($locale, 'connections.probeSend')}</button>
-    {#if request}<button onclick={() => void cancel().catch(() => { message = t($locale, 'connections.probeCancelFailed'); })}>{t($locale, 'rooms.cancel')}</button>{/if}
+    <button type="button" disabled={!confirmed || pending || !credentialBinding || !snapshot.document.connection.enabled} onclick={() => void probe()}>{t($locale, 'connections.probeSend')}</button>
+    {#if request}<button type="button" onclick={() => void cancel().catch(() => { message = t($locale, 'connections.probeCancelFailed'); })}>{t($locale, 'rooms.cancel')}</button>{/if}
     <details>
         <summary>{t($locale, 'connections.overrideTitle')} · {t($locale, assessment?.user_override ? 'connections.enabled' : 'connections.disabled')}</summary>
         <p>{t($locale, 'connections.overrideHint')}</p>
@@ -83,8 +87,8 @@
                 </select>
             </label>
         </fieldset>
-        <button disabled={pending} onclick={() => void saveOverride(false)}>{t($locale, 'chatSession.save')}</button>
-        <button disabled={pending || !assessment?.user_override} onclick={() => void saveOverride(true)}>{t($locale, 'connections.overrideClear')}</button>
+        <button type="button" disabled={pending} onclick={() => void saveOverride(false)}>{t($locale, 'chatSession.save')}</button>
+        <button type="button" disabled={pending || !assessment?.user_override} onclick={() => void saveOverride(true)}>{t($locale, 'connections.overrideClear')}</button>
     </details>
     {#if message}<p role="status">{message}</p>{/if}
 </details>

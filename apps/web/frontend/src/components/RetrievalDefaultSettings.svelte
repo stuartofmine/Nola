@@ -41,7 +41,7 @@
 <svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return; if (saving || uncertain) { event.preventDefault(); event.returnValue = ''; } }} />
 <ConfirmationDialog bind:this={confirmation} />
 <section class="card" aria-labelledby="retrieval-default-title" aria-busy={loading || saving}>
-    <header><h2 id="retrieval-default-title">{t($locale, 'chatSession.retrieval')}</h2><button disabled={loading || saving} onclick={reload}>{t($locale, 'agentAccess.reload')}</button></header>
+    <header><h2 id="retrieval-default-title">{t($locale, 'chatSession.retrieval')}</h2><button type="button" disabled={loading || saving} onclick={reload}>{t($locale, 'agentAccess.reload')}</button></header>
     <p class="muted">{t($locale, 'settings.retrieval.scope')}</p>
     <p class="muted">{t($locale, 'chatSession.retrievalScope')}</p>
     {#if loading}<p role="status">{t($locale, 'chatPage.loading')}</p>{/if}

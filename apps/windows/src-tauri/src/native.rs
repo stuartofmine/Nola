@@ -72,11 +72,24 @@ pub fn theme_background(theme: tauri::Theme) -> tauri::window::Color {
     }
 }
 
+pub fn desktop_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(dir) = std::env::var_os("NOLA_E2E_USER_DATA") {
+        return Ok(PathBuf::from(dir));
+    }
+    app.path().app_local_data_dir().map_err(|e| e.to_string())
+}
+
+pub fn desktop_workspace_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let base = if let Some(dir) = std::env::var_os("NOLA_E2E_USER_DATA") {
+        PathBuf::from(dir)
+    } else {
+        app.path().document_dir().map_err(|e| e.to_string())?
+    };
+    Ok(base.join("Nola Workspace"))
+}
+
 fn theme_preference_path(app: &AppHandle) -> Option<PathBuf> {
-    let dir = std::env::var_os("NOLA_E2E_USER_DATA")
-        .map(PathBuf::from)
-        .or_else(|| app.path().app_local_data_dir().ok())?;
-    Some(dir.join("theme-preference.txt"))
+    Some(desktop_data_dir(app).ok()?.join("theme-preference.txt"))
 }
 
 pub fn load_persisted_theme(app: &AppHandle) -> (String, Option<tauri::Theme>) {
@@ -109,12 +122,7 @@ pub fn apply_theme_background(window: &WebviewWindow, explicit: Option<tauri::Th
 fn require_host(window: &WebviewWindow) -> Result<(), String> {
     let url = window.url().map_err(|e| e.to_string())?;
     if window.label() == "main"
-        && window
-            .state::<super::Desktop>()
-            .origin
-            .lock()
-            .unwrap()
-            .as_ref()
+        && super::lock_unpoisoned(&window.state::<super::Desktop>().origin).as_ref()
             == Some(&url.origin())
     {
         Ok(())
@@ -191,9 +199,7 @@ pub fn set_theme(window: WebviewWindow, theme: String) -> Result<(), String> {
         "system" => None,
         _ => return Err("Unsupported theme".into()),
     };
-    if let Ok(mut pref) = window.state::<super::Desktop>().theme_preference.lock() {
-        *pref = theme.clone();
-    }
+    *super::lock_unpoisoned(&window.state::<super::Desktop>().theme_preference) = theme.clone();
     save_persisted_theme(window.app_handle(), &theme);
     window.set_theme(target).map_err(|e| e.to_string())?;
     apply_theme_background(&window, target);
@@ -203,16 +209,19 @@ pub fn set_theme(window: WebviewWindow, theme: String) -> Result<(), String> {
 #[tauri::command]
 pub fn open_logs_folder(window: WebviewWindow) -> Result<(), String> {
     require_host(&window)?;
-    let dir = window
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = desktop_data_dir(window.app_handle())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(dir).map_err(|e| e.to_string())
 }
 
 pub fn show(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        apply_theme_background(&window, None);
+        let explicit_theme = match super::lock_unpoisoned(&app.state::<super::Desktop>().theme_preference).as_str() {
+            "dark" => Some(tauri::Theme::Dark),
+            "light" => Some(tauri::Theme::Light),
+            _ => None,
+        };
+        apply_theme_background(&window, explicit_theme);
         if app
             .state::<super::Desktop>()
             .pending_window_state_restore
@@ -225,12 +234,7 @@ pub fn show(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        if app
-            .state::<super::Desktop>()
-            .failure
-            .lock()
-            .is_ok_and(|f| f.is_none())
-        {
+        if super::lock_unpoisoned(&app.state::<super::Desktop>().failure).is_none() {
             set_tray_tooltip(app, label("appName"));
         }
     }
@@ -249,7 +253,7 @@ pub fn notify_background_hidden_once(app: &AppHandle) -> bool {
     if state.background_notice_shown.swap(true, Ordering::SeqCst) {
         return false;
     }
-    if state.failure.lock().is_ok_and(|f| f.is_none()) {
+    if super::lock_unpoisoned(&state.failure).is_none() {
         set_tray_tooltip(app, &background_hint_tooltip(None));
     }
     true
@@ -293,13 +297,7 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
             "settings" => {
                 show(app);
                 if let Some(window) = app.get_webview_window("main") {
-                    if let Some(origin) = app
-                        .state::<super::Desktop>()
-                        .origin
-                        .lock()
-                        .ok()
-                        .and_then(|guard| guard.clone())
-                    {
+                    if let Some(origin) = super::lock_unpoisoned(&app.state::<super::Desktop>().origin).clone() {
                         if let Ok(url) = origin
                             .ascii_serialization()
                             .parse::<url::Url>()
@@ -311,7 +309,8 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "logs" => {
-                if let Ok(dir) = app.path().app_local_data_dir() {
+                if let Ok(dir) = desktop_data_dir(app) {
+                    let _ = std::fs::create_dir_all(&dir);
                     let _ = open::that_detached(dir);
                 }
             }
@@ -323,8 +322,9 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "workspace" => {
-                if let Ok(dir) = app.path().document_dir() {
-                    let _ = open::that_detached(dir.join("Nola Workspace"));
+                if let Ok(dir) = desktop_workspace_dir(app) {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = open::that_detached(dir);
                 }
             }
             "restart" => {

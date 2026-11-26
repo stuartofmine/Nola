@@ -30,9 +30,9 @@
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [reducer_port.rs](../../../../core/nola-agent-engine/src/reducer_port.rs) | 消费式候选 reduction 与恢复端口 |
-| [submission.rs](../../../../core/nola-agent-engine/src/agent/runtime/submission.rs) | 运行状态转换实现 |
-| [lib.rs](../../../../core/src/lib.rs) | rlib facade 与纯辅助 ABI 重导出 |
+| [reducer_port.rs](../../../../crates/nola-engine/src/lib.rs) | 消费式候选 reduction 与恢复端口 |
+| [submission.rs](../../../../crates/nola-engine/src/loop_runner.rs) | 运行状态转换实现 |
+| [lib.rs](../../../../crates/nola-app/src/lib.rs) | rlib facade 与纯辅助 ABI 重导出 |
 
 状态机实现已在 agent engine，不能再把 core/src/agent 说成待抽取的另一份实现。facade 仍有纯辅助函数，但最终原生产物属于 mobile_bindings；整个包装 crate 的存在不证明所有路径无 I/O。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

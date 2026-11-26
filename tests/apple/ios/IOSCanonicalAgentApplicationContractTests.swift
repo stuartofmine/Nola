@@ -70,8 +70,8 @@ final class IOSCanonicalAgentApplicationContractTests: XCTestCase {
             parentRunId: "run", taskId: "child", messageId: "fixed-intent",
             submittedAtMs: 42, message: "Continue with the smaller scope")
         let payload = try JSONEncoder().encode(intent)
-        _ = try application.taskGuidanceTransport(path: "chat/agent/v2/task/message", payload: payload, parentTurnID: "turn")
-        _ = try application.taskGuidanceTransport(path: "chat/agent/v2/task/message/receipt", payload: payload, parentTurnID: "turn")
+        _ = try application.taskGuidanceTransport(path: "chat/conversations/c1/messages", payload: payload, parentTurnID: "turn")
+        _ = try application.taskGuidanceTransport(path: "chat/conversations/c1/messages", payload: payload, parentTurnID: "turn")
         XCTAssertEqual(store.commands, [
             .object(["type": .string("load_task_guidance_receipt"), "task_id": .string("child"),
                 "message_id": .string("fixed-intent"), "parent_conversation_id": .string("parent"),
@@ -85,7 +85,7 @@ final class IOSCanonicalAgentApplicationContractTests: XCTestCase {
         let foreign = AppleTaskGuidanceIntent(hostId: "device", conversationId: "parent",
             parentRunId: "foreign", taskId: "child", messageId: "fixed-intent",
             submittedAtMs: 42, message: intent.message)
-        XCTAssertThrowsError(try application.taskGuidanceTransport(path: "chat/agent/v2/task/message",
+        XCTAssertThrowsError(try application.taskGuidanceTransport(path: "chat/conversations/c1/messages",
             payload: JSONEncoder().encode(foreign), parentTurnID: "turn"))
         XCTAssertEqual(store.commands.count, 3)
     }

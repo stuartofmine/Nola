@@ -93,7 +93,7 @@ struct MacOnboardingView: View {
                                 .fill(MacDesignColor.brand)
                             Text(verbatim: "n")
                                 .font(.system(size: 24, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(MacDesignColor.onAccent)
                                 .offset(y: -1)
                         }
                         .frame(width: 44, height: 44)

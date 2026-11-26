@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Заменённые записи</string>
     <string name="chat_permission_mode">Режим разрешений</string>
     <string name="chat_permission_mode_cautious">Осторожный</string>
+    <string name="chat_permission_mode_accept_edits">Принимать правки</string>
     <string name="chat_permission_mode_allow_all">Разрешить всё</string>
     <string name="chat_permission_mode_cautious_detail">Подтверждать удаление, перезапись, доступ к конфиденциальным данным, отправку и новые подключения. Обычное чтение и создание файлов разрешены.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Автоматически разрешать правки файлов в рабочей области. Подтверждать команды оболочки, запись вне рабочей области, отправку и новые подключения.</string>
     <string name="chat_permission_mode_allow_all_detail">Без подтверждений Nola в этой беседе. Системные разрешения остаются в силе.</string>
     <string name="models_inference_test">Тест модели</string>
     <string name="models_inference_test_hint">Выполнить отдельный запрос с сохранёнными параметрами модели. Активная модель чата и разговор не изменятся.</string>
@@ -1477,4 +1479,23 @@
     <string name="permission_from_subagent">От субагента: %1$s</string>
     <string name="permission_queue_pending">1 из %1$d ожидает</string>
     <string name="chat_response_failed_empty">Не удалось получить ответ.</string>
+    <string name="chat_v2_question_placeholder">Введите ответ…</string>
+    <string name="chat_v2_question_skip">Пропустить</string>
+    <string name="chat_v2_question_submit">Отправить</string>
+    <string name="chat_v2_ui_unavailable">Интерактивный интерфейс недоступен</string>
+    <string name="chat_v2_ui_interaction_failed">Ошибка взаимодействия</string>
+    <string name="chat_v2_context_compacted">Контекст сжат</string>
+    <string name="chat_v2_context_compacted_range">Контекст сжат (%1$s → %2$s токенов)</string>
+    <string name="chat_v2_context_compacted_after">Контекст сжат (%1$s токенов)</string>
+    <string name="chat_v2_context_compaction_failed">Не удалось сжать контекст</string>
+    <string name="chat_v2_branch_conversation">Создать ветку диалога</string>
+    <string name="chat_v2_branch_failed">Не удалось создать ветку диалога</string>
+    <string name="chat_v2_workspace_review">Обзор рабочей области</string>
+    <string name="chat_v2_workspace_review_empty">Изменения в рабочей области не обнаружены</string>
+    <string name="chat_v2_workspace_review_host_required">Подключитесь к Web Agent Host для просмотра изменений рабочей области</string>
+    <string name="chat_v2_workspace_review_staged">Индексированные изменения</string>
+    <string name="chat_v2_workspace_review_unstaged">Неиндексированные изменения</string>
+    <string name="chat_v2_workspace_review_files">Файлы рабочей области</string>
+    <string name="chat_v2_workspace_review_truncated">Вывод сокращён для предпросмотра</string>
+    <string name="chat_v2_edit_resend_failed">Не удалось обрезать и повторно отправить сообщение</string>
 </resources>

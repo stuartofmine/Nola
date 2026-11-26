@@ -14,9 +14,9 @@ Exercise restart after dispatch, cancellation racing a result and delivery by an
 
 ## Implementation
 
-- [nola-runtime-driver/src/lib.rs](../../../../core/nola-runtime-driver/src/lib.rs)
-- [nola-runtime-driver/src/task_execution_authority.rs](../../../../core/nola-runtime-driver/src/task_execution_authority.rs)
-- [cli/src/native_host_entry.rs](../../../../apps/cli/src/native_host_entry.rs)
+- [nola-runtime-driver/src/lib.rs](../../../../crates/nola-engine/src/loop_runner.rs)
+- [nola-runtime-driver/src/task_execution_authority.rs](../../../../crates/nola-engine/src/subagents.rs)
+- [cli/src/native_host_entry.rs](../../../../crates/nola-app/src/main.rs)
 
 ## Detailed references
 

@@ -14,9 +14,9 @@ Test interrupted writes, replay from a cursor, stale writes after editing and re
 
 ## Implementation
 
-- [nola-store/src/schema_store.rs](../../../../core/nola-store/src/schema_store.rs)
-- [nola-store/src/canonical_text_store.rs](../../../../core/nola-store/src/canonical_text_store.rs)
-- [nola-store-port/src/assistant_journal.rs](../../../../core/nola-store-port/src/assistant_journal.rs)
+- [nola-store/src/schema_store.rs](../../../../crates/nola-store/src/db.rs)
+- [nola-store/src/canonical_text_store.rs](../../../../crates/nola-store/src/db.rs)
+- [nola-store-port/src/assistant_journal.rs](../../../../crates/nola-store/src/db.rs)
 
 ## Detailed references
 

@@ -104,7 +104,7 @@ public actor AppleTaskGuidanceOutbox {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let payload = try encoder.encode(intent)
-        let path = "chat/agent/v2/task/message"
+        let path = "chat/conversations/\(conversationId)/messages"
         var receipt: AppleTaskGuidanceReceipt?
         try Task.checkCancellation()
         if existing {
@@ -197,7 +197,7 @@ nonisolated public enum AppleTaskGuidanceCoreTransport {
         let intent = try JSONDecoder().decode(AppleTaskGuidanceIntent.self, from: payload)
         guard intent.conversationId == conversationId, intent.parentRunId == parentRunId,
               !parentTurnId.isEmpty else { throw AppleTaskGuidanceOutbox.Failure.invalidOwner }
-        guard path == "chat/agent/v2/task/message/receipt" || path == "chat/agent/v2/task/message" else {
+        guard path.hasPrefix("chat/conversations/") && (path.hasSuffix("/messages") || path.hasSuffix("/messages/receipt")) else {
             throw AppleTaskGuidanceOutbox.Failure.invalidOwner
         }
         // Core validates immutable parent Run authority even for a fresh intent.
@@ -207,7 +207,7 @@ nonisolated public enum AppleTaskGuidanceCoreTransport {
             "parent_run_id": parentRunId]
         var guidance = try JSONSerialization.jsonObject(with: execute(
             JSONSerialization.data(withJSONObject: lookup, options: [.sortedKeys])), options: [.fragmentsAllowed])
-        if path == "chat/agent/v2/task/message", guidance is NSNull {
+        if path.hasSuffix("/messages"), guidance is NSNull {
             let command: [String: Any] = ["type": "submit_task_guidance", "task_id": intent.taskId,
                 "message_id": intent.messageId, "parent_turn_id": parentTurnId,
                 "content": intent.message, "submitted_at_ms": intent.submittedAtMs]

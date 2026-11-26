@@ -14,6 +14,7 @@ const messages: Record<string, Translations> = {
     'plugin.install': ["Install", "安装", "Installieren", "Instalar", "Installer", "インストール", "Установить"],
     'plugin.more': ['More actions for {name}','{name}的更多操作','Weitere Aktionen für {name}','Más acciones para {name}','Autres actions pour {name}','{name}のその他の操作','Другие действия для {name}'],
     'plugin.remove': ["Remove", "移除", "Entfernen", "Quitar", "Retirer", "削除", "Удалить"],
+    'plugin.toggle': ["Enable {name}", "启用 {name}", "{name} aktivieren", "Activar {name}", "Activer {name}", "{name} を有効にする", "Включить {name}"],
     'plugin.refresh': ["Refresh", "刷新", "Aktualisieren", "Actualizar", "Actualiser", "更新", "Обновить"],
     'plugin.empty': ['No plugins yet.','还没有插件。','Noch keine Plugins.','Aún no hay plugins.','Aucune extension pour le moment.','プラグインはまだありません。','Плагинов пока нет.'],
     'plugin.working': ["Contacting Host…", "正在等待 Host…", "Host wird kontaktiert…", "Consultando al Host…", "Connexion à l’hôte…", "Host に接続中…", "Ожидание Host…"],
@@ -96,6 +97,7 @@ const messages: Record<string, Translations> = {
     'capability.category.planning-automation': ['Planning and automation', '计划与自动化', 'Planung und Automatisierung', 'Planificación y automatización', 'Planification et automatisation', '計画と自動化', 'Планирование и автоматизация'],
     'capability.category.knowledge-research': ['Knowledge and research', '知识与研究', 'Wissen und Recherche', 'Conocimiento e investigación', 'Connaissances et recherche', '知識と調査', 'Знания и исследования'],
     'capability.category.workspace': ['Workspace', '工作区', 'Arbeitsbereich', 'Espacio de trabajo', 'Espace de travail', 'ワークスペース', 'Рабочая область'],
+    'capability.category.builtin': ['Built-in skills', '内置技能', 'Integrierte Skills', 'Habilidades integradas', 'Compétences intégrées', '組み込みスキル', 'Встроенные навыки'],
     'capability.category.custom': ['Custom skills', '自定义技能', 'Benutzerdefinierte Skills', 'Habilidades personalizadas', 'Compétences personnalisées', 'カスタムスキル', 'Пользовательские навыки'],
     'capability.category.mcp': ['MCP', 'MCP', 'MCP', 'MCP', 'MCP', 'MCP', 'MCP'],
 };

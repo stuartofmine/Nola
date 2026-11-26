@@ -1273,7 +1273,7 @@ struct MacChatWorkspaceView: View {
         let inspectorColumnOpen = resolvedLayoutMode == .threeColumn
             && !isManagementContent
             && (showsInspector || forcesInspectorVisible)
-        let leadingPadding = max(10, leadingTrafficLightInset)
+        let leadingPadding = leadingTrafficLightInset > 0 ? max(78, leadingTrafficLightInset - 4) : 10
 
         return HStack(spacing: 0) {
             if sidebarOpen {
@@ -1283,7 +1283,7 @@ struct MacChatWorkspaceView: View {
                     Spacer(minLength: 4)
                     newConversationButton
                 }
-                .padding(.leading, max(78, leadingPadding - 4))
+                .padding(.leading, leadingPadding)
                 .padding(.trailing, 10)
                 .padding(.bottom, 4)
                 .frame(width: sidebarWidth(availableWidth: availableWidth) + 1, height: 48)
@@ -1296,7 +1296,7 @@ struct MacChatWorkspaceView: View {
                         .accessibilityIdentifier("workspace.toggleSidebar")
                     newConversationButton
                 }
-                .padding(.leading, max(78, leadingTrafficLightInset - 4))
+                .padding(.leading, leadingPadding)
                 .padding(.trailing, 10)
                 .padding(.bottom, 4)
                 Rectangle()

@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
-from sign_update_feed import public_key
+from sign_update_feed import default_openssl, public_key
 
 
 def renew(source, feed, key, openssl='openssl', now=None):
@@ -42,7 +42,7 @@ def renew(source, feed, key, openssl='openssl', now=None):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--private-key',required=True,type=Path)
-    parser.add_argument('--openssl',default=os.environ.get('OPENSSL_BIN','openssl'))
+    parser.add_argument('--openssl',default=default_openssl())
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[2]
     path=root/'release/feed.json'
@@ -52,9 +52,11 @@ def main():
         # Validate all current target and Store contracts before replacing the file.
         with tempfile.TemporaryDirectory(prefix='nola-renew-validation-') as name:
             staged=Path(name)/'feed.json';staged.write_text(json.dumps(value,indent=2)+'\n')
-            manifest=json.loads(base64.b64decode(value['payload_base64']))
-            for item in manifest['targets']:
-                subprocess.run(['cargo','run','--locked','-p','nola_update_host','--example','verify_feed','--',str(root/'release/update-source.json'),str(staged),item['target']],cwd=root,check=True)
+            subprocess.run(
+                ['cargo','run','--locked','-p','nola-app','--bin','nola','--',
+                 'update','verify-feed','--source',str(root/'release/update-source.json'),'--feed',str(staged)],
+                cwd=root,check=True,
+            )
             path.write_text(staged.read_text())
         print('Renewed signed release timestamps; package identities are unchanged.')
     except (ValueError,KeyError,OSError,subprocess.CalledProcessError) as error:

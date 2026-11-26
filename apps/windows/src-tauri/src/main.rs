@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex,
+        Mutex, MutexGuard,
     },
     thread,
     time::Duration,
@@ -45,6 +45,10 @@ impl Desktop {
     }
 }
 
+pub(crate) fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn startup_url() -> Url {
     if cfg!(windows) {
         "http://tauri.localhost/index.html"
@@ -53,6 +57,12 @@ fn startup_url() -> Url {
     }
     .parse()
     .expect("static startup url")
+}
+
+fn startup_url_for_generation(generation: u64) -> Url {
+    let mut url = startup_url();
+    url.set_query(Some(&format!("gen={generation}")));
+    url
 }
 
 fn is_allowed_download_url(url: &Url, allowed_origin: Option<&url::Origin>) -> bool {
@@ -68,6 +78,36 @@ fn is_allowed_download_url(url: &Url, allowed_origin: Option<&url::Origin>) -> b
         }
     }
     false
+}
+
+fn is_windows_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let upper = stem.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
 }
 
 fn sanitize_download_filename(raw: &Path) -> String {
@@ -92,7 +132,12 @@ fn sanitize_download_filename(raw: &Path) -> String {
     if trimmed.is_empty() {
         "nola-download.bin".into()
     } else {
-        trimmed.chars().take(180).collect()
+        let safe = if is_windows_reserved_name(trimmed) {
+            format!("_{trimmed}")
+        } else {
+            trimmed.to_string()
+        };
+        safe.chars().take(180).collect()
     }
 }
 
@@ -122,21 +167,20 @@ fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
 }
 
 pub(crate) fn stop_host(app: &AppHandle) {
-    if let Ok(mut guard) = app.state::<Desktop>().host.lock() {
-        if let Some(mut host) = guard.take() {
-            host.stop();
-        }
+    let mut guard = lock_unpoisoned(&app.state::<Desktop>().host);
+    if let Some(mut host) = guard.take() {
+        host.stop();
     }
 }
 
 pub(crate) fn restart_host(app: &AppHandle) {
     let state = app.state::<Desktop>();
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    let previous = state.host.lock().unwrap().take();
-    *state.failure.lock().unwrap() = None;
-    *state.origin.lock().unwrap() = None;
+    let previous = lock_unpoisoned(&state.host).take();
+    *lock_unpoisoned(&state.failure) = None;
+    *lock_unpoisoned(&state.origin) = None;
     native::set_tray_tooltip(app, native::label("appName"));
-    let startup = startup_url();
+    let startup = startup_url_for_generation(generation);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.navigate(startup.clone());
     }
@@ -144,7 +188,7 @@ pub(crate) fn restart_host(app: &AppHandle) {
     thread::spawn(move || {
         {
             let state = handle.state::<Desktop>();
-            let _guard = state.lifecycle.lock().unwrap();
+            let _guard = lock_unpoisoned(&state.lifecycle);
             if let Some(mut host) = previous {
                 host.stop();
             }
@@ -155,7 +199,20 @@ pub(crate) fn restart_host(app: &AppHandle) {
         if let Err(error) = start_host(&handle, startup, generation) {
             let state = handle.state::<Desktop>();
             if state.generation.load(Ordering::SeqCst) == generation {
-                *state.failure.lock().unwrap() = Some(error);
+                *lock_unpoisoned(&state.failure) = Some(error);
+                native::set_tray_tooltip(
+                    &handle,
+                    &format!(
+                        "{} — {}",
+                        native::label("appName"),
+                        native::label("failedTitle")
+                    ),
+                );
+                if let Some(window) = handle.get_webview_window("main") {
+                    if !window.is_visible().unwrap_or(false) {
+                        native::show(&handle);
+                    }
+                }
             }
         }
     });
@@ -174,7 +231,7 @@ fn startup_status(window: tauri::WebviewWindow, phase: String) -> Option<serde_j
         return None;
     }
     let state = window.state::<Desktop>();
-    let failure = state.failure.lock().ok()?.clone();
+    let failure = lock_unpoisoned(&state.failure).clone();
     let current = if failure.is_some() {
         "failed"
     } else {
@@ -187,12 +244,7 @@ fn startup_status(window: tauri::WebviewWindow, phase: String) -> Option<serde_j
             "startingPage"
         })
     });
-    let theme = state
-        .theme_preference
-        .lock()
-        .ok()
-        .map(|pref| pref.clone())
-        .unwrap_or_else(|| "system".into());
+    let theme = lock_unpoisoned(&state.theme_preference).clone();
     Some(
         serde_json::json!({"phase":current,"page":page,"language":native::language(),"failure":failure,"theme":theme}),
     )
@@ -203,13 +255,9 @@ fn open_diagnostics(window: tauri::WebviewWindow) -> Result<(), String> {
     if !window.url().is_ok_and(|url| local_page(&url)) {
         return Err(native::label("diagnosticsUnavailable").into());
     }
-    open::that_detached(
-        window
-            .path()
-            .app_local_data_dir()
-            .map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    let dir = native::desktop_data_dir(window.app_handle())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open::that_detached(dir).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -247,11 +295,7 @@ fn validate_retry_startup(is_local: bool, has_failure: bool) -> Result<(), Strin
 #[tauri::command]
 fn retry_startup(window: tauri::WebviewWindow) -> Result<(), String> {
     let is_local = window.url().is_ok_and(|url| local_page(&url));
-    let has_failure = window
-        .state::<Desktop>()
-        .failure
-        .lock()
-        .is_ok_and(|f| f.is_some());
+    let has_failure = lock_unpoisoned(&window.state::<Desktop>().failure).is_some();
     validate_retry_startup(is_local, has_failure)?;
     restart_host(window.app_handle());
     Ok(())
@@ -260,20 +304,11 @@ fn retry_startup(window: tauri::WebviewWindow) -> Result<(), String> {
 fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), String> {
     let window = app.get_webview_window("main").ok_or("Window closed")?;
     let path = app.path();
-    let test_profile = std::env::var_os("NOLA_E2E_USER_DATA").map(PathBuf::from);
-    let data = test_profile
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| path.app_local_data_dir())
-        .map_err(|e| e.to_string())?;
-    let workspace = test_profile
-        .map(Ok)
-        .unwrap_or_else(|| path.document_dir())
-        .map_err(|e| e.to_string())?
-        .join("Nola Workspace");
+    let data = native::desktop_data_dir(app)?;
+    let workspace = native::desktop_workspace_dir(app)?;
     let state = app.state::<Desktop>();
     let origin = {
-        let _guard = state.lifecycle.lock().unwrap();
+        let _guard = lock_unpoisoned(&state.lifecycle);
         if state.generation.load(Ordering::SeqCst) != generation {
             return Ok(());
         }
@@ -303,8 +338,8 @@ fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), Stri
             child.stop();
             return Err(err);
         }
-        *state.host.lock().unwrap() = Some(child);
-        *state.origin.lock().unwrap() = Some(origin.origin());
+        *lock_unpoisoned(&state.host) = Some(child);
+        *lock_unpoisoned(&state.origin) = Some(origin.origin());
         origin
     };
     if let Err(err) = origin
@@ -314,7 +349,7 @@ fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), Stri
     {
         if state.generation.load(Ordering::SeqCst) == generation {
             stop_host(app);
-            *state.origin.lock().unwrap() = None;
+            *lock_unpoisoned(&state.origin) = None;
         }
         return Err(err);
     }
@@ -327,7 +362,7 @@ fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), Stri
             stop_host(app);
             return Ok(());
         }
-        let exited = match state.host.lock().unwrap().as_mut() {
+        let exited = match lock_unpoisoned(&state.host).as_mut() {
             Some(host) => host.exited(),
             None => return Ok(()),
         };
@@ -339,10 +374,10 @@ fn start_host(app: &AppHandle, startup: Url, generation: u64) -> Result<(), Stri
     if state.generation.load(Ordering::SeqCst) != generation {
         return Ok(());
     }
-    let _ = state.host.lock().unwrap().take();
+    let _ = lock_unpoisoned(&state.host).take();
     let message = native::label("hostStopped").to_string();
-    *state.failure.lock().unwrap() = Some(message.clone());
-    *state.origin.lock().unwrap() = None;
+    *lock_unpoisoned(&state.failure) = Some(message.clone());
+    *lock_unpoisoned(&state.origin) = None;
     native::set_tray_tooltip(
         app,
         &format!("{} — {}", native::label("appName"), native::label("failedTitle")),
@@ -393,9 +428,7 @@ fn main() {
             let new_window_handle = app.handle().clone();
             let download_handle = app.handle().clone();
             let (saved_pref, saved_theme) = native::load_persisted_theme(app.handle());
-            if let Ok(mut pref) = app.state::<Desktop>().theme_preference.lock() {
-                *pref = saved_pref;
-            }
+            *lock_unpoisoned(&app.state::<Desktop>().theme_preference) = saved_pref;
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
             if let Some(dir) = std::env::var_os("NOLA_E2E_USER_DATA") {
@@ -412,11 +445,8 @@ fn main() {
                 .min_inner_size(480., 520.)
                 .on_navigation(move |url| {
                     if local_page(url)
-                        || nav_handle
-                            .state::<Desktop>()
-                            .origin
-                            .lock()
-                            .is_ok_and(|origin| origin.as_ref() == Some(&url.origin()))
+                        || lock_unpoisoned(&nav_handle.state::<Desktop>().origin).as_ref()
+                            == Some(&url.origin())
                     {
                         return true;
                     }
@@ -430,12 +460,8 @@ fn main() {
                 })
                 .on_new_window(move |url, _| {
                     let action = {
-                        let origin = new_window_handle
-                            .state::<Desktop>()
-                            .origin
-                            .lock()
-                            .ok()
-                            .and_then(|guard| guard.clone());
+                        let origin =
+                            lock_unpoisoned(&new_window_handle.state::<Desktop>().origin).clone();
                         classify_new_window(&url, origin.as_ref())
                     };
                     match action {
@@ -453,12 +479,10 @@ fn main() {
                 })
                 .on_download(move |_webview, event| match event {
                     DownloadEvent::Requested { url, destination } => {
-                        let allowed = download_handle
-                            .state::<Desktop>()
-                            .origin
-                            .lock()
-                            .ok()
-                            .is_some_and(|origin| is_allowed_download_url(&url, origin.as_ref()));
+                        let allowed = is_allowed_download_url(
+                            &url,
+                            lock_unpoisoned(&download_handle.state::<Desktop>().origin).as_ref(),
+                        );
                         if !allowed {
                             return false;
                         }
@@ -466,7 +490,7 @@ fn main() {
                         let target_dir = download_handle
                             .path()
                             .download_dir()
-                            .or_else(|_| download_handle.path().app_local_data_dir());
+                            .or_else(|_| native::desktop_data_dir(&download_handle));
                         let Ok(dir) = target_dir else {
                             return false;
                         };
@@ -492,17 +516,17 @@ fn main() {
             // Apply the persisted/OS theme's canvas color before restoring state or showing to avoid a light flash.
             native::apply_theme_background(&window, saved_theme);
             let handle = app.handle().clone();
-            let startup = startup_url();
             let generation = app
                 .state::<Desktop>()
                 .generation
                 .fetch_add(1, Ordering::SeqCst)
                 + 1;
+            let startup = startup_url_for_generation(generation);
             thread::spawn(move || {
                 if let Err(error) = start_host(&handle, startup, generation) {
                     let state = handle.state::<Desktop>();
                     if state.generation.load(Ordering::SeqCst) == generation {
-                        *state.failure.lock().unwrap() = Some(error);
+                        *lock_unpoisoned(&state.failure) = Some(error);
                         native::set_tray_tooltip(
                             &handle,
                             &format!(
@@ -522,11 +546,10 @@ fn main() {
                     native::notify_background_hidden_once(event_window.app_handle());
                 }
                 tauri::WindowEvent::ThemeChanged(theme) => {
-                    let follow_system = event_window
-                        .state::<Desktop>()
-                        .theme_preference
-                        .lock()
-                        .is_ok_and(|pref| pref.as_str() == "system");
+                    let follow_system =
+                        lock_unpoisoned(&event_window.state::<Desktop>().theme_preference)
+                            .as_str()
+                            == "system";
                     if follow_system {
                         native::apply_theme_background(&event_window, Some(*theme));
                     }
@@ -558,6 +581,9 @@ mod tests {
     #[test]
     fn startup_url_is_a_recognized_local_page() {
         assert!(local_page(&startup_url()));
+        let gen_url = startup_url_for_generation(3);
+        assert!(local_page(&gen_url));
+        assert_eq!(gen_url.query(), Some("gen=3"));
     }
 
     #[test]
@@ -588,6 +614,11 @@ mod tests {
             sanitize_download_filename(Path::new("nola-1.0.1-x64.exe")),
             "nola-1.0.1-x64.exe"
         );
+        assert_eq!(sanitize_download_filename(Path::new("CON")), "_CON");
+        assert_eq!(sanitize_download_filename(Path::new("nul.txt")), "_nul.txt");
+        assert_eq!(sanitize_download_filename(Path::new("com1.tar.gz")), "_com1.tar.gz");
+        assert_eq!(sanitize_download_filename(Path::new("LPT9")), "_LPT9");
+        assert_eq!(sanitize_download_filename(Path::new("console.txt")), "console.txt");
     }
 
     #[test]

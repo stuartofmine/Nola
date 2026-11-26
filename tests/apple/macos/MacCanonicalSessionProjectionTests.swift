@@ -408,51 +408,6 @@ struct MacCanonicalSessionProjectionTests {
     }
 
     @Test
-    func swiftCallsNativeKernelWithOwnedLiveText() throws {
-        let initial = Data(#"""
-        {"assistant_journal_heads":[],"event_sequence":5,"total_message_count":1,"before_ordinal":null,"has_more":false,"deferred_text_parts":[],
-         "stream_owners":[{"message_id":"assistant","part_id":"text","run_id":"run","execution":{"type":"model_attempt","attempt_id":"attempt"}}],
-         "projection":{"execution_ownership":{"kind":"user"},"contract_version":2,"conversation_id":"native","revision":1,"title":"Native",
-          "messages":[{"message_id":"assistant","role":"assistant","state":"running","revision":1,
-            "created_at_ms":1,"parts":[{"kind":"text","part_id":"text","revision":1,"markdown":"Hello","is_final":false}]}],
-          "active_run":null,"context_usage":{"used_tokens":0,"context_window_tokens":65536,
-            "prompt_token_limit":61440,"estimated":true,"measured_at_revision":0}}}
-        """#.utf8)
-        let handle = try #require(initial.withUnsafeBytes { bytes in
-            nola_core_projection_new(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
-        })
-        defer { nola_core_projection_free(handle) }
-        func consume(_ result: UnsafeMutablePointer<CChar>?) throws -> [String: Any] {
-            let result = try #require(result)
-            defer { nola_core_free_c_string(result) }
-            let data = Data(String(cString: result).utf8)
-            return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        }
-        func append(attempt: String) throws -> [String: Any] {
-            let data = try JSONSerialization.data(withJSONObject: [[
-                "identity": ["event_id": "next", "conversation_id": "native", "run_id": "run",
-                    "attempt_id": attempt, "sequence": 6],
-                "mutation": ["type": "append_text_preview", "message_id": "assistant",
-                    "part_id": "text", "revision": 2, "delta": " world"]
-            ]])
-            return try consume(data.withUnsafeBytes { bytes in
-                nola_core_projection_apply(handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
-            })
-        }
-        #expect(try append(attempt: "another-request")["ok"] as? Bool == false)
-        #expect(try append(attempt: "attempt")["ok"] as? Bool == true)
-        let duplicate = try #require(append(attempt: "attempt")["result"] as? [String: Any])
-        #expect(duplicate["duplicates"] as? Int == 1)
-        let snapshot = try consume(nola_core_projection_snapshot(handle))
-        let result = try #require(snapshot["result"] as? [String: Any])
-        #expect(result["sequence"] as? Int == 6)
-        let projection = try #require(result["projection"] as? [String: Any])
-        let messages = try #require(projection["messages"] as? [[String: Any]])
-        let parts = try #require(messages.first?["parts"] as? [[String: Any]])
-        #expect(parts.first?["markdown"] as? String == "Hello world")
-    }
-
-    @Test
     func windowPreservesUnavailableAndEmptyStreamOwnershipDistinctly() throws {
         var payload: [String: Any] = [
             "projection": [
@@ -506,27 +461,6 @@ struct MacCanonicalSessionProjectionTests {
         #expect(throws: (any Error).self) {
             try JSONDecoder().decode(MacCanonicalConversationProjectionEvent.self, from: Data(ambiguous.utf8))
         }
-    }
-
-    @Test
-    func applicationOrderedContextUpdateCanResetMeasurementRevision() throws {
-        let initial = #"""
-        {"execution_ownership":{"kind":"user"},"contract_version":2,"conversation_id":"context-order","revision":100,
-         "title":"Context order","messages":[],"active_run":null,
-         "context_usage":{"used_tokens":9000,"context_window_tokens":65536,
-           "prompt_token_limit":57344,"estimated":false,"measured_at_revision":900}}
-        """#
-        let event: [String: Any] = [
-            "identity": ["event_id": "usage-reset", "conversation_id": "context-order", "sequence": 41],
-            "mutation": ["type": "set_context_usage", "context_usage": [
-                "used_tokens": 0, "context_window_tokens": 32768,
-                "prompt_token_limit": 24576, "estimated": true, "measured_at_revision": 2]]
-        ]
-        let updated = try applyKernelPages(initial: initial, sequence: 40, pages: [[event], [event]])
-        #expect(updated.contextUsage.usedTokens == 0)
-        #expect(updated.contextUsage.measuredAtRevision == 2)
-        #expect(updated.contextUsage.windowTokens == 32768)
-        #expect(updated.revision == 100)
     }
 
     @Test
@@ -640,82 +574,6 @@ struct MacCanonicalSessionProjectionTests {
         #expect(messages.first?.text == "Hello")
         #expect(messages.last?.text.isEmpty == true)
         #expect(messages.last?.presentation != nil)
-    }
-
-    @Test
-    func projectionEventsAppendPreviewThenReplaceItWithCanonicalCompletedText() throws {
-        let initial = #"""
-        {"execution_ownership":{"kind":"user"},"contract_version":2,"conversation_id":"stream-1","revision":1,"title":"Stream",
-         "messages":[{"message_id":"assistant-1","role":"assistant","state":"running",
-           "revision":1,"created_at_ms":1000,"parts":[{"kind":"text","part_id":"text-1",
-             "revision":1,"markdown":"Hel","is_final":false}]}],"active_run":null,
-         "context_usage":{"used_tokens":1,"context_window_tokens":65536,
-           "prompt_token_limit":57344,"estimated":true,"measured_at_revision":1}}
-        """#
-        func event(_ sequence: Int, mutation: [String: Any]) -> [String: Any] {
-            ["identity": ["event_id": "event-\(sequence)", "conversation_id": "stream-1",
-                "run_id": "run-1", "attempt_id": "attempt-1", "sequence": sequence],
-             "mutation": mutation]
-        }
-        let preview = event(8, mutation: ["type": "append_text_preview", "message_id": "assistant-1",
-            "part_id": "text-1", "revision": 2, "delta": "lo"])
-        let completed = event(9, mutation: ["type": "complete_text_part", "message_id": "assistant-1",
-            "part_id": "text-1", "revision": 3, "markdown": "Hello, canonical world."])
-        let owners: [[String: Any]] = [["message_id": "assistant-1", "part_id": "text-1",
-                       "run_id": "run-1", "execution": ["type": "model_attempt", "attempt_id": "attempt-1"]]]
-        let projection = try applyKernelPages(initial: initial, sequence: 7, owners: owners,
-                                              pages: [[preview, completed]])
-        let paged = try applyKernelPages(initial: initial, sequence: 7, owners: owners,
-                                         pages: [[preview], [completed], [completed]])
-        #expect(paged == projection)
-        guard case let .text(text) = projection.messages.first?.parts.first else {
-            Issue.record("Expected canonical text Part")
-            return
-        }
-        #expect(text.markdown == "Hello, canonical world.")
-        #expect(text.revision == 3)
-        #expect(text.isFinal)
-        #expect(projection.messages.first?.state == .running)
-        #expect(throws: (any Error).self) {
-            try applyKernelPages(initial: initial, sequence: 7, owners: owners,
-                                 pages: [[completed, preview]])
-        }
-    }
-
-    private func applyKernelPages(
-        initial: String, sequence: Int, owners: [[String: Any]] = [],
-        pages: [[[String: Any]]]
-    ) throws -> MacCanonicalConversationProjectionV1 {
-        let projection = try JSONSerialization.jsonObject(with: Data(initial.utf8))
-        let input = try JSONSerialization.data(withJSONObject: [
-            "projection": projection, "event_sequence": sequence, "stream_owners": owners,
-            "total_message_count": ((projection as? [String: Any])?["messages"] as? [Any])?.count ?? 0,
-            "before_ordinal": NSNull(), "has_more": false, "assistant_journal_heads": [] as [String], "deferred_text_parts": [] as [String]
-        ])
-        let handle = try #require(input.withUnsafeBytes { bytes in
-            nola_core_projection_new(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
-        })
-        defer { nola_core_projection_free(handle) }
-        func consume(_ pointer: UnsafeMutablePointer<CChar>?) throws -> [String: Any] {
-            let pointer = try #require(pointer)
-            defer { nola_core_free_c_string(pointer) }
-            let value = try #require(JSONSerialization.jsonObject(
-                with: Data(String(cString: pointer).utf8)) as? [String: Any])
-            guard value["ok"] as? Bool == true else {
-                throw NSError(domain: "KernelProjectionTest", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: String(describing: value)])
-            }
-            return try #require(value["result"] as? [String: Any])
-        }
-        for page in pages {
-            let data = try JSONSerialization.data(withJSONObject: page)
-            _ = try consume(data.withUnsafeBytes { bytes in
-                nola_core_projection_apply(handle, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
-            })
-        }
-        let result = try consume(nola_core_projection_snapshot(handle))
-        return try JSONDecoder().decode(MacCanonicalConversationProjectionV1.self,
-            from: JSONSerialization.data(withJSONObject: try #require(result["projection"])))
     }
 
     @Test

@@ -240,7 +240,8 @@
         --a2ui-color-text-muted: var(--muted);
         --a2ui-color-primary: var(--primary);
         --a2ui-color-on-primary: var(--on-primary);
-        --a2ui-color-border: var(--outline);
+        --a2ui-color-accent: var(--accent);
+        --a2ui-color-border: var(--border);
         --a2ui-color-danger: var(--danger);
     }
 </style>

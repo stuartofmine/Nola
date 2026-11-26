@@ -2,7 +2,7 @@
 
 # Data Source Centered Architecture
 
-Status: product/ownership target with source alignment on 2026-11-08. The conceptual fields below are not a claim that every external tool result already travels through one unified DataSource wire object. The actual configuration/validation/override use case is [Application data_source.rs](../../../../core/nola-application/src/data_source.rs); the Host supplies physical reads, freshness and resource facts. Authentication, source enablement, read authorization and result disclosure are distinct.
+Status: product/ownership target with source alignment on 2026-11-08. The conceptual fields below are not a claim that every external tool result already travels through one unified DataSource wire object. The actual configuration/validation/override use case is [Application data_source.rs](../../../../crates/nola-modules/src/data_sources.rs); the Host supplies physical reads, freshness and resource facts. Authentication, source enablement, read authorization and result disclosure are distinct.
 
 Memory owner isolation and typed automation definitions have separate contracts: [memory gap](MEMORY_SCOPE_V2.md), [current automation](AUTOMATION_CROSS_PLATFORM_CONTRACT.md). A data-source-centered product direction does not close either runtime boundary by itself.
 

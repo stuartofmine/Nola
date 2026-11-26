@@ -61,7 +61,7 @@ review 存在于原任务范围及 checkpoint，依赖的来源不受普通读�
 5. Skill/SOP 激活与其他调用混合时，Host 整批拒绝，反馈所有被拒绝调用 ID 和“未执行”，在有限纠正预算内重规划；不得只挑第一个调用执行。
 6. Core 重复调用与能力预算拒绝保留原始调用身份，经普通工具生命周期生成明确终态和结果，不创建 Host 执行请求。不能通过删除调用制造表面的成功或空批次。
 7. `ToolContext` 显式持有结果存储依赖。内置工具、MCP 和代码分析结果统一写入 `<database>.outputs/<session digest>/`；读取、列表和搜索只能访问本会话目录，不能通过全局缓存或权限线程局部变量推断所有权。相同数据库和会话重启后引用保持有效；未完成的暂存文件不公开。
-8. 模型侧有界预览（[tool_driver.rs](../../../../core/nola-agent-engine/src/agent/runtime/tool_driver.rs)）优先解包 `read_file` 的 `content` 字段而非输出双重 JSON 转义字符串，发生截断时强制标注 `complete: false`；CLI 预览上限对齐为 `read_file`/`read_many_files` `24,000` 字符、`bash`/`grep`/`git_diff`/`git_history` `16,000` 字符（[model_conversion.rs](../../../../apps/cli/src/agent_host_driver_parts/model_conversion.rs)）；`invalid_tool_arguments` 仅回传紧凑 schema 摘要而非完整原始 JSON Schema。
+8. 模型侧有界预览（[tool_driver.rs](../../../../crates/nola-engine/src/loop_runner.rs)）优先解包 `read_file` 的 `content` 字段而非输出双重 JSON 转义字符串，发生截断时强制标注 `complete: false`；CLI 预览上限对齐为 `read_file`/`read_many_files` `24,000` 字符、`bash`/`grep`/`git_diff`/`git_history` `16,000` 字符（[model_conversion.rs](../../../../crates/nola-llm/src/adapter.rs)）；`invalid_tool_arguments` 仅回传紧凑 schema 摘要而非完整原始 JSON Schema。
 
 ## 尚待整体验收，不能宣称完成
 
@@ -69,7 +69,7 @@ review 存在于原任务范围及 checkpoint，依赖的来源不受普通读�
 
 `write_file`创建不存在的目标无需原版本；替换已有且内容不同的文件必须提交观察到的`expected_sha256`。缺失时返回`existing_file_version_required`并明确未执行；不将“允许新增”解释为允许覆盖。相同内容返回`changed=false`，不改mtime、不产生新变更。`dry_run`只预览，不授予写入权限。版本摘要是并发保护，不是用户授权，禁止据此扩大用户允许的修改范围。
 
-成功写入后，`write_file` 在输出中回传 `(sha256: <hex>)`，并在磁盘内容与本次写入一致（未被外部格式化器改写）时登记 Run 局部的 `Full` 文件读取覆盖（[editing.rs](../../../../apps/cli/src/tools/parts/editing.rs)），使后续 `edit_file`/`apply_patch` 无需重复读取刚由本轮完整写出的文件。`apply_patch` 解析 unified diff hunk 的旧行区间（[checkpoints_review.rs](../../../../apps/cli/src/tools/parts/checkpoints_review.rs)）：目标 hunk 落在已分段读取的行区间内时放行，命中未读行区间仍明确拒绝。
+成功写入后，`write_file` 在输出中回传 `(sha256: <hex>)`，并在磁盘内容与本次写入一致（未被外部格式化器改写）时登记 Run 局部的 `Full` 文件读取覆盖（[editing.rs](../../../../crates/nola-tools/src/file_pipeline.rs)），使后续 `edit_file`/`apply_patch` 无需重复读取刚由本轮完整写出的文件。`apply_patch` 解析 unified diff hunk 的旧行区间（[checkpoints_review.rs](../../../../crates/nola-tools/src/code_tools.rs)）：目标 hunk 落在已分段读取的行区间内时放行，命中未读行区间仍明确拒绝。
 
 Host在操作前观察目标，在路径锁内再次比较资源身份和版本；新文件采用不覆盖的原子发布，已存在目标采用明确替换路径。目录准备后的再次校验仍保留，不能通过先创建目录绕过版本变化检查。此契约不新增旧接口回退；模型及各客户端使用同一当前schema。
 

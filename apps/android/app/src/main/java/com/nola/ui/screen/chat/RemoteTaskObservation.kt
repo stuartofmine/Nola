@@ -47,6 +47,12 @@ internal class RemoteTaskObservation {
                             is SseEvent.TaskStreamCheckpoint -> if (event.conversationId == conversationId) {
                                 advance(event.cursor)
                             }
+                            is SseEvent.V2TaskSnapshot -> if (event.conversationId == conversationId && event.cursor > 0L) {
+                                advance(event.cursor)
+                            }
+                            is SseEvent.V2TaskEvent -> if (event.conversationId == conversationId && event.seq > 0L) {
+                                advance(event.seq)
+                            }
                             else -> Unit
                         }
                         retryDelayMillis = INITIAL_RETRY_DELAY_MILLIS

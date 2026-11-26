@@ -15,7 +15,7 @@ Application commands carry `protocol_version`, `request_id`, `client_id`, option
 | Transport lost or commit acknowledgement missing | The client cannot determine whether the mutation committed. | Reconcile the original request ID. |
 | External effect uncertain | A Host may already have performed an action. | Inspect the effect and external evidence before any physical retry. |
 
-The first four outcomes are stored receipt tags. Read-only queries can return a snapshot without creating a business receipt. Service failures expose `code`, `message`, `recoverable` and optional `details`. Some internal boundaries return strings. A recoverable flag alone cannot establish that repeating an action is safe. [Service types](../../core/nola-protocol/src/lib.rs) · [Client command outcomes](../../core/nola-service-client/src/command_error.rs)
+The first four outcomes are stored receipt tags. Read-only queries can return a snapshot without creating a business receipt. Service failures expose `code`, `message`, `recoverable` and optional `details`. Some internal boundaries return strings. A recoverable flag alone cannot establish that repeating an action is safe. [Service types](../../crates/nola-types/src/lib.rs) · [Client command outcomes](../../crates/nola-app/src/daemon.rs)
 
 ## Applying the failure to its owner
 

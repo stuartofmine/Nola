@@ -14,10 +14,10 @@ Test edits with stale revisions, switching conversations during streaming, submi
 
 ## Implementation
 
-- [nola-mobile-bindings/src/lib.rs](../../../../core/nola-mobile-bindings/src/lib.rs)
-- [nola-mobile-bindings/src/projection.rs](../../../../core/nola-mobile-bindings/src/projection.rs)
+- [nola-mobile-bindings/src/lib.rs](../../../../crates/nola-app/src/ffi.rs)
+- [nola-mobile-bindings/src/projection.rs](../../../../crates/nola-app/src/ffi.rs)
 - [apple/Protocol/RemoteSubmissionIdentity.swift](../../../../shared/apple/Protocol/RemoteSubmissionIdentity.swift)
-- [nola-application/src/edited_resend.rs](../../../../core/nola-application/src/edited_resend.rs)
+- [nola-application/src/edited_resend.rs](../../../../crates/nola-app/src/web_server.rs)
 
 ## Detailed references
 

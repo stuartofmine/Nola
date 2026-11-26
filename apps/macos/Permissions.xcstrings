@@ -1,7 +1,50 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "Checking permission status…": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"正在核对权限状态…"}},"en":{"stringUnit":{"state":"translated","value":"Checking permission status…"}},"de":{"stringUnit":{"state":"translated","value":"Berechtigungsstatus wird geprüft…"}},"es":{"stringUnit":{"state":"translated","value":"Comprobando el estado de los permisos…"}},"fr":{"stringUnit":{"state":"translated","value":"Vérification des autorisations…"}},"ja":{"stringUnit":{"state":"translated","value":"権限の状態を確認中…"}},"ru":{"stringUnit":{"state":"translated","value":"Проверка состояния разрешений…"}},
+    "Checking permission status…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在核对权限状态…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking permission status…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berechtigungsstatus wird geprüft…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando el estado de los permisos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification des autorisations…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "権限の状態を確認中…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка состояния разрешений…"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -14,8 +57,52 @@
             "value": "권한 상태 확인 중…"
           }
         }
-      }},
-    "For the next message": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"下次发送使用"}},"en":{"stringUnit":{"state":"translated","value":"For the next message"}},"de":{"stringUnit":{"state":"translated","value":"Für die nächste Nachricht"}},"es":{"stringUnit":{"state":"translated","value":"Para el próximo mensaje"}},"fr":{"stringUnit":{"state":"translated","value":"Pour le prochain message"}},"ja":{"stringUnit":{"state":"translated","value":"次の送信に使用"}},"ru":{"stringUnit":{"state":"translated","value":"Для следующего сообщения"}},
+      }
+    },
+    "For the next message": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下次发送使用"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For the next message"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für die nächste Nachricht"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Para el próximo mensaje"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pour le prochain message"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の送信に使用"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для следующего сообщения"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -28,8 +115,52 @@
             "value": "다음 메시지에 적용"
           }
         }
-      }},
-    "Switching permissions…": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"正在切换权限…"}},"en":{"stringUnit":{"state":"translated","value":"Switching permissions…"}},"de":{"stringUnit":{"state":"translated","value":"Berechtigungen werden geändert…"}},"es":{"stringUnit":{"state":"translated","value":"Cambiando permisos…"}},"fr":{"stringUnit":{"state":"translated","value":"Modification des autorisations…"}},"ja":{"stringUnit":{"state":"translated","value":"権限を変更中…"}},"ru":{"stringUnit":{"state":"translated","value":"Изменение разрешений…"}},
+      }
+    },
+    "Switching permissions…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在切换权限…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching permissions…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berechtigungen werden geändert…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambiando permisos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modification des autorisations…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "権限を変更中…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Изменение разрешений…"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -42,8 +173,52 @@
             "value": "권한 전환 중…"
           }
         }
-      }},
-    "Permissions saved": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"权限已保存"}},"en":{"stringUnit":{"state":"translated","value":"Permissions saved"}},"de":{"stringUnit":{"state":"translated","value":"Berechtigungen gespeichert"}},"es":{"stringUnit":{"state":"translated","value":"Permisos guardados"}},"fr":{"stringUnit":{"state":"translated","value":"Autorisations enregistrées"}},"ja":{"stringUnit":{"state":"translated","value":"権限を保存しました"}},"ru":{"stringUnit":{"state":"translated","value":"Разрешения сохранены"}},
+      }
+    },
+    "Permissions saved": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "权限已保存"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permissions saved"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berechtigungen gespeichert"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permisos guardados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autorisations enregistrées"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "権限を保存しました"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешения сохранены"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -56,8 +231,52 @@
             "value": "권한 저장됨"
           }
         }
-      }},
-    "Saved; waiting for the running task": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"已保存，等待当前任务生效"}},"en":{"stringUnit":{"state":"translated","value":"Saved; waiting for the running task"}},"de":{"stringUnit":{"state":"translated","value":"Gespeichert; wartet auf laufende Aufgabe"}},"es":{"stringUnit":{"state":"translated","value":"Guardados; esperando la tarea actual"}},"fr":{"stringUnit":{"state":"translated","value":"Enregistrées ; en attente de la tâche"}},"ja":{"stringUnit":{"state":"translated","value":"保存済み・実行中のタスクの反映待ち"}},"ru":{"stringUnit":{"state":"translated","value":"Сохранено; ожидание текущей задачи"}},
+      }
+    },
+    "Saved; waiting for the running task": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存，等待当前任务生效"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved; waiting for the running task"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gespeichert; wartet auf laufende Aufgabe"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardados; esperando la tarea actual"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrées ; en attente de la tâche"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存済み・実行中のタスクの反映待ち"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранено; ожидание текущей задачи"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -70,8 +289,52 @@
             "value": "저장됨 · 실행 중인 작업 대기 중"
           }
         }
-      }},
-    "Permissions active": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"当前任务已生效"}},"en":{"stringUnit":{"state":"translated","value":"Permissions active"}},"de":{"stringUnit":{"state":"translated","value":"Für laufende Aufgabe aktiv"}},"es":{"stringUnit":{"state":"translated","value":"Activos para la tarea actual"}},"fr":{"stringUnit":{"state":"translated","value":"Actives pour la tâche en cours"}},"ja":{"stringUnit":{"state":"translated","value":"実行中のタスクに適用済み"}},"ru":{"stringUnit":{"state":"translated","value":"Действует для текущей задачи"}},
+      }
+    },
+    "Permissions active": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前任务已生效"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permissions active"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für laufende Aufgabe aktiv"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activos para la tarea actual"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actives pour la tâche en cours"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中のタスクに適用済み"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Действует для текущей задачи"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -84,8 +347,52 @@
             "value": "권한 활성화됨"
           }
         }
-      }},
-    "Save not confirmed. Refresh and retry.": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"保存未确认，请刷新后重试。"}},"en":{"stringUnit":{"state":"translated","value":"Save not confirmed. Refresh and retry."}},"de":{"stringUnit":{"state":"translated","value":"Speichern nicht bestätigt. Aktualisieren und erneut versuchen."}},"es":{"stringUnit":{"state":"translated","value":"Guardado sin confirmar. Actualiza y reintenta."}},"fr":{"stringUnit":{"state":"translated","value":"Enregistrement non confirmé. Actualisez et réessayez."}},"ja":{"stringUnit":{"state":"translated","value":"保存を確認できません。更新して再試行してください。"}},"ru":{"stringUnit":{"state":"translated","value":"Сохранение не подтверждено. Обновите и повторите."}},
+      }
+    },
+    "Save not confirmed. Refresh and retry.": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存未确认，请刷新后重试。"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save not confirmed. Refresh and retry."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speichern nicht bestätigt. Aktualisieren und erneut versuchen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardado sin confirmar. Actualiza y reintenta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement non confirmé. Actualisez et réessayez."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存を確認できません。更新して再試行してください。"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранение не подтверждено. Обновите и повторите."
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -98,8 +405,52 @@
             "value": "저장 여부를 확인하지 못했습니다. 새로고침한 후 다시 시도하세요."
           }
         }
-      }},
-    "Estimated next request": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"预计下次请求"}},"en":{"stringUnit":{"state":"translated","value":"Estimated next request"}},"de":{"stringUnit":{"state":"translated","value":"Schätzung der nächsten Anfrage"}},"es":{"stringUnit":{"state":"translated","value":"Estimación de la próxima solicitud"}},"fr":{"stringUnit":{"state":"translated","value":"Estimation de la prochaine requête"}},"ja":{"stringUnit":{"state":"translated","value":"次のリクエストの推定"}},"ru":{"stringUnit":{"state":"translated","value":"Оценка следующего запроса"}},
+      }
+    },
+    "Estimated next request": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预计下次请求"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated next request"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schätzung der nächsten Anfrage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimación de la próxima solicitud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation de la prochaine requête"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次のリクエストの推定"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оценка следующего запроса"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -112,8 +463,52 @@
             "value": "다음 요청 예상치"
           }
         }
-      }},
-    "Measured request context": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"请求实测上下文"}},"en":{"stringUnit":{"state":"translated","value":"Measured request context"}},"de":{"stringUnit":{"state":"translated","value":"Gemessener Anfragekontext"}},"es":{"stringUnit":{"state":"translated","value":"Contexto medido de la solicitud"}},"fr":{"stringUnit":{"state":"translated","value":"Contexte mesuré de la requête"}},"ja":{"stringUnit":{"state":"translated","value":"リクエストの実測コンテキスト"}},"ru":{"stringUnit":{"state":"translated","value":"Измеренный контекст запроса"}},
+      }
+    },
+    "Measured request context": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求实测上下文"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Measured request context"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemessener Anfragekontext"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contexto medido de la solicitud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contexte mesuré de la requête"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リクエストの実測コンテキスト"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Измеренный контекст запроса"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -126,8 +521,52 @@
             "value": "요청 컨텍스트 측정값"
           }
         }
-      }},
-    "Request": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"请求"}},"en":{"stringUnit":{"state":"translated","value":"Request"}},"de":{"stringUnit":{"state":"translated","value":"Anfrage"}},"es":{"stringUnit":{"state":"translated","value":"Solicitud"}},"fr":{"stringUnit":{"state":"translated","value":"Requête"}},"ja":{"stringUnit":{"state":"translated","value":"リクエスト"}},"ru":{"stringUnit":{"state":"translated","value":"Запрос"}},
+      }
+    },
+    "Request": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anfrage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solicitud"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requête"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リクエスト"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрос"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -140,8 +579,52 @@
             "value": "요청"
           }
         }
-      }},
-    "Attempt": {"localizations":{"zh-Hans":{"stringUnit":{"state":"translated","value":"物理尝试"}},"en":{"stringUnit":{"state":"translated","value":"Attempt"}},"de":{"stringUnit":{"state":"translated","value":"Physischer Versuch"}},"es":{"stringUnit":{"state":"translated","value":"Intento físico"}},"fr":{"stringUnit":{"state":"translated","value":"Tentative physique"}},"ja":{"stringUnit":{"state":"translated","value":"物理試行"}},"ru":{"stringUnit":{"state":"translated","value":"Физическая попытка"}},
+      }
+    },
+    "Attempt": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "物理尝试"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attempt"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Physischer Versuch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Intento físico"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tentative physique"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "物理試行"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Физическая попытка"
+          }
+        },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
@@ -154,7 +637,8 @@
             "value": "시도"
           }
         }
-      }},
+      }
+    },
     "Cautious": {
       "localizations": {
         "en": {
@@ -325,6 +809,122 @@
           "stringUnit": {
             "state": "translated",
             "value": "이 대화에서는 Nola 승인 요청이 표시되지 않습니다. 시스템 권한은 계속 적용됩니다."
+          }
+        }
+      }
+    },
+    "Accept Edits": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accept Edits"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动接受编辑"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動接受編輯"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Änderungen zulassen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aceptar cambios"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepter les modifications"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "編集を自動許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "편집 자동 허용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Принимать правки"
+          }
+        }
+      }
+    },
+    "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作区内文件编辑自动放行；Shell 命令、工作区外写入、外发内容和新连接仍需确认。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作區內檔案編輯自動放行；Shell 指令、工作區外寫入、外發內容和新連接仍需確認。"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dateibearbeitungen im Arbeitsbereich automatisch zulassen. Shell-Befehle, Schreibvorgänge außerhalb, ausgehende Inhalte und neue Verbindungen bestätigen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite automáticamente ediciones en el espacio de trabajo. Confirma comandos de shell, escrituras externas, envíos y conexiones nuevas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser automatiquement les modifications dans l’espace de travail. Confirmer les commandes shell, écritures externes, envois et nouvelles connexions."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ワークスペース内のファイル編集を自動許可します。シェルコマンド、ワークスペース外への書き込み、外部送信、新規接続は確認します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업 공간 내 파일 편집은 자동 허용합니다. 셸 명령, 작업 공간 외부 쓰기, 외부 전송 및 새 연결은 확인 후 진행합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически разрешать правки файлов в рабочей области. Подтверждать команды оболочки, запись вне рабочей области, отправку и новые подключения."
           }
         }
       }

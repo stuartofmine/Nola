@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# Builds the two native executables embedded by NolaMac without coupling the
-# application target to the complete CLI product.
+# Builds the unified Nola v2 native executable embedded by NolaMac.
 set -euo pipefail
 
 ROOT="${NOLA_REPOSITORY_ROOT:-${SRCROOT:?SRCROOT is required}}"
@@ -34,8 +33,7 @@ if [[ -z "$BUILD_PROFILE" ]]; then
 fi
 OUTPUT_PROFILE="$BUILD_PROFILE"
 [[ "$OUTPUT_PROFILE" == "dev" ]] && OUTPUT_PROFILE="debug"
-HOST_ARTIFACT="${CARGO_TARGET_DIR}/${OUTPUT_PROFILE}/nola-agent-host"
-SERVICE_ARTIFACT="${CARGO_TARGET_DIR}/${OUTPUT_PROFILE}/nola-service"
+NOLA_ARTIFACT="${CARGO_TARGET_DIR}/${OUTPUT_PROFILE}/nola"
 
 mkdir -p "$CARGO_TARGET_DIR"
 
@@ -48,15 +46,13 @@ write_dependency_file() {
   [[ -z "$dependency_file" ]] && return
   mkdir -p "$(dirname "$dependency_file")"
   {
-    printf '%s:' "$(escape_dependency_path "$HOST_DEST")"
+    printf '%s:' "$(escape_dependency_path "$NOLA_DEST")"
     {
       find \
-        "$ROOT/apps/cli/src" \
-        "$ROOT/apps/cli/vendor" \
-        "$ROOT/core" \
+        "$ROOT/crates" \
         "$ROOT/third_party/a2ui/spec" \
         -type d \( -name target -o -name 'target_*' -o -name tests \) -prune -o \
-        -type f \( -name '*.rs' -o -name '*.json' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.py' \) \
+        -type f \( -name '*.rs' -o -name '*.json' -o -name 'Cargo.toml' -o -name 'build.rs' -o -name '*.sql' -o -name '*.h' \) \
         -print
       find "$ROOT/apps/macos/Resources/NolaBuiltInSkills.bundle" \
         -type f ! -name '*.pyc' -print
@@ -64,7 +60,6 @@ write_dependency_file() {
         "$ROOT/Cargo.toml" \
         "$ROOT/Cargo.lock" \
         "$ROOT/rust-toolchain.toml" \
-        "$ROOT/apps/cli/build.rs" \
         "$ROOT/scripts/build_mac_runtime.sh" \
         "$NOLA_RUST_BUILD_CACHE_HELPER" \
         "$NOLA_MAC_INSTALL_HELPER" \
@@ -74,10 +69,6 @@ write_dependency_file() {
   } > "$dependency_file"
 }
 
-# Xcode decides when this phase runs from the generated dependency file. Once
-# invoked, Cargo remains the source of truth for the transitive Rust graph.
-# Do not use executable mtimes to bypass Cargo: they cannot detect toolchain,
-# feature or profile changes. Cargo cheaply reuses valid fingerprints itself.
 {
   if [[ "$BUILD_PROFILE" == "release" ]]; then
     export CARGO_INCREMENTAL=0
@@ -87,17 +78,9 @@ write_dependency_file() {
     --locked
     --profile "$BUILD_PROFILE"
     --manifest-path "$ROOT/Cargo.toml"
-    --no-default-features
-    --features nola_cli/native-host
-    -p nola_cli
-    --bin nola-agent-host
-    -p nola_service
-    --bin nola-service
+    -p nola-app
+    --bin nola
   )
-  # Job control gives only this background build a private process group. A
-  # new shell verifies it is the group leader before executing Cargo/mbx, so
-  # failed group creation cannot start an uncontained build. Positional args
-  # retain executable/argument boundaries; no user text is shell-evaluated.
   set -m
   "$BASH" -c '
     . "$1"
@@ -112,15 +95,11 @@ write_dependency_file() {
   set +m
   cleanup_cargo() {
     if kill -0 "$CARGO_PID" 2>/dev/null; then
-      # Cargo is a child of mbx when caching is selected. Signal only the
-      # verified private group, including its compiler descendants, not names
-      # or an inferred ancestry shared with another build or the Xcode process.
       local owned_group
       owned_group="$(nola_rust_process_group "$CARGO_PID" 2>/dev/null)" || owned_group=""
       if [[ "$owned_group" == "$CARGO_PID" ]]; then
         kill -TERM -- "-$CARGO_PID" 2>/dev/null || true
       else
-        echo "error: private Rust build group identity unavailable; stopping only its owned leader." >&2
         kill -TERM "$CARGO_PID" 2>/dev/null || true
       fi
       wait "$CARGO_PID" 2>/dev/null || true
@@ -132,15 +111,13 @@ write_dependency_file() {
 }
 
 RUNTIME_OUTPUT_DIR="${NOLA_RUNTIME_OUTPUT_DIR:-${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/MacOS}"
-HOST_DEST="${RUNTIME_OUTPUT_DIR}/nola-agent-host"
-SERVICE_DEST="${RUNTIME_OUTPUT_DIR}/nola-service"
-mkdir -p "$(dirname "$HOST_DEST")"
+NOLA_DEST="${RUNTIME_OUTPUT_DIR}/nola"
+mkdir -p "$(dirname "$NOLA_DEST")"
 INSTALL_SIGN=NO
 if [[ -z "${NOLA_RUNTIME_OUTPUT_DIR:-}" && "${CODE_SIGNING_ALLOWED:-NO}" == "YES" ]]; then
   INSTALL_SIGN=YES
 fi
-nola_install_mac_executable "$HOST_ARTIFACT" "$HOST_DEST" "$INSTALL_SIGN"
-nola_install_mac_executable "$SERVICE_ARTIFACT" "$SERVICE_DEST" "$INSTALL_SIGN"
+nola_install_mac_executable "$NOLA_ARTIFACT" "$NOLA_DEST" "$INSTALL_SIGN"
 
 AGENT_PLIST_SOURCE="$ROOT/apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist"
 if [[ -n "${NOLA_RUNTIME_OUTPUT_DIR:-}" ]]; then

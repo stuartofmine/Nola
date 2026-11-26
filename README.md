@@ -39,11 +39,10 @@ Configure a model connection and select a declared model before starting a conve
 | Android · `apps/android/` | Kotlin / Compose | Mobile client, JNI integration and Android capabilities |
 | Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | Desktop client and owned local Host integration |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | Browser interface served by the Rust Host |
-| CLI · `apps/cli/` | Rust | Terminal client, Agent Host and local HTTP service |
-| Core · `core/` | Rust, C ABI / JNI | Domain contracts, Agent execution, Application Service, persistence and Host interfaces |
+| Unified Rust Workspace · `crates/` | 8 Rust crates (`nola-types`, `nola-store`, `nola-llm`, `nola-tools`, `nola-mcp`, `nola-engine`, `nola-modules`, `nola-app`) | Single `nola` binary (CLI, TUI, local HTTP/Web Host, background daemon) and C ABI / JNI FFI core library |
 | Shared Apple code · `shared/apple/` | Swift | Shared presentation and protocol code |
 
-Native clients have their own UI; the macOS client is not a CLI wrapper. The desktop Service and embedded mobile Application use the same business commands and Store contracts. Remote Host access requires authentication and explicit authorization.
+Native clients have their own UI; the macOS client is not a CLI wrapper. The unified `nola` Host binary and embedded mobile FFI library compile from the same `crates/` workspace and share the same SQLite WAL store, agent engine, and tool/module contracts. Remote Host access requires authentication and explicit authorization.
 
 See [source layout](docs/engineering/SOURCE_LAYOUT.md) for platform roots, shared modules and test locations.
 
@@ -56,7 +55,7 @@ From the repository root:
 ```sh
 npm --prefix apps/web/frontend ci
 npm --prefix apps/web/frontend run build
-cargo build --locked -p nola_cli -p nola_service --bins
+cargo build --locked -p nola-app --bin nola
 ./target/debug/nola --help
 ./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/apps/web"
 ```
@@ -72,7 +71,7 @@ In the interactive CLI, `Ctrl+V` attaches a clipboard image; an absolute image p
 Run checks for the area being changed:
 
 ```sh
-cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
+cargo test --locked --workspace --lib
 npm --prefix apps/web/frontend run check
 npm --prefix apps/web/frontend test
 ./scripts/test_mac_layers.sh contracts
@@ -90,7 +89,7 @@ Prototype replays, native UI checks, and real-model execution have separate scop
 
 ## Versions and compatibility
 
-The reissued **1.0.0 is the first supported baseline**. All Nola-owned protocol, ABI and database format/epoch versions start at **1**. Earlier development formats are unsupported. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
+**Nola 2.0.0** establishes the lean 8-crate Rust architecture, unified `nola` binary, and SQLite WAL schema (`user_version = 2`) as the new supported baseline. Legacy v1 databases are explicitly rejected without silently deleting or rewriting user data. Application version/build numbers are separate from contract versions; external standards retain their own version identifiers.
 
 Subsequent releases must preserve published interfaces and stored data, with explicit negotiation for protocol changes and tested, recoverable migrations for data changes. Unsupported formats are rejected without automatically deleting or rebuilding user data. See the [compatibility policy](docs/architecture/总体设计/VERSION_COMPATIBILITY.en.md).
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Canonical Warm Ink & Warm Paper surface tokens synchronized with shared/design-tokens/tokens.json.
+// Canonical Monochrome Obsidian & Porcelain surface tokens synchronized with shared/design-tokens/tokens.json.
 
 export interface DesktopThemeTokens {
     readonly canvas: string;

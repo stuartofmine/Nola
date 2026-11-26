@@ -49,6 +49,7 @@ internal class ChatRunSession(
     var visibleHeads: List<JsonObject> = emptyList()
     var submission: RemoteSubmissionIntent? = null
     var admitted = false
+    var v2TurnCompleted = false
     var permissionSourceUnconfirmed = false
     var permissionOwnerProjectionRunId: String? = null
     var permissionObservedIdentity: com.nola.data.remote.api.RemoteSubmissionIdentity? = null

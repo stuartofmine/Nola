@@ -112,7 +112,7 @@ enum MacReadinessService {
             let url = URL(fileURLWithPath: configured)
             if fileManager.isExecutableFile(atPath: url.path) { return url }
         }
-        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-agent-host"),
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-runtime"),
            fileManager.isExecutableFile(atPath: bundled.path) {
             return bundled
         }

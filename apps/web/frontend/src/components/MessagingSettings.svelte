@@ -20,6 +20,7 @@
     let workerError = $state(''), connectionError = $state(''), editorError = $state('');
     let workerNotice = $state(''), connectionNotice = $state('');
     let workerLoading = $state(false), channelsLoading = $state(false), saving = $state(false), confirming = $state(false);
+    let testingId = $state('');
     let channels = $state<Channel[]>([]), channelsLoaded = $state(false);
     let editing = $state<ChannelDraft>(), baseline = $state<Channel>();
     let savedDraft = $state('');
@@ -127,6 +128,46 @@
         } catch (cause) { if (!disposed) editorError = messagingErrorKey(cause); }
         finally { if (!disposed) saving = false; }
     }
+    async function deleteChannel() {
+        if (busy || !baseline) return;
+        const target = $state.snapshot(baseline);
+        const version = editorVersion;
+        confirming = true;
+        const approved = await confirmation.ask({
+            title: t($locale, 'messaging.deleteTitle'),
+            description: t($locale, 'messaging.deleteBody', { name: target.display_name || target.connection_id }),
+            confirmLabel: t($locale, 'messaging.delete'),
+            destructive: true,
+        });
+        confirming = false;
+        if (!approved || disposed || version !== editorVersion) return;
+        saving = true; editorError = ''; channelsRead.cancel(); ++channelsVersion; channelsLoading = false;
+        try {
+            await api(`/api/messaging-channels/${encodeURIComponent(target.connection_id)}`, { method: 'DELETE' });
+            if (disposed) return;
+            channels = channels.filter(channel => channel.connection_id !== target.connection_id);
+            connectionNotice = 'messaging.deleted';
+            dialog.close(); editing = undefined; baseline = undefined; ++editorVersion;
+            await loadChannels();
+        } catch (cause) { if (!disposed) editorError = messagingErrorKey(cause); }
+        finally { if (!disposed) saving = false; }
+    }
+    async function testChannel(channel: Channel) {
+        if (busy || workerLoading || testingId) return;
+        testingId = channel.connection_id;
+        connectionError = '';
+        connectionNotice = '';
+        try {
+            const result = await api<{ ok?: boolean }>(`/api/messaging-channels/${encodeURIComponent(channel.connection_id)}/test`, { method: 'POST', body: '{}' });
+            if (disposed) return;
+            if (result?.ok === false) connectionError = 'messaging.testFailed';
+            else connectionNotice = 'messaging.testOk';
+        } catch (cause) {
+            if (!disposed) connectionError = messagingErrorKey(cause) === 'messaging.authError' ? 'messaging.authError' : 'messaging.testFailed';
+        } finally {
+            if (!disposed) testingId = '';
+        }
+    }
     function beforeUnload(event: BeforeUnloadEvent) {
         if (!acceptsWorkspaceUnload(event)) return; if (workerDirty || editorDirty || saving) { event.preventDefault(); event.returnValue = ''; } }
 </script>
@@ -148,18 +189,21 @@
                 <label>{t($locale, 'messaging.token')}<input type="password" bind:value={token} disabled={clearToken} autocomplete="new-password" spellcheck="false" /></label>
                 <label class="toggle"><input type="checkbox" role="switch" bind:checked={clearToken} onchange={() => { if (clearToken) token = ''; }} />{t($locale, 'messaging.clearToken')}</label>
                 <p class="muted">{t($locale, settings.has_access_token ? 'messaging.tokenSaved' : 'messaging.tokenMissing')} · {t($locale, 'messaging.tokenHint')}</p>
-                <label>{t($locale, 'messaging.execution_backend')}<select bind:value={draft.execution_backend}><option value="nola">Nola</option>{#if draft.execution_backend !== 'nola'}<option value={draft.execution_backend}>{draft.execution_backend}</option>{/if}</select></label>
+                <label>{t($locale, 'messaging.execution_backend')}<select bind:value={draft.execution_backend}><option value={settings.execution_backend === 'nola-v2' ? 'nola-v2' : 'nola'}>Nola</option>{#if draft.execution_backend !== 'nola' && draft.execution_backend !== 'nola-v2'}<option value={draft.execution_backend}>{draft.execution_backend}</option>{/if}</select></label>
                 <div class="fields">{#each workerFields as field}<label>{t($locale, `messaging.${field}`)}<input bind:value={draft[field]} inputmode={field === 'project_root' ? 'text' : 'numeric'} /></label>{/each}</div>
-                <button class="primary" disabled={!workerDirty}>{t($locale, saving ? 'models.saving' : 'models.save')}</button>
+                <button type="submit" class="primary" disabled={!workerDirty}>{t($locale, saving ? 'models.saving' : 'models.save')}</button>
             </fieldset>{/if}
         </form>
     </details>
-    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button disabled={busy || channelsLoading || workerLoading || workerUncertain || !!workerError || !channelsConfigured} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
+    <div class="row between"><h3>{t($locale, 'messaging.connections')}</h3><div class="actions"><button type="button" disabled={busy || channelsLoading || workerLoading || workerUncertain || !!workerError || !channelsConfigured} onclick={loadChannels}>{t($locale, 'models.reload')}</button><button type="button" disabled={busy || workerLoading || workerUncertain || !channelsLoaded} onclick={() => open()}>{t($locale, 'messaging.add')}</button></div></div>
     {#if channelsLoading}<p role="status">{t($locale, 'remote.loading')}</p>{/if}
     {#if connectionError}<p role="alert" class="error">{t($locale, connectionError)}</p>{/if}
     {#if connectionNotice}<p role="status">{t($locale, connectionNotice)}</p>{/if}
     {#if channelsLoaded}{#each channels as channel (channel.connection_id)}
-        <button class="card connection" disabled={busy || workerLoading} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
+        <article class="card connection-card">
+            <button type="button" class="connection" disabled={busy || workerLoading || !!testingId} onclick={() => open(channel)}><span class="row between"><strong>{channel.display_name || channel.connection_id}</strong><span>{channel.enabled ? ['connected','degraded','awaiting_verification','ready','disabled'].includes(channel.state) ? t($locale, `messaging.${channel.state}`) : channel.state : t($locale, 'remote.disabled')}</span></span><span>{providerName(channel.kind)} · {channel.connection_id}</span><small class="muted">{resultTime(channel.last_received_at, $locale)}</small></button>
+            <div class="connection-actions"><button type="button" disabled={busy || workerLoading || !!testingId} onclick={() => void testChannel(channel)}>{t($locale, testingId === channel.connection_id ? 'messaging.testing' : 'messaging.test')}</button></div>
+        </article>
     {:else}<p class="muted">{t($locale, 'messaging.empty')}</p>{/each}{/if}
 </section>
 <dialog use:ownDialog bind:this={dialog} oncancel={close} onclick={event => { if (event.target === dialog && !busy) void close(); }} aria-labelledby="messaging-editor-title">
@@ -172,11 +216,15 @@
             {#each Object.hasOwn(providerFields, editing.kind) ? providerFields[editing.kind] : [] as field}<label>{t($locale, `messaging.${field}`)}<input value={typeof editing.provider_config[field] === 'string' ? editing.provider_config[field] : ''} oninput={event => { if (editing) editing.provider_config[field] = event.currentTarget.value; }} autocomplete="off" /></label>{/each}
         </div><label class="toggle"><input type="checkbox" role="switch" bind:checked={editing.enabled} />{t($locale, 'messaging.enableConnection')}</label></fieldset>
         {#if callback}<div><p class="muted">{t($locale, 'messaging.callback')}</p><code>{callback}</code><button type="button" onclick={copyCallback}>{t($locale, 'shell.markdown.copy')}</button>{#if copyNotice}<p role="status">{t($locale, copyNotice)}</p>{/if}</div>{/if}
-        <p class="muted">{t($locale, 'messaging.applyHint')}</p><div class="actions"><button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button class="primary" disabled={busy}>{t($locale, saving ? 'models.saving' : editing.enabled ? 'messaging.apply' : 'models.save')}</button></div>
+        <p class="muted">{t($locale, 'messaging.applyHint')}</p><div class="actions">{#if baseline}<button type="button" class="danger" disabled={busy} onclick={() => void deleteChannel()}>{t($locale, 'messaging.delete')}</button>{/if}<button type="button" disabled={busy} onclick={() => close()}>{t($locale, 'shell.cancel')}</button><button type="submit" class="primary" disabled={busy}>{t($locale, saving ? 'models.saving' : editing.enabled ? 'messaging.apply' : 'models.save')}</button></div>
     </form>{/if}
 </dialog>
 <style>
     form, fieldset { display: grid; gap: 14px; } fieldset { border: 0; min-width: 0; padding: 0; margin: 0; } p { margin: 0; }
     .toggle { display: flex; align-items: center; gap: 8px; } .toggle input { width: auto; }
-    .connection { width: 100%; text-align: start; overflow-wrap: anywhere; } code { overflow-wrap: anywhere; } dialog { max-width: 740px; }
+    .connection-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+    .connection { flex: 1 1 220px; display: grid; gap: 4px; padding: 0; border: 0; background: transparent; box-shadow: none; text-align: start; overflow-wrap: anywhere; min-height: 0; }
+    .connection:hover:not(:disabled) { background: transparent; border-color: transparent; }
+    .connection-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    code { overflow-wrap: anywhere; } dialog { max-width: 740px; }
 </style>

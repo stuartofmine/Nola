@@ -30,7 +30,7 @@ enum MacBackgroundSchedulerService {
         }
         guard let appURL = Bundle.main.executableURL,
               FileManager.default.isExecutableFile(atPath: appURL.path),
-              let hostURL = Bundle.main.url(forAuxiliaryExecutable: "nola-agent-host"),
+              let hostURL = Bundle.main.url(forAuxiliaryExecutable: "nola-runtime"),
               FileManager.default.isExecutableFile(atPath: hostURL.path) else {
             record(.warn, "Background scheduler runtime is incomplete")
             unregisterStaleService(service)

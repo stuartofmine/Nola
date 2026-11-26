@@ -171,7 +171,7 @@ final class NolaTailcatTransportTests: XCTestCase {
     }
 
     func testURLProtocolStopGuardSuppressesLateFailureCallbacks() {
-        let request = URLRequest(url: URL(string: "http://192.168.1.52:5001/api/mobile/me")!)
+        let request = URLRequest(url: URL(string: "http://192.168.1.52:5001/api/me")!)
         let client = RecordingURLProtocolClient()
         let proto = NolaTailcatURLProtocol(request: request, cachedResponse: nil, client: client)
 

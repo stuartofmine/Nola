@@ -15,7 +15,9 @@ extension IOSApplicationRuntime {
         case "auxiliary_invocation":
             let kind = (arguments["command"] as? [String: Any])?["type"] as? String
             return kind == "inspect" || kind == "inspect_source"
-        case "read_expert_exchange_capability", "read_ui_authority", "read_ui_capability", "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes", "list_ui_surfaces", "command_receipt", "load_run_identity", "load_conversation", "list_conversations", "list_root_conversations", "load_conversation_settings",
+        case "health", "sessions_list", "events_after", "projection_snapshot",
+             "projection_event_suffix", "projection_cursor_wait", "module_list", "memory_search",
+             "read_expert_exchange_capability", "read_ui_authority", "read_ui_capability", "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes", "list_ui_surfaces", "command_receipt", "load_run_identity", "load_conversation", "list_conversations", "list_root_conversations", "load_conversation_settings",
              "load_committed_host_requests", "load_runtime_effect_work_schedule", "load_host_execution_state",
              "load_session_projection", "load_goal_control_observation", "validate_mobile_run_recovery_authority",
              "query_claimable_memory_jobs", "build_memory_worker_plan", "read_remote_submission_intent", "read_admitted_remote_run_identity", "read_remote_submission_request",

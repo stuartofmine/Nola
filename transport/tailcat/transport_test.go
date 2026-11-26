@@ -180,3 +180,37 @@ func TestConnectionsCloseWaitIsBoundedOnStalledDial(t *testing.T) {
 		t.Fatal("bounded close wait took too long")
 	}
 }
+
+func TestBidirectionalIdlePairKeepsUnidirectionalSSEAlive(t *testing.T) {
+	c1, s1 := net.Pipe()
+	c2, s2 := net.Pipe()
+	defer c1.Close()
+	defer s2.Close()
+
+	wrappedA, wrappedB, stop := newBidirectionalIdlePair(s1, c2, 80*time.Millisecond)
+	defer stop()
+	go tailcat.ProxyConns(wrappedA, wrappedB)
+
+	// Push server->client SSE heartbeats every 25ms for 150ms (> 80ms timeout)
+	// while the client sends ZERO bytes; bidirectional activity must keep it open!
+	done := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 5)
+		for i := 0; i < 6; i++ {
+			if _, err := io.ReadFull(c1, buf); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for i := 0; i < 6; i++ {
+		if _, err := io.WriteString(s2, "ping\n"); err != nil {
+			t.Fatalf("SSE write %d failed prematurely: %v", i, err)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("SSE read failed prematurely: %v", err)
+	}
+}

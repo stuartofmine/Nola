@@ -3,7 +3,7 @@
     import { STREAMING_TEXT_SELECTION, captureTextSelection } from '../lib/streamingText';
     import StreamingText from './StreamingText.svelte';
     import MermaidDiagram from './MermaidDiagram.svelte';
-    import { StreamingMarkdownCache } from '../lib/markdown';
+    import { StreamingMarkdownCache, highlightCode, renderMathExpression } from '../lib/markdown';
     import type { InlineNode, MarkdownBlock } from '../lib/markdown';
     import { locale, t } from '../lib/i18n';
     let { source, streaming = false, initialText = '' }: { source: string; streaming?: boolean; initialText?: string } = $props();
@@ -67,6 +67,7 @@
     {#each nodes as node}
         {#if node.kind === 'text'}{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}
         {:else if node.kind === 'code'}<code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code>
+        {:else if node.kind === 'math'}<span class="math-inline">{@html renderMathExpression(node.text)}</span>
         {:else if node.kind === 'strong'}<strong>{@render inlines(node.children)}</strong>
         {:else if node.kind === 'em'}<em>{@render inlines(node.children)}</em>
         {:else if node.kind === 'del'}<del>{@render inlines(node.children)}</del>
@@ -93,9 +94,11 @@
             {:else}
             <div class="code-block"><div class="code-header"><span>{node.language || t($locale, 'shell.markdown.code')}</span><button type="button" onclick={() => copy(node.text, node)}>{t($locale, copiedBlock === node ? 'shell.markdown.copied' : 'shell.markdown.copy')}</button></div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users need to focus this overflow region to scroll code.) -->
-                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming || hasStreamed}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{node.text}{/if}</code></pre>
+                <pre tabindex="0" role="region" aria-label={t($locale, 'shell.markdown.code')}><code>{#if streaming}<StreamingText text={node.text} {streaming} visiblePrefix={prefix(node, node.text.length)} />{:else}{@html highlightCode(node.text, node.language)}{/if}</code></pre>
             </div>
             {/if}
+        {:else if node.kind === 'math'}
+            <div class="math-block" role="math" aria-label={node.text}>{@html renderMathExpression(node.text)}</div>
         {:else if node.kind === 'list'}
             <svelte:element this={node.ordered ? 'ol' : 'ul'} start={node.ordered ? node.start : undefined}>
                 {#each node.items as item}<li class:task={item.checked !== undefined}>
@@ -130,19 +133,146 @@
     .markdown :global(li > div > p:first-child) { margin-top: 0; } .markdown :global(li > div > p:last-child) { margin-bottom: 0; }
     li.task { list-style: none; display: flex; align-items: baseline; gap: .55em; } .task input { width: auto; margin: 0; }
     blockquote { margin: 12px 0; padding-inline-start: 12px; border-inline-start: 2px solid var(--outline); color: var(--muted); }
-    .markdown :global(code) { font-family: var(--font-code); font-size: .9em; background: var(--panel); border-radius: 4px; padding: .12em .3em; }
+    .markdown :global(code) { font-family: var(--font-code); font-size: .9em; background: var(--canvas); border: 1px solid var(--border); border-radius: 4px; padding: .12em .35em; }
     .code-block { margin: 1em 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-    .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--panel); font-size: .85em; color: var(--muted); }
+    .code-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px; background: var(--canvas); border-bottom: 1px solid var(--border); font-size: .85em; color: var(--muted); }
     .code-header button { padding: 3px 8px; min-height: max(32px, var(--control-hit-size)); min-width: 44px; }
     pre { margin: 0; padding: 12px; overflow: auto; max-height: 480px; white-space: pre; line-height: 1.5; tab-size: 4; background: var(--surface); }
-    .markdown pre code { padding: 0; background: none; border-radius: 0; }
+    .markdown pre code { padding: 0; background: none; border: 0; border-radius: 0; }
+    .markdown {
+        --tok-kw: #9a2b7c;
+        --tok-str: #146c37;
+        --tok-num: #9a4d00;
+        --tok-cmt: #63636e;
+        --tok-type: #0e5a8a;
+        --tok-attr: #6f42c1;
+        --tok-tag: #1d4ed8;
+        --tok-meta: #8a4b08;
+        --tok-key: #0f5a78;
+        --tok-var: #b43a1c;
+        --tok-add: var(--success);
+        --tok-del: var(--danger);
+        --tok-hunk: var(--info);
+    }
+    @media (prefers-color-scheme: dark) {
+        :global(:root:not([data-appearance="light"])) .markdown {
+            --tok-kw: #d896ff;
+            --tok-str: #7ee787;
+            --tok-num: #f0b85a;
+            --tok-cmt: #8b8b96;
+            --tok-type: #79c0ff;
+            --tok-attr: #d2a8ff;
+            --tok-tag: #7ee787;
+            --tok-meta: #ffa657;
+            --tok-key: #79c0ff;
+            --tok-var: #ffa198;
+        }
+    }
+    :global(:root[data-appearance="dark"]) .markdown {
+        --tok-kw: #d896ff;
+        --tok-str: #7ee787;
+        --tok-num: #f0b85a;
+        --tok-cmt: #8b8b96;
+        --tok-type: #79c0ff;
+        --tok-attr: #d2a8ff;
+        --tok-tag: #7ee787;
+        --tok-meta: #ffa657;
+        --tok-key: #79c0ff;
+        --tok-var: #ffa198;
+    }
+    .markdown :global(.tok-kw) { color: var(--tok-kw); }
+    .markdown :global(.tok-str) { color: var(--tok-str); }
+    .markdown :global(.tok-num) { color: var(--tok-num); }
+    .markdown :global(.tok-cmt) { color: var(--tok-cmt); font-style: italic; }
+    .markdown :global(.tok-type) { color: var(--tok-type); }
+    .markdown :global(.tok-attr) { color: var(--tok-attr); }
+    .markdown :global(.tok-tag) { color: var(--tok-tag); }
+    .markdown :global(.tok-meta) { color: var(--tok-meta); }
+    .markdown :global(.tok-key) { color: var(--tok-key); }
+    .markdown :global(.tok-var) { color: var(--tok-var); }
+    .markdown :global(.tok-add) { display: inline-block; min-width: 100%; background: color-mix(in srgb, var(--tok-add) 14%, transparent); color: var(--tok-add); }
+    .markdown :global(.tok-del) { display: inline-block; min-width: 100%; background: color-mix(in srgb, var(--tok-del) 14%, transparent); color: var(--tok-del); }
+    .markdown :global(.tok-hunk) { display: inline-block; min-width: 100%; background: color-mix(in srgb, var(--tok-hunk) 12%, transparent); color: var(--tok-hunk); font-weight: 600; }
+    .markdown :global(.math-inline) {
+        font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', Georgia, 'Times New Roman', serif;
+        font-size: 1.03em;
+        padding: 0 .14em;
+        color: var(--content);
+        white-space: nowrap;
+    }
+    .markdown :global(.math-block) {
+        margin: 1em 0;
+        padding: 12px 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--canvas);
+        color: var(--content);
+        font-family: 'Cambria Math', 'STIX Two Math', 'Latin Modern Math', Georgia, 'Times New Roman', serif;
+        font-size: 1.12em;
+        line-height: 1.7;
+        text-align: center;
+        overflow-x: auto;
+    }
+    .markdown :global(.math-inline sup),
+    .markdown :global(.math-block sup),
+    .markdown :global(.math-inline sub),
+    .markdown :global(.math-block sub) {
+        font-size: .74em;
+        line-height: 0;
+    }
+    .markdown :global(.math-frac) {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        vertical-align: middle;
+        margin: 0 .18em;
+        font-size: .92em;
+        line-height: 1.25;
+        text-align: center;
+    }
+    .markdown :global(.math-frac-num) {
+        display: block;
+        padding: 0 .24em .1em;
+        border-bottom: 1px solid currentColor;
+        width: 100%;
+    }
+    .markdown :global(.math-frac-den) {
+        display: block;
+        padding: .1em .24em 0;
+        width: 100%;
+    }
+    .markdown :global(.math-sqrt) {
+        display: inline-flex;
+        align-items: baseline;
+    }
+    .markdown :global(.math-sqrt-sign) {
+        font-size: 1.08em;
+        margin-right: .04em;
+    }
+    .markdown :global(.math-sqrt-body) {
+        border-top: 1px solid currentColor;
+        padding: .05em .18em 0;
+    }
+    .markdown :global(.math-root) {
+        font-size: .68em;
+        margin-right: -.15em;
+    }
+    .markdown :global(.math-text),
+    .markdown :global(.math-op) {
+        font-family: inherit;
+        font-style: normal;
+    }
+    .markdown :global(.math-bf) { font-weight: 700; }
+    .markdown :global(.math-it) { font-style: italic; }
+    .markdown :global(.math-bb) { font-weight: 600; letter-spacing: .04em; }
+    .markdown :global(.math-cal) { font-style: italic; font-family: Georgia, serif; }
     .markdown :global(a.inline-reference) { color: var(--muted); font-size: .8125rem; font-weight: 400; text-decoration: none; text-underline-offset: .15em; }
     .markdown :global(a.inline-reference:hover), .markdown :global(a.inline-reference:focus-visible) { color: var(--content); text-decoration: underline; }
     .markdown :global(a.inline-reference strong) { font-weight: 400; }
     .table-scroll { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 8px; }
     table { border-collapse: collapse; min-width: 100%; font-size: .95em; }
     th, td { padding: 8px 12px; border-bottom: 1px solid var(--border); min-width: 64px; vertical-align: top; }
-    th { background: var(--panel); font-weight: 600; } tbody tr:last-child td { border-bottom: 0; }
+    th { background: var(--canvas); font-weight: 600; } td { background: var(--surface); } tbody tr:last-child td { border-bottom: 0; }
     hr { border: 0; border-top: 1px solid var(--border); margin: 1.3em 0; }
     .copy-notice { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
     @media (pointer: coarse) { .code-header button { min-height: 44px; } }

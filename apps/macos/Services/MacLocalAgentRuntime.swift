@@ -478,6 +478,26 @@ nonisolated struct MacRemoteUserInputRequest: Identifiable, Hashable, Sendable {
     var question: String { questions.map(\.prompt).joined(separator: "\n") }
     var isOpen: Bool { state == "open" }
 
+    init(
+        id: String,
+        conversationID: String,
+        runID: String,
+        sessionID: String,
+        revision: UInt64,
+        schemaDigest: String,
+        state: String,
+        questions: [MacRemoteUserInputQuestion]
+    ) {
+        self.id = id
+        self.conversationID = conversationID
+        self.runID = runID
+        self.sessionID = sessionID
+        self.revision = revision
+        self.schemaDigest = schemaDigest
+        self.state = state
+        self.questions = questions
+    }
+
     init?(object: [String: Any]) {
         guard let conversationID = object["conversation_id"] as? String, !conversationID.isEmpty,
               let runID = object["run_id"] as? String, !runID.isEmpty,
@@ -519,6 +539,19 @@ nonisolated struct MacRemoteUserInputRequest: Identifiable, Hashable, Sendable {
     }
 }
 
+nonisolated enum MacV2StreamEvent: Sendable, Equatable {
+    case sessionStarted(sessionID: String, model: String)
+    case textDelta(String)
+    case reasoningDelta(String)
+    case toolStarted(callID: String, name: String)
+    case toolFinished(callID: String, name: String, isError: Bool, summary: String)
+    case compacted(summary: String)
+    case uiSurface(snapshotJSON: String)
+    case permissionRequested(requestID: String, tool: String, reason: String, argumentsJSON: String)
+    case userQuestion(requestID: String, question: String, options: [String])
+    case turnCompleted(sessionID: String, finalText: String)
+}
+
 nonisolated struct MacLocalAgentEvent: Sendable {
     enum Kind: Sendable, Equatable {
         case toolStarted
@@ -554,6 +587,7 @@ nonisolated struct MacLocalAgentEvent: Sendable {
     let contextPromptLimit: Int?
     let artifactURLs: [URL]
     let trace: MacAgentTraceEnvelope?
+    let v2Event: MacV2StreamEvent?
     private(set) var canonicalRunID: String? = nil
     private(set) var remoteSubmissionIntent: MacRemoteSubmissionIntent? = nil
     private(set) var validatedCoreSessionID: String? = nil
@@ -582,7 +616,8 @@ nonisolated struct MacLocalAgentEvent: Sendable {
         contextWindowTokens: Int? = nil,
         contextPromptLimit: Int? = nil,
         artifactURLs: [URL] = [],
-        trace: MacAgentTraceEnvelope? = nil
+        trace: MacAgentTraceEnvelope? = nil,
+        v2Event: MacV2StreamEvent? = nil
     ) {
         self.kind = kind
         self.text = text
@@ -606,6 +641,7 @@ nonisolated struct MacLocalAgentEvent: Sendable {
         self.contextPromptLimit = contextPromptLimit
         self.artifactURLs = artifactURLs
         self.trace = trace
+        self.v2Event = v2Event
     }
 
     func bindingCanonicalRun(_ runID: String?) -> Self {
@@ -658,7 +694,8 @@ nonisolated struct MacLocalAgentEvent: Sendable {
             contextWindowTokens: contextWindowTokens,
             contextPromptLimit: contextPromptLimit,
             artifactURLs: merged,
-            trace: trace
+            trace: trace,
+            v2Event: self.v2Event
         ).bindingCanonicalRun(canonicalRunID)
             .bindingSubmissionIntent(remoteSubmissionIntent)
             .bindingCoreSession(conversationID: validatedCoreConversationID,
@@ -900,7 +937,7 @@ nonisolated enum MacAgentHostExecutableLocator {
                 return url
             }
         }
-        if let bundled = bundle.url(forAuxiliaryExecutable: "nola-agent-host"),
+        if let bundled = bundle.url(forAuxiliaryExecutable: "nola-runtime"),
            fileManager.isExecutableFile(atPath: bundled.path) {
             return bundled
         }
@@ -991,6 +1028,11 @@ protocol MacLocalAgentRuntime: Actor {
         scope: MacPermissionGrantScope
     ) throws
     func providePermissionInstruction(conversationID: String, request: MacRemotePermissionRequest, instruction: String) throws
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws
     func activePermissionRequest(
         conversationID: String,
         requestID: String
@@ -1021,6 +1063,14 @@ extension MacLocalAgentRuntime {
     }
     func providePermissionInstruction(conversationID: String, request: MacRemotePermissionRequest, instruction: String) throws {
         throw MacPermissionInstructionError.unsupported
+    }
+
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws {
+        throw MacLocalAgentRuntimeError.protocolViolation("Local runtime does not support user input responses.")
     }
 
 
@@ -1430,12 +1480,45 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     ) -> MacRemotePermissionRequest? {
         guard let process = processes[conversationID], process.isRunning,
               controlInputs[conversationID] != nil,
-              toolPlans[conversationID] != nil,
-              let request = pendingPermissionRequests[conversationID]?[requestID],
+              let request = pendingPermissionRequests[conversationID]?[requestID] else {
+            return nil
+        }
+        if request.nonce.hasPrefix("v2-") {
+            return request.sessionID == conversationID ? request : nil
+        }
+        guard toolPlans[conversationID] != nil,
               isAdmittedPermissionSession(request, conversationID: conversationID) else {
             return nil
         }
         return request
+    }
+
+    func respondUserInput(
+        conversationID: String,
+        requestID: String,
+        answer: String?
+    ) throws {
+        guard let process = processes[conversationID], process.isRunning,
+              let input = controlInputs[conversationID] else {
+            throw NSError(
+                domain: "NolaMac.AgentHost.UserInput",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        String(localized: "The agent input channel is no longer active.")
+                ]
+            )
+        }
+        var payload: [String: Any] = [
+            "type": "user_input_response",
+            "request_id": requestID,
+        ]
+        if let answer {
+            payload["answer"] = answer
+        } else {
+            payload["cancelled"] = true
+        }
+        try writeControlFrame(payload, to: input)
     }
 
     func resolvePermission(
@@ -1452,6 +1535,62 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     }
 
     private func sendPermissionDecision(conversationID: String, request: MacRemotePermissionRequest, decision: MacRemotePermissionDecision) throws {
+        if request.nonce.hasPrefix("v2-") {
+            guard request.sessionID == conversationID else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The permission request belongs to a different conversation.")
+                    ]
+                )
+            }
+            guard let pendingRequest = pendingPermissionRequests[conversationID]?[request.id],
+                  pendingRequest == request else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The permission request is no longer pending.")
+                    ]
+                )
+            }
+            guard let process = processes[conversationID], process.isRunning,
+                  let input = controlInputs[conversationID] else {
+                throw NSError(
+                    domain: "NolaMac.AgentHost.Permission",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            String(localized: "The agent permission input channel is no longer active.")
+                    ]
+                )
+            }
+            var v2Payload: [String: Any] = [
+                "type": "permission_response",
+                "request_id": request.id,
+            ]
+            switch decision.resolution {
+            case .authorization(let allow, let scope):
+                v2Payload["allow"] = allow
+                v2Payload["decision"] = allow
+                    ? (scope == .conversation ? "allow_session" : "allow_once")
+                    : "deny"
+                v2Payload["scope"] = scope == .conversation ? "session" : "once"
+            case .provideInstruction(let instruction):
+                v2Payload["allow"] = false
+                v2Payload["decision"] = "deny"
+                v2Payload["instruction"] = instruction
+            }
+            try writeControlFrame(v2Payload, to: input)
+            pendingPermissionRequests[conversationID]?.removeValue(forKey: request.id)
+            if pendingPermissionRequests[conversationID]?.isEmpty == true {
+                pendingPermissionRequests.removeValue(forKey: conversationID)
+            }
+            return
+        }
         guard isAdmittedPermissionSession(request, conversationID: conversationID) else {
             throw NSError(
                 domain: "NolaMac.AgentHost.Permission",
@@ -2039,10 +2178,12 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                         )
                     }
                     if let wait = event.userInputRequest {
-                        guard wait.runID == currentRunID,
-                              wait.conversationID == request.conversationID,
-                              wait.sessionID == admittedCoreSessionID else {
-                            throw MacLocalAgentRuntimeError.protocolViolation("The user question belongs to a different canonical Run.")
+                        if event.v2Event == nil {
+                            guard wait.runID == currentRunID,
+                                  wait.conversationID == request.conversationID,
+                                  wait.sessionID == admittedCoreSessionID else {
+                                throw MacLocalAgentRuntimeError.protocolViolation("The user question belongs to a different canonical Run.")
+                            }
                         }
                         observedUserInputWaitIDs.insert(wait.id)
                     }
@@ -2759,6 +2900,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let type = optionalString(in: nestedEvent ?? object, keys: ["type"])
             ?? optionalString(in: object, keys: ["type"])
             ?? "unknown"
+        if let v2Event = decodeV2LocalEvent(object: nestedEvent ?? object, type: type, conversationID: conversationID) {
+            return v2Event
+        }
         if requiresCoreSessionWitness(type: type),
            coreSessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             return protocolFailure(
@@ -2818,6 +2962,197 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         }
     }
 
+    private static func decodeV2LocalEvent(
+        object: [String: Any],
+        type: String,
+        conversationID: String
+    ) -> MacLocalAgentEvent? {
+        switch type {
+        case "session_started":
+            let sessionID = (object["session_id"] as? String) ?? conversationID
+            let model = (object["model"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: "",
+                title: "session_started",
+                detail: sessionID,
+                isError: false,
+                v2Event: .sessionStarted(sessionID: sessionID, model: model)
+            )
+        case "text_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_text_delta",
+                isError: false,
+                v2Event: .textDelta(delta)
+            )
+        case "reasoning_delta":
+            let delta = (object["delta"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: delta,
+                title: nil,
+                detail: "v2_reasoning_delta",
+                isError: false,
+                v2Event: .reasoningDelta(delta)
+            )
+        case "tool_started":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            return MacLocalAgentEvent(
+                kind: .toolStarted,
+                text: "",
+                title: name,
+                detail: nil,
+                isError: false,
+                toolCallID: callID,
+                v2Event: .toolStarted(callID: callID, name: name)
+            )
+        case "tool_finished":
+            let callID = (object["call_id"] as? String) ?? UUID().uuidString
+            let name = (object["name"] as? String) ?? "tool"
+            let isError = (object["is_error"] as? Bool) ?? false
+            let summary = (object["summary"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .toolFinished,
+                text: summary,
+                title: name,
+                detail: summary,
+                isError: isError,
+                toolCallID: callID,
+                v2Event: .toolFinished(callID: callID, name: name, isError: isError, summary: summary)
+            )
+        case "compacted":
+            let explicitSummary = (object["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary: String
+            if let explicitSummary, !explicitSummary.isEmpty {
+                summary = explicitSummary
+            } else if let before = object["tokens_before"], let after = object["tokens_after"] {
+                summary = "Context compacted (\(before) → \(after) tokens)"
+            } else if let after = object["tokens_after"] {
+                summary = "Context compacted (\(after) tokens)"
+            } else {
+                summary = "Context compacted"
+            }
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: summary,
+                title: "compacted",
+                detail: summary,
+                isError: false,
+                v2Event: .compacted(summary: summary)
+            )
+        case "ui_surface":
+            let snapshotObject = object["snapshot"]
+            let snapshotJSON: String = {
+                guard let snapshotObject,
+                      JSONSerialization.isValidJSONObject(snapshotObject),
+                      let data = try? JSONSerialization.data(withJSONObject: snapshotObject, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return "{}"
+                }
+                return text
+            }()
+            let phase = (snapshotObject as? [String: Any])?["phase"] as? String
+            return MacLocalAgentEvent(
+                kind: .status,
+                text: snapshotJSON,
+                title: "ui_surface",
+                detail: phase,
+                isError: false,
+                v2Event: .uiSurface(snapshotJSON: snapshotJSON)
+            )
+        case "permission_requested":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let tool = (object["tool"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "tool"
+            let reason = (object["reason"] as? String) ?? ""
+            let argsJSON: String = {
+                guard let rawArgs = object["arguments"],
+                      JSONSerialization.isValidJSONObject(rawArgs),
+                      let data = try? JSONSerialization.data(withJSONObject: rawArgs, options: [.sortedKeys]),
+                      let text = String(data: data, encoding: .utf8) else {
+                    return ""
+                }
+                return text
+            }()
+            let request = MacRemotePermissionRequest(
+                id: requestID,
+                allowConversation: true,
+                protocolVersion: MacRemotePermissionRequest.supportedProtocolVersion,
+                nonce: "v2-\(requestID)",
+                hostID: "local",
+                clientID: "nola-macos",
+                sessionID: conversationID,
+                toolName: tool,
+                arguments: argsJSON,
+                callID: requestID,
+                reason: reason,
+                message: reason.isEmpty ? "Allow \(tool)?" : reason,
+                expiresAt: nil
+            )
+            return MacLocalAgentEvent(
+                kind: .permissionRequested,
+                text: reason,
+                title: tool,
+                detail: reason,
+                isError: false,
+                toolCallID: requestID,
+                permissionRequest: request,
+                v2Event: .permissionRequested(requestID: requestID, tool: tool, reason: reason, argumentsJSON: argsJSON)
+            )
+        case "user_question":
+            let requestID = (object["request_id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
+            let questionText = (object["question"] as? String) ?? ""
+            let rawOptions = (object["options"] as? [String]) ?? []
+            let mappedOptions = rawOptions.enumerated().map { index, label in
+                MacRemoteUserInputOption(id: "opt-\(index)", label: label, detail: "")
+            }
+            let question = MacRemoteUserInputQuestion(
+                id: requestID,
+                prompt: questionText,
+                options: mappedOptions,
+                allowsFreeform: true,
+                required: true,
+                maxTextCharacters: 4096
+            )
+            let userInput = MacRemoteUserInputRequest(
+                id: requestID,
+                conversationID: conversationID,
+                runID: conversationID,
+                sessionID: conversationID,
+                revision: 1,
+                schemaDigest: "",
+                state: "open",
+                questions: [question]
+            )
+            return MacLocalAgentEvent(
+                kind: .userInputRequested,
+                text: questionText,
+                title: "user_question",
+                detail: rawOptions.joined(separator: ", "),
+                isError: false,
+                userInputRequest: userInput,
+                v2Event: .userQuestion(requestID: requestID, question: questionText, options: rawOptions)
+            )
+        case "turn_completed" where object["protocol_version"] == nil:
+            let sessionID = (object["session_id"] as? String) ?? conversationID
+            let finalText = (object["final_text"] as? String) ?? ""
+            return MacLocalAgentEvent(
+                kind: .finished,
+                text: finalText,
+                title: nil,
+                detail: "v2_turn_completed",
+                isError: false,
+                v2Event: .turnCompleted(sessionID: sessionID, finalText: finalText)
+            )
+        default:
+            return nil
+        }
+    }
+
     private static func requiresCoreSessionWitness(type: String) -> Bool {
         switch type {
         case "core_task_updated", "core_skill_runtime_updated",
@@ -2845,6 +3180,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let nested = object["event"] as? [String: Any]
         let type = optionalString(in: nested ?? object, keys: ["type"])
             ?? optionalString(in: object, keys: ["type"]) ?? "unknown"
+        if type == "turn_completed" && object["protocol_version"] == nil {
+            return false
+        }
         return requiresCoreSessionWitness(type: type) || requiresControlSessionWitness(type: type)
     }
 

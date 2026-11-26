@@ -81,7 +81,7 @@ class AgentCoreToolPolicyContractTest {
     private fun sharedFixture(): File {
         val workingDirectory = System.getProperty("user.dir") ?: "."
         return generateSequence(File(workingDirectory).canonicalFile) { it.parentFile }
-            .map { root -> File(root, "core/fixtures/tool_policy_v1_golden.json") }
+            .map { root -> File(root, "tests/apple/ios/Fixtures/tool_policy_v1_golden.json") }
             .firstOrNull(File::isFile)
             ?: error("Shared Core tool policy fixture is missing")
     }

@@ -13,7 +13,7 @@ add_library(nola_core_jni SHARED nola_core_jni.cpp model_privacy_jni.cpp)
 target_include_directories(
     nola_core_jni
     PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../core/swift_shims"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../crates/nola-app/include"
 )
 
 find_library(android_log log)

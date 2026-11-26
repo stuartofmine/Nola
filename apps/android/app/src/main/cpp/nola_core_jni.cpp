@@ -46,7 +46,6 @@ void release_bytes(JNIEnv* env, jbyteArray input, jbyte* pinned) {
 
 }  // namespace
 
-
 extern "C" JNIEXPORT jint JNICALL
 Java_com_nola_core_AgentCoreNative_nativeApplicationAbiVersion(JNIEnv*, jobject) {
     return static_cast<jint>(nola_core_application_abi_version());
@@ -109,7 +108,6 @@ Java_com_nola_core_AgentCoreNative_nativeApplicationExecute(
     return consume_json(env, result);
 }
 
-// Trusted template-selection factory transport. Generic Application JSON never reaches this entry.
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeApplicationExpertHostOperation(
     JNIEnv* env, jobject, jlong handle, jbyteArray operation
@@ -124,7 +122,6 @@ Java_com_nola_core_AgentCoreNative_nativeApplicationExpertHostOperation(
     return consume_json(env, result);
 }
 
-// Trusted native Host entry; deliberately absent from renderer execute commands.
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeApplicationAttestEditedResendHostPolicy(
     JNIEnv* env, jobject, jlong handle, jbyteArray target, jbyteArray config
@@ -150,23 +147,6 @@ Java_com_nola_core_AgentCoreNative_nativeApplicationFree(JNIEnv*, jobject, jlong
     nola_core_application_free(
         reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle))
     );
-}
-
-
-
-
-
-
-
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeContextPlan(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_context_plan(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -214,56 +194,6 @@ Java_com_nola_core_AgentCoreNative_nativeResourceAccessEvaluate(JNIEnv* env, job
     return consume_json(env, result);
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_nola_core_AgentCoreNative_nativeLifecycleHookAbiVersion(JNIEnv*, jobject) {
-    return static_cast<jint>(nola_core_lifecycle_hook_abi_version());
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeLifecycleHookBuildRegistry(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_lifecycle_hook_build_registry(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeLifecycleHookPlan(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_lifecycle_hook_plan(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeLifecycleHookProjectExecution(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_lifecycle_hook_project_execution(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_nola_core_AgentCoreNative_nativePromptCacheAbiVersion(JNIEnv*, jobject) {
-    return static_cast<jint>(nola_core_prompt_cache_abi_version());
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativePromptCacheDiagnose(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_prompt_cache_diagnose(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeToolPolicy(JNIEnv* env, jobject, jbyteArray input) {
     jbyte* pinned = nullptr;
@@ -293,8 +223,6 @@ Java_com_nola_core_AgentCoreNative_nativeComposeAgentPrompt(JNIEnv* env, jobject
     release_bytes(env, input, pinned);
     return consume_json(env, result);
 }
-
-
 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreContextNative_nativeContextPrepare(
@@ -341,36 +269,6 @@ Java_com_nola_core_AgentCoreNative_nativeStitchAgentModelContinuation(JNIEnv* en
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeIntelligenceIngest(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_intelligence_ingest(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeIntelligenceRecall(JNIEnv* env, jobject, jbyteArray input) {
-    jbyte* pinned = nullptr;
-    jsize length = 0;
-    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
-    char* result = nola_core_intelligence_recall(bytes, static_cast<size_t>(length));
-    release_bytes(env, input, pinned);
-    return consume_json(env, result);
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeIntelligenceSnapshot(JNIEnv* env, jobject) {
-    return consume_json(env, nola_core_intelligence_snapshot());
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_nola_core_AgentCoreNative_nativeIntelligenceClear(JNIEnv*, jobject) {
-    return nola_core_intelligence_clear() ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceIngest(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
     jbyte* pinned = nullptr;
     jsize length = 0;
@@ -406,12 +304,18 @@ Java_com_nola_core_AgentCoreNative_nativeApplicationIntelligenceClear(JNIEnv*, j
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_nola_core_AgentCoreNative_nativeChildPumpStart(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
-    jbyte* pinned=nullptr; jsize length=0;
-    const auto* bytes=pin_bytes(env,input,&pinned,&length);
-    char* error=nullptr;
-    auto* pump=nola_core_child_pump_start(reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle)),bytes,static_cast<size_t>(length),&error);
-    release_bytes(env,input,pinned);
-    if(error){
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const auto* bytes = pin_bytes(env, input, &pinned, &length);
+    char* error = nullptr;
+    auto* pump = nola_core_child_pump_start(
+        reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle)),
+        bytes,
+        static_cast<size_t>(length),
+        &error
+    );
+    release_bytes(env, input, pinned);
+    if (error) {
         if (jclass cls = env->FindClass("java/lang/IllegalStateException")) {
             env->ThrowNew(cls, error);
         }
@@ -419,29 +323,55 @@ Java_com_nola_core_AgentCoreNative_nativeChildPumpStart(JNIEnv* env, jobject, jl
     }
     return static_cast<jlong>(reinterpret_cast<std::intptr_t>(pump));
 }
+
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeChildPumpPoll(JNIEnv* env,jobject,jlong handle,jint wait_ms) {
-    return consume_json(env,nola_core_child_pump_poll(reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)),static_cast<uint32_t>(wait_ms)));
+Java_com_nola_core_AgentCoreNative_nativeChildPumpPoll(JNIEnv* env, jobject, jlong handle, jint wait_ms) {
+    return consume_json(
+        env,
+        nola_core_child_pump_poll(
+            reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)),
+            static_cast<uint32_t>(wait_ms)
+        )
+    );
 }
+
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeChildPumpRespond(JNIEnv* env,jobject,jlong handle,jbyteArray input) {
-    jbyte* pinned=nullptr;jsize length=0;const auto* bytes=pin_bytes(env,input,&pinned,&length);
-    char* result=nola_core_child_pump_respond(reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)),bytes,static_cast<size_t>(length));
-    release_bytes(env,input,pinned);return consume_json(env,result);
+Java_com_nola_core_AgentCoreNative_nativeChildPumpRespond(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const auto* bytes = pin_bytes(env, input, &pinned, &length);
+    char* result = nola_core_child_pump_respond(
+        reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)),
+        bytes,
+        static_cast<size_t>(length)
+    );
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
 }
+
 extern "C" JNIEXPORT void JNICALL
-Java_com_nola_core_AgentCoreNative_nativeChildPumpClose(JNIEnv*,jobject,jlong handle) {
-    nola_core_child_pump_close(reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)));
+Java_com_nola_core_AgentCoreNative_nativeChildPumpClose(JNIEnv*, jobject, jlong handle) {
+    nola_core_child_pump_close(
+        reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle))
+    );
 }
+
 extern "C" JNIEXPORT void JNICALL
-Java_com_nola_core_AgentCoreNative_nativeChildPumpFree(JNIEnv*,jobject,jlong handle) {
-    nola_core_child_pump_free(reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle)));
+Java_com_nola_core_AgentCoreNative_nativeChildPumpFree(JNIEnv*, jobject, jlong handle) {
+    nola_core_child_pump_free(
+        reinterpret_cast<NolaCoreChildPump*>(static_cast<std::intptr_t>(handle))
+    );
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_nola_core_AgentCoreNative_nativeMobileMcpRetain(JNIEnv*,jobject,jlong handle) {
-    return reinterpret_cast<std::intptr_t>(nola_core_mobile_mcp_retain(reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle))));
+Java_com_nola_core_AgentCoreNative_nativeMobileMcpRetain(JNIEnv*, jobject, jlong handle) {
+    return static_cast<jlong>(reinterpret_cast<std::intptr_t>(
+        nola_core_mobile_mcp_retain(
+            reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle))
+        )
+    ));
 }
+
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_nola_core_AgentCoreNative_nativeGithubSkillPackage(
     JNIEnv* env, jobject, jbyteArray root, jbyteArray request
@@ -457,10 +387,17 @@ Java_com_nola_core_AgentCoreNative_nativeGithubSkillPackage(
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_core_AgentCoreNative_nativeMobileMcpHost(JNIEnv* env,jobject,jlong handle,jbyteArray input) {
-    jbyte* pinned=nullptr;jsize length=0;const unsigned char* bytes=pin_bytes(env,input,&pinned,&length);
-    char* result=nola_core_mobile_mcp_host(reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle)),bytes,static_cast<size_t>(length));
-    release_bytes(env,input,pinned);return consume_json(env,result);
+Java_com_nola_core_AgentCoreNative_nativeMobileMcpHost(JNIEnv* env, jobject, jlong handle, jbyteArray input) {
+    jbyte* pinned = nullptr;
+    jsize length = 0;
+    const unsigned char* bytes = pin_bytes(env, input, &pinned, &length);
+    char* result = nola_core_mobile_mcp_host(
+        reinterpret_cast<NolaCoreApplication*>(static_cast<std::intptr_t>(handle)),
+        bytes,
+        static_cast<size_t>(length)
+    );
+    release_bytes(env, input, pinned);
+    return consume_json(env, result);
 }
 
 extern "C" JNIEXPORT jbyteArray JNICALL

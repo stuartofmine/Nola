@@ -39,11 +39,10 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 | Android · `apps/android/` | Kotlin / Compose | 移动客户端、JNI 集成与 Android 系统能力 |
 | Windows · `apps/windows/` | Tauri 2 / WebView2 / Svelte | 桌面客户端与受控本地 Host 集成 |
 | Web · `apps/web/frontend/` | Svelte / TypeScript | 由 Rust Host 提供服务的浏览器界面 |
-| CLI · `apps/cli/` | Rust | 终端客户端、Agent Host 与本地 HTTP 服务 |
-| Core · `core/` | Rust、C ABI / JNI | 领域契约、Agent 执行、Application Service、持久化与 Host 接口 |
+| 统一 Rust 工作区 · `crates/` | 8 个 Rust crate（`nola-types`、`nola-store`、`nola-llm`、`nola-tools`、`nola-mcp`、`nola-engine`、`nola-modules`、`nola-app`） | 统一 `nola` 单一可执行文件（CLI、TUI、本地 HTTP/Web Host、后台守护进程）以及 C ABI / JNI FFI 核心库 |
 | Apple 共享代码 · `shared/apple/` | Swift | 共用展示组件与协议代码 |
 
-各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。桌面 Service 与移动端嵌入式 Application 共用业务命令和存储契约。远程 Host 访问需要认证和明确授权。
+各原生客户端拥有自己的界面；macOS App 不是 CLI 的外壳。统一 `nola` 宿主机二进制与移动端嵌入式 FFI 核心编译自同一 `crates/` 工作区，共用同一套 SQLite WAL 存储、Agent 引擎与工具/模块契约。远程 Host 访问需要认证和明确授权。
 
 ## 从源码运行
 
@@ -54,7 +53,7 @@ CLI 可以通过带认证的本地 HTTP 服务，为 Web 和远程客户端提�
 ```sh
 npm --prefix apps/web/frontend ci
 npm --prefix apps/web/frontend run build
-cargo build --locked -p nola_cli -p nola_service --bins
+cargo build --locked -p nola-app --bin nola
 ./target/debug/nola --help
 ./target/debug/nola web --host 127.0.0.1 --port 5001 --web-root "$PWD/apps/web"
 ```
@@ -70,7 +69,7 @@ CLI 交互中，按 `Ctrl+V` 添加剪贴板图片，也可粘贴图片的绝对
 按修改范围运行相应检查：
 
 ```sh
-cargo test --locked -p nola_domain -p nola_protocol -p nola_store -p nola_update_host
+cargo test --locked --workspace --lib
 npm --prefix apps/web/frontend run check
 npm --prefix apps/web/frontend test
 ./scripts/test_mac_layers.sh contracts
@@ -88,7 +87,7 @@ Apple 测试脚本使用隔离的 Test 输出目录，macOS Debug 构建保留�
 
 ## 版本与兼容
 
-**本次重新发布的 1.0.0 是首个受支持基线**。Nola 自有协议、ABI、数据库格式与 epoch 均从 **1** 开始，不保留此前开发格式的兼容实现。应用版本/build 与契约版本分别管理；外部标准协议沿用其自身的版本标识。
+**Nola 2.0.0** 确立了精简 8-crate Rust 架构、统一单一 `nola` 可执行文件与 SQLite WAL 存储格式（`user_version = 2`）作为新的受支持基线。旧版 v1 数据库会明确拒绝，不自动删除或静默改写用户数据。应用版本/build 与契约版本分别管理；外部标准协议沿用其自身的版本标识。
 
 从本次发布起，后续版本必须维护已发布接口和用户数据的兼容性。协议变更需要明确协商，数据变更需要可验证、可回滚的迁移。未知格式明确拒绝，不自动删除或重建用户数据。详见[版本兼容策略](docs/architecture/总体设计/VERSION_COMPATIBILITY.md)。
 

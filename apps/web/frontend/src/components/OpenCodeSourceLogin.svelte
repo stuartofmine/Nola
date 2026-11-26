@@ -82,14 +82,14 @@
     <p>{t($locale, 'sourceAccounts.openCodeLimits')}</p>
     <fieldset disabled={busy || login !== null}>
         <label>{t($locale, 'sourceAccounts.savedOwner')} <select bind:value={ownerID} onchange={selectOwner}><option value="">{t($locale, 'sourceAccounts.selectOwner')}</option>{#each owners as owner}<option value={owner.account_id}>{owner.display_name} · {owner.origin} · {owner.directory}</option>{/each}</select></label>
-        <button onclick={inspect} disabled={!ownerID}>{t($locale, 'sourceAccounts.inspectOwner')}</button><button onclick={refreshOwners}>{t($locale, 'sourceAccounts.refreshOwners')}</button>
+        <button type="button" onclick={inspect} disabled={!ownerID}>{t($locale, 'sourceAccounts.inspectOwner')}</button><button type="button" onclick={refreshOwners}>{t($locale, 'sourceAccounts.refreshOwners')}</button>
         <details><summary>{t($locale, 'sourceAccounts.connectOwner')}</summary>
             <label>{t($locale, 'sourceAccounts.origin')}<input bind:value={origin} placeholder="http://127.0.0.1:4096" /></label>
             <label>{t($locale, 'sourceAccounts.directory')} <input bind:value={directory} placeholder="/absolute/project" /></label>
             <label>{t($locale, 'sourceAccounts.username')} <input bind:value={username} autocomplete="off" /></label>
             <label>{t($locale, 'sourceAccounts.password')} <input bind:value={password} type="password" autocomplete="new-password" /></label>
             <label><input type="checkbox" bind:checked={consent} /> {t($locale, 'sourceAccounts.openCodeConsent')}</label>
-            <button onclick={connect} disabled={!consent || !origin || !directory || !password}>{t($locale, 'sourceAccounts.connectOwner')}</button>
+            <button type="button" onclick={connect} disabled={!consent || !origin || !directory || !password}>{t($locale, 'sourceAccounts.connectOwner')}</button>
         </details>
     </fieldset>
     {#if connected}
@@ -100,7 +100,7 @@
                 <label>{prompt.message}{#if prompt.type === 'select'}<select value={inputs[prompt.key] ?? ''} onchange={event => inputs = {...inputs, [prompt.key]: event.currentTarget.value}}><option value="">{t($locale, 'sourceAccounts.select')}</option>{#each prompt.options ?? [] as option}<option value={option.value}>{option.label}</option>{/each}</select>{:else}<input type="password" autocomplete="off" placeholder={prompt.placeholder ?? ''} value={inputs[prompt.key] ?? ''} oninput={event => inputs = {...inputs, [prompt.key]: event.currentTarget.value}} />{/if}</label>
             {/if}{/each}{/if}
             <label><input type="checkbox" bind:checked={loginConsent} /> {t($locale, 'sourceAccounts.openCodeLoginConsent')}</label>
-            <button onclick={authorize} disabled={!method || !loginConsent}>{t($locale, 'sourceAccounts.startSelected')}</button>
+            <button type="button" onclick={authorize} disabled={!method || !loginConsent}>{t($locale, 'sourceAccounts.startSelected')}</button>
         </fieldset>
     {/if}
     {#if login}
@@ -110,9 +110,9 @@
         {#if login.state === 'pending'}
             {#if login.callback_mode === 'code'}<label>{t($locale, 'sourceAccounts.code')} <input type="password" bind:value={code} autocomplete="off" disabled={busy} /></label>{/if}
             <label><input type="checkbox" bind:checked={callbackConsent} disabled={busy} /> {t($locale, 'sourceAccounts.callbackConsent')}</label>
-            <button onclick={() => finish(false)} disabled={busy || !callbackConsent || (login.callback_mode === 'code' && !code)}>{t($locale, 'sourceAccounts.confirmCallback')}</button>
+            <button type="button" onclick={() => finish(false)} disabled={busy || !callbackConsent || (login.callback_mode === 'code' && !code)}>{t($locale, 'sourceAccounts.confirmCallback')}</button>
         {/if}
-        <button onclick={() => finish(true)} disabled={busy}>{t($locale, 'sourceAccounts.forgetHandle')}</button>
+        <button type="button" onclick={() => finish(true)} disabled={busy}>{t($locale, 'sourceAccounts.forgetHandle')}</button>
     {/if}
     {#if failed}<p role="alert">{t($locale, 'sourceAccounts.openCodeError')}</p>{/if}
 </section>

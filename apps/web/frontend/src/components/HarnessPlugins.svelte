@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, tick } from 'svelte';
-    import { api as base, errorMessage } from '../lib/api';
+    import { api as base, ApiError, errorMessage } from '../lib/api';
     import { desktopPluginPath, desktopPluginsChanged } from '../lib/desktopPluginPages';
     import { locale, t } from '../lib/i18n';
     import { dismissibleDisclosure } from '../lib/dismissibleDisclosure';
@@ -9,11 +9,13 @@
     import PrototypeIcon from './PrototypeIcon.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
 
-    type Plugin = {source: string; pages: {id:string; title:string}[]; links: {title:string; url:string}[]};
+    type Plugin = {id?: string; source: string; enabled?: boolean; pages: {id:string; title:string}[]; links: {title:string; url:string}[]};
+    type ListedPlugin = {id: string; name?: string; version?: string; entry_path?: string; enabled?: boolean};
     type Profile = {runtime:'pi'|'dsh'; profile:string; available:boolean; packages:Plugin[]; error?:string};
     const api = workspacePageApi(base);
     const host = window.location.host;
     let profiles = $state<Profile[]>();
+    let listedPlugins = $state<ListedPlugin[]>([]);
     let chosen = $state('');
     let draft = $state('');
     let adding = $state(false);
@@ -44,12 +46,67 @@
         return {name:source.split(/[\\/]/).filter(Boolean).at(-1) ?? source,version:undefined};
     }
     async function read() {
-        const response = await api<{profiles:Profile[]}>('/api/harness-plugins', {
+        const response = await api<{profiles:Profile[]; plugins?: ListedPlugin[]}>('/api/harness-plugins', {
             method:'POST', body:JSON.stringify({action:'library'}),
         });
         if (disposed) return;
         if (!Array.isArray(response.profiles)) throw Error(t($locale,'plugin.readError'));
-        profiles = response.profiles; readError = '';
+        profiles = response.profiles;
+        listedPlugins = Array.isArray(response.plugins) ? response.plugins : [];
+        readError = '';
+    }
+    function matchListed(plugin: Plugin) {
+        const info = packageInfo(plugin.source);
+        return listedPlugins.find(item =>
+            (plugin.id && item.id === plugin.id)
+            || item.entry_path === plugin.source
+            || (item.name && item.version && `${item.name}@${item.version}` === plugin.source)
+            || item.id === info.name
+            || item.name === info.name,
+        );
+    }
+    function pluginId(plugin: Plugin): string {
+        return plugin.id ?? matchListed(plugin)?.id ?? packageInfo(plugin.source).name;
+    }
+    function pluginEnabled(plugin: Plugin): boolean {
+        if (typeof plugin.enabled === 'boolean') return plugin.enabled;
+        const matched = matchListed(plugin);
+        return typeof matched?.enabled === 'boolean' ? matched.enabled : true;
+    }
+    async function togglePlugin(profile: Profile, plugin: Plugin) {
+        if (disposed || busy || !!readError || !profile.available || profile.error) return;
+        const id = pluginId(plugin);
+        const nextEnabled = !pluginEnabled(plugin);
+        busy = true; error = '';
+        const body = JSON.stringify({
+            action: 'toggle',
+            id,
+            enabled: nextEnabled,
+            runtime: profile.runtime,
+            profile: profile.profile,
+            source: plugin.source,
+        });
+        try {
+            try {
+                await api('/api/harness/plugins', { method: 'POST', body });
+            } catch (cause) {
+                if (cause instanceof ApiError && cause.status === 404) {
+                    await api('/api/harness-plugins', { method: 'POST', body });
+                } else {
+                    throw cause;
+                }
+            }
+            if (disposed) return;
+        } catch (cause) { if (!disposed) error = errorMessage(cause); }
+        if (disposed) return;
+        try { await read(); }
+        catch (cause) { if (!disposed) { readError = errorMessage(cause); } }
+        finally {
+            if (!disposed) {
+                busy = false;
+                window.dispatchEvent(new Event(desktopPluginsChanged));
+            }
+        }
     }
     async function refresh() {
         if (disposed || busy) return;
@@ -111,12 +168,12 @@
 <ConfirmationDialog bind:this={gate}/>
 <section class="library" aria-label={t($locale,'plugin.title')}>
     <header>
-        <h1>{t($locale,adding ? 'plugin.add' : 'plugin.title')}</h1>
+        <h2>{t($locale,adding ? 'plugin.add' : 'plugin.title')}</h2>
         {#if !adding && profiles && !readError && !error && usable && !profileErrors.length}
-            <button class="library-refresh" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
+            <button type="button" class="library-refresh" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
         {/if}
         {#if !adding && usable}
-            <button class="primary add" bind:this={addButton} disabled={busy || !!readError} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
+            <button type="button" class="primary add" bind:this={addButton} disabled={busy || !!readError} onclick={begin}><PrototypeIcon name="plus" size={16}/>{t($locale,'plugin.add')}</button>
         {/if}
     </header>
     {#if adding}
@@ -132,6 +189,7 @@
             <ul class="collection" bind:this={list} aria-label={t($locale,'plugin.title')}>
                 {#each entries as {profile,plugin} (JSON.stringify([profile.profile,plugin.source]))}
                     {@const info = packageInfo(plugin.source)}
+                    {@const enabled = pluginEnabled(plugin)}
                     <li tabindex="-1" data-source={plugin.source} data-profile={profile.profile}>
                         <div class="resource">
                             {#each plugin.pages as page (page.id)}<a class="page-link" href={desktopPluginPath(page.id)}>{page.title}</a>{/each}
@@ -139,14 +197,22 @@
                             {#if !plugin.pages.length && !plugin.links.length}<strong>{info.name}</strong>{/if}
                             <small class="metadata">{label(profile)}{#if (plugin.pages.length || plugin.links.length) && ![...plugin.pages,...plugin.links].some(page => page.title === info.name)} · {info.name}{/if}{#if info.version} · {info.version}{/if}{#if !profile.available} · {t($locale,'plugin.runtimeMissing')}{/if}</small>
                         </div>
-                        <details class="row-actions" use:dismissibleDisclosure>
-                            <summary aria-label={t($locale,'plugin.more',{name:plugin.pages[0]?.title ?? plugin.links[0]?.title ?? info.name})}><PrototypeIcon name="more" size={18}/></summary>
-                            <div class="menu"><button class="danger" disabled={busy || !!readError || !profile.available || !!profile.error} onclick={event => {
-                                const details = event.currentTarget.closest('details');
-                                if (details) { details.open = false; details.querySelector('summary')?.focus(); }
-                                void change('remove',profile,plugin.source);
-                            }}>{t($locale,'plugin.remove')}</button></div>
-                        </details>
+                        <div class="plugin-controls">
+                            <label class="plugin-toggle">
+                                <input type="checkbox" role="switch" aria-label={t($locale, 'plugin.toggle', { name: info.name })} checked={enabled} disabled={busy || !!readError || !profile.available || !!profile.error} onchange={event => {
+                                    event.currentTarget.checked = enabled;
+                                    void togglePlugin(profile, plugin);
+                                }} />
+                            </label>
+                            <details class="row-actions" use:dismissibleDisclosure>
+                                <summary aria-label={t($locale,'plugin.more',{name:plugin.pages[0]?.title ?? plugin.links[0]?.title ?? info.name})}><PrototypeIcon name="more" size={18}/></summary>
+                                <div class="menu"><button type="button" class="danger" aria-label={`${t($locale,'plugin.remove')}: ${info.name}`} disabled={busy || !!readError || !profile.available || !!profile.error} onclick={event => {
+                                    const details = event.currentTarget.closest('details');
+                                    if (details) { details.open = false; details.querySelector('summary')?.focus(); }
+                                    void change('remove',profile,plugin.source);
+                                }}>{t($locale,'plugin.remove')}</button></div>
+                            </details>
+                        </div>
                     </li>
                 {/each}
             </ul>
@@ -157,7 +223,7 @@
     {#if busy}<p class="feedback" role="status">{t($locale,'plugin.working')}</p>{/if}
     {#if error || readError || profileErrors.length || (profiles && !usable && !adding)}
         <div class="feedback">{#if error || readError || profileErrors.length}<div role="alert">{#if error}<p>{error}</p>{/if}{#if readError}<p>{readError}</p>{/if}{#each profileErrors as profile}<p>{label(profile)} · {profile.error}</p>{/each}</div>{/if}
-            <button disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
+            <button type="button" disabled={busy} onclick={refresh}>{t($locale,'plugin.refresh')}</button>
         </div>
     {/if}
 </section>
@@ -167,8 +233,11 @@
     .library { max-width: none; padding: 0; }
     header,.form-actions,li,.add { display:flex;align-items:center;gap:.6rem; }
     header { justify-content:space-between;gap:1rem;margin-bottom:1.35rem; }
-    h1 { margin:0;font-size:clamp(1.45rem,2.25vw,2rem);line-height:1.25; }
-    .library button,.library input,.library select { min-height:44px; }
+    h2 { margin:0;font-size:clamp(1.25rem,2vw,1.5rem);line-height:1.25; }
+    .library button,.library input:not([role="switch"]),.library select { min-height:44px; }
+    .plugin-controls { display:flex;align-items:center;gap:.5rem;flex:none; }
+    .plugin-toggle { display:inline-flex;align-items:center;min-height:44px;padding:0; }
+    .plugin-toggle input { width:auto;margin:0; }
     .add { white-space:nowrap; }
     .collection { list-style:none;margin:0;padding:0; }
     li { justify-content:space-between;padding:.7rem .1rem;border-bottom:1px solid var(--border); }
@@ -181,7 +250,7 @@
     .row-actions { position:relative;flex:none; }
     .row-actions summary { display:grid;place-items:center;list-style:none;cursor:pointer;width:44px;height:44px;color:var(--muted);border-radius:.6rem; }
     .row-actions summary::-webkit-details-marker { display:none; }
-    .menu { position:absolute;inset-inline-end:0;top:100%;z-index:2;min-width:8rem;padding:.22rem;background:var(--surface);border:1px solid var(--border);border-radius:.6rem;box-shadow:0 4px 16px #0002; }
+    .menu { position:absolute;inset-inline-end:0;top:100%;z-index:2;min-width:8rem;padding:.22rem;background:var(--surface-elevated);border:1px solid var(--border);border-radius:.6rem;box-shadow:var(--dialog-shadow); }
     .menu button { width:100%;text-align:start;border:0;background:transparent; }
     @media(hover:hover){.row-actions summary:hover,.resource a:hover { color:var(--accent);background:var(--accent-subtle); }}
     .library :is(a,button,input,select,summary):focus-visible { outline:2px solid var(--accent);outline-offset:2px; }

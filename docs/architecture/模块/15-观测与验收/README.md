@@ -28,8 +28,8 @@ UsageLedger、Measurement、EvidenceReport 分离；观测服务只读业务事�
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [lib.rs](../../../../core/nola-measurement/src/lib.rs) | 有界非权威测量 |
-| [dependency_boundary.rs](../../../../apps/cli/tests/suites/dependency_boundary.rs) | Rust 声明依赖与能力边界门禁 |
+| [lib.rs](../../../../crates/nola-types/src/budget.rs) | 有界非权威测量 |
+| [dependency_boundary.rs](../../../../crates/nola-engine/src/tests.rs) | Rust 声明依赖与能力边界门禁 |
 | [test_mac_layers.sh](../../../../scripts/test_mac_layers.sh) | 使用 Test 配置的 Mac 分层测试入口 |
 
 文档中的历史通过数、一次沙箱拒绝或“尚未运行”都仅属于原快照；当前测试范围以实际命令/报告为准。依赖图、静态检查和组件测试不能推出业务恢复或真机通过。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。

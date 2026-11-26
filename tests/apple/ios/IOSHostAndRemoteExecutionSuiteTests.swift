@@ -596,7 +596,7 @@ final class RemoteHostModelCatalogTests: XCTestCase {
                     "model_profiles": [["profile_id": "p", "revision": 3, "display_name": "Model", "model_name": "upstream"]],
                     "default_chat_model_resolution": ["kind": "resolved", "profile_id": "p", "origin": "default"],
                     "default_chat_model_revision": 7]
-            } else if request.url?.path.hasSuffix("/chat/agent/v2/submission-frontier") == true {
+            } else if request.url?.path.hasSuffix("/chat/conversations/c1/configuration") == true {
                 var encrypted = try WebAgentProvider.encryptMobileJSON(["source_host_id": "host", "result": [
                     "protocol_version": 1, "source_host_id": "host", "client_id": "client", "conversation_id": "conversation",
                     "configuration_revision": NSNull(), "parent_message_id": NSNull(),
@@ -899,7 +899,7 @@ final class AppleGoalControlOutboxTests: XCTestCase {
         let control = AppleGoalControl(action: .pause, expectedGoalId: "goal", expectedControlToken: "token")
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:9")!,
             token: "fixture-token", expectedHostId: "host", clientId: "client")) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/goal")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/conversation/goal")
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-Nola-Mobile-Crypto"), "aes-gcm-v1")
             let encrypted = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as! [String: Any]
             let body = try WebAgentProvider.decryptMobileJSON(encrypted, token: "fixture-token")

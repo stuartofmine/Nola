@@ -75,6 +75,7 @@ class WebAgentProvider @Inject constructor(
     private val webHostApi: WebHostApiService,
     private val summaryTextSource: WebAgentSummaryTextSource
 ) : LlmClient {
+    private val uiJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     data class Config(
         val hostBaseUrl: String,
@@ -211,7 +212,7 @@ class WebAgentProvider @Inject constructor(
             put("expected_host_id", captured.expectedHostId); put("conversation_id", conversationId)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val surfaces = Json.decodeFromString<List<com.nola.data.local.UiSnapshot>>(response.getValue("result").toString())
+        val surfaces = uiJson.decodeFromString<List<com.nola.data.local.UiSnapshot>>(response.getValue("result").toString())
         require(surfaces.size <= 8 && surfaces.all { it.identity.owner.conversation_id == conversationId && it.identity.owner.authority_id == expectedSourceStoreEpoch })
         return surfaces
     }
@@ -221,11 +222,11 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank())
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "changes", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("identity", Json.parseToJsonElement(Json.encodeToString(identity)))
+            put("identity", uiJson.parseToJsonElement(uiJson.encodeToString(identity)))
             put("base_revision", baseRevision?.let(::JsonPrimitive) ?: JsonNull)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        return Json.decodeFromString(response.getValue("result").toString())
+        return uiJson.decodeFromString(response.getValue("result").toString())
     }
 
     suspend fun readUiSurfaceRevision(reference: com.nola.data.local.UiSurfaceRevisionRef, configuration: Config): com.nola.data.local.UiSnapshot? {
@@ -233,11 +234,11 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank() && reference.revision > 0)
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "revision", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("identity", Json.parseToJsonElement(Json.encodeToString(reference.identity)))
+            put("identity", uiJson.parseToJsonElement(uiJson.encodeToString(reference.identity)))
             put("revision", reference.revision)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val snapshot = Json.decodeFromString<com.nola.data.local.UiSnapshot?>(response.getValue("result").toString())
+        val snapshot = uiJson.decodeFromString<com.nola.data.local.UiSnapshot?>(response.getValue("result").toString())
         require(snapshot == null || snapshot.identity == reference.identity && snapshot.revision == reference.revision &&
             snapshot.phase != com.nola.data.local.UiSurfacePhase.Ready && snapshot.nodes.values.all { it.actions.isEmpty() && it.bindings.isEmpty() })
         return snapshot
@@ -245,11 +246,11 @@ class WebAgentProvider @Inject constructor(
 
     suspend fun previewUiSurface(input: com.nola.data.local.UiPreviewInput, configuration: Config): com.nola.data.local.UiPreview {
         val captured = configuration.copy()
-        val fields = kotlinx.serialization.json.Json.encodeToJsonElement(com.nola.data.local.UiPreviewInput.serializer(), input).jsonObject
+        val fields = uiJson.encodeToJsonElement(com.nola.data.local.UiPreviewInput.serializer(), input).jsonObject
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "preview",
             JsonObject(fields + ("expected_host_id" to JsonPrimitive(captured.expectedHostId))), captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        return kotlinx.serialization.json.Json.decodeFromJsonElement(com.nola.data.local.UiPreview.serializer(), response.getValue("result"))
+        return uiJson.decodeFromJsonElement(com.nola.data.local.UiPreview.serializer(), response.getValue("result"))
     }
 
     suspend fun submitUiInteraction(input: com.nola.data.local.UiSubmission, configuration: Config): com.nola.data.local.UiRemoteInteractionResult {
@@ -257,10 +258,10 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank())
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "interactions", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("input", Json.parseToJsonElement(Json.encodeToString(input)))
+            put("input", uiJson.parseToJsonElement(uiJson.encodeToString(input)))
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val result = Json.decodeFromString<com.nola.data.local.UiRemoteInteractionResult>(response.getValue("result").toString())
+        val result = uiJson.decodeFromString<com.nola.data.local.UiRemoteInteractionResult>(response.getValue("result").toString())
         require(result.status in setOf("committed", "rejected", "conflict", "unknown"))
         if (result.status == "committed") {
             val receipt = checkNotNull(result.receipt)
@@ -523,7 +524,7 @@ class WebAgentProvider @Inject constructor(
         )
     }
 
-    private fun deviceBridgeAdvertisement(
+    internal fun deviceBridgeAdvertisement(
         config: Config,
         sessionId: String?,
         allowedCapabilities: Set<String>,
@@ -561,46 +562,195 @@ class WebAgentProvider @Inject constructor(
         return if (timeout != null) kotlinx.coroutines.withTimeout(timeout) { collectSummary() } else collectSummary()
     }
 
+    /** Direct Rust v2 WebHost SSE chat streaming (zero v1 journal/outbox overhead). */
+    fun streamV2Message(
+        conversationId: String,
+        content: String,
+        configuration: Config? = config,
+        attachments: JsonArray? = null,
+        modelId: String? = null,
+        reasoningEffort: String? = null,
+        permissionProfile: String? = null,
+        selectedExperts: JsonArray? = null,
+        deviceBridge: JsonObject? = null,
+    ): Flow<SseEvent> {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2StreamMessage(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            content = content,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+            attachments = attachments,
+            modelId = modelId,
+            reasoningEffort = reasoningEffort,
+            permissionProfile = permissionProfile,
+            selectedExperts = selectedExperts,
+            deviceBridge = deviceBridge,
+        )
+    }
+
+    suspend fun v2CreateConversation(title: String = "Chat", configuration: Config? = config): String {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2CreateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            title = title,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun cancelV2Conversation(conversationId: String, configuration: Config? = config) {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        webHostApi.v2CancelConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2CancelConversation(conversationId: String, configuration: Config? = config) {
+        cancelV2Conversation(conversationId, configuration)
+    }
+
+    suspend fun v2CompactConversation(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2CompactConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2BranchConversation(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2BranchConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2TruncateConversation(
+        conversationId: String,
+        fromSeq: Long,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2TruncateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            fromSeq = fromSeq,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2WorkspaceReview(conversationId: String, configuration: Config? = config): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2WorkspaceReview(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2RespondPermission(
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        scope: String = "once",
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2RespondPermission(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            requestId = requestId,
+            allow = allow,
+            scope = scope,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2RespondUserInput(
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2RespondUserInput(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            requestId = requestId,
+            answer = answer,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
+    suspend fun v2SubmitUiInteraction(
+        conversationId: String,
+        interaction: JsonObject,
+        configuration: Config? = config,
+    ): JsonObject {
+        val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
+        return webHostApi.v2SubmitUiInteraction(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            conversationId = conversationId,
+            interaction = interaction,
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+    }
+
     override fun generateSummaryStream(input: ModelInput): Flow<String> = flow {
-        val cfg = checkNotNull(config) { "Web Agent Host is not configured" }
-        val conversation = java.util.UUID.randomUUID().toString()
-        val submission = java.util.UUID.randomUUID().toString()
-        val identity = com.nola.data.remote.api.RemoteSubmissionIdentity(cfg.expectedHostId, cfg.clientId,
-            conversation, submission, submission, "$submission:assistant")
-        val request = freezeHostToolPlan(prepareAgentRequest(input, conversationId = conversation, submissionId = submission, configuration = cfg), cfg)
-        val submit = submissionTransport(cfg)
-        // Auxiliary summaries need no local replica intent or fake conversation.
-        // The source-only digest operation is not an admission receipt.
-        val prepared = submit(buildJsonObject { put("operation", JsonPrimitive("prepare")); put("identity", identity.wire()); put("request", request) })
-            .getValue("result") as? JsonObject ?: error("Missing source digest preparation")
-        require(prepared["identity"] == identity.wire())
-        val frozen = com.nola.data.remote.api.FrozenRemoteSubmission(identity, prepared.getValue("request_digest").jsonPrimitive.content, request)
-        val reader = RemoteJournalSummary(cfg.expectedHostId, conversation, submission, journalTransport(cfg))
-        var committed: String? = null
-        var streamFailure: Exception? = null
-        try { streamFrozenSubmission(frozen, cfg).collect { event ->
-            if (committed != null) return@collect
-            when (event) {
-                is SseEvent.SubmissionReceipt -> reader.acceptReceipt(com.nola.data.remote.api.decodeRemoteSubmissionReceipt(
-                    event.receipt, identity, frozen.requestDigest))
-                is SseEvent.AssistantJournal -> reader.observe(event.envelope)
-                is SseEvent.AssistantTerminal -> committed = reader.terminal(event.envelope)
-                is SseEvent.PermissionRequest -> error("Summary requires interactive permission")
-                is SseEvent.DeviceToolRequest -> error("Summary requires device approval")
-                is SseEvent.Error -> error(redactHostToolText(event.message))
-                else -> Unit // Trace, lifecycle and task events are not answer/terminal authority.
+        val cfg = checkNotNull(config) { "Web Agent Host is not configured" }.copy()
+        val prompt = input.messages.lastOrNull()?.get("content")?.toString().orEmpty()
+        val conversationId = webHostApi.v2CreateConversation(
+            hostBaseUrl = cfg.hostBaseUrl,
+            token = cfg.token,
+            title = "Summary",
+            pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+        )
+        try {
+            var emittedAny = false
+            webHostApi.v2StreamMessage(
+                hostBaseUrl = cfg.hostBaseUrl,
+                token = cfg.token,
+                conversationId = conversationId,
+                content = prompt,
+                pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+            ).collect { event ->
+                when (event) {
+                    is SseEvent.V2TextDelta -> if (event.delta.isNotEmpty()) {
+                        emittedAny = true
+                        emit(event.delta)
+                    }
+                    is SseEvent.V2TurnCompleted -> if (!emittedAny && event.finalText.isNotEmpty()) {
+                        emittedAny = true
+                        emit(event.finalText)
+                    }
+                    is SseEvent.Error -> error(redactHostToolText(event.message))
+                    else -> Unit
+                }
             }
-        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-        catch (failure: Exception) { streamFailure = failure }
-        if (!reader.isAdmitted()) {
-            val result = try { submit(frozen.reconciliationRequest()).getValue("result") }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) { throw com.nola.data.remote.api.RemoteSubmissionUnresolved(frozen, failure) }
-            if (result is JsonObject) reader.acceptReceipt(com.nola.data.remote.api.decodeRemoteSubmissionReceipt(result, identity, frozen.requestDigest))
+        } finally {
+            runCatching {
+                webHostApi.v2DeleteConversation(
+                    hostBaseUrl = cfg.hostBaseUrl,
+                    token = cfg.token,
+                    conversationId = conversationId,
+                    pinnedCertificateSha256 = cfg.pinnedCertificateSha256,
+                )
+            }
         }
-        val answer = committed ?: reader.terminal()
-        if (answer == null) throw com.nola.data.remote.api.RemoteSubmissionUnresolved(frozen, streamFailure)
-        emit(answer)
     }
 
     override suspend fun chat(

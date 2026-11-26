@@ -40,7 +40,7 @@
     .disclosed-actions[popover] {
         position: fixed; inset: auto; margin: 0; box-sizing: border-box; overflow: auto;
         padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-control);
-        background: var(--surface-elevated, var(--surface)); color: var(--content); box-shadow: 0 6px 18px rgb(0 0 0 / .18);
+        background: var(--surface-elevated); color: var(--content); box-shadow: var(--dialog-shadow);
     }
     .disclosed-actions:popover-open { display: grid; gap: 0; }
     .disclosed-actions[popover] :global(button:focus-visible) { outline-offset: -2px; }

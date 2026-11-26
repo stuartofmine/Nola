@@ -2,6 +2,10 @@ import { executionConversationLink } from './results.ts';
 import { randomId } from './randomId.ts';
 export const automationFormats = ['agent', 'html', 'search', 'rss', 'json', 'icalendar', 'file', 'folder', 'script'] as const;
 export type AutomationFormat = typeof automationFormats[number];
+export const automationDisplayFormats = [...automationFormats, 'reminder', 'prompt', 'conversation', 'assistant'] as const;
+export function automationFormatKnown(format: string): boolean {
+    return (automationDisplayFormats as readonly string[]).includes(format);
+}
 export interface Automation {
     executionSpec?: unknown;
     id: string; name: string; url: string; format: string; userPrompt: string; revision?: number;
@@ -25,7 +29,8 @@ export function newAutomationDraft(): AutomationDraft {
     return { skillIds: [], workspaceRoot: '', permissionProfile: '', name: '', format: 'agent', source: '', prompt: '', script: '', cwd: '', frequency: 'daily', weekday: 1, time: '09:00' };
 }
 export function parseAutomations(value: unknown): Automation[] {
-    const items = (value as { actions?: unknown })?.actions;
+    const obj = value as { actions?: unknown; automations?: unknown; items?: unknown } | null | undefined;
+    const items = obj?.actions ?? obj?.automations ?? obj?.items;
     if (!Array.isArray(items)) throw new Error('automation.invalidResponse');
     const ids = new Set<string>();
     return items.map(item => {
@@ -84,7 +89,8 @@ export function automationCanEdit(action: Automation): boolean {
 }
 export interface AutomationSkill { id: string; name: string; description: string }
 export function parseAutomationSkills(value: unknown): AutomationSkill[] {
-    const skills = (value as { skills?: unknown })?.skills;
+    const obj = value as { skills?: unknown; items?: unknown } | null | undefined;
+    const skills = obj?.skills ?? obj?.items;
     if (!Array.isArray(skills)) throw new Error('automation.invalidResponse');
     const ids = new Set<string>();
     return skills.map(item => {

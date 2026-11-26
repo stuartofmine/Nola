@@ -33,6 +33,73 @@ import kotlinx.serialization.json.jsonPrimitive
 internal fun ChatUiState.dismissingDisplayedError(expected: ChatUiState): ChatUiState =
     if (this === expected) copy(error = null) else this
 
+data class V2UserQuestionPrompt(
+    val requestId: String,
+    val conversationId: String,
+    val question: String,
+    val options: List<String> = emptyList(),
+)
+
+data class V2WorkspaceFileEntry(
+    val path: String,
+    val status: String = "",
+    val isDir: Boolean = false,
+    val sizeBytes: Long? = null,
+)
+
+data class V2WorkspaceReviewState(
+    val loading: Boolean = false,
+    val workspaceRoot: String = "",
+    val isGitRepository: Boolean = false,
+    val entries: List<V2WorkspaceFileEntry> = emptyList(),
+    val stagedDiff: String = "",
+    val unstagedDiff: String = "",
+    val truncated: Boolean = false,
+    val error: String? = null,
+)
+
+internal fun parseV2WorkspaceReview(raw: JsonObject): V2WorkspaceReviewState {
+    val workspaceRoot = (raw["workspace_root"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty()
+    val isGit = (raw["is_git_repository"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
+    val truncated = (raw["truncated"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
+    val error = (raw["error"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.isNotBlank() }
+    val review = raw["review"] as? JsonObject
+    val gitEntries = ((review?.get("inventory") as? JsonObject)?.get("entries") as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { elem ->
+            val obj = elem as? JsonObject ?: return@mapNotNull null
+            val path = (obj["path"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val idx = (obj["index_status"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty()
+            val wt = (obj["worktree_status"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull.orEmpty()
+            V2WorkspaceFileEntry(path = path, status = (idx + wt).trim())
+        }
+        ?: emptyList()
+    val plainFiles = (raw["files"] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { elem ->
+            val obj = elem as? JsonObject ?: return@mapNotNull null
+            val path = (obj["path"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val isDir = (obj["is_dir"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
+            val size = (obj["size"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            V2WorkspaceFileEntry(path = path, isDir = isDir, sizeBytes = size)
+        }
+        ?: emptyList()
+    val stagedDiff = ((review?.get("staged") as? JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)
+        ?.takeIf { it.isString }?.contentOrNull.orEmpty()
+    val unstagedDiff = ((review?.get("unstaged") as? JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)
+        ?.takeIf { it.isString }?.contentOrNull.orEmpty()
+    return V2WorkspaceReviewState(
+        loading = false,
+        workspaceRoot = workspaceRoot,
+        isGitRepository = isGit,
+        entries = if (isGit) gitEntries else plainFiles,
+        stagedDiff = stagedDiff,
+        unstagedDiff = unstagedDiff,
+        truncated = truncated,
+        error = error,
+    )
+}
+
 data class ChatUiState(
     val expertContextOwner: com.nola.domain.model.AgentRoomContextOwner? = null,
     val expertContextParentId: String? = null,
@@ -119,6 +186,11 @@ data class ChatUiState(
     val pendingExpertHostAdmission: com.nola.data.local.AndroidPendingExpertAdmission? = null,
     val expertHostConfirmationStatus: String? = null,
     val checkingExpertHostAdmission: Boolean = false,
+    val pendingUserQuestion: V2UserQuestionPrompt? = null,
+    val v2UiSurfaces: List<JsonObject> = emptyList(),
+    val v2SessionId: String? = null,
+    val v2CompactionSummary: String? = null,
+    val v2WorkspaceReview: V2WorkspaceReviewState? = null,
 ) {
     // Updated only at admission/observation/save boundaries, never by a render-time query.
     val permissionApplicationStatus: String get() {
@@ -248,6 +320,8 @@ internal fun ChatUiState.beginAssistantTurn(
     toolEvents = emptyList(),
     permissionRequest = null,
     pendingPermissionRequests = emptyList(),
+    pendingUserQuestion = null,
+    v2CompactionSummary = null,
     answerSources = emptyList(),
     coreTaskProjection = AgentCoreTaskProjection(),
     coreSkillProjection = com.nola.core.AgentCoreSkillRuntimeProjection(),

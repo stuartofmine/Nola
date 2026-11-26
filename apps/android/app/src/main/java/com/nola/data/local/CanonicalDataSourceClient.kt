@@ -89,7 +89,8 @@ internal class CanonicalDataSourceClient(private val execute: (JsonObject) -> Js
     fun get(id: String): CanonicalDataSource? = command("get") { put("id", id) }
         .takeUnless { it == JsonNull }?.let { json.decodeFromJsonElement(it) }
 
-    fun list(): List<CanonicalDataSource> = json.decodeFromJsonElement(command("list"))
+    fun list(): List<CanonicalDataSource> =
+        json.decodeFromJsonElement(command("list").extractJsonArray("sources", "data_sources", "items", "records"))
 
     fun create(draft: CanonicalDataSourceDraft): CanonicalDataSource = source("create_draft") {
         put("input", json.encodeToJsonElement(draft))

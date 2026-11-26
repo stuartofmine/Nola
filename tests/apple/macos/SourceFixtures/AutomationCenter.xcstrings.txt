@@ -1,1 +1,0 @@
-../../../../apps/macos/AutomationCenter.xcstrings

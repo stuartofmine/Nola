@@ -22,9 +22,9 @@
 		min-width: 0;
 		margin: var(--a2ui-space-leaf);
 		padding: var(--a2ui-space-inset);
-		border: 1px solid var(--a2ui-color-border);
+		border: 1px solid var(--border, var(--a2ui-color-border));
 		border-radius: var(--a2ui-radius);
-		background: var(--a2ui-color-surface-raised);
+		background: var(--surface-elevated, var(--canvas, var(--a2ui-color-surface)));
 		box-shadow: var(--a2ui-elevation);
 	}
 

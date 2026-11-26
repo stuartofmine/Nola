@@ -50,6 +50,7 @@ def materialize_tool_outputs(event_log: Path, output_root: Path, destination: Pa
         return manifest
     manifest['event_log_status'] = 'read'
     manifest['invalid_json_lines'] = 0
+    manifest['tool_events_seen'] = 0
     opener = gzip.open if event_log.suffix == '.gz' else open
     with opener(event_log, 'rt', encoding='utf-8', errors='replace') as stream:
         for line_number, line in enumerate(stream, 1):
@@ -59,6 +60,24 @@ def materialize_tool_outputs(event_log: Path, output_root: Path, destination: Pa
                 manifest['invalid_json_lines'] += 1
                 continue
             if not isinstance(event, dict):
+                continue
+            # Support flat Nola v2 NDJSON AgentEvent lines (`type == "tool_finished"`)
+            if event.get('type') == 'tool_finished':
+                manifest['tool_events_seen'] += 1
+                reference = event.get('full_output_ref')
+                if isinstance(reference, str) and reference:
+                    record = {
+                        'event_id': None,
+                        'run_id': None,
+                        'sequence': None,
+                        'trace_sequence': None,
+                        'call_id': event.get('call_id'),
+                        'tool_name': event.get('name'),
+                        'event_log_line': line_number,
+                        'source_reference': reference,
+                    }
+                    manifest['references'].append(record)
+                    archive_blob(record, Path(reference), output_root, destination, secrets)
                 continue
             trace = event.get('trace') or {}
             if not isinstance(trace, dict):
@@ -177,6 +196,34 @@ def collect(database: Path) -> dict:
     connection.row_factory = sqlite3.Row
     try:
         connection.execute('BEGIN')
+        tables = {
+            row['name']
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if 'sessions' in tables and 'events' in tables and 'runs' not in tables:
+            # Native Nola v2 lean SQLite schema
+            return {
+                'schema_version': 2,
+                'scope': 'isolated_evaluation_database_v2',
+                'sessions': [
+                    dict(row)
+                    for row in connection.execute(
+                        'SELECT id, title, workspace_root, model_connection, model_id, created_at_ms, updated_at_ms FROM sessions ORDER BY created_at_ms'
+                    )
+                ],
+                'events': [
+                    dict(row)
+                    for row in connection.execute(
+                        'SELECT scope, seq, kind, payload_json, created_at_ms FROM events ORDER BY scope, seq'
+                    )
+                ],
+                'memory_items': [
+                    dict(row)
+                    for row in connection.execute(
+                        'SELECT id, namespace, title, tags_json, created_at_ms, updated_at_ms FROM memory_items ORDER BY updated_at_ms'
+                    )
+                ],
+            }
         queries = {
             'runs': 'SELECT id, conversation_id, status, created_at_ms, completed_at_ms FROM runs ORDER BY id',
             'model_attempts': "SELECT id,run_id,operation_id,state,json_extract(record_json,'$.model') AS model,json_extract(record_json,'$.usage') AS usage_json FROM run_attempts ORDER BY id",

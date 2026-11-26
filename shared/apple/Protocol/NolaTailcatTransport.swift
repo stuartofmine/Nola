@@ -183,7 +183,7 @@ nonisolated enum NolaTailcatTransport {
 
     static func register(baseURL: URL, token: String, hostID: String?, certificatePin: String? = nil) {
         guard available, MobileHostTransportPolicy.allows(baseURL), certificatePin?.isEmpty != false,
-              ["", "/", "/api", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
+              ["", "/", "/api", "/api/", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
               let origin = origin(baseURL),
               let hostID, !hostID.isEmpty, !token.isEmpty else { return }
         _ = lifecycle
@@ -209,7 +209,7 @@ nonisolated enum NolaTailcatTransport {
         guard (!requireNativeAvailability || available),
               MobileHostTransportPolicy.allows(baseURL),
               certificatePin?.isEmpty != false,
-              ["", "/", "/api", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
+              ["", "/", "/api", "/api/", "/api/mobile", "/api/mobile/"].contains(baseURL.path),
               let origin = origin(baseURL),
               !hostID.isEmpty, !token.isEmpty else { return }
         _ = lifecycle
@@ -253,13 +253,15 @@ nonisolated enum NolaTailcatTransport {
     // Select a route using the request's frozen credential. This is not the
     // permission authority: the Host still validates proof, body and ownership.
     static func matches(_ request: URLRequest, configuration: Configuration) -> Bool {
-        guard let url = request.url, url.path.hasPrefix("/api/mobile/"),
+        guard let url = request.url,
+              url.path.hasPrefix("/api/mobile/") || url.path.hasPrefix("/api/"),
               let timestamp = request.value(forHTTPHeaderField: "X-Nola-Mobile-Timestamp"),
               let nonce = request.value(forHTTPHeaderField: "X-Nola-Mobile-Nonce"),
               let digest = request.value(forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256"),
               let proof = request.value(forHTTPHeaderField: "X-Nola-Mobile-Auth"),
               let signature = try? NolaTailcatGrant.decode(proof) else { return false }
-        let path = url.path + (url.query.map { "?\($0)" } ?? "")
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let path = (comps?.percentEncodedPath ?? url.path) + (comps?.percentEncodedQuery.map { "?\($0)" } ?? "")
         let message = "v1\n\((request.httpMethod ?? "GET").uppercased())\n\(path)\n\(timestamp)\n\(nonce)\n\(digest)"
         return HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: Data(message.utf8), using: SymmetricKey(data: Data(configuration.token.utf8)))
     }
@@ -766,9 +768,12 @@ private nonisolated enum NolaTailcatGrant {
         request.httpBody = body
         request.timeoutInterval = op == "close" ? 6 : (op == "renew" ? 12 : 40)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("aes-gcm-v1", forHTTPHeaderField: "X-Nola-Mobile-Crypto")
         let timestamp = String(UInt64(Date().timeIntervalSince1970)), nonce = UUID().uuidString.lowercased()
         let digest = SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
-        let message = "v1\nPOST\n\(request.url!.path)\n\(timestamp)\n\(nonce)\n\(digest)"
+        let comps = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let path = (comps?.percentEncodedPath ?? request.url!.path) + (comps?.percentEncodedQuery.map { "?\($0)" } ?? "")
+        let message = "v1\nPOST\n\(path)\n\(timestamp)\n\(nonce)\n\(digest)"
         request.setValue(timestamp, forHTTPHeaderField: "X-Nola-Mobile-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "X-Nola-Mobile-Nonce")
         request.setValue(digest, forHTTPHeaderField: "X-Nola-Mobile-Body-SHA256")

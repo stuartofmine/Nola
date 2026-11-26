@@ -2700,8 +2700,10 @@
 
 "chat.permission.guidance" = "指导已记录。工具参数未改变，仍需明确批准。";
 "permission.mode.cautious" = "谨慎";
+"permission.mode.accept_edits" = "自动接受编辑";
 "permission.mode.allow_all" = "全部允许";
 "permission.mode.cautious.detail" = "删除、覆盖、敏感数据访问、外发内容和新连接先确认；普通读取与新建直接执行。";
+"permission.mode.accept_edits.detail" = "工作区内文件编辑自动放行；Shell 命令、工作区外写入、外发内容和新连接仍需确认。";
 "permission.mode.allow_all.detail" = "此会话内无需 Nola 确认，系统权限仍然生效。";
 "chat.compaction.show_sources_format" = "查看原始上下文（%d 项）";
 "model.parameters.invalid_values" = "请检查参数是否处于标注范围内；随机种子必须是整数。";
@@ -3583,3 +3585,6 @@
 "chat.task.state.failed" = "失败";
 "chat.task.state.cancelled" = "已取消";
 "chat.context.skills.template.body" = "# 技能：新技能\n\n## 适用场景\n描述适合使用这项技能的具体情况。\n\n## 工作流程\n1. 明确用户目标。\n2. 查看相关背景信息。\n3. 给出简明、可执行的结果。\n\n## 输出要求\n- 层次清晰。\n- 说明假设和风险。";
+"chat.v2.question.placeholder" = "输入你的回答…";
+"chat.v2.question.submit" = "提交";
+"chat.v2.question.skip" = "跳过";

@@ -34,10 +34,15 @@ val privacyRustTarget = privacyTestDir.resolve("cargo")
 val privacyWorkspace = rootProject.projectDir.parentFile.parentFile
 val privacyCore = tasks.register<Exec>("buildJvmModelPrivacyCore") {
     workingDir(privacyWorkspace)
-    inputs.files(fileTree(privacyWorkspace.resolve("core/nola-model-privacy")), privacyWorkspace.resolve("Cargo.lock"),
-        privacyWorkspace.resolve("Cargo.toml"), privacyWorkspace.resolve("rust-toolchain.toml"))
-    outputs.file(privacyRustTarget.resolve("debug/" + System.mapLibraryName("nola_model_privacy")))
-    commandLine("cargo", "rustc", "--locked", "-p", "nola_model_privacy", "--lib", "--crate-type", "cdylib",
+    inputs.files(
+        fileTree(privacyWorkspace.resolve("crates/nola-app")),
+        fileTree(privacyWorkspace.resolve("crates/nola-llm")),
+        privacyWorkspace.resolve("Cargo.lock"),
+        privacyWorkspace.resolve("Cargo.toml"),
+        privacyWorkspace.resolve("rust-toolchain.toml")
+    )
+    outputs.file(privacyRustTarget.resolve("debug/" + System.mapLibraryName("nola_app")))
+    commandLine("cargo", "build", "--locked", "-p", "nola-app", "--lib",
         "--target-dir", privacyRustTarget)
 }
 val privacyCmake = tasks.register<Exec>("configureJvmModelPrivacy") {
@@ -175,15 +180,6 @@ android {
 
     sourceSets.getByName("test").resources.srcDir(
         rootProject.projectDir.parentFile.parentFile.resolve("tests/fixtures")
-    )
-    sourceSets.getByName("test").resources.srcDir(
-        rootProject.projectDir.parentFile.parentFile.resolve("core/tests/fixtures")
-    )
-    sourceSets.getByName("test").resources.srcDir(
-        rootProject.projectDir.parentFile.parentFile.resolve("core/fixtures/host_protocol")
-    )
-    sourceSets.getByName("androidTest").assets.srcDir(
-        rootProject.projectDir.parentFile.parentFile.resolve("core/tests/fixtures")
     )
 
     externalNativeBuild {
@@ -328,10 +324,10 @@ dependencies {
 }
 
 val buildRustCore by tasks.registering(org.gradle.api.tasks.Exec::class) {
-    val coreDir = rootProject.projectDir.parentFile.parentFile.resolve("core")
+    val repoRoot = rootProject.projectDir.parentFile.parentFile
     val outputDir = layout.projectDirectory.dir("src/main/cpp/rust")
-    workingDir(coreDir)
-    commandLine("bash", "scripts/build_android.sh", outputDir.asFile.absolutePath)
+    workingDir(repoRoot)
+    commandLine("bash", "scripts/build_android_core.sh", outputDir.asFile.absolutePath)
     // Cargo tracks include_str!/include_bytes!, build scripts, toolchains and
     // environment inputs. A second Gradle source whitelist can silently skip
     // changed embedded resources. Always ask Cargo; it keeps compilation fresh.

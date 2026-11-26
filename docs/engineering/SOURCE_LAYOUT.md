@@ -3,14 +3,21 @@
 仓库按平台与用途组织。目录调整不改变应用标识、可执行文件名、安装包资源布局或用户数据路径。
 
 ```text
-apps/                 六个平台入口
+apps/                 五个图形平台入口
   ios/                SwiftUI iOS / iPadOS
   macos/              SwiftUI / AppKit macOS
   android/            Kotlin / Compose
   windows/            Windows 桌面壳
   web/                Svelte、Web 资源与浏览器运行时桥接
-  cli/                Rust CLI、Agent Host、HTTP 服务
-core/                 Rust 领域、Application Service、Store、FFI
+crates/               统一 Nola v2 8-crate Rust 工作区
+  nola-types/         共享领域模型、协议类型、策略与预算契约
+  nola-store/         SQLite WAL + FTS5 统一存储（user_version = 2）、加密 Vault 与服务锁
+  nola-llm/           多模型协议适配器（OpenAI/Anthropic/Gemini/SIWC）、SSE 与隐私脱敏
+  nola-tools/         统一工具运行时（文件流水线、OS 沙箱 Shell/PTY、搜索、LSP、浏览器、桌面控制、Code Mode）
+  nola-mcp/           MCP 客户端管理（stdio/HTTP/SSE 与 OAuth 2.1 / PKCE）
+  nola-engine/        Agent 执行循环、压缩、Hooks、策略与子代理调度
+  nola-modules/       记忆、代码索引、Skills、Goal/SOP、资料源、Room/专家、自动化、调度器、A2UI 与签名更新
+  nola-app/           统一 `nola` 二进制（CLI、TUI、本地 Web/HTTP Host、守护进程）与 C ABI / JNI FFI 库
 shared/               跨平台设计 Token（design-tokens）、Apple 共用代码、FFI 框架、MLX
 tests/apple/          Apple 单元与 UI 测试
 transport/            跨模块传输定义

@@ -2552,8 +2552,10 @@
 "personal.capabilities.retry" = "Повторить";
 "personal.capabilities.invalid_import" = "Выберите непустой файл Skill в кодировке UTF-8 длиной не более 48 000 символов.";
 "permission.mode.cautious" = "Осторожный";
+"permission.mode.accept_edits" = "Принимать правки";
 "permission.mode.allow_all" = "Разрешить всё";
 "permission.mode.cautious.detail" = "Подтверждать удаление, перезапись, доступ к конфиденциальным данным, отправку и новые подключения. Обычное чтение и создание файлов разрешены.";
+"permission.mode.accept_edits.detail" = "Автоматически разрешать правки файлов в рабочей области. Подтверждать команды оболочки, запись вне рабочей области, отправку и новые подключения.";
 "permission.mode.allow_all.detail" = "Без подтверждений Nola в этой беседе. Системные разрешения остаются в силе.";
 "chat.compaction.show_sources_format" = "Показать исходный контекст (элементов: %d)";
 "chat.style.inherit_model" = "Использовать настройку модели";
@@ -3420,3 +3422,6 @@
 "chat.task.state.failed" = "Ошибка";
 "chat.task.state.cancelled" = "Отменена";
 "chat.context.skills.template.body" = "# Навык: новый навык\n\n## Когда использовать\nОпишите конкретную ситуацию, в которой нужен этот навык.\n\n## Порядок действий\n1. Уточнить цель пользователя.\n2. Изучить контекст.\n3. Дать краткий, практичный результат.\n\n## Формат ответа\n- Структурировать ответ.\n- Указать допущения и риски.";
+"chat.v2.question.placeholder" = "Введите ответ…";
+"chat.v2.question.submit" = "Отправить";
+"chat.v2.question.skip" = "Пропустить";

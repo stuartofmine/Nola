@@ -36,7 +36,7 @@ def main():
     check_architecture_languages(errors)
     links = 0
     documents = sorted((ROOT / 'docs').rglob('*.md'))
-    documents += [ROOT / path for path in ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'apps/README.md', 'shared/README.md', 'tests/apple/README.md', 'apps/cli/README.md', 'release/README.md']]
+    documents += [ROOT / path for path in ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'apps/README.md', 'shared/README.md', 'tests/apple/README.md', 'release/README.md']]
     for document in documents:
         text = re.sub(r'```.*?```', '', document.read_text(), flags=re.S)
         for destination in re.findall(r'\]\(([^)\n]+)\)', text):

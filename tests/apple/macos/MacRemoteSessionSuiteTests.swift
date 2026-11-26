@@ -1249,7 +1249,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     let actions = pending; pending.removeAll()
                     actions.forEach { $0() }
                     try json(connection, value: [:] as [String: String])
-                case "/api/mobile/agent/settings":
+                case "/api/agent/settings":
                     settings += 1
                     let response: () -> Void = { [self] in
                         try? json(connection, value: modelSettings ?? ["host_identity": ["id": "fixture-host"],

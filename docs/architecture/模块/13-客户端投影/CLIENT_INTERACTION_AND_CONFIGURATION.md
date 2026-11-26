@@ -79,17 +79,17 @@ Source/Citation 汇总到回复末尾的文献列表，默认三条；显示聚�
 | Mac | [Journal 回复](../../../../apps/macos/Features/Chat/MacJournalMessageTextView.swift) | `processDelivery`、引用聚合和技能头；完整导航地址从当前 owner 的精确字段有界读取，未解析时不启用旧地址；本地文件仍须证明本地 Journal 来源 |
 | iOS/iPadOS | [ChatBubble](../../../../apps/ios/UI/Chat/ChatBubble.swift)、[引用投影](../../../../apps/ios/Services/ChatSourceReference.swift) | `ChatExecutionProcessPolicy`、`bibliography` 与信息表单；复用原文件/外链入口，消息变化关闭旧详情并重置来源展开 |
 | Android | [分组与引用](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/CanonicalMessagePartPresentation.kt)、[过程/来源组件](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/CanonicalPartCards.kt)、[聊天](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt) | `canonicalBibliography`、独立信息对话框；维持外链准入检查，不赋予 URI 新的文件访问权 |
-| Web / Windows 共享界面 | [消息展示](../../../../apps/web/frontend/src/components/ChatMessageContent.svelte)、[引用列表](../../../../apps/web/frontend/src/components/ChatReferenceFooter.svelte)、[引用投影](../../../../apps/web/frontend/src/lib/chatReferences.ts) | 只对最新过程段传 live；引用展开按消息阅读 owner 重置；只把已通过原 URL 校验的 HTTP(S) 地址作为外链 |
-| CLI | [终端 Journal 展示](../../../../apps/cli/src/terminal_journal_presentation.rs) | 保持文本与 Markdown 内联引用；本次没有为终端增加字体尺寸、卡片或图形展开操作 |
+| Web / Windows 共享界面 | [消息展示](../../../../apps/web/frontend/src/pages/Chat.svelte)、[引用列表](../../../../apps/web/frontend/src/pages/Chat.svelte)、[引用投影](../../../../apps/web/frontend/src/pages/Chat.svelte) | 只对最新过程段传 live；引用展开按消息阅读 owner 重置；只把已通过原 URL 校验的 HTTP(S) 地址作为外链 |
+| CLI | [终端 Journal 展示](../../../../crates/nola-app/src/tui.rs) | 保持文本与 Markdown 内联引用；本次没有为终端增加字体尺寸、卡片或图形展开操作 |
 
 纯展示细节不拥有授权或执行生命周期。Windows 共用 Web 页面不代表已经在 Windows 系统实测；iOS 共享 iPad 代码不代表本轮跑过 iPad 模拟器。已执行与未覆盖范围见[验证总账](../../../quality/VALIDATION_SCOPE.md)。
 
 ## 可复核源码与验证边界
 
-- Core：[profile resolver](../../../../core/nola-application/src/model_profile_resolution.rs)、[reasoning resolver](../../../../core/nola-application/src/model_generation.rs)。
+- Core：[profile resolver](../../../../crates/nola-app/src/config.rs)、[reasoning resolver](../../../../crates/nola-types/src/model.rs)。
 - Apple：[Mac 检查器](../../../../apps/macos/Features/Inspector/MacChatInspectorView.swift)、[Mac 模型设置](../../../../apps/macos/Features/Chat/MacConversationModelSettingsView.swift)、[iOS 模型解析](../../../../apps/ios/Services/ModelSelectionManager.swift)、[iOS 导航](../../../../apps/ios/UI/Chat/ChatNavigationGestureBridge.swift)、[紧凑标签宿主](../../../../apps/ios/UI/IOSCompactTabContainer.swift)。
 - Android：[聊天](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/ChatScreen.kt)、[effort 菜单](../../../../apps/android/app/src/main/java/com/nola/ui/screen/chat/ReasoningEffortMenu.kt)、[段落投影](../../../../apps/android/app/src/main/java/com/nola/agent/trace/StreamingMarkdownProjection.kt)。
-- Web：[聊天/检查器](../../../../apps/web/frontend/src/pages/Chat.svelte)、[抽屉](../../../../apps/web/frontend/src/components/ChatResponsivePanel.svelte)、[手势判定](../../../../apps/web/frontend/src/lib/panelSwipe.ts)、[会话参数](../../../../apps/web/frontend/src/lib/chatSessionSettings.ts)。
+- Web：[聊天/检查器](../../../../apps/web/frontend/src/pages/Chat.svelte)、[抽屉](../../../../apps/web/frontend/src/pages/Chat.svelte)、[手势判定](../../../../apps/web/frontend/src/lib/chatResponsivePresentation.test.ts)、[会话参数](../../../../apps/web/frontend/src/lib/locales/chatSessionSettings.ts)。
 
 回归入口包括 `MacInspectorInteractionTests`、`MacReasoningConfigurationTests`、`ChatNavigationGestureTests`、`IOSCompactTabContainerTests`、`ReasoningEffortSelectionTests`、Android 的 `ReasoningEffortSelectionTest` 和 Web 的 `panelSwipe.test.ts`/`chatSessionSettings.test.ts`。隔离测试、模拟器和浏览器组件检查分别记录，不能推导整窗帧率、全量真机、真实 provider、远程 Host 或 CLI 的验收结论。
 

@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Ersetzte Datensätze</string>
     <string name="chat_permission_mode">Berechtigungsmodus</string>
     <string name="chat_permission_mode_cautious">Vorsichtig</string>
+    <string name="chat_permission_mode_accept_edits">Änderungen zulassen</string>
     <string name="chat_permission_mode_allow_all">Alles erlauben</string>
     <string name="chat_permission_mode_cautious_detail">Löschen, Überschreiben, sensible Daten, ausgehende Inhalte und neue Verbindungen bestätigen. Normales Lesen und neue Dateien sind erlaubt.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Dateibearbeitungen im Arbeitsbereich automatisch zulassen. Shell-Befehle, Schreibvorgänge außerhalb, ausgehende Inhalte und neue Verbindungen bestätigen.</string>
     <string name="chat_permission_mode_allow_all_detail">Keine Nola-Bestätigungen in diesem Gespräch. Systemberechtigungen gelten weiterhin.</string>
     <string name="models_inference_test">Modell testen</string>
     <string name="models_inference_test_hint">Eine einzelne Anfrage mit den gespeicherten Parametern dieses Modells ausführen. Das aktive Chatmodell und die Unterhaltung bleiben unverändert.</string>
@@ -1477,4 +1479,23 @@
     <string name="permission_from_subagent">Von Unteraufgabe: %1$s</string>
     <string name="permission_queue_pending">1 von %1$d ausstehend</string>
     <string name="chat_response_failed_empty">Antwort fehlgeschlagen.</string>
+    <string name="chat_v2_question_placeholder">Antwort eingeben…</string>
+    <string name="chat_v2_question_skip">Überspringen</string>
+    <string name="chat_v2_question_submit">Senden</string>
+    <string name="chat_v2_ui_unavailable">Interaktive Oberfläche nicht verfügbar</string>
+    <string name="chat_v2_ui_interaction_failed">Interaktion fehlgeschlagen</string>
+    <string name="chat_v2_context_compacted">Kontext komprimiert</string>
+    <string name="chat_v2_context_compacted_range">Kontext komprimiert (%1$s → %2$s Tokens)</string>
+    <string name="chat_v2_context_compacted_after">Kontext komprimiert (%1$s Tokens)</string>
+    <string name="chat_v2_context_compaction_failed">Kontextkomprimierung fehlgeschlagen</string>
+    <string name="chat_v2_branch_conversation">Unterhaltung verzweigen</string>
+    <string name="chat_v2_branch_failed">Unterhaltung konnte nicht verzweigt werden</string>
+    <string name="chat_v2_workspace_review">Workspace-Prüfung</string>
+    <string name="chat_v2_workspace_review_empty">Keine Änderungen im Workspace erkannt</string>
+    <string name="chat_v2_workspace_review_host_required">Mit einem Web Agent Host verbinden, um Workspace-Änderungen zu prüfen</string>
+    <string name="chat_v2_workspace_review_staged">Vorgemerkte Änderungen</string>
+    <string name="chat_v2_workspace_review_unstaged">Nicht vorgemerkte Änderungen</string>
+    <string name="chat_v2_workspace_review_files">Workspace-Dateien</string>
+    <string name="chat_v2_workspace_review_truncated">Ausgabe für die Vorschau gekürzt</string>
+    <string name="chat_v2_edit_resend_failed">Nachricht konnte nicht gekürzt und erneut gesendet werden</string>
 </resources>

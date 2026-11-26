@@ -1,0 +1,40 @@
+[package]
+name = "nola-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "nola_app"
+path = "src/lib.rs"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "nola"
+path = "src/main.rs"
+
+[dependencies]
+nola-types = { workspace = true }
+nola-store = { workspace = true }
+nola-llm = { workspace = true }
+nola-tools = { workspace = true }
+nola-mcp = { workspace = true }
+nola-engine = { workspace = true }
+nola-modules = { workspace = true }
+chrono = { workspace = true }
+crossterm = { workspace = true }
+hex = { workspace = true }
+libc = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+signal-hook = { workspace = true }
+tiny_http = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

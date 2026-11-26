@@ -8,6 +8,8 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal object ApplicationCommandEffect {
     private val observations = setOf(
+        "health", "sessions_list", "events_after", "projection_snapshot",
+        "projection_event_suffix", "projection_cursor_wait", "module_list", "memory_search",
         "list_activity", "load_activity_detail", "read_expert_exchange_capability",
         "preview_ui_surface", "read_ui_authority", "read_ui_capability", "read_ui_surface", "read_ui_surface_revision", "read_ui_surface_changes", "list_ui_surfaces", "peek_agent_command",
         "inspect_owned_task_recovery", "inspect_unknown_effect_recovery", "inspect_run_recovery", "read_permission_configuration", "load_exact_run_invocation", "validate_run_recovery_authority", "validate_mobile_run_recovery_authority", "encode_host_worker_identity",

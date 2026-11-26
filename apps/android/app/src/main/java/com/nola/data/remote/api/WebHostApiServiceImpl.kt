@@ -12,8 +12,10 @@ import com.nola.core.decodeAgentCoreTaskProjection
 import com.nola.data.remote.dto.VerifiedHostTransport
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.preparePost
 import io.ktor.client.statement.bodyAsChannel
@@ -68,290 +70,63 @@ class WebHostApiServiceImpl @Inject constructor(
         encodeDefaults = true
     }
 
-    override suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject {
-        require(operation in setOf("parent", "admit", "manifest"))
-        return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-            webHostMobileUrl(hostBaseUrl, "chat/expert-messages/$operation"), token, request,
-            maximumRequestBytes = 4 * 1024 * 1024, maximumResponseBytes = 8 * 1024 * 1024)
-    }
-
-    override suspend fun goalControl(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/goal"), token, request,
-    )
-
-    override suspend fun conversationProgress(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/progress"), token, request,
-    )
-
-    override suspend fun submissionFrontier(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/submission-frontier"), token, request,
-    )
-
-    override suspend fun permissionConfiguration(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/configuration"), token, request,
-    )
-
-    override suspend fun auxiliaryCommand(hostBaseUrl: String, token: String, action: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject {
-        require(action in setOf("prepare", "admit", "invoke", "inspect", "cancel"))
-        return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-            webHostMobileUrl(hostBaseUrl, "auxiliary/$action"), token, request)
-    }
-
-    override suspend fun agentRoomCommand(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "agent-rooms"), token, request,
-    )
-
-    override suspend fun generativeUi(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject {
-        require(operation in GENERATIVE_UI_OPERATIONS)
-        return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-            webHostMobileUrl(hostBaseUrl, "chat/agent/v2/ui/$operation"), token, request, 128 * 1024,
-            maximumResponseBytes = generativeUiMaxResponseBytes(operation))
-    }
-
-    override suspend fun readAssistantJournal(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/journal")
-        return postEncryptedWebHostRequest(httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-            url, token, request)
-    }
-
-    override suspend fun observeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/observe"), token, request,
-    )
-
-    override fun resumeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): Flow<SseEvent> {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/resume")
-        val body = json.encodeToString(MobileCrypto.encryptJsonObject(request, token))
-        return sseClient.stream(url = url, bodyJson = body,
-            headers = mobileAuthHeaders(token, "POST", url, body = body) + mapOf(
-                "Accept" to "text/event-stream", "X-Nola-Mobile-Crypto" to "aes-gcm-v1"),
-            mobileCryptoToken = token,
-            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256))
-    }
-
-    override suspend fun requestWebManagementUrl(
-        hostBaseUrl: String,
-        token: String,
-        target: String,
-        pinnedCertificateSha256: String
-    ): String {
-        val url = webHostMobileUrl(hostBaseUrl, "web-handoff")
-        val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJson(mapOf("target" to target), token))
-        val response = httpClientFactory
-            .clientFor(hostBaseUrl, pinnedCertificateSha256)
-            .post(url) {
-                mobileAuthHeaders(token, "POST", url, body = encryptedBodyJson)
-                    .forEach { (name, value) -> header(name, value) }
-                header("Accept", "application/json")
-                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
-                setBody(TextContent(encryptedBodyJson, ContentType.Application.Json))
-            }
-        if (response.status.value !in 200..299) {
-            error("Web Agent Host rejected the browser handoff (${response.status.value})")
+    private fun decryptOrParseJsonObject(text: String, token: String): JsonObject {
+        if (token.isNotBlank()) {
+            val decrypted = runCatching {
+                val envelope = json.decodeFromString<EncryptedEnvelope>(text)
+                MobileCrypto.decryptJsonObject(envelope, token)
+            }.getOrNull()
+            if (decrypted != null) return decrypted
         }
-        val envelope: EncryptedEnvelope = response.body()
-        val decrypted = MobileCrypto.decryptJsonObject(envelope, token)
-        val path = decrypted["path"]?.toString()?.trim('"')
-            ?.takeIf { it.isNotBlank() }
-            ?: error("Web Agent Host returned an invalid browser handoff")
-        return webHostControlPlaneUrl(hostBaseUrl, path)
-            ?: error("Web Agent Host returned an invalid browser handoff URL")
+        return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
     }
 
-    override suspend fun getAgentSettings(
-        hostBaseUrl: String,
-        token: String,
-        pinnedCertificateSha256: String
-    ): AgentSettingsResponse {
-        var verifiedTransport: VerifiedHostTransport? = null
-        val envelope = httpGetEncrypted(
-            client = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
-            hostBaseUrl = hostBaseUrl,
-            token = token,
-            path = "agent/settings",
-            onRoute = { verifiedTransport = it },
-        )
-        val decrypted = MobileCrypto.decryptJsonObject(envelope, token)
-        return json.decodeFromJsonElement<AgentSettingsResponse>(decrypted).copy(verifiedTransport = verifiedTransport)
-    }
-
-    override suspend fun submitAgentPermissionDecision(
-        hostBaseUrl: String,
-        token: String,
-        payload: Map<String, Any>,
-        pinnedCertificateSha256: String
-    ) {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/permission")
-        val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJson(payload, token))
-        val response = httpClientFactory
-            .controlClientFor(hostBaseUrl, pinnedCertificateSha256)
-            .post(url) {
-                mobileAuthHeaders(token, "POST", url, body = encryptedBodyJson)
-                    .forEach { (name, value) -> header(name, value) }
-                header("Accept", "application/json")
-                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
-                setBody(TextContent(encryptedBodyJson, ContentType.Application.Json))
-            }
-        if (response.status.value !in 200..299) {
-            error("Web Agent Host rejected the permission response (${response.status.value})")
-        }
-    }
-
-    override suspend fun cancelAdmittedRemoteSubmission(
-        hostBaseUrl: String,
-        token: String,
-        identity: RemoteSubmissionIdentity,
-        pinnedCertificateSha256: String
-    ) {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/cancel")
-        val payload = kotlinx.serialization.json.buildJsonObject {
-            put("identity", identity.wire())
-        }
-        val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJsonObject(payload, token))
-        val response = httpClientFactory
-            .controlClientFor(hostBaseUrl, pinnedCertificateSha256)
-            .post(url) {
-                mobileAuthHeaders(token, "POST", url, body = encryptedBodyJson)
-                    .forEach { (name, value) -> header(name, value) }
-                header("Accept", "application/json")
-                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
-                setBody(TextContent(encryptedBodyJson, ContentType.Application.Json))
-            }
-        if (response.status.value !in 200..299) {
-            error("Web Agent Host rejected cancellation (${response.status.value})")
-        }
-        val envelope: EncryptedEnvelope = response.body()
-        val result = MobileCrypto.decryptJsonObject(envelope, token)
-        val cancelRequested = (result["cancelRequested"] as? kotlinx.serialization.json.JsonPrimitive)
-            ?.content
-            ?.toBooleanStrictOrNull()
-            ?: false
-        check(cancelRequested) {
-            "Web Agent Host did not find an active generation for this conversation"
-        }
-    }
-
-    override suspend fun submitAgentDeviceToolResult(
-        hostBaseUrl: String,
-        token: String,
-        payload: Map<String, Any>,
-        pinnedCertificateSha256: String
-    ) {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/device-tool")
-        val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJson(payload, token))
-        val response = httpClientFactory
-            .clientFor(hostBaseUrl, pinnedCertificateSha256)
-            .post(url) {
-                mobileAuthHeaders(token, "POST", url, body = encryptedBodyJson)
-                    .forEach { (name, value) -> header(name, value) }
-                header("Accept", "application/json")
-                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
-                setBody(TextContent(encryptedBodyJson, ContentType.Application.Json))
-            }
-        if (response.status.value !in 200..299) {
-            error("Web Agent Host rejected the device tool result (${response.status.value})")
-        }
-    }
-
-    override suspend fun taskCancellationCommand(hostBaseUrl: String, token: String, request: JsonObject,
-        receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/task/cancel" + if (receiptOnly) "/receipt" else ""), token, request,
-    )
-
-    override suspend fun taskGuidanceCommand(hostBaseUrl: String, token: String, request: JsonObject,
-        receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/task/message" + if (receiptOnly) "/receipt" else ""), token, request,
-    )
-
-    override fun streamAgentTaskEvents(
-        hostBaseUrl: String,
-        token: String,
-        conversationId: String,
-        afterCursor: Long,
-        pinnedCertificateSha256: String,
-    ): Flow<SseEvent> {
-        val url = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/task/events")
-        val body = mapOf(
-            "conversationId" to conversationId,
-            "afterCursor" to afterCursor.coerceAtLeast(0),
-            "timeoutMs" to 25_000,
-        )
-        val encryptedBodyJson = json.encodeToString(MobileCrypto.encryptJson(body, token))
-        val headers = mobileAuthHeaders(token, "POST", url, body = encryptedBodyJson) + mapOf(
-            "Accept" to "text/event-stream",
-            "X-Nola-Mobile-Crypto" to "aes-gcm-v1",
-        )
-        return sseClient.stream(
-            url = url,
-            bodyJson = encryptedBodyJson,
-            headers = headers,
-            mobileCryptoToken = token,
-            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
-        )
-    }
-
-    override suspend fun remoteSubmission(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "chat/agent/v2/submission"), token, request, 17 * 1024 * 1024)
-
-    override suspend fun prepareToolPlan(hostBaseUrl: String, token: String, request: JsonObject,
-        pinnedCertificateSha256: String): JsonObject = postEncryptedWebHostRequest(
-        httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
-        webHostMobileUrl(hostBaseUrl, "agent/tool-plan/prepare"), token, request, 512 * 1024)
-
-    override fun streamBoundAgentRequest(
-        hostBaseUrl: String,
-        token: String,
-        submission: FrozenRemoteSubmission,
-        pinnedCertificateSha256: String,
-    ): Flow<SseEvent> {
-        val encryptedBody = MobileCrypto.encryptJsonObject(submission.wireRequest(), token)
-        val encryptedBodyJson = json.encodeToString(encryptedBody)
-
-        val streamUrl = webHostMobileUrl(hostBaseUrl, "chat/agent/v2/stream")
-        val headers = mobileAuthHeaders(token, "POST", streamUrl, body = encryptedBodyJson) + mapOf(
-            "Accept" to "text/event-stream",
-            "X-Nola-Mobile-Crypto" to "aes-gcm-v1"
-        )
-
-        return sseClient.stream(
-            url = streamUrl,
-            bodyJson = encryptedBodyJson,
-            headers = headers,
-            mobileCryptoToken = token,
-            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256)
-        )
-    }
-
-    private suspend fun httpGetEncrypted(
-        client: HttpClient = httpClient,
+    private suspend fun postV2Json(
         hostBaseUrl: String,
         token: String,
         path: String,
+        body: JsonObject,
+        pinnedCertificateSha256: String,
+    ): JsonObject {
+        val url = webHostV2ApiUrl(hostBaseUrl, path)
+        val useMobileCrypto = token.isNotBlank()
+        val bodyText = if (useMobileCrypto) {
+            json.encodeToString(MobileCrypto.encryptJsonObject(body, token))
+        } else {
+            body.toString()
+        }
+        val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).post(url) {
+            header("X-Nola-Client", "android")
+            if (useMobileCrypto) {
+                mobileAuthHeaders(token, "POST", url, body = bodyText).forEach { (k, v) -> header(k, v) }
+                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
+            header("Accept", "application/json")
+            setBody(TextContent(bodyText, ContentType.Application.Json))
+        }
+        val text = response.body<String>()
+        if (response.status.value !in 200..299) {
+            error("WebHost v2 rejected $path (${response.status.value}): $text")
+        }
+        return decryptOrParseJsonObject(text, token)
+    }
+
+    private suspend fun getV2Json(
+        hostBaseUrl: String,
+        token: String,
+        path: String,
+        pinnedCertificateSha256: String,
+        client: HttpClient = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256),
         onRoute: ((VerifiedHostTransport) -> Unit)? = null,
-    ): EncryptedEnvelope {
-        val url = webHostMobileUrl(hostBaseUrl, path)
+    ): JsonObject {
+        val url = webHostV2ApiUrl(hostBaseUrl, path)
+        val useMobileCrypto = token.isNotBlank()
         val response = client.get(url) {
-            mobileAuthHeaders(token, "GET", url).forEach { (name, value) -> header(name, value) }
+            header("X-Nola-Client", "android")
+            if (useMobileCrypto) {
+                mobileAuthHeaders(token, "GET", url).forEach { (k, v) -> header(k, v) }
+                header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
             header("Accept", "application/json")
         }
         val route = if (onRoute == null) null else when {
@@ -360,9 +135,533 @@ class WebHostApiServiceImpl @Inject constructor(
                 VerifiedHostTransport.DirectWithoutTailcat
             else -> VerifiedHostTransport.Direct
         }
-        if (response.status.value !in 200..299) throw WebHostStatusException(response.status.value, verificationRoute = route)
+        val text = response.body<String>()
+        if (response.status.value !in 200..299) {
+            if (onRoute != null) {
+                throw WebHostStatusException(response.status.value, verificationRoute = route)
+            }
+            error("WebHost v2 GET $path failed (${response.status.value}): $text")
+        }
         if (route != null) onRoute?.invoke(route)
-        return response.body()
+        return decryptOrParseJsonObject(text, token)
+    }
+
+    override suspend fun v2CreateConversation(
+        hostBaseUrl: String,
+        token: String,
+        title: String,
+        pinnedCertificateSha256: String,
+    ): String {
+        val created = postV2Json(
+            hostBaseUrl,
+            token,
+            "chat/conversations",
+            buildJsonObject { put("title", title) },
+            pinnedCertificateSha256,
+        )
+        return (created["conversationId"] as? JsonPrimitive)?.content
+            ?.takeIf { it.isNotBlank() }
+            ?: error("WebHost v2 returned no conversationId")
+    }
+
+    override suspend fun v2DeleteConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ) {
+        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId")
+        val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).delete(url) {
+            header("X-Nola-Client", "android")
+            if (token.isNotBlank()) {
+                mobileAuthHeaders(token, "DELETE", url).forEach { (k, v) -> header(k, v) }
+            }
+            header("Accept", "application/json")
+        }
+        if (response.status.value !in 200..299 && response.status.value != 404) {
+            error("WebHost v2 DELETE conversation failed (${response.status.value})")
+        }
+    }
+
+    override fun v2StreamMessage(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        content: String,
+        pinnedCertificateSha256: String,
+        attachments: kotlinx.serialization.json.JsonArray?,
+        modelId: String?,
+        reasoningEffort: String?,
+        permissionProfile: String?,
+        selectedExperts: kotlinx.serialization.json.JsonArray?,
+        deviceBridge: JsonObject?,
+    ): Flow<SseEvent> {
+        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId/messages")
+        val payload = buildJsonObject {
+            put("content", content)
+            if (attachments != null && attachments.isNotEmpty()) put("attachments", attachments)
+            if (!modelId.isNullOrBlank()) put("modelId", modelId)
+            if (!reasoningEffort.isNullOrBlank()) put("reasoningEffort", reasoningEffort)
+            if (!permissionProfile.isNullOrBlank()) put("permissionProfile", permissionProfile)
+            if (selectedExperts != null && selectedExperts.isNotEmpty()) put("selected_experts", selectedExperts)
+            if (deviceBridge != null) put("device_bridge", deviceBridge)
+        }
+        val useMobileCrypto = token.isNotBlank()
+        val wireBodyJson = if (useMobileCrypto) {
+            json.encodeToString(MobileCrypto.encryptJsonObject(payload, token))
+        } else {
+            payload.toString()
+        }
+        val headers = buildMap {
+            put("X-Nola-Client", "android")
+            put("Accept", "text/event-stream")
+            if (useMobileCrypto) {
+                putAll(mobileAuthHeaders(token, "POST", url, body = wireBodyJson))
+                put("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
+        }
+        return sseClient.stream(
+            url = url,
+            bodyJson = wireBodyJson,
+            headers = headers,
+            mobileCryptoToken = token.takeIf { useMobileCrypto },
+            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
+        )
+    }
+
+    override suspend fun v2CancelConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ) {
+        postV2Json(
+            hostBaseUrl,
+            token,
+            "chat/conversations/$conversationId/cancel",
+            JsonObject(emptyMap()),
+            pinnedCertificateSha256,
+        )
+    }
+
+    override suspend fun v2RespondPermission(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        scope: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/permission",
+        buildJsonObject {
+            put("request_id", requestId)
+            put("allow", allow)
+            put("scope", scope)
+        },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2RespondUserInput(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/user-input",
+        buildJsonObject {
+            put("request_id", requestId)
+            if (answer != null) put("answer", answer)
+        },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2ListUiSurfaces(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = getV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-surfaces",
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2PreviewUiSurface(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        input: JsonObject,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-surface-preview",
+        input,
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2SubmitUiInteraction(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        interaction: JsonObject,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/ui-interactions",
+        interaction,
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2TruncateConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        fromSeq: Long,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/truncate",
+        buildJsonObject { put("fromSeq", fromSeq) },
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2CompactConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/compact",
+        JsonObject(emptyMap()),
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2BranchConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = postV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/branch",
+        JsonObject(emptyMap()),
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun v2WorkspaceReview(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String,
+    ): JsonObject = getV2Json(
+        hostBaseUrl,
+        token,
+        "chat/conversations/$conversationId/workspace-review",
+        pinnedCertificateSha256,
+    )
+
+    override suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        require(operation in setOf("parent", "admit", "manifest"))
+        return postV2Json(hostBaseUrl, token, "agent-rooms", request, pinnedCertificateSha256)
+    }
+
+    override suspend fun goalControl(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+            ?: (request["conversationId"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+            ?: ""
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/goal", request, pinnedCertificateSha256)
+    }
+
+    override suspend fun conversationProgress(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/progress", pinnedCertificateSha256)
+    }
+
+    override suspend fun submissionFrontier(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", pinnedCertificateSha256)
+    }
+
+    override suspend fun permissionConfiguration(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
+        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$convId/configuration")
+        val op = (request["operation"] as? JsonPrimitive)?.content
+        if (op == "patch") {
+            val useMobileCrypto = token.isNotBlank()
+            val bodyText = if (useMobileCrypto) {
+                json.encodeToString(MobileCrypto.encryptJsonObject(request, token))
+            } else {
+                request.toString()
+            }
+            val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).patch(url) {
+                header("X-Nola-Client", "android")
+                if (useMobileCrypto) {
+                    mobileAuthHeaders(token, "PATCH", url, body = bodyText).forEach { (k, v) -> header(k, v) }
+                    header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+                }
+                header("Accept", "application/json")
+                setBody(TextContent(bodyText, ContentType.Application.Json))
+            }
+            val text = response.body<String>()
+            if (response.status.value !in 200..299) error("WebHost v2 PATCH configuration failed (${response.status.value})")
+            return decryptOrParseJsonObject(text, token)
+        }
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", pinnedCertificateSha256)
+    }
+
+    override suspend fun auxiliaryCommand(hostBaseUrl: String, token: String, action: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        require(action in setOf("prepare", "admit", "invoke", "inspect", "cancel"))
+        return postV2Json(hostBaseUrl, token, "auxiliary/$action", request, pinnedCertificateSha256)
+    }
+
+    override suspend fun agentRoomCommand(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject =
+        postV2Json(hostBaseUrl, token, "agent-rooms", request, pinnedCertificateSha256)
+
+    override suspend fun generativeUi(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        require(operation in GENERATIVE_UI_OPERATIONS)
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content
+            ?: ((request["identity"] as? JsonObject)?.get("owner") as? JsonObject)
+                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
+            ?: ((((request["input"] as? JsonObject)?.get("interaction") as? JsonObject)
+                ?.get("identity") as? JsonObject)?.get("owner") as? JsonObject)
+                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
+            ?: ""
+        return when (operation) {
+            "surfaces" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surfaces", pinnedCertificateSha256)
+            "preview" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-preview", request, pinnedCertificateSha256)
+            "changes" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-changes", request, pinnedCertificateSha256)
+            "revision" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-revision", request, pinnedCertificateSha256)
+            "interactions" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
+            "queued-input" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/events", pinnedCertificateSha256)
+            "queued-input/cancel" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/cancel", request, pinnedCertificateSha256)
+            else -> error("Unsupported generative UI operation: $operation")
+        }
+    }
+
+    override suspend fun readAssistantJournal(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/messages", pinnedCertificateSha256)
+    }
+
+    override suspend fun observeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/observe", pinnedCertificateSha256)
+    }
+
+    override fun resumeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): Flow<SseEvent> {
+        val convId = (request["conversation_id"] as? JsonPrimitive)?.content
+            ?: (request["conversationId"] as? JsonPrimitive)?.content
+            ?: ""
+        val prompt = (request["content"] as? JsonPrimitive)?.content.orEmpty()
+        return v2StreamMessage(hostBaseUrl, token, convId, prompt, pinnedCertificateSha256)
+    }
+
+    override suspend fun requestWebManagementUrl(
+        hostBaseUrl: String,
+        token: String,
+        target: String,
+        pinnedCertificateSha256: String
+    ): String {
+        val handoffTarget = runCatching {
+            val response = postV2Json(
+                hostBaseUrl = hostBaseUrl,
+                token = token,
+                path = "web-handoff",
+                body = buildJsonObject { put("target", target) },
+                pinnedCertificateSha256 = pinnedCertificateSha256,
+            )
+            (response["url"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+                ?: (response["path"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+        return webHostControlPlaneUrl(hostBaseUrl, handoffTarget ?: target)
+            ?: webHostControlPlaneUrl(hostBaseUrl, target)
+            ?: error("Web Agent Host returned an invalid management URL")
+    }
+
+    override suspend fun getAgentSettings(
+        hostBaseUrl: String,
+        token: String,
+        pinnedCertificateSha256: String
+    ): AgentSettingsResponse {
+        var verifiedTransport: VerifiedHostTransport? = null
+        val body = getV2Json(
+            hostBaseUrl = hostBaseUrl,
+            token = token,
+            path = "agent/settings",
+            pinnedCertificateSha256 = pinnedCertificateSha256,
+            client = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
+            onRoute = { verifiedTransport = it },
+        )
+        return json.decodeFromJsonElement<AgentSettingsResponse>(body).copy(verifiedTransport = verifiedTransport)
+    }
+
+    override suspend fun submitAgentPermissionDecision(
+        hostBaseUrl: String,
+        token: String,
+        payload: Map<String, Any>,
+        pinnedCertificateSha256: String
+    ) {
+        val convId = payload["session_id"]?.toString()
+            ?: payload["conversation_id"]?.toString()
+            ?: "default"
+        val reqId = payload["request_id"]?.toString()
+            ?: payload["id"]?.toString()
+            ?: ""
+        val resolutionDecision = (payload["resolution"] as? Map<*, *>)?.get("decision")?.toString()?.lowercase()
+        val decisionStr = payload["decision"]?.toString()?.lowercase() ?: resolutionDecision
+        val allow = (payload["allow"] as? Boolean)
+            ?: (payload["approved"] as? Boolean)
+            ?: (decisionStr == "allow" || decisionStr == "approve" || decisionStr == "allow_once" || decisionStr == "allow_conversation")
+        val scope = payload["scope"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: if (decisionStr == "allow_conversation" || payload["remember_for_conversation"] == true) "session" else "once"
+        v2RespondPermission(
+            hostBaseUrl = hostBaseUrl,
+            token = token,
+            conversationId = convId,
+            requestId = reqId,
+            allow = allow,
+            scope = scope,
+            pinnedCertificateSha256 = pinnedCertificateSha256,
+        )
+    }
+
+    override suspend fun cancelAdmittedRemoteSubmission(
+        hostBaseUrl: String,
+        token: String,
+        identity: RemoteSubmissionIdentity,
+        pinnedCertificateSha256: String
+    ) {
+        v2CancelConversation(hostBaseUrl, token, identity.conversationId, pinnedCertificateSha256)
+    }
+
+    override suspend fun submitAgentDeviceToolResult(
+        hostBaseUrl: String,
+        token: String,
+        payload: Map<String, Any>,
+        pinnedCertificateSha256: String
+    ) {
+        val convId = payload["session_id"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: payload["conversation_id"]?.toString().orEmpty()
+        postV2Json(
+            hostBaseUrl,
+            token,
+            "chat/conversations/$convId/device-tool",
+            MobileCrypto.payloadJsonObject(payload),
+            pinnedCertificateSha256,
+        )
+    }
+
+    override suspend fun taskCancellationCommand(hostBaseUrl: String, token: String, request: JsonObject,
+        receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversationId"] as? JsonPrimitive)?.content.orEmpty()
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/cancel", request, pinnedCertificateSha256)
+    }
+
+    override suspend fun taskGuidanceCommand(hostBaseUrl: String, token: String, request: JsonObject,
+        receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversationId"] as? JsonPrimitive)?.content.orEmpty()
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/messages", request, pinnedCertificateSha256)
+    }
+
+    override fun streamAgentTaskEvents(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        afterCursor: Long,
+        pinnedCertificateSha256: String,
+    ): Flow<SseEvent> {
+        val query = if (afterCursor > 0L) "?afterCursor=$afterCursor" else ""
+        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId/tasks/events$query")
+        val useMobileCrypto = token.isNotBlank()
+        val headers = buildMap {
+            put("X-Nola-Client", "android")
+            put("Accept", "text/event-stream")
+            if (useMobileCrypto) {
+                putAll(mobileAuthHeaders(token, "GET", url))
+                put("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
+        }
+        return sseClient.streamGet(
+            url = url,
+            headers = headers,
+            mobileCryptoToken = token.takeIf { useMobileCrypto },
+            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
+        )
+    }
+
+    override suspend fun remoteSubmission(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject {
+        val convId = (request["conversationId"] as? JsonPrimitive)?.content
+            ?: ((request["identity"] as? JsonObject)?.get("conversation_id") as? JsonPrimitive)?.content
+            ?: ""
+        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId", pinnedCertificateSha256)
+    }
+
+    override suspend fun prepareToolPlan(hostBaseUrl: String, token: String, request: JsonObject,
+        pinnedCertificateSha256: String): JsonObject =
+        postV2Json(hostBaseUrl, token, "agent/tool-plan/prepare", request, pinnedCertificateSha256)
+
+    override fun streamBoundAgentRequest(
+        hostBaseUrl: String,
+        token: String,
+        submission: FrozenRemoteSubmission,
+        pinnedCertificateSha256: String,
+    ): Flow<SseEvent> {
+        val lastMessage = (submission.request["messages"] as? kotlinx.serialization.json.JsonArray)
+            ?.lastOrNull() as? JsonObject
+        val prompt = lastMessage
+            ?.get("content")
+            ?.let { (it as? JsonPrimitive)?.content }
+            .orEmpty()
+        val attachments = (submission.request["attachments"] as? kotlinx.serialization.json.JsonArray)
+            ?: (lastMessage?.get("attachments") as? kotlinx.serialization.json.JsonArray)
+        val modelId = (submission.request["modelId"] as? JsonPrimitive)?.content
+            ?: (submission.request["model_id"] as? JsonPrimitive)?.content
+            ?: ((submission.request["model_intent"] as? JsonObject)?.get("model_id") as? JsonPrimitive)?.content
+        val reasoningEffort = (submission.request["reasoningEffort"] as? JsonPrimitive)?.content
+            ?: (submission.request["reasoning_effort"] as? JsonPrimitive)?.content
+        val permissionProfile = (submission.request["permissionProfile"] as? JsonPrimitive)?.content
+            ?: (submission.request["permission_profile"] as? JsonPrimitive)?.content
+        val selectedExperts = submission.request["selected_experts"] as? kotlinx.serialization.json.JsonArray
+        val deviceBridge = submission.request["device_bridge"] as? JsonObject
+        return v2StreamMessage(
+            hostBaseUrl = hostBaseUrl,
+            token = token,
+            conversationId = submission.identity.conversationId,
+            content = prompt,
+            pinnedCertificateSha256 = pinnedCertificateSha256,
+            attachments = attachments,
+            modelId = modelId,
+            reasoningEffort = reasoningEffort,
+            permissionProfile = permissionProfile,
+            selectedExperts = selectedExperts,
+            deviceBridge = deviceBridge,
+        )
     }
 }
 
@@ -371,7 +670,8 @@ class WebHostStatusException(val statusCode: Int, val errorCode: String? = null,
     IllegalStateException("Web Host request failed ($statusCode)" + (errorCode?.let { ": $it" } ?: ""))
 
 internal fun boundedWebHostErrorCode(error: JsonObject): String? =
-    (error["code"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+    ((error["code"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        ?: (error["error"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content)
         ?.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,95}")) }
 
 /** Only bounded source identities are retained; arbitrary Host error text is never journaled. */
@@ -490,10 +790,13 @@ internal fun isAllowedWebHostTransport(raw: String): Boolean {
         (parts[0] == 169 && parts[1] == 254)
 }
 
-internal fun webHostMobileUrl(hostBaseUrl: String, path: String): String {
+internal fun webHostV2ApiUrl(hostBaseUrl: String, path: String): String {
     val base = normalizeWebHostBaseUrl(hostBaseUrl)
     return "$base/api/mobile/${path.trimStart('/')}"
 }
+
+internal fun webHostMobileUrl(hostBaseUrl: String, path: String): String =
+    webHostV2ApiUrl(hostBaseUrl, path)
 
 internal fun webHostControlPlaneUrl(hostBaseUrl: String, path: String): String? {
     val base = runCatching { URI(normalizeWebHostBaseUrl(hostBaseUrl)) }.getOrNull() ?: return null

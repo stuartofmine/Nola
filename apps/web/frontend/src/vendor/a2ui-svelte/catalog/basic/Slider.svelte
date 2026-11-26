@@ -73,8 +73,20 @@
 		color: var(--a2ui-color-text);
 		font-variant-numeric: tabular-nums;
 	}
-	input {
+	input[type='range'] {
 		accent-color: var(--a2ui-color-primary);
 		width: 100%;
+		border: none;
+		background: transparent;
+		padding: 0;
+		border-radius: 0;
+		box-shadow: none;
+		min-height: auto;
+		cursor: pointer;
+	}
+	input[type='range']:hover,
+	input[type='range']:focus {
+		border: none;
+		box-shadow: none;
 	}
 </style>

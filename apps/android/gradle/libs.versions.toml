@@ -15,10 +15,6 @@ activity = "1.9.1"
 core = "1.13.1"
 coroutines = "1.8.1"
 work = "2.9.1"
-firebase-bom = "33.1.2"
-credentials = "1.3.0"
-browser = "1.8.0"
-identity = "1.1.0"
 markwon = "4.6.2"
 health-connect = "1.1.0-alpha12"
 
@@ -76,16 +72,6 @@ work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref
 work-hilt = { group = "androidx.hilt", name = "hilt-work", version.ref = "hilt-navigation-compose" }
 work-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hilt-navigation-compose" }
 
-# Firebase
-firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebase-bom" }
-firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
-
-# Google Auth
-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
-googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "identity" }
-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
-
 # Markdown rendering
 markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
 markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version.ref = "markwon" }
@@ -109,4 +95,3 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-google-services = { id = "com.google.gms.google-services", version = "4.4.2" }

@@ -20,6 +20,8 @@ export type ModelPlan = Record<string, unknown> & { repository: string };
 export const targetContextTokens = 128 * 1024;
 type ContextLimitReason = 'target_met' | 'native_limit' | 'memory_budget' | 'metadata_unknown';
 export type ModelCandidate = {
+    id?: string;
+    quantization?: string;
     quantized?: boolean; targetContextTokens?: number; nativeContextTokens?: number | null;
     contextLimitReason?: ContextLimitReason;
     repository: string; revision: string; downloadBytes: number; variant?: string;
@@ -82,14 +84,23 @@ export type ModelDownload = {
     source: ModelSource;
     repository: string;
     plan?: ModelPlan;
-    status: 'downloading' | 'cancelling' | 'installed' | 'cancelled' | 'failed';
+    status: 'queued' | 'downloading' | 'verifying' | 'cancelling' | 'installed' | 'completed' | 'cancelled' | 'failed';
     downloadedBytes: number;
     totalBytes: number;
     error?: string;
 };
 
 export function downloadActive(job?: ModelDownload | null) {
-    return job?.status === 'downloading' || job?.status === 'cancelling';
+    return (
+        job?.status === 'queued' ||
+        job?.status === 'downloading' ||
+        job?.status === 'verifying' ||
+        job?.status === 'cancelling'
+    );
+}
+
+export function downloadSucceeded(job?: ModelDownload | null) {
+    return job?.status === 'installed' || job?.status === 'completed';
 }
 
 export const engineName = (engine: LocalEngine) => engine === 'vllm' ? 'vLLM' : 'llama.cpp';
@@ -132,7 +143,8 @@ export function parseDirectModelInput(raw: string): { repository: string; source
     return null;
 }
 
-export function cleanModelName(repository: string): string {
+export function cleanModelName(repository?: string | null): string {
+    if (!repository) return '';
     const tail = repository.split('/').pop() || repository;
     return tail
         .replace(/[-_.]?(?:GGUF|MLX|AWQ|GPTQ|EXL2|FP8|BF16|Q\d[_A-Z0-9]*)$/i, '')

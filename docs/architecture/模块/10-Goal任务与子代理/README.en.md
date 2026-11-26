@@ -14,11 +14,11 @@ Test two turns with the same expert, edit and resend across an expert turn, canc
 
 ## Implementation
 
-- [nola-application/src/goal_execution.rs](../../../../core/nola-application/src/goal_execution.rs)
-- [src/agent_room/submission.rs](../../../../core/nola-application/src/agent_room/submission.rs)
-- [nola-mobile-bindings/src/child_pump.rs](../../../../core/nola-mobile-bindings/src/child_pump.rs)
-- [nola-application/src/main_expert_selection.rs](../../../../core/nola-application/src/main_expert_selection.rs)
-- [nola-application/src/expert_peer_task.rs](../../../../core/nola-application/src/expert_peer_task.rs)
+- [nola-application/src/goal_execution.rs](../../../../crates/nola-modules/src/goals_sops.rs)
+- [src/agent_room/submission.rs](../../../../crates/nola-modules/src/rooms_peers.rs)
+- [nola-mobile-bindings/src/child_pump.rs](../../../../crates/nola-engine/src/subagents.rs)
+- [nola-application/src/main_expert_selection.rs](../../../../crates/nola-modules/src/rooms_peers.rs)
+- [nola-application/src/expert_peer_task.rs](../../../../crates/nola-modules/src/rooms_peers.rs)
 
 ## Detailed references
 

@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">置き換えられたレコード</string>
     <string name="chat_permission_mode">権限モード</string>
     <string name="chat_permission_mode_cautious">慎重</string>
+    <string name="chat_permission_mode_accept_edits">編集を自動許可</string>
     <string name="chat_permission_mode_allow_all">すべて許可</string>
     <string name="chat_permission_mode_cautious_detail">削除、上書き、機密データへのアクセス、外部送信、新規接続を確認します。通常の読み取りと新規作成は続行します。</string>
+    <string name="chat_permission_mode_accept_edits_detail">ワークスペース内のファイル編集を自動許可します。シェルコマンド、ワークスペース外への書き込み、外部送信、新規接続は確認します。</string>
     <string name="chat_permission_mode_allow_all_detail">この会話では Nola の確認を省略します。システム権限は引き続き必要です。</string>
     <string name="models_inference_test">モデルをテスト</string>
     <string name="models_inference_test_hint">このモデルの保存済みパラメータで独立したプロンプトを1回実行します。現在のチャットモデルや会話は変更されません。</string>
@@ -1479,4 +1481,23 @@
     <string name="permission_from_subagent">サブエージェント: %1$s</string>
     <string name="permission_queue_pending">%1$d 件中 1 件保留中</string>
     <string name="chat_response_failed_empty">応答に失敗しました。</string>
+    <string name="chat_v2_question_placeholder">回答を入力…</string>
+    <string name="chat_v2_question_skip">スキップ</string>
+    <string name="chat_v2_question_submit">送信</string>
+    <string name="chat_v2_ui_unavailable">対話 UI を利用できません</string>
+    <string name="chat_v2_ui_interaction_failed">操作に失敗しました</string>
+    <string name="chat_v2_context_compacted">コンテキストを圧縮しました</string>
+    <string name="chat_v2_context_compacted_range">コンテキストを圧縮しました（%1$s → %2$s トークン）</string>
+    <string name="chat_v2_context_compacted_after">コンテキストを圧縮しました（%1$s トークン）</string>
+    <string name="chat_v2_context_compaction_failed">コンテキストの圧縮に失敗しました</string>
+    <string name="chat_v2_branch_conversation">会話を分岐</string>
+    <string name="chat_v2_branch_failed">会話を分岐できませんでした</string>
+    <string name="chat_v2_workspace_review">ワークスペース差分レビュー</string>
+    <string name="chat_v2_workspace_review_empty">ワークスペースの変更は検出されませんでした</string>
+    <string name="chat_v2_workspace_review_host_required">ワークスペースの変更を確認するには Web Agent Host に接続してください</string>
+    <string name="chat_v2_workspace_review_staged">ステージ済みの差分</string>
+    <string name="chat_v2_workspace_review_unstaged">未ステージの差分</string>
+    <string name="chat_v2_workspace_review_files">ワークスペースファイル</string>
+    <string name="chat_v2_workspace_review_truncated">プレビューのため出力を省略しました</string>
+    <string name="chat_v2_edit_resend_failed">メッセージを編集して再送信できませんでした</string>
 </resources>

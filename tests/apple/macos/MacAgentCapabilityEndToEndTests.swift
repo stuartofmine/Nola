@@ -991,7 +991,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             deleteSessionAfterRun: false,
             modelID: model,
             apiKey: apiKey,
-            appEnvironment: appEnvironment,
+            appEnvironment: appEnvironment
         )
         XCTAssertTrue(firstEvents.contains { $0.kind == .toolStarted && $0.title == "Skill" })
         XCTAssertEqual(
@@ -1017,7 +1017,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             deleteSessionAfterRun: false,
             modelID: model,
             apiKey: apiKey,
-            appEnvironment: appEnvironment,
+            appEnvironment: appEnvironment
         )
         XCTAssertTrue(editedEvents.contains { $0.kind == .toolStarted && $0.title == "Skill" })
         XCTAssertEqual(
@@ -1044,7 +1044,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
             deleteSessionAfterRun: false,
             modelID: model,
             apiKey: apiKey,
-            appEnvironment: appEnvironment,
+            appEnvironment: appEnvironment
         )
         XCTAssertFalse(assistantText(disabledEvents).contains(editedMarker))
         XCTAssertFalse(
@@ -2154,7 +2154,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let databaseURL = workspace.appendingPathComponent("state/nola.db")
         let applicationPort = try MacApplicationPort(databaseURL: databaseURL)
         let canonicalRepository = MacCanonicalConversationRepository(
-            store: applicationPort,
+            store: applicationPort
         )
         _ = try canonicalRepository.restoreBackupSnapshot([MacStoredConversation(
                 conversation: MacConversation(
@@ -2237,7 +2237,7 @@ final class MacAgentCapabilityEndToEndTests: XCTestCase {
         let databaseURL = workspace.appendingPathComponent("state/nola.db")
         let applicationPort = try MacApplicationPort(databaseURL: databaseURL)
         let canonicalRepository = MacCanonicalConversationRepository(
-            store: applicationPort,
+            store: applicationPort
         )
         let originalText = "Project Aurora immutable original: Tokyo launch date is October 14; owner is Mina."
         _ = try canonicalRepository.restoreBackupSnapshot([MacStoredConversation(

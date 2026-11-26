@@ -142,7 +142,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Login.svelte",
                 "apps/web/frontend/src/lib/login.ts",
-                "apps/cli/src/web_parts/native_bridge.rs",
+                "crates/nola-app/src/web_server.rs",
                 "apps/web/frontend/src/pages/Settings.svelte",
                 "apps/web/frontend/src/lib/settingsSession.ts",
                 "apps/windows/src-tauri/src/main.rs"
@@ -291,7 +291,7 @@
             "sources": [
                 "apps/ios/UI/OnboardingView.swift",
                 "apps/web/frontend/src/pages/Login.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -409,7 +409,7 @@
             "sources": [
                 "apps/ios/UI/OnboardingView.swift",
                 "apps/web/frontend/src/pages/Login.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -1365,7 +1365,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1477,7 +1477,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1576,7 +1576,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1701,7 +1701,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1788,7 +1788,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1875,7 +1875,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -1969,7 +1969,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2056,7 +2056,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2149,7 +2149,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2237,7 +2237,7 @@
             ],
             "sources": [
                 "apps/macos/Features/Chat/MacRemoteRunRecovery.swift",
-                "apps/cli/src/core_agent_runtime.rs",
+                "crates/nola-engine/src/loop_runner.rs",
                 "docs/design/shared/HOST_CONNECTION_WORKFLOW.md"
             ],
             "states": [
@@ -2325,7 +2325,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2418,7 +2418,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2528,7 +2528,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2616,7 +2616,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2709,7 +2709,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2802,7 +2802,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2906,7 +2906,7 @@
             "sources": [
                 "apps/ios/UI/ModelsView.swift",
                 "apps/web/frontend/src/pages/ModelCenter.svelte",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -2998,8 +2998,7 @@
                 "cli"
             ],
             "sources": [
-                "apps/cli/src/model_acquisition/planning.rs",
-                "apps/cli/src/model_acquisition/modelfit.rs",
+                "crates/nola-modules/src/local_models_plugins.rs",
                 "apps/macos/UI/MacLocalModelManagerView.swift",
                 "apps/ios/UI/ModelsView.swift",
                 "apps/android/app/src/main/java/com/nola/ui/screen/models/ModelsScreen.kt",
@@ -4076,10 +4075,9 @@
                 "cli"
             ],
             "sources": [
-                "core/nola-skill-host/src/lib.rs",
+                "crates/nola-modules/src/skills.rs",
                 "apps/ios/Services/IOSGitHubSkillPackages.swift",
-                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
-                "apps/cli/src/github_skills.rs"
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt"
             ],
             "states": [
                 {
@@ -4249,10 +4247,9 @@
                 "android"
             ],
             "sources": [
-                "core/nola-skill-host/src/lib.rs",
+                "crates/nola-modules/src/skills.rs",
                 "apps/ios/Services/IOSGitHubSkillPackages.swift",
-                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt",
-                "apps/cli/src/github_skills.rs"
+                "apps/android/app/src/main/java/com/nola/core/AndroidAgentHostExecutor.kt"
             ],
             "states": [
                 {
@@ -4427,7 +4424,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -4535,7 +4532,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -4627,7 +4624,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -4730,7 +4727,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -4855,7 +4852,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -4938,7 +4935,7 @@
             "sources": [
                 "apps/web/frontend/src/pages/Capabilities.svelte",
                 "apps/macos/Services/MacBuiltInSkillRegistry.swift",
-                "apps/cli/src/config.rs"
+                "crates/nola-app/src/config.rs"
             ],
             "states": [
                 {
@@ -7512,7 +7509,7 @@
                 "cli"
             ],
             "sources": [
-                "apps/cli/src/harness_plugin.rs"
+                "crates/nola-modules/src/local_models_plugins.rs"
             ],
             "states": [
                 {
@@ -7990,6 +7987,14 @@
         ],
         "/plugin-page": [
             "harness-plugins"
+        ],
+        "/automations": [
+            "plans",
+            "event-wait"
+        ],
+        "/experts": [
+            "experts",
+            "room"
         ]
     }
 }

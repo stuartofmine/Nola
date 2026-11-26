@@ -34,12 +34,12 @@ launch_failed 与 admitted 后运行失败不同；准入结果未知先按原�
 
 ## 源码与验证
 
-- [Domain spec 与执行绑定](../../../../core/nola-domain/src/automation_execution.rs)
-- [Application 定义/发生命令](../../../../core/nola-application/src/automation.rs)
-- [执行准入](../../../../core/nola-application/src/automation_execution.rs)
-- [发生时间查询](../../../../core/nola-application/src/automation_occurrence.rs)
-- [Store 执行记录](../../../../core/nola-store/src/automation_execution_store.rs)
-- [CLI schedule adapter](../../../../apps/cli/src/store/schedule.rs)
+- [Domain spec 与执行绑定](../../../../crates/nola-types/src/modules.rs)
+- [Application 定义/发生命令](../../../../crates/nola-modules/src/automations_messaging.rs)
+- [执行准入](../../../../crates/nola-modules/src/automations_messaging.rs)
+- [发生时间查询](../../../../crates/nola-modules/src/scheduler.rs)
+- [Store 执行记录](../../../../crates/nola-store/src/db.rs)
+- [CLI schedule adapter](../../../../crates/nola-modules/src/scheduler.rs)
 
 验收区分字段往返/CAS、时区/DST、重复 occurrence、领取/续租、崩溃前后准入、terminal 核对、通知和各端实际交互。不得使用用户计划或个人凭据作 fixture。本文只做源码核对，不添加真实模型或后台真机通过声明。
 

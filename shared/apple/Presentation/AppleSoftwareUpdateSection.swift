@@ -45,10 +45,21 @@ nonisolated enum AppleSoftwareUpdateClient {
         "macos-x86_64"
         #endif
     }
-    static func call<T: Decodable & Sendable>(_ operation: String, id: String? = nil, directory: URL? = nil) async throws -> T {
+    static func call<T: Decodable & Sendable>(
+        _ operation: String,
+        id: String? = nil,
+        directory: URL? = nil,
+        url: String? = nil,
+        sha256: String? = nil
+    ) async throws -> T {
         var request: [String: String] = ["operation": operation, "target": target]
         if let id { request["expected_release_id"] = id }
-        if let directory { request["directory"] = directory.path }
+        if let url { request["url"] = url }
+        if let sha256 { request["sha256"] = sha256 }
+        if let directory {
+            request["directory"] = directory.path
+            request["dest_dir"] = directory.path
+        }
         let input = try JSONSerialization.data(withJSONObject: request)
         let output = try await Task.detached(priority: .utility) {
             try input.withUnsafeBytes { bytes -> Data in
@@ -80,7 +91,8 @@ struct AppleSoftwareUpdateSection: View {
             Text("softwareUpdate.title").font(.headline)
             if let snapshot {
                 Text("Nola \(snapshot.current_version) (\(snapshot.current_build))").font(.subheadline)
-                Text(String(localized: String.LocalizationValue("softwareUpdate.status." + snapshot.status))).foregroundStyle(.secondary)
+                let normalizedStatus = snapshot.status == "unconfigured" ? "disabled" : snapshot.status
+                Text(String(localized: String.LocalizationValue("softwareUpdate.status." + normalizedStatus))).foregroundStyle(.secondary)
                 if let release = snapshot.release {
                     Text("\(release.version) (\(release.build))").font(.subheadline.weight(.medium))
                     if !release.notes.isEmpty { Text(release.notes).textSelection(.enabled) }
@@ -96,7 +108,7 @@ struct AppleSoftwareUpdateSection: View {
             if busy { ProgressView().controlSize(.small).accessibilityLabel(Text("softwareUpdate.working")) }
             if let failure {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("softwareUpdate.failed").foregroundStyle(.red)
+                    Text("softwareUpdate.failed").foregroundStyle(Color("NolaDanger"))
                     Text(failure).font(.caption).textSelection(.enabled)
                 }.accessibilityElement(children: .combine)
             }
@@ -141,7 +153,13 @@ struct AppleSoftwareUpdateSection: View {
                 struct Download: Decodable, Sendable { let path: String }
                 let directory = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                     .appendingPathComponent("Nola/SoftwareUpdates/\(UUID().uuidString)", isDirectory: true)
-                let result: Download = try await AppleSoftwareUpdateClient.call("download", id: release.release_id, directory: directory)
+                let result: Download = try await AppleSoftwareUpdateClient.call(
+                    "download",
+                    id: release.release_id,
+                    directory: directory,
+                    url: release.artifact.url,
+                    sha256: release.artifact.sha256
+                )
                 try Task.checkCancellation()
                 let url = URL(fileURLWithPath: result.path)
                 // Mark this as an internet download so the normal macOS security

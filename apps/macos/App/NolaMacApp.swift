@@ -200,12 +200,12 @@ struct NolaMacApp: App {
         }
         if CommandLine.arguments.contains("--nola-background-scheduler-tick") {
             NSApplication.shared.setActivationPolicy(.prohibited)
-            guard let hostURL = Bundle.main.url(forAuxiliaryExecutable: "nola-agent-host") else {
+            guard let hostURL = Bundle.main.url(forAuxiliaryExecutable: "nola-runtime") else {
                 exit(127)
             }
             let process = Process()
             process.executableURL = hostURL
-            process.arguments = ["--background-scheduler-tick"]
+            process.arguments = ["scheduler", "tick"]
             process.environment = MacAppEnvironment.shared.launchAgentEnvironment(
                 projectURL: MacAppEnvironment.shared.scratchWorkspaceURL
             )

@@ -15,13 +15,14 @@
     let editing = $state(false), editRecord = $state<MemoryRecord>();
     let editorOpener: HTMLButtonElement | undefined;
     function edit(record: MemoryRecord | undefined, opener: HTMLButtonElement) {
-        if (loading || removing || editing) return;
+        if (loading || removing || promoting || editing) return;
         editRecord = record ? $state.snapshot(record) : undefined; editorOpener = opener; editing = true;
     }
     async function closeEditor() {editing = false; await tick(); if (disposed || !pageLocation.active()) return; if (editorOpener?.isConnected) editorOpener.focus(); else refreshButton?.focus();}
     let confirmation: ConfirmationDialog;
     let refreshButton = $state<HTMLButtonElement>();
     let removing = $state(false), deletionFailed = $state(false);
+    let promoting = $state(false), promotionFailed = $state(false);
     import type { MemoryRecord } from '../lib/memoryCenter';
     let records = $state<MemoryRecord[]>([]), query = $state('');
     let loading = $state(false), failed = $state(false), loaded = $state(false);
@@ -37,8 +38,20 @@
         finally {if (!disposed) loading = false;}
     }
     onMount(() => {void load(); return () => {disposed = true; controller?.abort();};});
+    async function promote(record: MemoryRecord) {
+        if (promoting || removing || loading || editing || record.scope === 'global') return;
+        promoting = true; promotionFailed = false;
+        try {
+            await api('/api/memory', {method: 'POST', body: JSON.stringify({operation: 'promote', id: record.id})});
+            if (!disposed) await load();
+        } catch {
+            if (!disposed) promotionFailed = true;
+        } finally {
+            if (!disposed) promoting = false;
+        }
+    }
     async function remove(id: string, opener: HTMLButtonElement) {
-        if (removing || loading || !records.some(record => record.id === id)) return;
+        if (removing || promoting || loading || !records.some(record => record.id === id)) return;
         removing = true; deletionFailed = false;
         try {
             const approved = await confirmation.ask({title: t($locale, 'memoryCenter.delete'), description: t($locale, 'memoryCenter.deleteBody'), confirmLabel: t($locale, 'memoryCenter.delete'), destructive: true});
@@ -59,17 +72,25 @@
         }
     }
 </script>
-<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return;if (removing) {event.preventDefault(); event.returnValue = '';}}} />
+<svelte:window onbeforeunload={event => { if (!acceptsWorkspaceUnload(event)) return;if (removing || promoting) {event.preventDefault(); event.returnValue = '';}}} />
 <ConfirmationDialog bind:this={confirmation} />
 {#if editing}<MemoryEditor record={editRecord} onclose={closeEditor} onrefresh={load} />{/if}
-<section class="memory-center card" aria-busy={loading}>
-    <div class="row memory-actions"><RefreshButton bind:element={refreshButton} disabled={removing} {loading} refresh={load} /></div>
-    <p class="muted">{t($locale, 'memoryCenter.hint')}</p>
-    <button disabled={loading || removing || editing || !loaded} onclick={event => edit(undefined, event.currentTarget)}>{t($locale, 'memoryCenter.create')}</button>
+<section class="memory-center card" aria-busy={loading || promoting}>
+    <header class="memory-header">
+        <div class="memory-heading">
+            <h2>{t($locale, 'memoryCenter.title')}</h2>
+            <p class="muted">{t($locale, 'memoryCenter.hint')}</p>
+        </div>
+        <div class="memory-actions">
+            <button type="button" class="primary" disabled={loading || removing || promoting || editing || !loaded} onclick={event => edit(undefined, event.currentTarget)}>{t($locale, 'memoryCenter.create')}</button>
+            <RefreshButton bind:element={refreshButton} disabled={removing || promoting} {loading} refresh={load} />
+        </div>
+    </header>
     <label>{t($locale, 'memoryCenter.search')}<input type="search" bind:value={query} /></label>
     {#if loading && !loaded}<p role="status">{t($locale, 'memoryCenter.loading')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'memoryCenter.failed')}{#if loaded} {t($locale, 'data_sources.stale')}{/if}</p>{/if}
     {#if deletionFailed}<p role="alert" class="error">{t($locale, 'memoryCenter.deleteFailed')}</p>{/if}
+    {#if promotionFailed}<p role="alert" class="error">{t($locale, 'memoryCenter.promoteFailed')}</p>{/if}
     {#if loaded}
         <p class="muted">{t($locale, 'memoryCenter.limit')}</p>
         {#each visible as {record, superseded} (record.id)}
@@ -79,15 +100,21 @@
                 <p class="muted">{t($locale, 'memoryCenter.source')}: {record.source} · {t($locale, 'memoryCenter.confidence')}: {new Intl.NumberFormat($locale, {style: 'percent', maximumFractionDigits: 0}).format(record.confidence)}</p>
                 {#if record.tags.length}<p class="muted">{record.tags.join(' · ')}</p>{/if}
                 <div class="actions">
-                    <button disabled={loading || removing || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
-                    <button class="danger" disabled={loading || removing} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
+                    {#if record.scope !== 'global'}
+                        <button type="button" disabled={loading || removing || promoting || editing} onclick={() => void promote(record)}>{t($locale, 'memoryCenter.promote')}</button>
+                    {/if}
+                    <button type="button" disabled={loading || removing || promoting || editing} onclick={event => edit(record, event.currentTarget)}>{t($locale, 'memoryCenter.revise')}</button>
+                    <button type="button" class="danger" disabled={loading || removing || promoting} onclick={event => remove(record.id, event.currentTarget)}>{t($locale, 'memoryCenter.delete')}</button>
                 </div>
             </article>
         {:else}<p role="status">{t($locale, 'memoryCenter.empty')}</p>{/each}
     {/if}
 </section>
 <style>
-    .memory-actions { justify-content: flex-end; }
+    .memory-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; }
+    .memory-heading { display: grid; gap: 4px; flex: 1 1 240px; min-width: 0; }
+    .memory-heading h2 { margin: 0; font-size: 1.0625rem; }
+    .memory-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex-shrink: 0; }
     section, article, label { display: grid; gap: 12px; min-width: 0; }
     input { width: 100%; min-width: 0; box-sizing: border-box; }
     section { overflow-wrap: anywhere; }

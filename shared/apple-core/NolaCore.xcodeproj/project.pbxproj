@@ -22,13 +22,13 @@
 
 /* Begin PBXBuildFile section */
 		C00000000000000000000001 /* NolaCore.c in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000004 /* NolaCore.c */; };
-		C00000000000000000000002 /* ../../core/swift_shims/nola_core.h in Headers */ = {isa = PBXBuildFile; fileRef = C00000000000000000000005 /* ../../core/swift_shims/nola_core.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		C00000000000000000000002 /* ../../crates/nola-app/include/nola_core.h in Headers */ = {isa = PBXBuildFile; fileRef = C00000000000000000000005 /* ../../crates/nola-app/include/nola_core.h */; settings = {ATTRIBUTES = (Public, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		C00000000000000000000003 /* NolaCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = NolaCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000004 /* NolaCore.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = NolaCore.c; sourceTree = "<group>"; };
-		C00000000000000000000005 /* ../../core/swift_shims/nola_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../../core/swift_shims/nola_core.h; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000005 /* ../../crates/nola-app/include/nola_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../../crates/nola-app/include/nola_core.h; sourceTree = SOURCE_ROOT; };
 		C00000000000000000000006 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		C00000000000000000000042 /* Cargo.toml */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.toml; path = ../../Cargo.toml; sourceTree = SOURCE_ROOT; };
 		C00000000000000000000043 /* Cargo.lock */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.lock; path = ../../Cargo.lock; sourceTree = SOURCE_ROOT; };
@@ -36,8 +36,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		C00000000000000000000040 /* Core Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = "Core Sources"; path = ../../core; sourceTree = SOURCE_ROOT; };
-		C00000000000000000000041 /* Runtime Host Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = "Runtime Host Sources"; path = ../../apps/cli/src; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000040 /* Core Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = "Core Sources"; path = ../../crates; sourceTree = SOURCE_ROOT; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,10 +54,9 @@
 			isa = PBXGroup;
 			children = (
 				C00000000000000000000040 /* Core Sources */,
-				C00000000000000000000041 /* Runtime Host Sources */,
 				C00000000000000000000045 /* Build Support */,
 				C00000000000000000000004 /* NolaCore.c */,
-				C00000000000000000000005 /* ../../core/swift_shims/nola_core.h */,
+				C00000000000000000000005 /* ../../crates/nola-app/include/nola_core.h */,
 				C00000000000000000000006 /* module.modulemap */,
 				C00000000000000000000009 /* Products */,
 			);
@@ -89,7 +87,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C00000000000000000000002 /* ../../core/swift_shims/nola_core.h in Headers */,
+				C00000000000000000000002 /* ../../crates/nola-app/include/nola_core.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -164,10 +162,10 @@
 				"$(SRCROOT)/../../release/update-source.json",
 				"$(SRCROOT)/../../third_party/a2ui/spec",
 				"$(SRCROOT)/../../Cargo.toml",
-				"$(SRCROOT)/../../core/Cargo.toml",
-				"$(SRCROOT)/../../core/nola-mobile-bindings/Cargo.toml",
-				"$(SRCROOT)/../../core/swift_shims/nola_core.h",
+				"$(SRCROOT)/../../crates/nola-app/Cargo.toml",
+				"$(SRCROOT)/../../crates/nola-app/include/nola_core.h",
 				"$(SRCROOT)/../../rust-toolchain.toml",
+				"$(SRCROOT)/../../scripts/build_apple_core.sh",
 				"$(SRCROOT)/../../scripts/lib/rust_build_cache.sh",
 			);
 			name = "Build Rust Core";
@@ -179,7 +177,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "NOLA_DEPENDENCY_FILE=\"${DERIVED_FILE_DIR}/nola_core/nola_core_inputs.d\" \"${SRCROOT}/../../core/scripts/build_xcframework.sh\" --xcode-target\n";
+			shellScript = "NOLA_DEPENDENCY_FILE=\"${DERIVED_FILE_DIR}/nola_core/nola_core_inputs.d\" \"${SRCROOT}/../../scripts/build_apple_core.sh\"\n";
 		};
 		C0000000000000000000000E /* Build Runtime Products */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -194,13 +192,8 @@
 				"$(SRCROOT)/../../Cargo.lock",
 				"$(SRCROOT)/../../release/update-source.json",
 				"$(SRCROOT)/../../third_party/a2ui/spec",
-				"$(SRCROOT)/../../apps/cli/Cargo.toml",
-				"$(SRCROOT)/../../apps/cli/build.rs",
+				"$(SRCROOT)/../../crates",
 				"$(SRCROOT)/../../rust-toolchain.toml",
-				"$(SRCROOT)/../../apps/cli/src",
-				"$(SRCROOT)/../../apps/cli/vendor",
-				"$(SRCROOT)/../../core",
-				"$(SRCROOT)/../../core/nola-service/Cargo.toml",
 				"$(SRCROOT)/../../apps/macos/Resources/NolaBuiltInSkills.bundle",
 				"$(SRCROOT)/../../apps/macos/Resources/com.gaojc.Nola.background-scheduler.plist",
 				"$(SRCROOT)/../../scripts/build_mac_runtime.sh",
@@ -211,10 +204,8 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host.nola-staging",
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service.nola-staging",
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host",
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola.nola-staging",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola",
 				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/com.gaojc.Nola.background-scheduler.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -362,7 +353,7 @@
 				DEFINES_MODULE = YES;
 				ENABLE_MODULE_VERIFIER = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/nola-app/include";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACH_O_TYPE = staticlib;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
@@ -391,7 +382,7 @@
 				ENABLE_MODULE_VERIFIER = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/nola-app/include";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACH_O_TYPE = staticlib;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
@@ -419,7 +410,7 @@
 				DEFINES_MODULE = YES;
 				ENABLE_MODULE_VERIFIER = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/swift_shims";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/nola-app/include";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACH_O_TYPE = staticlib;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;

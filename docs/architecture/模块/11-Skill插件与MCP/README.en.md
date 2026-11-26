@@ -14,11 +14,11 @@ Test a repository containing multiple Skills, refusal of installation, disconnec
 
 ## Implementation
 
-- [nola-application/src/skill.rs](../../../../core/nola-application/src/skill.rs)
-- [nola-application/src/mcp.rs](../../../../core/nola-application/src/mcp.rs)
-- [nola-mcp-host/src/lib.rs](../../../../core/nola-mcp-host/src/lib.rs)
-- [nola-skill-host/src/lib.rs](../../../../core/nola-skill-host/src/lib.rs)
-- [cli/src/harness_plugin.rs](../../../../apps/cli/src/harness_plugin.rs)
+- [nola-application/src/skill.rs](../../../../crates/nola-modules/src/skills.rs)
+- [nola-application/src/mcp.rs](../../../../crates/nola-mcp/src/lib.rs)
+- [nola-mcp-host/src/lib.rs](../../../../crates/nola-mcp/src/lib.rs)
+- [nola-skill-host/src/lib.rs](../../../../crates/nola-modules/src/skills.rs)
+- [cli/src/harness_plugin.rs](../../../../crates/nola-modules/src/local_models_plugins.rs)
 
 ## Detailed references
 

@@ -20,6 +20,6 @@
 
 ## 实现与目标
 
-当前路径：[Room 用例](../../../../core/nola-application/src/agent_room.rs)、[submission/routing](../../../../core/nola-application/src/agent_room/submission.rs)、[分派契约](../10-Goal任务与子代理/ROOM_DISPATCH.md)。产品目标见[统一对话与可保存 Agent](../../../design/shared/MULTI_AGENT_NAVIGATION.md)。
+当前路径：[Room 用例](../../../../crates/nola-modules/src/rooms_peers.rs)、[submission/routing](../../../../crates/nola-modules/src/rooms_peers.rs)、[分派契约](../10-Goal任务与子代理/ROOM_DISPATCH.md)。产品目标见[统一对话与可保存 Agent](../../../design/shared/MULTI_AGENT_NAVIGATION.md)。
 
 “删除独立 Room 产品入口”不能被当成已删除所有底层 Room 类型/发送协议的证明，也不要求维护新的旧入口兼容层。相应调用者调整必须与实际实现一起完成，不改写用户数据。当前静态接线、隔离测试、真实模型分派和各端操作需要分别提供证据。

@@ -4,11 +4,14 @@ import { createServer } from 'vite';
 import {
     StreamingMarkdownCache,
     findMarkdownSearchMatches,
+    highlightCode,
     indexMarkdownBlocks,
+    languageFromPath,
     markdownHref,
     markdownPlainText,
     nodeSearchMatches,
     parseMarkdown,
+    renderMathExpression,
 } from './markdown.ts';
 import type { InlineNode, MarkdownBlock } from './markdown.ts';
 import type { Locale } from './i18n.ts';
@@ -379,4 +382,171 @@ test('streaming a 200-paragraph document reuses frozen prefix blocks in O(tail) 
         cache.totalParsedChars < fullDocument.length * 4,
         `Expected linear total parsed chars (< ${fullDocument.length * 4}), got ${cache.totalParsedChars}`,
     );
+});
+
+test('highlightCode supports all mainstream languages, unified diff, and languageFromPath', () => {
+    const rust = highlightCode('#[derive(Debug)]\npub fn main() -> Result<i32, String> { let x: &\'static str = "hi"; println!("{}", 42); }', 'rust');
+    assert.ok(rust.includes('<span class="tok-meta">#[derive(Debug)]</span>'));
+    assert.ok(rust.includes('<span class="tok-kw">pub</span>'));
+    assert.ok(rust.includes('<span class="tok-type">Result</span>'));
+    assert.ok(rust.includes('<span class="tok-meta">&#39;static</span>'));
+    assert.ok(rust.includes('<span class="tok-meta">println!</span>'));
+    assert.ok(rust.includes('<span class="tok-num">42</span>'));
+
+    const ts = highlightCode('export const count: number = 3; // note\nconst s = `hi`;', 'ts');
+    assert.ok(ts.includes('<span class="tok-kw">export</span>'));
+    assert.ok(ts.includes('<span class="tok-type">number</span>'));
+    assert.ok(ts.includes('<span class="tok-cmt">// note</span>'));
+    assert.ok(ts.includes('<span class="tok-str">`hi`</span>'));
+
+    const py = highlightCode('@cache\ndef fib(n: int) -> int:\n    return n # done', 'python');
+    assert.ok(py.includes('<span class="tok-meta">@cache</span>'));
+    assert.ok(py.includes('<span class="tok-kw">def</span>'));
+    assert.ok(py.includes('<span class="tok-type">int</span>'));
+    assert.ok(py.includes('<span class="tok-cmt"># done</span>'));
+
+    const swift = highlightCode('@MainActor\nstruct Card: View { let n: Int = 1 }', 'swift');
+    assert.ok(swift.includes('<span class="tok-meta">@MainActor</span>'));
+    assert.ok(swift.includes('<span class="tok-kw">struct</span>'));
+    assert.ok(swift.includes('<span class="tok-type">Int</span>'));
+
+    const kt = highlightCode('@Composable\nfun Row(x: Int) { val ok = true }', 'kotlin');
+    assert.ok(kt.includes('<span class="tok-meta">@Composable</span>'));
+    assert.ok(kt.includes('<span class="tok-kw">fun</span>'));
+    assert.ok(kt.includes('<span class="tok-kw">val</span>'));
+
+    const go = highlightCode('func add(a int) string { return "ok" }', 'go');
+    assert.ok(go.includes('<span class="tok-kw">func</span>'));
+    assert.ok(go.includes('<span class="tok-type">string</span>'));
+
+    const json = highlightCode('{"enabled": true, "count": 7, "name": "nola"}', 'json');
+    assert.ok(json.includes('<span class="tok-key">&quot;enabled&quot;</span>'));
+    assert.ok(json.includes('<span class="tok-kw">true</span>'));
+    assert.ok(json.includes('<span class="tok-num">7</span>'));
+    assert.ok(json.includes('<span class="tok-str">&quot;nola&quot;</span>'));
+
+    const yaml = highlightCode('---\nport: 8080 # server\nenabled: true', 'yaml');
+    assert.ok(yaml.includes('<span class="tok-meta">---</span>'));
+    assert.ok(yaml.includes('<span class="tok-key">port</span>'));
+    assert.ok(yaml.includes('<span class="tok-num">8080</span>'));
+    assert.ok(yaml.includes('<span class="tok-cmt"># server</span>'));
+
+    const bash = highlightCode('export FOO="bar"\nif [ "$FOO" ]; then echo $HOME; fi', 'bash');
+    assert.ok(bash.includes('<span class="tok-kw">export</span>'));
+    assert.ok(bash.includes('<span class="tok-var">FOO</span>'));
+    assert.ok(bash.includes('<span class="tok-var">$HOME</span>'));
+
+    const sql = highlightCode('SELECT id, name FROM users WHERE active = TRUE; -- filter', 'sql');
+    assert.ok(sql.includes('<span class="tok-kw">SELECT</span>'));
+    assert.ok(sql.includes('<span class="tok-kw">WHERE</span>'));
+    assert.ok(sql.includes('<span class="tok-cmt">-- filter</span>'));
+
+    const css = highlightCode('@media (min-width: 760px) { .card { color: #ff00aa; --gap: 12px; } }', 'css');
+    assert.ok(css.includes('<span class="tok-kw">@media</span>'));
+    assert.ok(css.includes('<span class="tok-attr">color</span>'));
+    assert.ok(css.includes('<span class="tok-num">#ff00aa</span>'));
+    assert.ok(css.includes('<span class="tok-var">--gap</span>'));
+
+    const diff = highlightCode('diff --git a/a.rs b/a.rs\n@@ -1,2 +1,2 @@\n-let a = 1;\n+let a = 2;\n ctx', 'diff');
+    assert.ok(diff.includes('<span class="tok-meta">diff --git a/a.rs b/a.rs</span>'));
+    assert.ok(diff.includes('<span class="tok-hunk">@@ -1,2 +1,2 @@</span>'));
+    assert.ok(diff.includes('<span class="tok-del">-let a = 1;</span>'));
+    assert.ok(diff.includes('<span class="tok-add">+let a = 2;</span>'));
+
+    assert.equal(languageFromPath('src/lib/markdown.ts'), 'ts');
+    assert.equal(languageFromPath('core/src/lib.rs'), 'rust');
+    assert.equal(languageFromPath('README'), '');
+});
+
+test('highlightCode escapes all HTML across every language and Markdown renders highlighted blocks safely', () => {
+    const payload = '<img src=x onerror="alert(1)"> & \'<script>evil()</script>\'';
+    for (const lang of ['rust', 'ts', 'python', 'swift', 'kotlin', 'go', 'json', 'yaml', 'bash', 'sql', 'html', 'css', 'diff', 'unknown', '']) {
+        const rendered = highlightCode(payload, lang);
+        assert.ok(!rendered.includes('<img'), `unescaped <img in ${lang}`);
+        assert.ok(!rendered.includes('<script'), `unescaped <script in ${lang}`);
+        assert.ok(rendered.includes('&lt;'), `missing &lt; escape in ${lang}`);
+        assert.ok(rendered.includes('&amp;'), `missing &amp; escape in ${lang}`);
+    }
+
+    const renderedMarkdown = html('```rust\nlet x = "<script>alert(1)</script>";\n```');
+    assert.ok(renderedMarkdown.includes('class="tok-kw"'));
+    assert.ok(renderedMarkdown.includes('class="tok-str"'));
+    assert.ok(!renderedMarkdown.includes('<script>'));
+});
+
+test('renderMathExpression formats Greek letters, operators, fractions, radicals, scripts, and escapes HTML', () => {
+    const quadratic = renderMathExpression('\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}');
+    assert.ok(quadratic.includes('class="math-frac"'));
+    assert.ok(quadratic.includes('±'));
+    assert.ok(quadratic.includes('class="math-sqrt"'));
+    assert.ok(quadratic.includes('b<sup>2</sup>'));
+
+    const symbols = renderMathExpression('\\forall x \\in \\mathbb{R}, \\alpha + \\Omega \\le \\infty \\Rightarrow \\nabla f \\neq 0 \\land \\partial_t \\sum_{i=1}^{n} \\prod \\int \\approx \\cdot \\times \\ge \\to \\exists');
+    for (const ch of ['∀', '∈', 'ℝ', 'α', 'Ω', '≤', '∞', '⇒', '∇', '≠', '∂', '∑', '∏', '∫', '≈', '·', '×', '≥', '→', '∃']) {
+        assert.ok(symbols.includes(ch), `missing symbol ${ch} in ${symbols}`);
+    }
+    assert.ok(symbols.includes('<sub>i=1</sub>'));
+    assert.ok(symbols.includes('<sup>n</sup>'));
+
+    const xss = renderMathExpression('\\frac{<script>alert(1)</script>}{<img src=x onerror=evil()>}^{"a&b"}');
+    assert.ok(!xss.includes('<script>'));
+    assert.ok(!xss.includes('<img'));
+    assert.ok(xss.includes('&lt;script&gt;'));
+    assert.ok(xss.includes('&lt;img'));
+    assert.ok(xss.includes('&amp;'));
+});
+
+test('Markdown renders inline and display LaTeX while ignoring currency and code blocks', () => {
+    const src = [
+        'Inline energy $E = mc^2$ and subscript $x_1 + x_2 = \\alpha$ work.',
+        '',
+        'Prices like $5 and $10 or $5-$10 or $19.99 stay plain text.',
+        '',
+        'Code spans `$x^2 + \\alpha$` stay literal.',
+        '',
+        '```tex',
+        '$$\\frac{1}{2}$$ and $x^2$',
+        '```',
+        '',
+        '$$',
+        '\\sum_{i=1}^{\\infty} \\frac{1}{i^2} = \\frac{\\pi^2}{6}',
+        '$$',
+    ].join('\n');
+
+    const blocks = parseMarkdown(src);
+    assert.equal(blocks[0].kind, 'paragraph');
+    if (blocks[0].kind === 'paragraph') {
+        const mathNodes = blocks[0].children.filter((n): n is { kind: 'math'; text: string } => n.kind === 'math');
+        assert.equal(mathNodes.length, 2);
+        assert.equal(mathNodes[0].text, 'E = mc^2');
+        assert.equal(mathNodes[1].text, 'x_1 + x_2 = \\alpha');
+    }
+    assert.equal(blocks[1].kind, 'paragraph');
+    if (blocks[1].kind === 'paragraph') {
+        assert.equal(blocks[1].children.some(n => n.kind === 'math'), false);
+    }
+    assert.equal(blocks[2].kind, 'paragraph');
+    if (blocks[2].kind === 'paragraph') {
+        assert.equal(blocks[2].children.some(n => n.kind === 'math'), false);
+        assert.ok(blocks[2].children.some(n => n.kind === 'code' && n.text === '$x^2 + \\alpha$'));
+    }
+    assert.equal(blocks[3].kind, 'code');
+    assert.equal(blocks[4].kind, 'math');
+
+    const rendered = html(src);
+    assert.equal((rendered.match(/class="[^"]*\bmath-inline\b[^"]*"/g) ?? []).length, 2);
+    assert.equal((rendered.match(/class="[^"]*\bmath-block\b[^"]*"/g) ?? []).length, 1);
+    assert.ok(rendered.includes('E = mc<sup>2</sup>'));
+    assert.ok(rendered.includes('Prices like $5 and $10 or $5-$10 or $19.99 stay plain text.'));
+    assert.match(rendered, /<code\b[^>]*>\$x\^2 \+ \\alpha\$<\/code>/);
+    assert.ok(rendered.includes('class="math-frac"'));
+    assert.ok(rendered.includes('π<sup>2</sup>'));
+
+    // Streaming cache equivalence with inline and display math.
+    const cache = new StreamingMarkdownCache();
+    for (let i = 0; i <= src.length; i += 3) {
+        const partial = src.slice(0, i);
+        assert.deepEqual(cache.update(partial).blocks, parseMarkdown(partial), `math streaming mismatch at ${i}`);
+    }
+    assert.deepEqual(cache.update(src).blocks, parseMarkdown(src));
 });

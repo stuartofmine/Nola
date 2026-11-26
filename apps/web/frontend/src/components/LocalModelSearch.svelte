@@ -12,7 +12,7 @@
     import { latestRequest } from '../lib/latestRequest';
     import { t, locale } from '../lib/i18n';
     import {
-        downloadActive, engineName, sourceName, modelByteSize, modelMemorySize,
+        downloadActive, downloadSucceeded, engineName, sourceName, modelByteSize, modelMemorySize,
         targetContextTokens, contextLimitation, repositoryUrl, unslothQuantization,
         parseDirectModelInput, cleanModelName, formatUnifiedGb, modelFitLevel, formatEta,
         type LocalEngine, type ModelDownload, type ModelSource
@@ -234,7 +234,7 @@
 </script>
 
 <section class="acquisition" aria-label={t($locale, 'local.find')}>
-    {#if job && job.status !== 'installed'}
+    {#if job && !downloadSucceeded(job)}
         <div class="download-banner" aria-live="polite">
             <div class="download-head">
                 <div class="download-title">
@@ -313,7 +313,7 @@
         {#if results.length}
             <p class="context-target">{t($locale, 'local.contextTarget', {tokens: targetContextTokens.toLocaleString($locale)})}</p>
             <ul class="candidate-list">
-                {#each results as candidate (candidate.repository)}
+                {#each results as candidate (candidate.id || `${candidate.repository}:${candidate.quantization ?? candidate.variant ?? ''}`)}
                     {@const limitation = contextLimitation(candidate)}
                     {@const edition = unslothQuantization(candidate)}
                     {@const fit = modelFitLevel(candidate, hardware)}
@@ -345,7 +345,7 @@
                                 </div>
                             </details>
                         </div>
-                        <button class="primary download-btn" disabled={!canStart} aria-label={t($locale, 'local.confirmDownload') + ' · ' + candidate.repository} onclick={() => update('install-plan', { engine, source, repository: candidate.repository, plan: candidate.plan })}>{t($locale, 'local.download')}</button>
+                        <button type="button" class="primary download-btn" disabled={!canStart} aria-label={t($locale, 'local.confirmDownload') + ' · ' + candidate.repository} onclick={() => update('install-plan', { engine, source, repository: candidate.repository, plan: candidate.plan })}>{t($locale, 'local.download')}</button>
                     </li>
                 {/each}
             </ul>

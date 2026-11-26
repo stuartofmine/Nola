@@ -431,6 +431,101 @@ private fun jsString(value: String): String =
         .replace("\n", "\\n")
         .replace("\r", "\\r") + "\""
 
+private data class MarkwonThemeKey(
+    val density: Float,
+    val textColor: Int,
+    val linkColor: Int,
+    val secondaryTextColor: Int,
+    val referenceTextSizePx: Int,
+    val outlineColor: Int,
+    val codeBackgroundColor: Int,
+    val tableOddRowColor: Int,
+    val tableEvenRowColor: Int,
+    val tableHeaderColor: Int,
+)
+
+/**
+ * Process-scoped cache of [Markwon] pipelines keyed by `applicationContext` and
+ * theme colors so `LazyColumn` blocks and table cells share one pipeline instead
+ * of rebuilding CommonMark/Markwon plugins on every composable block.
+ */
+private object MarkwonCache {
+    private const val MAX_THEME_ENTRIES_PER_CONTEXT = 8
+    private val lock = Any()
+    private val byContext = java.util.WeakHashMap<Context, java.util.LinkedHashMap<MarkwonThemeKey, Markwon>>()
+
+    fun getOrCreate(context: Context, key: MarkwonThemeKey): Markwon {
+        val appContext = context.applicationContext ?: context
+        synchronized(lock) {
+            byContext[appContext]?.get(key)?.let { return it }
+        }
+        val built = buildMarkwon(appContext, key)
+        synchronized(lock) {
+            val themeMap = byContext.getOrPut(appContext) {
+                object : java.util.LinkedHashMap<MarkwonThemeKey, Markwon>(4, 0.75f, true) {
+                    override fun removeEldestEntry(
+                        eldest: MutableMap.MutableEntry<MarkwonThemeKey, Markwon>?,
+                    ): Boolean = size > MAX_THEME_ENTRIES_PER_CONTEXT
+                }
+            }
+            return themeMap.getOrPut(key) { built }
+        }
+    }
+
+    private fun buildMarkwon(context: Context, key: MarkwonThemeKey): Markwon {
+        val tableTheme = TableTheme.Builder()
+            .tableCellPadding((8f * key.density).toInt())
+            .tableBorderColor(key.outlineColor)
+            .tableBorderWidth(max(1, key.density.toInt()))
+            .tableOddRowBackgroundColor(key.tableOddRowColor)
+            .tableEvenRowBackgroundColor(key.tableEvenRowColor)
+            .tableHeaderRowBackgroundColor(key.tableHeaderColor)
+            .build()
+        return Markwon.builder(context)
+            .usePlugin(SoftBreakAddsNewLinePlugin.create())
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureSpansFactory(builder: io.noties.markwon.MarkwonSpansFactory.Builder) {
+                    builder.setFactory(org.commonmark.node.Link::class.java) { configuration, props ->
+                        val destination = io.noties.markwon.core.CoreProps.LINK_DESTINATION.require(props)
+                        val scheme = android.net.Uri.parse(destination).scheme?.lowercase()
+                        if (scheme == "http" || scheme == "https") arrayOf(
+                            object : io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver()) {
+                                override fun updateDrawState(paint: android.text.TextPaint) {
+                                    super.updateDrawState(paint)
+                                    paint.color = key.secondaryTextColor
+                                    paint.isFakeBoldText = false
+                                }
+                            }, android.text.style.AbsoluteSizeSpan(key.referenceTextSizePx)
+                        ) else io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver())
+                    }
+                }
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder
+                        .linkColor(key.linkColor)
+                        .blockQuoteColor(key.secondaryTextColor)
+                        .listItemColor(key.secondaryTextColor)
+                        .codeTextColor(key.textColor)
+                        .codeBlockTextColor(key.textColor)
+                        .codeBackgroundColor(key.codeBackgroundColor)
+                        .codeBlockBackgroundColor(key.codeBackgroundColor)
+                        .headingBreakHeight(0)
+                        .headingBreakColor(key.outlineColor)
+                        .headingTextSizeMultipliers(
+                            floatArrayOf(1.55f, 1.38f, 1.24f, 1.14f, 1.08f, 1.04f)
+                        )
+                        .thematicBreakColor(key.outlineColor)
+                }
+            })
+            .usePlugin(TablePlugin.create(tableTheme))
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(MarkwonInlineParserPlugin.create())
+            .usePlugin(JLatexMathPlugin.create(16f) { builder ->
+                builder.inlinesEnabled(true)
+            })
+            .build()
+    }
+}
+
 @Composable
 private fun RichMarkdownRenderer(
     text: String,
@@ -452,8 +547,9 @@ private fun RichMarkdownRenderer(
     val density = LocalDensity.current
     var measuredContentHeightPx by remember { mutableStateOf(0) }
     val normalizedText = remember(text) { normalizeLatexForMarkwon(text) }
-    val markwon = remember(
-        context,
+    val displayDensity = context.resources.displayMetrics.density
+    val markwonThemeKey = remember(
+        displayDensity,
         textColor,
         linkColor,
         secondaryTextColor,
@@ -462,59 +558,23 @@ private fun RichMarkdownRenderer(
         codeBackgroundColor,
         tableOddRowColor,
         tableEvenRowColor,
-        tableHeaderColor
+        tableHeaderColor,
     ) {
-        val density = context.resources.displayMetrics.density
-        val tableTheme = TableTheme.Builder()
-            .tableCellPadding((8f * density).toInt())
-            .tableBorderColor(outlineColor)
-            .tableBorderWidth(max(1, density.toInt()))
-            .tableOddRowBackgroundColor(tableOddRowColor)
-            .tableEvenRowBackgroundColor(tableEvenRowColor)
-            .tableHeaderRowBackgroundColor(tableHeaderColor)
-            .build()
-        Markwon.builder(context)
-            .usePlugin(SoftBreakAddsNewLinePlugin.create())
-            .usePlugin(object : AbstractMarkwonPlugin() {
-                override fun configureSpansFactory(builder: io.noties.markwon.MarkwonSpansFactory.Builder) {
-                    builder.setFactory(org.commonmark.node.Link::class.java) { configuration, props ->
-                        val destination = io.noties.markwon.core.CoreProps.LINK_DESTINATION.require(props)
-                        val scheme = android.net.Uri.parse(destination).scheme?.lowercase()
-                        if (scheme == "http" || scheme == "https") arrayOf(
-                            object : io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver()) {
-                                override fun updateDrawState(paint: android.text.TextPaint) {
-                                    super.updateDrawState(paint)
-                                    paint.color = secondaryTextColor
-                                    paint.isFakeBoldText = false
-                                }
-                            }, android.text.style.AbsoluteSizeSpan(referenceTextSizePx.toInt())
-                        ) else io.noties.markwon.core.spans.LinkSpan(configuration.theme(), destination, configuration.linkResolver())
-                    }
-                }
-                override fun configureTheme(builder: MarkwonTheme.Builder) {
-                    builder
-                        .linkColor(linkColor)
-                        .blockQuoteColor(secondaryTextColor)
-                        .listItemColor(secondaryTextColor)
-                        .codeTextColor(textColor)
-                        .codeBlockTextColor(textColor)
-                        .codeBackgroundColor(codeBackgroundColor)
-                        .codeBlockBackgroundColor(codeBackgroundColor)
-                        .headingBreakHeight(0)
-                        .headingBreakColor(outlineColor)
-                        .headingTextSizeMultipliers(
-                            floatArrayOf(1.55f, 1.38f, 1.24f, 1.14f, 1.08f, 1.04f)
-                        )
-                        .thematicBreakColor(outlineColor)
-                }
-            })
-            .usePlugin(TablePlugin.create(tableTheme))
-            .usePlugin(StrikethroughPlugin.create())
-            .usePlugin(MarkwonInlineParserPlugin.create())
-            .usePlugin(JLatexMathPlugin.create(16f) { builder ->
-                builder.inlinesEnabled(true)
-            })
-            .build()
+        MarkwonThemeKey(
+            density = displayDensity,
+            textColor = textColor,
+            linkColor = linkColor,
+            secondaryTextColor = secondaryTextColor,
+            referenceTextSizePx = referenceTextSizePx.toInt(),
+            outlineColor = outlineColor,
+            codeBackgroundColor = codeBackgroundColor,
+            tableOddRowColor = tableOddRowColor,
+            tableEvenRowColor = tableEvenRowColor,
+            tableHeaderColor = tableHeaderColor,
+        )
+    }
+    val markwon = remember(context.applicationContext ?: context, markwonThemeKey) {
+        MarkwonCache.getOrCreate(context, markwonThemeKey)
     }
     val renderKey = remember(
         normalizedText,

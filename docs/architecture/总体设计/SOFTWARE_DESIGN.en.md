@@ -11,7 +11,7 @@ Nola runs on the user’s devices. A client submits work to an Application insta
 3. A driver or worker claims committed work. The model or tool Host performs I/O. Its observations carry the original effect, attempt and execution generation.
 4. Application accepts the matching observation, commits the resulting state and publishes a journal increment. The client updates the existing message parts. A late reply to another conversation cannot unlock this composer.
 
-[Reducer](../../../core/nola-agent-engine/src/reducer_port.rs) · [Application commands](../../../core/nola-application/src/application_command.rs) · [Driver](../../../core/nola-runtime-driver/src/lib.rs) · [Journal port](../../../core/nola-store-port/src/assistant_journal.rs)
+[Reducer](../../../crates/nola-engine/src/lib.rs) · [Application commands](../../../crates/nola-app/src/daemon.rs) · [Driver](../../../crates/nola-engine/src/loop_runner.rs) · [Journal port](../../../crates/nola-store/src/db.rs)
 
 ## Identities and ownership
 
@@ -30,7 +30,7 @@ Nola runs on the user’s devices. A client submits work to an Application insta
 | Scenario | What commits and how it recovers |
 | --- | --- |
 | CLI or Web startup | Read user and project layers. Publish the catalog, enabled models and default in one transaction. A rejected catalog leaves the committed selection available. Resuming a conversation uses its binding. [File configuration](../模块/08-模型配置与调用/MODEL_FILE_CONFIGURATION.en.md) |
-| Send, edit and resend | Bind submission to the original conversation and request ID. An edit rewinds the affected suffix and working context in that conversation, then admits the replacement execution. A stale edit must reload the source state. [Edited resend](../../../core/nola-application/src/edited_resend.rs) |
+| Send, edit and resend | Bind submission to the original conversation and request ID. An edit rewinds the affected suffix and working context in that conversation, then admits the replacement execution. A stale edit must reload the source state. [Edited resend](../../../crates/nola-app/src/web_server.rs) |
 | Main agent and experts | The main agent receives user input and dispatches Tasks. An expert reuses its child conversation under that parent and returns its result. Temporary subagents share the Task execution path. [Goals and experts](../模块/10-Goal任务与子代理/README.en.md) |
 | Remote long task | Pair and authenticate with the source Host. Reattach to the admitted run and journal cursor. Reconcile the receipt after a disconnect and obtain stop evidence from the executor for cancellation. [Remote Hosts](../模块/14-远程Host与同步/README.en.md) |
 | Desktop local model | Inspect hardware and engine readiness on the inference machine. Recommend weights and a fitting context. Confirm the plan before downloading, then verify the served model ID after launch. [Models](../模块/08-模型配置与调用/README.en.md) |

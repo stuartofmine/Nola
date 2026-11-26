@@ -1,16 +1,28 @@
-> **发布兼容约束：重新发布的 Nola 1.0.0 是首个受支持基线，Nola 自有协议、ABI 与数据库格式/epoch 从 1 开始；此前开发格式不保留兼容或转换代码。从本次发布起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
+> **发布兼容约束：Nola 2.0.0（v2 精简 8-crate 架构）是新的受支持基线，SQLite 数据库格式 `user_version = 2`，统一单一二进制 `nola` 与统一 FFI 静态库 `nola-app`；此前 v1 开发格式不保留兼容或静默转换代码。从 2.0.0 基线起，后续版本须维护已发布接口与数据兼容，破坏性变更必须有明确版本协商、升级说明及回归测试；数据库迁移必须可验证、可回滚并保护原始数据。未知或不支持的格式（含旧版 v1 数据库）明确拒绝，不得自动删除、重建或静默改写用户数据。外部服务标准协议沿用其自身版本。**
 
 # Repository Guidelines
 
 ## Project Structure & Module Organization
 
-Nola is a local-first personal AI assistant with several clients and shared services. `apps/ios/` contains the SwiftUI iOS app, with UI in `apps/ios/UI/`, services in `apps/ios/Services/`, LLM code in `apps/ios/LLM/`, assets in `apps/ios/Assets.xcassets/`, and localization in `*.lproj/`. `apps/macos/` contains the native SwiftUI/AppKit macOS app; its tests live in `tests/apple/macos/`. iOS unit tests live in `tests/apple/ios/`; UI tests live in `tests/apple/ios-ui/`. `apps/cli/` provides the independent Rust CLI and Rust Web Host. `apps/web/` contains templates/static assets plus native host helpers, and `apps/android/` is the Kotlin/Compose client. The Rust FFI core is `core/`. Public docs are in `docs/`, organized by purpose and platform. `Doc/当前任务/` and `Doc/历史任务/` are local-only records; do not track or export them. Historical implementations in `legacy/` are also local-only and must not be tracked or exported.
+Nola is a local-first personal AI assistant with native clients and a unified 8-crate Rust workspace under `crates/`:
+- `crates/nola-types`: shared domain models, messages, tool specs, budgets, policy, and module types.
+- `crates/nola-store`: SQLite WAL + FTS5 unified store (`user_version = 2`), encrypted vault, and service lock.
+- `crates/nola-llm`: multi-provider LLM client (OpenAI Chat/Responses, Anthropic, Gemini, Sign in with ChatGPT, SSE, privacy redactor).
+- `crates/nola-tools`: unified tool runtime (file mutation pipeline, OS sandboxed shell/PTY, ripgrep/glob search, LSP pool, code tools, binary doc readers, SSRF-safe web fetch/search, CDP browser, desktop automation, QuickJS code mode).
+- `crates/nola-mcp`: MCP client manager with stdio/HTTP/SSE transports and OAuth 2.1 / PKCE.
+- `crates/nola-engine`: agent execution loop, compaction, hooks, loop guard, middleware, planning, policy, and subagents.
+- `crates/nola-modules`: persistent memory, code memory, skills, goals/SOPs, data sources, rooms/peers, automations/messaging, scheduler, A2UI, local models/plugins, and signed software updater.
+- `crates/nola-app`: single unified `nola` binary (CLI, TUI, local Web/HTTP Host, background daemon, update verifier) and C ABI / JNI FFI library (`rlib`, `staticlib`, `cdylib`).
+
+Platform clients live under `apps/`: `apps/ios/` (SwiftUI iOS app, tests in `tests/apple/ios/` and `tests/apple/ios-ui/`), `apps/macos/` (SwiftUI/AppKit macOS app, tests in `tests/apple/macos/`), `apps/android/` (Kotlin/Compose client), `apps/windows/` (Tauri 2 desktop shell), and `apps/web/` (Svelte/TypeScript Web client + browser runtime bridge). Shared Apple code and design tokens live in `shared/`. Public docs are in `docs/`, organized by purpose and platform. `Doc/当前任务/` and `Doc/历史任务/` are local-only records; do not track or export them. Historical implementations in `legacy/` are also local-only and must not be tracked or exported.
 
 ## Build, Test, and Development Commands
 
-- Build the Svelte assets and start `nola web` for the local Web client.
-- `cd core && cargo test --quiet`: run Rust core tests.
-- `cd core && cargo build --release`: build Rust library artifacts.
+- Build the Svelte assets (`npm --prefix apps/web/frontend run build`) and start `nola web --web-root "$PWD/apps/web"` for the local Web client.
+- `cargo test --locked --workspace --lib`: run all Rust workspace unit tests.
+- `cargo test --locked -p <crate> --lib [filter]`: run focused unit tests for a single crate (e.g. `nola-engine`, `nola-store`, `nola-tools`, `nola-modules`, `nola-app`).
+- `cargo build --locked --release -p nola-app --bin nola`: build the unified `nola` release binary.
+- `./scripts/build_apple_core.sh`, `./scripts/build_mac_runtime.sh`, `./scripts/build_android_core.sh`, `./scripts/build_cli_runtime.sh`: build native static libraries and bundled runtimes through the shared cache launcher.
 - `cd apps/android && ./gradlew test`: run Android unit tests when Android code changes.
 - `cd apps/android && ./gradlew connectedDebugAndroidTest`: run Android instrumentation tests with a running emulator or device; install `cargo-ndk` and Android Rust targets first.
 - `xcrun simctl list devices available`: list valid simulator destinations before running iOS tests; do not hard-code a simulator that is absent locally.
@@ -34,7 +46,7 @@ Do not ask for approval again for ordinary builds or tests. Use isolated test
 databases and fixtures; this authorization does not permit deleting user data,
 changing production credentials, or polling locked physical iOS devices.
 
-Place iOS Swift tests in `tests/apple/ios/` or `tests/apple/ios-ui/` and macOS tests in `tests/apple/macos/`, with names ending in `Tests.swift`. Android JVM tests live in `apps/android/app/src/test/`; device/Compose tests live in `apps/android/app/src/androidTest/`. Rust CLI/Web tests can stay inline under `#[cfg(test)]` in `apps/cli/`. Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
+Place iOS Swift tests in `tests/apple/ios/` or `tests/apple/ios-ui/` and macOS tests in `tests/apple/macos/`, with names ending in `Tests.swift`. Android JVM tests live in `apps/android/app/src/test/`; device/Compose tests live in `apps/android/app/src/androidTest/`. Rust unit tests live under `#[cfg(test)]` inside each crate in `crates/` (e.g. `crates/nola-engine/src/tests.rs`, `crates/nola-app/src/cli.rs`). Add tests for behavior changes, API contracts, scheduling, persistence, streaming message order, and FFI boundaries.
 
 ## Commit & Pull Request Guidelines
 
@@ -47,7 +59,7 @@ release files. Verify the exported diff and the remote commit after pushing.
 Never push the development branch or its history directly to the public remote.
 Use the development remote only when the owner asks for it explicitly.
 
-Git history uses Conventional Commit-style prefixes, especially `feat:`. Keep commits focused and descriptive, for example `feat: add chat thinking parser` or `fix: handle OAuth relay errors`. PRs should include a summary, validation commands, linked issues when relevant, screenshots for UI changes, docs updates for user-facing behavior, and removed-interface notes. Update current callers together; preserve the reissued 1.0.0 compatibility baseline and test any subsequent versioned adapters or data migrations.
+Git history uses Conventional Commit-style prefixes, especially `feat:`. Keep commits focused and descriptive, for example `feat: add chat thinking parser` or `fix: handle OAuth relay errors`. PRs should include a summary, validation commands, linked issues when relevant, screenshots for UI changes, docs updates for user-facing behavior, and removed-interface notes. Update current callers together; preserve the 2.0.0 compatibility baseline and test any subsequent versioned adapters or data migrations.
 
 ## Security & Configuration Tips
 
@@ -64,8 +76,8 @@ Architecture, audit, and comparison prompts that mention capability names such a
 Filtered Rust unit tests must select `--lib`; integration tests must select
 `--test <target>`. A bare filter still compiles every integration target and can
 link many large test executables without running them. For example use
-`cargo test -p nola_application --lib model_generation`, or
-`cargo test -p nola_application --test application_suite model_connections`.
+`cargo test -p nola-engine --lib compaction`, or
+`cargo test -p nola-app --lib resolve_route`.
 Use `scripts/test_rust.sh <package> [filter]` for the bounded unit-test default.
 Preview disposable integration runner cleanup with
 `python3 scripts/maintain_build_storage.py`; `--apply` preserves dependencies,

@@ -4,7 +4,7 @@
 
 ## 范围与使用方法
 
-本清单以当前仓库用户可见业务为范围，共 **71 个场景、267 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **15 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
+本清单以当前仓库用户可见业务为范围，共 **71 个场景、267 个状态、6 个平台视角**。每项有独立状态图、原型入口、适用平台与生产源码依据；Web 当前 **17 个路由**全部关联。它覆盖可枚举的业务主线、异常和恢复，不声称穷尽任意数据、语言、系统版本和网络组合。
 
 选择业务与平台，直接操作预览中的按钮；右侧可跳到任意状态。每个状态有独立 URL，浏览器前进／后退可复现。原型目录和状态面板属于评审工具，不是产品导航。字段只保存为当前页面内、当前平台及场景的草稿；取消保留已保存基线，切换场景不覆盖其他草稿，刷新重置。破坏性样例先打开可取消的确认框。没有模型、账户、Host、文件、下载或系统权限请求，不能输入真实凭据。
 
@@ -116,6 +116,8 @@
 | `/conversations` | [conversation-list](../scenarios.html?scene=conversation-list&platform=web), [conversation-delete](../scenarios.html?scene=conversation-delete&platform=web) |
 | `/chat` | [compose](../scenarios.html?scene=compose&platform=web), [stream-reader](../scenarios.html?scene=stream-reader&platform=web), [goal-input](../scenarios.html?scene=goal-input&platform=web), [permission](../scenarios.html?scene=permission&platform=web), [remote-reconnect](../scenarios.html?scene=remote-reconnect&platform=web), [compaction](../scenarios.html?scene=compaction&platform=web), [inspector](../scenarios.html?scene=inspector&platform=web), [github-skill](../scenarios.html?scene=github-skill&platform=web) |
 | `/plugin-page` | [harness-plugins](../scenarios.html?scene=harness-plugins&platform=web) |
+| `/automations` | [plans](../scenarios.html?scene=plans&platform=web), [event-wait](../scenarios.html?scene=event-wait&platform=web) |
+| `/experts` | [experts](../scenarios.html?scene=experts&platform=web), [room](../scenarios.html?scene=room&platform=web) |
 
 ## 维护与验收
 

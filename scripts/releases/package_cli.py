@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Package the matching CLI, Agent Host, service, Web UI and browser runtime."""
+"""Package the unified Nola v2 CLI/Web runtime, Web UI and browser runtime."""
 import argparse
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
@@ -12,13 +12,6 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-
-
-def verify_contract_marker(path):
-    """Do not ship stale executables from before the reissued v1 baseline."""
-    data = path.read_bytes()
-    if b'nola.tool_result.v1' not in data or b'nola.tool_result.v2' in data:
-        raise ValueError('Executable does not use the v1 tool-result contract: ' + path.name)
 
 
 class WebEntrypoints(HTMLParser):
@@ -70,10 +63,9 @@ def main():
     name=f'Nola-cli-macos-aarch64-{version}'
     with tempfile.TemporaryDirectory(prefix='nola-cli-package-') as temporary:
         bundle=Path(temporary)/name;bundle.mkdir();(bundle/'bin').mkdir()
-        for binary in ['nola','nola-agent-host','nola-service']:
+        for binary in ['nola']:
             path=root/'target/release'/binary
             if not path.is_file():raise SystemExit('Release executable missing: '+binary)
-            verify_contract_marker(path)
             shutil.copy2(path,bundle/'bin'/binary)
         for folder in ['app/static']:
             path=root/'apps/web'/folder

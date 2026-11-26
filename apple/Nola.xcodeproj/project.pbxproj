@@ -45,9 +45,6 @@
 		D41000000000000000000001 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 9AC100022EF03C1000B71A10 /* SwiftMath */; };
 		D5A000000000000000000001 /* apps/ios/Services/AgentCoreDataSourceResolution.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */; };
 		D5A000000000000000000003 /* apps/ios/Services/AgentCoreResourceAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */; };
-		D60000000000000000000001 /* core/tests/fixtures/long_task_trace_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */; };
-		D60000000000000000000005 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */; };
-		D60000000000000000000007 /* core/tests/fixtures/historical_conversation_projection_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */; };
 		D61000000000000000000002 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */ = {isa = PBXBuildFile; fileRef = D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */; };
 		D61000000000000000000003 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */ = {isa = PBXBuildFile; fileRef = D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */; };
 		F10000000000000000000001 /* NolaCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* NolaCore.framework */; };
@@ -155,9 +152,6 @@
 		D50000000000000000000001 /* NolaMacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NolaMacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/AgentCoreDataSourceResolution.swift; sourceTree = SOURCE_ROOT; };
 		D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = apps/ios/Services/AgentCoreResourceAccess.swift; sourceTree = SOURCE_ROOT; };
-		D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/long_task_trace_v1.json; sourceTree = SOURCE_ROOT; };
-		D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/historical_unloaded_conversation_projection_v1.json; sourceTree = SOURCE_ROOT; };
-		D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = core/tests/fixtures/historical_conversation_projection_v1.json; sourceTree = SOURCE_ROOT; };
 		D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = tests/fixtures/a2ui/form_interaction_v0_9_1.json; sourceTree = SOURCE_ROOT; };
 		F10000000000000000000003 /* shared/apple-core/NolaCore.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = "shared/apple-core/NolaCore.xcodeproj"; sourceTree = SOURCE_ROOT; };
 		F20000000000000000000001 /* nola-mlx-runtime */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "nola-mlx-runtime"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -314,9 +308,6 @@
 				C2000000000000000000D221 /* apps/ios/Services/AgentCoreModelPrivacy.swift */,
 				D5A000000000000000000002 /* apps/ios/Services/AgentCoreDataSourceResolution.swift */,
 				D5A000000000000000000004 /* apps/ios/Services/AgentCoreResourceAccess.swift */,
-				D60000000000000000000002 /* core/tests/fixtures/long_task_trace_v1.json */,
-				D60000000000000000000006 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json */,
-				D60000000000000000000008 /* core/tests/fixtures/historical_conversation_projection_v1.json */,
 				D61000000000000000000001 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json */,
 				A611CA700000000000000001 /* transport/tailcat/Tailcat.xcconfig */,
 			);
@@ -670,9 +661,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				D61000000000000000000003 /* tests/fixtures/a2ui/form_interaction_v0_9_1.json in Resources */,
-				D60000000000000000000001 /* core/tests/fixtures/long_task_trace_v1.json in Resources */,
-				D60000000000000000000005 /* core/tests/fixtures/historical_unloaded_conversation_projection_v1.json in Resources */,
-				D60000000000000000000007 /* core/tests/fixtures/historical_conversation_projection_v1.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -746,10 +734,9 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-agent-host",
+				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola",
 				"$(SRCROOT)/scripts/embed_mac_runtime.sh",
 				"$(SRCROOT)/scripts/lib/install_mac_executable.sh",
-				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/nola-service",
 				"$(BUILT_PRODUCTS_DIR)/NolaRuntime/com.gaojc.Nola.background-scheduler.plist",
 				"$(BUILT_PRODUCTS_DIR)/nola-mlx-runtime",
 				"$(BUILT_PRODUCTS_DIR)/mlx-swift_Cmlx.bundle",
@@ -758,11 +745,9 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-agent-host",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-agent-host.nola-staging",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-service.nola-staging",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-runtime",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-runtime.nola-staging",
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-mlx-runtime.nola-staging",
-				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-service",
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/nola-mlx-runtime",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/mlx-swift_Cmlx.bundle",
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/com.gaojc.Nola.background-scheduler.plist",

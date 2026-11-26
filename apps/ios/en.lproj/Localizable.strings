@@ -2710,8 +2710,10 @@
 
 "chat.permission.guidance" = "Guidance recorded. Tool arguments are unchanged; explicit approval is still required.";
 "permission.mode.cautious" = "Cautious";
+"permission.mode.accept_edits" = "Accept Edits";
 "permission.mode.allow_all" = "Allow All";
 "permission.mode.cautious.detail" = "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.";
+"permission.mode.accept_edits.detail" = "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.";
 "permission.mode.allow_all.detail" = "No Nola approval prompts in this conversation. System permissions still apply.";
 "chat.compaction.show_sources_format" = "Show original context (%d items)";
 "chat.style.inherit_model" = "Use model default";
@@ -3592,3 +3594,6 @@
 "chat.task.state.failed" = "Failed";
 "chat.task.state.cancelled" = "Cancelled";
 "chat.context.skills.template.body" = "# Skill: New Skill\n\n## When to use\nDescribe the exact scenario where this skill should be used.\n\n## Workflow\n1. Clarify the user goal.\n2. Inspect relevant context.\n3. Produce a concise, actionable result.\n\n## Output style\n- Keep the response structured.\n- Call out assumptions and risks.";
+"chat.v2.question.placeholder" = "Type your answer...";
+"chat.v2.question.submit" = "Submit";
+"chat.v2.question.skip" = "Skip";

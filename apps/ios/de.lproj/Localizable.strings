@@ -2552,8 +2552,10 @@
 "personal.capabilities.retry" = "Erneut versuchen";
 "personal.capabilities.invalid_import" = "Wähle eine nicht leere UTF-8-Skill-Datei mit höchstens 48.000 Zeichen.";
 "permission.mode.cautious" = "Vorsichtig";
+"permission.mode.accept_edits" = "Änderungen zulassen";
 "permission.mode.allow_all" = "Alles erlauben";
 "permission.mode.cautious.detail" = "Löschen, Überschreiben, sensible Daten, ausgehende Inhalte und neue Verbindungen bestätigen. Normales Lesen und neue Dateien sind erlaubt.";
+"permission.mode.accept_edits.detail" = "Dateibearbeitungen im Arbeitsbereich automatisch zulassen. Shell-Befehle, Schreibvorgänge außerhalb, ausgehende Inhalte und neue Verbindungen bestätigen.";
 "permission.mode.allow_all.detail" = "Keine Nola-Bestätigungen in diesem Gespräch. Systemberechtigungen gelten weiterhin.";
 "chat.compaction.show_sources_format" = "Ursprünglichen Kontext anzeigen (%d Elemente)";
 "chat.style.inherit_model" = "Modellstandard verwenden";
@@ -3420,3 +3422,6 @@
 "chat.task.state.failed" = "Fehlgeschlagen";
 "chat.task.state.cancelled" = "Abgebrochen";
 "chat.context.skills.template.body" = "# Skill: Neuer Skill\n\n## Einsatzgebiet\nBeschreibe konkret, wann dieser Skill eingesetzt werden soll.\n\n## Ablauf\n1. Ziel klären.\n2. Relevanten Kontext prüfen.\n3. Ein knappes, umsetzbares Ergebnis liefern.\n\n## Ausgabe\n- Antwort klar gliedern.\n- Annahmen und Risiken benennen.";
+"chat.v2.question.placeholder" = "Antwort eingeben…";
+"chat.v2.question.submit" = "Senden";
+"chat.v2.question.skip" = "Überspringen";

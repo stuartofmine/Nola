@@ -3,11 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAYER="${1:-contracts}"
-# Real UI acceptance uses the existing provider-evidence runner, including
-# exact test-count and zero-skip checks. Plain xcodebuild is not acceptance.
-if [[ "$LAYER" == "real-ui" ]]; then
-  exec "$ROOT/scripts/test_real_mac_product_ui_multiturn.sh"
-fi
 MAC_ARCH="$(uname -m)"
 DESTINATION="${NOLA_MAC_TEST_DESTINATION:-platform=macOS,arch=$MAC_ARCH}"
 
@@ -28,7 +23,6 @@ esac
 # out of the default architecture/contract loop so a normal refactor test run
 # cannot terminate a bundled Nola executable or trigger macOS CrashReporter.
 host_e2e_suites=(
-  MacAssistantJournalIngestionTests
   MacCancellationCLIEndToEndTests
   MacAgentCapabilityEndToEndTests
   MacBuiltInSkillEndToEndTests
@@ -80,14 +74,13 @@ case "$LAYER" in
     ;;
   a2ui)
     args+=("-only-testing:NolaMacTests/MacPublicPartSemanticParityTests")
-    args+=("-only-testing:NolaMacTests/MacAssistantJournalTransportTests")
     args+=("-only-testing:NolaMacTests/MacCanonicalConversationRepositoryEndToEndTests/testCanonicalCorePartsRestoreStructuredPresentationWithoutPollutingAnswerText")
     args+=("-only-testing:NolaMacTests/MacCanonicalExportTests/testPagedExportReadsDeclaredDerivationSeparatelyAndFailsIfMissing")
     ;;
   full)
     ;;
   *)
-    printf 'Usage: %s [contracts|host-e2e|cancel-e2e|task-projection|a2ui|real-ui|full]\n' "$0" >&2
+    printf 'Usage: %s [contracts|host-e2e|cancel-e2e|task-projection|a2ui|full]\n' "$0" >&2
     exit 64
     ;;
 esac

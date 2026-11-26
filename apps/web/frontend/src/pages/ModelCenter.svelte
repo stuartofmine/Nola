@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { untrack } from 'svelte';
+    import { untrack, setContext } from 'svelte';
+    setContext('nola.modelCenterToolbar', true);
     import { workspacePageApi } from '../lib/workspacePageLocation';
     const api = workspacePageApi(unscopedApi);
     import { workspaceElements } from '../lib/workspacePageLocation';
@@ -64,8 +65,11 @@
     let disposed = false;
     const catalogReads = latestRequest<Catalog>();
     const dirty = $derived(!!editing && JSON.stringify(draft) !== JSON.stringify(editing.parameters));
+    function isModelDownloadActive(status?: string) {
+        return status === 'queued' || status === 'downloading' || status === 'verifying' || status === 'cancelling';
+    }
     const visibleModels = $derived(
-        (catalog?.models.filter(model => model.installed || model.download?.status === 'downloading') ?? [])
+        (catalog?.models.filter(model => model.installed || isModelDownloadActive(model.download?.status)) ?? [])
             .sort((a, b) => Number(b.running) - Number(a.running) || Number(b.selected) - Number(a.selected))
     );
     function runtimeAvailable(id: LocalEngine) {
@@ -78,7 +82,7 @@
         engineSetup?.reveal();
     }
     function hasActiveDownload(value?: Catalog) {
-        return downloadActive(value?.acquisition) || value?.models.some(model => model.download?.status === 'downloading');
+        return downloadActive(value?.acquisition) || value?.models.some(model => isModelDownloadActive(model.download?.status));
     }
     let engineSetup = $state<{reveal(): void}>();
     let readiness = $state<Partial<Record<LocalEngine, boolean>>>({});
@@ -97,7 +101,7 @@
         return value >= 1024 && value % 1024 === 0 ? `${value / 1024}K` : new Intl.NumberFormat($locale).format(value);
     }
     const numericFields: { key: Exclude<keyof Parameters, 'flashAttention'>; label: string; min: number; max: number; step: number }[] = [
-        { key: 'contextTokens', label: 'models.context', min: 65536, max: 4000000, step: 1 },
+        { key: 'contextTokens', label: 'models.context', min: 2048, max: 4000000, step: 1 },
         { key: 'temperature', label: 'models.temperature', min: 0, max: 2, step: 0.05 },
         { key: 'topP', label: 'modelDisplay.topP', min: 0, max: 1, step: 0.01 },
         { key: 'topK', label: 'modelDisplay.topK', min: 1, max: 200, step: 1 },
@@ -184,6 +188,7 @@
             // Selection can succeed before startup fails. Re-read the durable state for either outcome.
             if (!disposed) {
                 await refresh();
+                window.dispatchEvent(new CustomEvent('nola:models-updated'));
                 busy = '';
             }
         }
@@ -242,6 +247,7 @@
             });
             if (disposed) return;
             dialog.close(); editing = undefined; draft = undefined; await refresh();
+            window.dispatchEvent(new CustomEvent('nola:models-updated'));
         } catch (cause) { if (!disposed) editorError = cause instanceof ModelValidationError ? cause.issue : errorMessage(cause); }
         finally { if (!disposed) busy = ''; }
     }
@@ -265,13 +271,18 @@
 <svelte:head>{#if pageLocation.active()}<title>{t($locale, 'models.title')} — Nola</title>{/if}</svelte:head>
 <header class="page-header models-header"><div><h1>{t($locale, 'models.title')}</h1><p class="muted">{t($locale, 'models.subtitle')}</p></div><a class="button" href="/model-test">{t($locale, 'modelTest.title')}…</a></header>
 <div class="content models-content">
-    <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
-        {#each ['api', 'local'] as value}
-            <button id="tab-{value}" role="tab" aria-controls="panel-{value}" aria-selected={tab === value} tabindex={tab === value ? 0 : -1} onclick={() => selectTab(value as 'local' | 'api')} onkeydown={tabKey}>{t($locale, value === 'local' ? 'models.local' : 'models.api')}</button>
-        {/each}
+    <div class="models-toolbar">
+        <div class="tabs" role="tablist" aria-label={t($locale, 'models.type')}>
+            {#each ['api', 'local'] as value}
+                <button type="button" id="tab-{value}" role="tab" aria-controls="panel-{value}" aria-selected={tab === value} tabindex={tab === value ? 0 : -1} onclick={() => selectTab(value as 'local' | 'api')} onkeydown={tabKey}>{t($locale, value === 'local' ? 'models.local' : 'models.api')}</button>
+            {/each}
+        </div>
+        {#if tab === 'api'}
+            <button type="button" class="primary" onclick={() => { requestedEndpointName = '__new__'; }}>{t($locale, 'remote.add_endpoint_model')}</button>
+        {/if}
     </div>
-    <div id="panel-local" role="tabpanel" tabindex="0" aria-labelledby="tab-local" hidden={tab !== 'local'}>
-        {#if error}<div class="notice error" role="alert">{error}{catalog ? t($locale, 'models.stale') : ''} <button onclick={refresh} disabled={!!busy}>{t($locale, 'models.retry')}</button></div>{/if}
+    <div id="panel-local" role="tabpanel" aria-labelledby="tab-local" hidden={tab !== 'local'}>
+        {#if error}<div class="notice error" role="alert">{error}{catalog ? t($locale, 'models.stale') : ''} <button type="button" onclick={refresh} disabled={!!busy}>{t($locale, 'models.retry')}</button></div>{/if}
         {#if actionError}<div class="notice error" role="alert"><strong>{actionError.name}</strong> {actionError.message}</div>{/if}
         {#if !catalog}{#if !error}<p role="status">{t($locale, 'models.loading')}</p>{/if}
         {:else}
@@ -310,14 +321,14 @@
                                 <div class="actions">
                                     {#if model.installed}
                                         {#if model.running}
-                                            <button class="primary" onclick={() => action(model, 'stop')} disabled={!!busy}>{t($locale, 'models.stop')}</button>
+                                            <button type="button" class="primary" onclick={() => action(model, 'stop')} disabled={!!busy}>{t($locale, 'models.stop')}</button>
                                         {:else if canRun}
-                                            <button class="primary" onclick={() => switchAndUse(model)} disabled={!!busy}>{t($locale, 'local.switchAndUse')}</button>
+                                            <button type="button" class="primary" onclick={() => switchAndUse(model)} disabled={!!busy}>{t($locale, 'local.switchAndUse')}</button>
                                         {:else}
-                                            <button onclick={() => showEngineSetup(modelEngine)}>{t($locale, 'local.setup.openSetup')}</button>
+                                            <button type="button" onclick={() => showEngineSetup(modelEngine)}>{t($locale, 'local.setup.openSetup')}</button>
                                         {/if}
-                                        <button onclick={() => configure(model)} disabled={!!busy}>{t($locale, 'models.configure')}</button>
-                                        <button class="danger" onclick={() => action(model, 'installation')} disabled={!!busy || model.running}>{t($locale, 'models.delete')}</button>
+                                        <button type="button" onclick={() => configure(model)} disabled={!!busy}>{t($locale, 'models.configure')}</button>
+                                        <button type="button" class="danger" onclick={() => action(model, 'installation')} disabled={!!busy || model.running}>{t($locale, 'models.delete')}</button>
                                     {/if}
                                 </div>
                             </article>
@@ -336,7 +347,7 @@
             {/if}
         {/if}
     </div>
-    <div id="panel-api" role="tabpanel" tabindex="0" aria-labelledby="tab-api" hidden={tab !== 'api'}>
+    <div id="panel-api" role="tabpanel" aria-labelledby="tab-api" hidden={tab !== 'api'}>
         {#if apiPageOpened}<ApiModels bind:requestedEndpointName openProfileId={tab === 'api' ? linkedModelId : ''} />{/if}
     </div>
 </div>
@@ -359,10 +370,10 @@
     .models-header { max-width: 1120px; margin: auto; border-bottom: 0; padding: 40px 32px 24px; align-items: start; }
     .models-header h1 { font-size: 1.75rem; letter-spacing: -.025em; }
     .models-header p { margin-top: 8px; }
-    .models-header > a { background: transparent; border-color: transparent; }
-    .models-content { max-width: 1120px; padding: 0 32px 48px; gap: 24px; }
-    .tabs { background: transparent; border: 0; padding: 0; gap: 8px; border-radius: 0; }
-    .tabs button { padding-inline: 20px; }
+    .models-content { max-width: 1120px; padding: 0 32px 48px; gap: 20px; }
+    .models-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .tabs button { padding-inline: 16px; }
+    #panel-api :global(.profile-settings) { margin-block: 0 24px; }
     .installed-section { display: grid; gap: 12px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
     .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
     .section-heading h2 { font-size: 1rem; font-weight: 600; margin: 0; }

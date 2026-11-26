@@ -164,7 +164,7 @@ class AndroidAgentPermissionBroker(private val context: Context) {
                 "network" to "granted",
                 "files_read" to "ask",
                 "files_write" to "ask",
-                "clipboard" to if (permissionMode == AndroidAgentPermissionMode.Cautious) "ask" else "granted",
+                "clipboard" to if (permissionMode == AndroidAgentPermissionMode.AllowAll) "granted" else "ask",
                 "location" to if (locationGranted) "granted" else "ask",
                 "calendar" to if (calendarGranted) "granted" else "ask"
             ),

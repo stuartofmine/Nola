@@ -100,10 +100,10 @@
     <label>{t($locale, 'sourceAccounts.executable')}<input bind:value={executable} disabled={active || busy} /></label>
     <label>{t($locale, 'sourceAccounts.home')}<input bind:value={home} disabled={active || busy} /></label>
     <label class="consent"><input type="checkbox" bind:checked={consent} disabled={active || busy} />{t($locale, 'sourceAccounts.codexConsent')}</label>
-    <button disabled={busy || active || !consent || !configured} onclick={() => start(false)}>{t($locale, 'sourceAccounts.startCodex')}</button>
-    {#if snapshot?.account || accountID}<button disabled={busy || active || !consent || !configured} onclick={() => start(true)}>{t($locale, 'sourceAccounts.refreshCodex')}</button>{/if}
-    {#if active}<button disabled={busy} onclick={cancel}>{t($locale, 'sourceAccounts.cancelCodex')}</button>{/if}
-    {#if failed && active}<button disabled={busy || checking} onclick={() => void poll()}>{t($locale, 'sourceAccounts.checkCodex')}</button>{/if}
+    <button type="button" disabled={busy || active || !consent || !configured} onclick={() => start(false)}>{t($locale, 'sourceAccounts.startCodex')}</button>
+    {#if snapshot?.account || accountID}<button type="button" disabled={busy || active || !consent || !configured} onclick={() => start(true)}>{t($locale, 'sourceAccounts.refreshCodex')}</button>{/if}
+    {#if active}<button type="button" disabled={busy} onclick={cancel}>{t($locale, 'sourceAccounts.cancelCodex')}</button>{/if}
+    {#if failed && active}<button type="button" disabled={busy || checking} onclick={() => void poll()}>{t($locale, 'sourceAccounts.checkCodex')}</button>{/if}
     {#if busy || checking}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
     {#if snapshot}<p role="status">{t($locale, sourceAccountStateKey(snapshot.state))} · {t($locale, 'sourceAccounts.disabled')}</p>{/if}
     {#if snapshot?.authorization_url}<a href={snapshot.authorization_url} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.continueCodex')}</a>{/if}

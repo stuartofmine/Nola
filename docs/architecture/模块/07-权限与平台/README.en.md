@@ -14,9 +14,9 @@ Test a denied permission, a revoked grant, an obsolete approval and a tool unava
 
 ## Implementation
 
-- [agent/runtime/permission_policy.rs](../../../../core/nola-agent-engine/src/agent/runtime/permission_policy.rs)
-- [nola-store/src/permission_source.rs](../../../../core/nola-store/src/permission_source.rs)
-- [src/tools/platform_catalog_contract_tests.rs](../../../../apps/cli/src/tools/platform_catalog_contract_tests.rs)
+- [agent/runtime/permission_policy.rs](../../../../crates/nola-engine/src/policy.rs)
+- [nola-store/src/permission_source.rs](../../../../crates/nola-engine/src/policy.rs)
+- [src/tools/platform_catalog_contract_tests.rs](../../../../crates/nola-tools/src/tests.rs)
 
 ## Detailed references
 

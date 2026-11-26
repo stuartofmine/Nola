@@ -91,7 +91,7 @@
             <label>{t($locale, 'remote.endpoint_name')}<input bind:value={draft.name} maxlength="512" required /></label>
             <label>{t($locale, 'remote.base_url')}<input type="url" bind:value={draft.baseURL} placeholder="https://api.example.com/v1" autocomplete="off" required /></label>
             <label>{t($locale, 'remote.protocol')}<select bind:value={draft.wireProtocol}>
-                <option value="chat_completions">Chat Completions</option><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option>
+                <option value="chat_completions">Chat Completions</option><option value="responses">Responses</option><option value="siwc_responses">ChatGPT Responses (SIWC)</option><option value="anthropic">Anthropic Messages</option><option value="gemini">Google Gemini</option>
             </select></label>
             <label class="toggle"><input type="checkbox" role="switch" bind:checked={draft.enabled} />{t($locale, 'remote.enable_endpoint')}</label>
         </fieldset>

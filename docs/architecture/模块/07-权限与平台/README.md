@@ -31,9 +31,9 @@ PermissionRequest、Grant、Decision 分离；平台权限适配器不能修改 
 
 | 源码 | 具体职责 |
 | --- | --- |
-| [permission_policy.rs](../../../../core/nola-agent-engine/src/agent/runtime/permission_policy.rs) | 具体调用的政策判断与等待 |
-| [permission_source.rs](../../../../core/nola-store/src/permission_source.rs) | 权限来源及提交前沿校验 |
-| [platform_catalog_contract_tests.rs](../../../../apps/cli/src/tools/platform_catalog_contract_tests.rs) | Host 实际注册工具与平台目录边界回归 |
+| [permission_policy.rs](../../../../crates/nola-engine/src/policy.rs) | 具体调用的政策判断与等待 |
+| [permission_source.rs](../../../../crates/nola-engine/src/policy.rs) | 权限来源及提交前沿校验 |
+| [platform_catalog_contract_tests.rs](../../../../crates/nola-tools/src/tests.rs) | Host 实际注册工具与平台目录边界回归 |
 
 平台工具目录、政策判断、持久等待/决定、OS 授权和结果披露是不同边界。已注册 handler 不等于当前 Run 已准入；不得按自然语言关键词修补路由或授予权限。 逐模块差距与证据边界见[源码核对](../../总体设计/ARCHITECTURE_SOURCE_AUDIT_20261108.md)。
 

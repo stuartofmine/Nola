@@ -84,6 +84,8 @@ const entries: Record<string, Translations> = {
     'shell.retry': ['重试', 'Retry', 'Erneut versuchen', 'Reintentar', 'Réessayer', '再試行', 'Повторить'],
     'shell.confirm': ['确认', 'Confirm', 'Bestätigen', 'Confirmar', 'Confirmer', '確認', 'Подтвердить'],
     'shell.cancel': ['取消', 'Cancel', 'Abbrechen', 'Cancelar', 'Annuler', 'キャンセル', 'Отмена'],
+    'shell.notifications': ['通知', 'Notifications', 'Benachrichtigungen', 'Notificaciones', 'Notifications', '通知', 'Уведомления'],
+    'shell.dismiss': ['关闭', 'Dismiss', 'Schließen', 'Descartar', 'Fermer', '閉じる', 'Закрыть'],
     'shell.language': ['语言', 'Language', 'Sprache', 'Idioma', 'Langue', '言語', 'Язык'],
     'shell.language.system': ['跟随浏览器', 'Browser default', 'Browsersprache', 'Idioma del navegador', 'Langue du navigateur', 'ブラウザの設定に従う', 'Язык браузера'],
     'shell.markdown.code': ['代码', 'Code', 'Code', 'Código', 'Code', 'コード', 'Код'],
@@ -128,6 +130,7 @@ const entries: Record<string, Translations> = {
     'a2ui.viewDetails': ['查看详情', 'View details', 'Details anzeigen', 'Ver detalles', 'Voir les détails', '詳細を表示', 'Подробнее'],
     'a2ui.details': ['详情', 'Details', 'Details', 'Detalles', 'Détails', '詳細', 'Подробности'],
     'a2ui.close': ['关闭', 'Close', 'Schließen', 'Cerrar', 'Fermer', '閉じる', 'Закрыть'],
+    'a2ui.unsupportedComponent': ['不支持的组件：{component}', 'Unsupported component: {component}', 'Nicht unterstützte Komponente: {component}', 'Componente no compatible: {component}', 'Composant non pris en charge : {component}', '未対応のコンポーネント：{component}', 'Неподдерживаемый компонент: {component}'],
 };
 
 export const languageNames: Record<Locale, string> = {

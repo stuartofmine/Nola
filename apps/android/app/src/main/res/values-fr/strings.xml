@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Enregistrements remplacés</string>
     <string name="chat_permission_mode">Mode d’autorisation</string>
     <string name="chat_permission_mode_cautious">Prudent</string>
+    <string name="chat_permission_mode_accept_edits">Accepter les modifications</string>
     <string name="chat_permission_mode_allow_all">Tout autoriser</string>
     <string name="chat_permission_mode_cautious_detail">Confirmer suppressions, écrasements, accès sensibles, envois et nouvelles connexions. Les lectures ordinaires et créations continuent.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Autoriser automatiquement les modifications dans l’espace de travail. Confirmer les commandes shell, écritures externes, envois et nouvelles connexions.</string>
     <string name="chat_permission_mode_allow_all_detail">Aucune confirmation Nola dans cette conversation. Les autorisations système restent actives.</string>
     <string name="models_inference_test">Tester le modèle</string>
     <string name="models_inference_test_hint">Exécuter une requête isolée avec les paramètres enregistrés de ce modèle. Le modèle actif et la conversation ne sont pas modifiés.</string>
@@ -1477,4 +1479,23 @@
     <string name="permission_from_subagent">Du sous-agent : %1$s</string>
     <string name="permission_queue_pending">1 sur %1$d en attente</string>
     <string name="chat_response_failed_empty">Échec de la réponse.</string>
+    <string name="chat_v2_question_placeholder">Saisissez votre réponse…</string>
+    <string name="chat_v2_question_skip">Ignorer</string>
+    <string name="chat_v2_question_submit">Envoyer</string>
+    <string name="chat_v2_ui_unavailable">Interface interactive indisponible</string>
+    <string name="chat_v2_ui_interaction_failed">Échec de l’interaction</string>
+    <string name="chat_v2_context_compacted">Contexte compacté</string>
+    <string name="chat_v2_context_compacted_range">Contexte compacté (%1$s → %2$s jetons)</string>
+    <string name="chat_v2_context_compacted_after">Contexte compacté (%1$s jetons)</string>
+    <string name="chat_v2_context_compaction_failed">Échec du compactage du contexte</string>
+    <string name="chat_v2_branch_conversation">Dupliquer la conversation</string>
+    <string name="chat_v2_branch_failed">Impossible de dupliquer la conversation</string>
+    <string name="chat_v2_workspace_review">Revue de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_empty">Aucune modification détectée dans l’espace de travail</string>
+    <string name="chat_v2_workspace_review_host_required">Connectez-vous à un Web Agent Host pour examiner les modifications de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_staged">Modifications indexées</string>
+    <string name="chat_v2_workspace_review_unstaged">Modifications non indexées</string>
+    <string name="chat_v2_workspace_review_files">Fichiers de l’espace de travail</string>
+    <string name="chat_v2_workspace_review_truncated">Sortie tronquée pour l’aperçu</string>
+    <string name="chat_v2_edit_resend_failed">Impossible de tronquer et renvoyer le message</string>
 </resources>

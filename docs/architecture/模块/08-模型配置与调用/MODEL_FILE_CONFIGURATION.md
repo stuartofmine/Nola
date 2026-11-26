@@ -48,7 +48,7 @@ nola
 {"llm":{"connections":[{"id":"primary","name":"Primary service","endpoint":"https://primary.example/v1","protocol":"chat_completions","models":[{"id":"fast-model","name":"Fast"}]}],"default_model":{"connection":"primary","model":"fast-model"}}}
 ```
 
-对照修正文件中的精确 ID，保存后重新启动 Nola。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../apps/cli/config.multi-endpoint.example.json)和[解析器](../../../../apps/cli/src/model_file_config.rs)为准。
+对照修正文件中的精确 ID，保存后重新启动 Nola。此错误在开始应用连接前拒绝；不会替用户猜测引用、重写配置或删除已有目录。完整格式以[仓库示例](../../../../crates/nola-app/src/config.rs)和[解析器](../../../../crates/nola-app/src/config.rs)为准。
 
 ## CLI 与 Web 数据库
 

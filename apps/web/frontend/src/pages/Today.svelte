@@ -46,7 +46,7 @@
     {#if failed}<div class="notice error" role="alert">{t($locale, 'shell.pageLoadFailed')} <button type="button" onclick={() => void refresh()} disabled={loading}>{t($locale, 'shell.retry')}</button></div>{/if}
     {#if facts}
         {#if facts.needs_attention}<aside role="status"><p>{t($locale, 'chatInspector.expertAttention')}</p><ul>{#each facts.unrepresented_expert_contexts as context (context.context_conversation_id)}<li>{context.display_name}</li>{/each}</ul></aside>{/if}
-        <section><h2>{t($locale, 'chatInspector.needsResponse')}</h2>
+        <section class="today-section"><h2>{t($locale, 'chatInspector.needsResponse')}</h2>
             {#each pending as row (row.conversation_id)}<article class="pending-matter"><p class="matter-meta">{time(row.updated_at_ms)} · {t($locale, 'chatInspector.needsResponse')}</p><h3>{row.title || t($locale, 'chatConversations.untitled')}</h3>
                 <p class="matter-summary">{t($locale, 'chatInspector.responseHint')}</p>
                 <a class="matter-action" href={conversationHref(row.conversation_id)}>{t($locale, 'chatInspector.handleResponse')}</a>
@@ -54,34 +54,38 @@
             {:else}{#if !facts.needs_attention}<p class="muted">{t($locale, 'chatInspector.noResponse')}</p>{/if}{/each}
             {#if facts.has_more_conversations}<a href={`/today?offset=${facts.next_conversation_offset}`}>{t($locale, 'chatInspector.moreConversations')}</a>{/if}
         </section>
-        <section><h2>{t($locale, 'chatInspector.queuedInstances')}</h2>
+        <section class="today-section"><h2>{t($locale, 'chatInspector.queuedInstances')}</h2>
             {#each facts.queued_instances as row (row.occurrence_id)}<a class="fact-row" href="/scheduled-actions"><span><strong>{row.title ?? row.automation_id}</strong><small>{time(row.scheduled_for_ms)}</small></span></a>
             {:else}<p class="muted">{t($locale, 'chatInspector.noQueuedInstances')}</p>{/each}
             {#if facts.has_more_queued_instances}<a href="/scheduled-actions">{t($locale, 'activity.automations')}</a>{/if}
         </section>
-        {#if offset === 0}<section><h2>{t($locale, 'chatConversations.recent')}</h2>
+        {#if offset === 0}<section class="today-section"><h2>{t($locale, 'chatConversations.recent')}</h2>
             {#each recent as row (row.conversation_id)}<a class="fact-row" href={conversationHref(row.conversation_id)}><span><strong>{row.title || t($locale, 'chatConversations.untitled')}</strong><small>{time(row.updated_at_ms)}</small></span></a>
             {:else}<p class="muted">{t($locale, 'chatPage.choose')}</p>{/each}
         </section>{/if}
     {/if}
-    {#if offset > 0}<a href="/today">{t($locale, 'chatInspector.today')}</a>{/if}
-    <nav aria-label={t($locale, 'shell.workspace')}><a href="/conversations">{t($locale, 'chatInspector.list.conversations')}</a><a href="/data-sources">{t($locale, 'chatInspector.list.resources')}</a><a href="/settings">{t($locale, 'shell.settings')}</a></nav>
+    {#if offset > 0}<a class="button" href="/today">{t($locale, 'chatInspector.today')}</a>{/if}
+    <nav aria-label={t($locale, 'shell.workspace')}><a class="button" href="/conversations">{t($locale, 'chatInspector.list.conversations')}</a><a class="button" href="/data-sources">{t($locale, 'chatInspector.list.resources')}</a><a class="button" href="/settings">{t($locale, 'shell.settings')}</a></nav>
 </main>
 <style>
     .today-page { max-width: 760px; min-height: calc(100dvh - 144px); margin-inline: auto; padding: 8px 20px max(20px, env(safe-area-inset-bottom)); background: var(--canvas); }
     header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; }
     .header-actions { display: flex; align-items: center; gap: 8px; flex: none; }
     .desktop-open-chat { min-height: 36px; padding: 6px 14px; font-size: 13.5px; }
-    h1 { font-size: 28px; line-height:36px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; }
-    section { margin-block: 32px; } header button { border:0; background:transparent; width:44px; padding:10px; } header svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.5; } .muted, small { color: var(--muted); font-size: .875rem; line-height: 1.6; }
+    h1 { font-size: 28px; line-height:36px; margin: 0; } h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
+    .today-section { margin-block: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel, var(--radius)); padding: 16px 20px; }
+    .today-section > :last-child { border-bottom: 0; padding-bottom: 0; }
+    header button { border:0; background:transparent; width:44px; padding:10px; } header svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:1.5; } .muted, small { color: var(--muted); font-size: .875rem; line-height: 1.6; }
     @media (max-width: 760px) { .today-page { width: 100%; min-height: 0; flex: 1; } .desktop-open-chat { display: none; } }
     .fact-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; border-bottom: 1px solid var(--border); min-height: 52px; }
     .fact-row > span { min-width: 0; } strong { font-weight: 500; overflow-wrap: anywhere; } small { display: block; margin-top: 4px; }
-    a { color: inherit; text-decoration: none; } a:hover { color: var(--accent); } nav { display: flex; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--border); margin-top: 32px; } nav a { display: flex; align-items: center; min-height: 48px; }
+    a { color: inherit; text-decoration: none; } a:hover { color: var(--accent); }
+    nav { display: flex; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--border); margin-top: 28px; padding-top: 20px; }
+    nav a.button { min-height: 38px; padding: 8px 16px; border-radius: 999px; font-size: .875rem; font-weight: 500; }
     button { min-height: 44px; }
     @media(max-width:359px) { .today-page { padding-inline:16px; } }
     @media (max-width: 760px) { nav { display: none; } }
-    .pending-matter { padding:22px 0; border-bottom:1px solid var(--border); }
+    .pending-matter { padding:18px 0; border-bottom:1px solid var(--border); }
     .matter-meta { color:var(--muted); font-size:12px; line-height:20px; margin:0 0 8px; }
     .pending-matter h3 { font-size:21px; line-height:31px; font-weight:550; letter-spacing:-.4px; margin:0; overflow-wrap:anywhere; }
     .matter-summary { margin:10px 0 0; font-size:15px; line-height:25px; color:var(--muted); }

@@ -1,259 +1,276 @@
 package com.nola.data.remote.api
 
-import com.nola.data.remote.mobile_crypto.EncryptedEnvelope
-import com.nola.data.remote.mobile_crypto.MobileCrypto
+import com.nola.agent.trace.AgentTraceReducer
+import com.nola.agent.trace.AgentTraceSession
 import com.nola.data.remote.sse.SseClient
-import com.nola.data.remote.sse.SseStatusException
+import com.nola.data.remote.sse.SseEvent
+import com.nola.data.remote.sse.decodeSsePayload
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
-import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.toList
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.*
-import kotlin.test.*
-
-/** Both SSE and the production's independent control engine hit this real server. */
-private class EncryptedControlLoopback(
-    private val token: String,
-    private val respond: (String, JsonObject) -> Pair<String, String>,
-) : java.io.Closeable {
-    private val socket = java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
-    val baseUrl = "http://127.0.0.1:${socket.localPort}"
-    private val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
-    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
-        Thread(task, "encrypted-control-loopback").apply { isDaemon = true }
-    }
-
-    init {
-        worker.submit {
-            try {
-                while (!socket.isClosed) socket.accept().use { connection ->
-                    connection.soTimeout = 5_000
-                    val input = connection.getInputStream().buffered()
-                    fun line(): String {
-                        val bytes = java.io.ByteArrayOutputStream()
-                        while (true) {
-                            val byte = input.read()
-                            check(byte >= 0) { "Truncated HTTP headers" }
-                            if (byte == 10) break
-                            if (byte != 13) bytes.write(byte)
-                        }
-                        return bytes.toString(Charsets.ISO_8859_1.name())
-                    }
-                    val requestLine = line().split(' ')
-                    assertEquals("POST", requestLine[0])
-                    val path = requestLine[1]
-                    val headers = mutableMapOf<String, String>()
-                    while (true) {
-                        val header = line()
-                        if (header.isEmpty()) break
-                        headers[header.substringBefore(':').lowercase()] = header.substringAfter(':').trim()
-                    }
-                    val size = headers.getValue("content-length").toInt()
-                    require(size in 1..1_048_576)
-                    val bytes = input.readNBytes(size)
-                    assertEquals(size, bytes.size)
-                    val raw = bytes.decodeToString()
-                    assertFalse(raw.contains("原始正文"))
-                    assertEquals("aes-gcm-v1", headers["x-nola-mobile-crypto"])
-                    assertNull(headers["authorization"])
-                    val expectedHeaders = mobileAuthHeaders(token, "POST", baseUrl + path,
-                        headers.getValue("x-nola-mobile-timestamp").toLong(),
-                        headers.getValue("x-nola-mobile-nonce"), raw)
-                    expectedHeaders.forEach { (name, value) -> assertEquals(value, headers[name.lowercase()]) }
-                    val clear = MobileCrypto.decryptJsonObject(Json.decodeFromString<EncryptedEnvelope>(raw), token)
-                    val (type, payload) = respond(path, clear)
-                    val body = payload.toByteArray()
-                    val output = connection.getOutputStream()
-                    output.write("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
-                    output.write(body); output.flush()
-                }
-            } catch (error: Throwable) {
-                if (!socket.isClosed) {
-                    failure.set(error)
-                    socket.close()
-                }
-            }
-        }
-    }
-
-    fun assertHealthy() { failure.get()?.let { throw AssertionError("Loopback contract failure", it) } }
-    override fun close() {
-        socket.close(); worker.shutdownNow()
-        worker.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
-        assertHealthy()
-    }
-}
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RemoteObservationTransportTest {
-    @Test fun submissionTransportFreezesOneEncryptedRequestAndReconcilesOnlyTheOriginalIdentity() = runTest {
-        val token = "fixture-mobile-token"
-        val identity = RemoteSubmissionIdentity("host", "client", "conversation", "submission", "user", "assistant")
-        val digest = "a".repeat(64)
-        val request = buildJsonObject {
-            put("conversationId", "conversation"); put("expected_host_id", "host"); put("client_id", "client")
-            put("submission_id", "submission"); put("user_message_id", "user"); put("assistant_message_id", "assistant")
-            put("messages", JsonArray(listOf(buildJsonObject { put("role", "user"); put("content", "原始正文🙂") })))
+
+    @Test
+    fun v2SsePayloadDecodesAllAgentEventsDirectly() {
+        val started = decodeSsePayload(
+            """{"type":"session_started","session_id":"conv-1","model":"gpt-test"}""",
+            null,
+        )
+        assertIs<SseEvent.V2SessionStarted>(started)
+        assertEquals("conv-1", started.sessionId)
+
+        val reasoning = decodeSsePayload("""{"type":"reasoning_delta","delta":"step 1"}""", null)
+        assertIs<SseEvent.V2ReasoningDelta>(reasoning)
+        assertEquals("step 1", reasoning.delta)
+
+        val text = decodeSsePayload("""{"type":"text_delta","delta":"hello v2"}""", null)
+        assertIs<SseEvent.V2TextDelta>(text)
+        assertEquals("hello v2", text.delta)
+
+        val toolStart = decodeSsePayload("""{"type":"tool_started","call_id":"tc-1","name":"read_file"}""", null)
+        assertIs<SseEvent.V2ToolStarted>(toolStart)
+        assertEquals("read_file", toolStart.name)
+
+        val toolEnd = decodeSsePayload(
+            """{"type":"tool_finished","call_id":"tc-1","name":"read_file","is_error":false,"summary":"ok"}""",
+            null,
+        )
+        assertIs<SseEvent.V2ToolFinished>(toolEnd)
+        assertEquals(false, toolEnd.isError)
+        assertEquals("ok", toolEnd.summary)
+
+        val uiSurface = decodeSsePayload(
+            """{"type":"ui_surface","snapshot":{"revision":1,"phase":"ready","summary":"Deploy Form"}}""",
+            null,
+        )
+        assertIs<SseEvent.V2UiSurface>(uiSurface)
+        assertEquals("ready", (uiSurface.snapshot["phase"] as? kotlinx.serialization.json.JsonPrimitive)?.content)
+
+        val perm = decodeSsePayload(
+            """{"type":"permission_requested","request_id":"req-1","tool":"write_file","reason":"Requires confirmation","arguments":{"path":"a.txt"}}""",
+            null,
+        )
+        assertIs<SseEvent.V2PermissionRequested>(perm)
+        assertEquals("req-1", perm.requestId)
+        assertEquals("write_file", perm.tool)
+
+        val question = decodeSsePayload(
+            """{"type":"user_question","request_id":"q-1","question":"Target env?","options":["Staging","Production"]}""",
+            null,
+        )
+        assertIs<SseEvent.V2UserQuestion>(question)
+        assertEquals("q-1", question.requestId)
+        assertEquals(listOf("Staging", "Production"), question.options)
+
+        val completed = decodeSsePayload(
+            """{"type":"turn_completed","session_id":"conv-1","final_text":"hello v2"}""",
+            null,
+        )
+        assertIs<SseEvent.V2TurnCompleted>(completed)
+        assertEquals("hello v2", completed.finalText)
+
+        assertNull(decodeSsePayload("[DONE]", null))
+    }
+
+    @Test
+    fun v2WebHostStreamCallsDirectConversationMessagesEndpoint() = runTest {
+        val seenPaths = mutableListOf<String>()
+        val seenAuth = mutableListOf<String?>()
+        val mockEngine = MockEngine { req ->
+            seenPaths += req.url.encodedPath
+            seenAuth += req.headers["Authorization"]
+            respond(
+                content = "data: {\"type\":\"text_delta\",\"delta\":\"Hi from v2\"}\n\n" +
+                    "data: {\"type\":\"turn_completed\",\"session_id\":\"c-42\",\"final_text\":\"Hi from v2\"}\n\n" +
+                    "data: [DONE]\n\n",
+                status = HttpStatusCode.OK,
+                headers = headersOf("Content-Type", "text/event-stream"),
+            )
         }
-        val frozen = FrozenRemoteSubmission(identity, digest, request)
-        val receipt = buildJsonObject {
-            put("protocol_version", 1); put("identity", identity.wire()); put("request_digest", digest)
-            put("phase", "prepared"); put("admission", JsonNull); put("rejection_code", JsonNull)
+        val client = HttpClient(mockEngine)
+        val sse = SseClient(client)
+        val url = webHostV2ApiUrl("http://127.0.0.1:5001", "chat/conversations/c-42/messages")
+        val events = sse.stream(
+            url = url,
+            bodyJson = """{"content":"hello"}""",
+            headers = mapOf("Authorization" to "Bearer tok", "X-Nola-Client" to "android"),
+            mobileCryptoToken = null,
+            requestClient = client,
+        ).toList()
+
+        assertEquals(listOf("/api/mobile/chat/conversations/c-42/messages"), seenPaths)
+        assertEquals(listOf<String?>("Bearer tok"), seenAuth)
+        assertEquals(2, events.size)
+        assertIs<SseEvent.V2TextDelta>(events[0])
+        assertEquals("Hi from v2", (events[0] as SseEvent.V2TextDelta).delta)
+        assertIs<SseEvent.V2TurnCompleted>(events[1])
+    }
+
+    @Test
+    fun v2SseTraceAdapterMapsInteractiveAndCompactionEvents() {
+        val session = AgentTraceSession(
+            traceId = "trace-v2",
+            runId = "run-v2",
+            conversationId = "conv-v2",
+            messageId = "msg-v2",
+            turnId = "turn-v2",
+        )
+
+        val permEvent = session.fromSse(
+            SseEvent.V2PermissionRequested(
+                requestId = "perm-1",
+                tool = "write_file",
+                reason = "Needs approval",
+                arguments = buildJsonObject { put("path", "notes.md") },
+            )
+        )
+        assertNotNull(permEvent)
+        assertEquals("tool.permission.requested", permEvent.kind)
+        assertEquals("waiting", permEvent.status)
+        assertEquals("perm-1", permEvent.payload.permissionRequestId)
+        assertEquals("write_file", permEvent.payload.toolName)
+        assertEquals("Needs approval", permEvent.payload.summary)
+
+        val questionEvent = session.fromSse(
+            SseEvent.V2UserQuestion(
+                requestId = "q-1",
+                question = "Deploy target?",
+                options = listOf("Staging", "Production"),
+            )
+        )
+        assertNotNull(questionEvent)
+        assertEquals("phase.changed", questionEvent.kind)
+        assertEquals("waiting", questionEvent.status)
+        assertEquals("awaiting_user_input", questionEvent.payload.phase)
+        assertEquals("Deploy target?", questionEvent.payload.summary)
+        assertEquals("Staging, Production", questionEvent.payload.detail)
+
+        val surfaceSnapshot = buildJsonObject {
+            put("identity", buildJsonObject { put("surface_id", "surf-1") })
+            put("phase", "ready")
+            put("summary", "Deploy Form")
         }
-        val seen = java.util.concurrent.CopyOnWriteArrayList<Pair<String, JsonObject>>()
-        EncryptedControlLoopback(token) { path, clear ->
-            seen += path to clear
-            if (path.endsWith("/stream")) {
-                assertEquals(frozen.wireRequest(), clear)
-                val envelope = MobileCrypto.encryptJsonObject(buildJsonObject { put("type", "submission_receipt"); put("receipt", receipt) }, token).copy(type = "encrypted")
-                "text/event-stream" to "data: ${Json.encodeToString(envelope)}\n\ndata: [DONE]\n\n"
-            } else {
-                assertEquals("/api/mobile/chat/agent/v2/submission", path)
-                val result = when (clear.getValue("operation").jsonPrimitive.content) {
-                    "prepare" -> {
-                        assertEquals(request, clear.getValue("request")); assertFalse(request.containsKey("request_digest"))
-                        buildJsonObject { put("identity", identity.wire()); put("request_digest", digest) }
+        val surfaceEvent = session.fromSse(SseEvent.V2UiSurface(snapshot = surfaceSnapshot))
+        assertNotNull(surfaceEvent)
+        assertEquals("tool.progress", surfaceEvent.kind)
+        assertEquals("surf-1", surfaceEvent.spanId)
+        assertEquals("render_ui_surface", surfaceEvent.payload.toolName)
+        assertEquals("Deploy Form", surfaceEvent.payload.summary)
+        assertEquals(surfaceSnapshot, surfaceEvent.payload.result)
+
+        val compactedEvent = session.fromSse(SseEvent.V2Compacted(summary = "Compacted 12 messages"))
+        assertNotNull(compactedEvent)
+        assertEquals("context.compacted", compactedEvent.kind)
+        assertEquals("compacting", compactedEvent.payload.phase)
+        assertEquals("Compacted 12 messages", compactedEvent.payload.summary)
+
+        val projection = AgentTraceReducer.replay(listOf(permEvent, questionEvent, surfaceEvent, compactedEvent))
+        assertEquals("processing", projection.phase)
+        assertTrue(projection.tools.any { it.spanId == "perm-1" && it.status == "permission_required" })
+        assertTrue(projection.tools.any { it.spanId == "surf-1" && it.toolName == "render_ui_surface" })
+    }
+
+    @Test
+    fun prepareToolPlanAndGenerativeUiRouteToExpectedV2Endpoints() = runTest {
+        val requests = CopyOnWriteArrayList<Pair<String, String>>()
+        val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val acceptThread = thread(isDaemon = true) {
+            repeat(3) {
+                val socket = runCatching { server.accept() }.getOrNull() ?: return@thread
+                socket.use { client ->
+                    val reader = BufferedReader(InputStreamReader(client.getInputStream()))
+                    val requestLine = reader.readLine().orEmpty()
+                    val parts = requestLine.split(" ")
+                    if (parts.size >= 2) requests += parts[0] to parts[1]
+                    var contentLength = 0
+                    while (true) {
+                        val header = reader.readLine() ?: break
+                        if (header.isEmpty()) break
+                        if (header.startsWith("Content-Length:", ignoreCase = true)) {
+                            contentLength = header.substringAfter(":").trim().toIntOrNull() ?: 0
+                        }
                     }
-                    "observe" -> { assertEquals(remoteSubmissionReconciliationRequest(identity, digest), clear); JsonNull }
-                    "cancel" -> { assertEquals(remoteSubmissionReconciliationRequest(identity, digest, true), clear); receipt }
-                    else -> error("Unexpected submission operation")
+                    if (contentLength > 0) {
+                        val bodyChars = CharArray(contentLength)
+                        var read = 0
+                        while (read < contentLength) {
+                            val n = reader.read(bodyChars, read, contentLength - read)
+                            if (n <= 0) break
+                            read += n
+                        }
+                    }
+                    val body = """{"ok":true}"""
+                    val response = "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Content-Length: ${body.toByteArray().size}\r\n" +
+                        "Connection: close\r\n\r\n" +
+                        body
+                    client.getOutputStream().write(response.toByteArray())
+                    client.getOutputStream().flush()
                 }
-                val response = buildJsonObject { put("source_host_id", "host"); put("result", result) }
-                "application/json" to Json.encodeToString(MobileCrypto.encryptJsonObject(response, token))
             }
-        }.use { server ->
-            val client = HttpClient(io.ktor.client.engine.cio.CIO) { install(ContentNegotiation) { json() } }
-            try {
-                val api = WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
-                val preparation = api.remoteSubmission(server.baseUrl, token, buildJsonObject {
-                    put("operation", "prepare"); put("identity", identity.wire()); put("request", request)
-                })
-                assertFalse(preparation.getValue("result").jsonObject.containsKey("phase"), "Digest preparation is not a receipt")
-                assertEquals(receipt, (api.streamBoundAgentRequest(server.baseUrl, token, frozen).toList().single()
-                    as com.nola.data.remote.sse.SseEvent.SubmissionReceipt).receipt)
-                assertEquals(JsonNull, api.remoteSubmission(server.baseUrl, token,
-                    remoteSubmissionReconciliationRequest(identity, digest)).getValue("result"))
-                api.remoteSubmission(server.baseUrl, token, remoteSubmissionReconciliationRequest(identity, digest, true))
-                assertEquals(1, seen.count { it.first.endsWith("/stream") })
-                assertEquals(4, seen.size)
-                assertTrue(seen.filter { it.second["operation"]?.jsonPrimitive?.content in setOf("observe", "cancel") }
-                    .all { !it.second.containsKey("request") && !it.second.containsKey("messages") })
-                server.assertHealthy()
-            } finally { client.close() }
         }
-    }
+        try {
+            val baseUrl = "http://127.0.0.1:${server.localPort}"
+            val mockClient = HttpClient(MockEngine { respond("""{}""", HttpStatusCode.OK) })
+            val api = WebHostApiServiceImpl(
+                httpClient = mockClient,
+                sseClient = SseClient(mockClient),
+                httpClientFactory = WebHostHttpClientFactory(mockClient),
+            )
+            api.prepareToolPlan(
+                hostBaseUrl = baseUrl,
+                token = "tok",
+                request = buildJsonObject { put("conversation_id", "c-1") },
+                pinnedCertificateSha256 = "",
+            )
+            api.generativeUi(
+                hostBaseUrl = baseUrl,
+                token = "tok",
+                operation = "queued-input",
+                request = buildJsonObject { put("conversation_id", "c-1") },
+                pinnedCertificateSha256 = "",
+            )
+            api.generativeUi(
+                hostBaseUrl = baseUrl,
+                token = "tok",
+                operation = "queued-input/cancel",
+                request = buildJsonObject { put("conversation_id", "c-1") },
+                pinnedCertificateSha256 = "",
+            )
 
-    @Test fun admittedCancellationCarriesExactSubmissionNotOnlyConversation() = runTest {
-        val token = "fixture-mobile-token"
-        val identity = RemoteSubmissionIdentity("host", "client", "conversation", "original-submission", "original-user", "original-root")
-        val requests = java.util.concurrent.atomic.AtomicInteger()
-        EncryptedControlLoopback(token) { path, clear ->
-            requests.incrementAndGet()
-            assertEquals("/api/mobile/chat/agent/v2/cancel", path)
-            assertEquals(buildJsonObject { put("identity", identity.wire()) }, clear)
-            "application/json" to Json.encodeToString(MobileCrypto.encryptJsonObject(buildJsonObject { put("cancelRequested", true) }, token))
-        }.use { server ->
-            val client = HttpClient(io.ktor.client.engine.cio.CIO) { install(ContentNegotiation) { json() } }
-            try {
-                WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
-                    .cancelAdmittedRemoteSubmission(server.baseUrl, token, identity)
-                assertEquals(1, requests.get())
-                server.assertHealthy()
-            } finally { client.close() }
+            assertEquals(
+                listOf(
+                    "POST" to "/api/mobile/agent/tool-plan/prepare",
+                    "GET" to "/api/mobile/chat/conversations/c-1/events",
+                    "POST" to "/api/mobile/chat/conversations/c-1/cancel",
+                ),
+                requests.toList(),
+            )
+        } finally {
+            server.close()
+            acceptThread.join(2_000)
         }
-    }
-
-    @Test fun productionControlTransportEncryptsExactObserverAndAuthenticatesTheObservePath() = runTest {
-        val token = "fixture-mobile-token"
-        val key = RemoteRunKey("conversation", "durable-run", "original-root")
-        val request = remoteObservationRequest("host", "client", key.conversationId, key)
-        val expected = buildJsonObject { put("source_host_id", "host"); put("result", JsonNull) }
-        var calls = 0
-        val client = HttpClient(MockEngine { http ->
-            calls++
-            assertEquals("/api/mobile/chat/agent/v2/observe", http.url.encodedPath)
-            assertEquals("aes-gcm-v1", http.headers["X-Nola-Mobile-Crypto"])
-            assertNull(http.headers["Authorization"])
-            val raw = (http.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-            assertFalse(raw.contains(key.runId))
-            // Rust requires these wire fields; Kotlin defaults must not hide omissions.
-            val wire = Json.parseToJsonElement(raw).jsonObject
-            assertEquals(JsonPrimitive(1), wire["v"])
-            assertEquals(JsonPrimitive("AES-256-GCM"), wire["alg"])
-            assertEquals(request, MobileCrypto.decryptJsonObject(Json.decodeFromString<EncryptedEnvelope>(raw), token))
-            val headers = mobileAuthHeaders(token, "POST", http.url.toString(),
-                http.headers["X-Nola-Mobile-Timestamp"]!!.toLong(), http.headers["X-Nola-Mobile-Nonce"]!!, raw)
-            assertEquals(headers["X-Nola-Mobile-Auth"], http.headers["X-Nola-Mobile-Auth"])
-            respond(Json.encodeToString(MobileCrypto.encryptJsonObject(expected, token)),
-                headers = headersOf("Content-Type", "application/json"))
-        }) { install(ContentNegotiation) { json() } }
-        try {
-            assertEquals(expected, postEncryptedWebHostRequest(client,
-                "http://127.0.0.1/api/mobile/chat/agent/v2/observe", token, request))
-            assertEquals(1, calls)
-        } finally { client.close() }
-    }
-
-    @Test fun encryptedControlResponseEnforcesWireBudgetWithoutContentLength() = runTest {
-        val token = "fixture-mobile-token"
-        val payload = buildJsonObject { put("source_host_id", "host"); put("result", "表单".repeat(100)) }
-        val wire = Json.encodeToString(MobileCrypto.encryptJsonObject(payload, token))
-        val wireBytes = wire.toByteArray(Charsets.UTF_8).size
-        val client = HttpClient(MockEngine {
-            respond(wire, headers = headersOf("Content-Type", "application/json"))
-        })
-        try {
-            assertEquals(payload, postEncryptedWebHostRequest(client,
-                "http://127.0.0.1/api/mobile/chat/agent/v2/ui/surfaces", token,
-                buildJsonObject {}, maximumResponseBytes = wireBytes))
-            assertFailsWith<IllegalArgumentException> {
-                postEncryptedWebHostRequest(client,
-                    "http://127.0.0.1/api/mobile/chat/agent/v2/ui/surfaces", token,
-                    buildJsonObject {}, maximumResponseBytes = wireBytes - 1)
-            }
-        } finally { client.close() }
-    }
-
-    @Test fun httpRejectionCannotBeDecodedAsSuccessfulAbsentRun() = runTest {
-        for (status in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.NotFound, HttpStatusCode.Conflict)) {
-            val client = HttpClient(MockEngine { respond("{}", status = status) })
-            try {
-                val error = assertFailsWith<WebHostStatusException> {
-                    postEncryptedWebHostRequest(client, "http://127.0.0.1/api/mobile/chat/agent/v2/observe",
-                        "fixture-token", remoteObservationRequest("host", "client", "conversation"))
-                }
-                assertEquals(status.value, error.statusCode)
-            } finally { client.close() }
-        }
-    }
-
-    @Test fun actualResumeApiUsesExactOriginalRunAndExposesConflictForObservation() = runTest {
-        val token = "fixture-mobile-token"
-        val key = RemoteRunKey("conversation", "original-durable-run", "original-root")
-        val expected = remoteResumeRequest("host", "client", key)
-        var calls = 0
-        val client = HttpClient(MockEngine { http ->
-            calls++
-            assertEquals("/api/mobile/chat/agent/v2/resume", http.url.encodedPath)
-            val raw = (http.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-            val clear = MobileCrypto.decryptJsonObject(Json.decodeFromString<EncryptedEnvelope>(raw), token)
-            assertEquals(expected, clear)
-            assertFalse(clear.containsKey("submission_id")); assertFalse(clear.containsKey("messages"))
-            respond("{}", status = HttpStatusCode.Conflict)
-        })
-        try {
-            val api = WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
-            val failure = assertFailsWith<SseStatusException> {
-                api.resumeRemoteConversation("http://127.0.0.1", token, expected).toList()
-            }
-            assertEquals(409, failure.statusCode); assertEquals(1, calls)
-        } finally { client.close() }
     }
 }

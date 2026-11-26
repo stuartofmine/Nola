@@ -14,9 +14,9 @@ Test an interrupted commit and a late observation against the same checkpoint. A
 
 ## Implementation
 
-- [nola-agent-engine/src/reducer_port.rs](../../../../core/nola-agent-engine/src/reducer_port.rs)
-- [agent/runtime/submission.rs](../../../../core/nola-agent-engine/src/agent/runtime/submission.rs)
-- [core/src/lib.rs](../../../../core/src/lib.rs)
+- [nola-agent-engine/src/reducer_port.rs](../../../../crates/nola-engine/src/lib.rs)
+- [agent/runtime/submission.rs](../../../../crates/nola-engine/src/loop_runner.rs)
+- [core/src/lib.rs](../../../../crates/nola-app/src/lib.rs)
 
 ## Detailed references
 

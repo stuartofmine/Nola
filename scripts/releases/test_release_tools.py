@@ -11,6 +11,8 @@ import unittest
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('prepare_version', HERE/'prepare_version.py')
 prepare = importlib.util.module_from_spec(spec); spec.loader.exec_module(prepare)
+sign_spec = importlib.util.spec_from_file_location('sign_update_feed', HERE/'sign_update_feed.py')
+sign_update_feed = importlib.util.module_from_spec(sign_spec); sign_spec.loader.exec_module(sign_update_feed)
 
 
 class VersionPreparationTests(unittest.TestCase):
@@ -40,7 +42,7 @@ class VersionPreparationTests(unittest.TestCase):
 
 class SigningTests(unittest.TestCase):
     def test_offline_signing_pins_key_and_hashes_actual_package(self):
-        openssl = os.environ.get('OPENSSL_BIN','openssl')
+        openssl = sign_update_feed.default_openssl()
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);key=root/'key.pem'
             subprocess.run([openssl,'genpkey','-algorithm','ED25519','-out',str(key)],check=True,capture_output=True)

@@ -1,0 +1,35 @@
+[package]
+name = "nola-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+nola-types = { workspace = true }
+base64 = { workspace = true }
+calamine = { workspace = true }
+globset = { workspace = true }
+ignore = { workspace = true }
+image = { workspace = true }
+libc = { workspace = true }
+lopdf = { workspace = true }
+quick-xml = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+rustfft = { workspace = true }
+scraper = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+symphonia = { workspace = true }
+url = { workspace = true }
+vt100 = { workspace = true }
+zip = { workspace = true }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rquickjs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

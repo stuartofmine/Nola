@@ -1072,8 +1072,10 @@
     <string name="canonical_supersedes">Registros reemplazados</string>
     <string name="chat_permission_mode">Modo de permisos</string>
     <string name="chat_permission_mode_cautious">Prudente</string>
+    <string name="chat_permission_mode_accept_edits">Aceptar cambios</string>
     <string name="chat_permission_mode_allow_all">Permitir todo</string>
     <string name="chat_permission_mode_cautious_detail">Confirma borrados, sobrescrituras, datos sensibles, envíos y conexiones nuevas. Las lecturas normales y los archivos nuevos continúan.</string>
+    <string name="chat_permission_mode_accept_edits_detail">Permite automáticamente ediciones en el espacio de trabajo. Confirma comandos de shell, escrituras externas, envíos y conexiones nuevas.</string>
     <string name="chat_permission_mode_allow_all_detail">Sin confirmaciones de Nola en esta conversación. Siguen vigentes los permisos del sistema.</string>
     <string name="models_inference_test">Probar modelo</string>
     <string name="models_inference_test_hint">Ejecutar una consulta aislada con los parámetros guardados del modelo. No cambia el modelo activo del chat ni la conversación.</string>
@@ -1477,4 +1479,23 @@
     <string name="permission_from_subagent">De subagente: %1$s</string>
     <string name="permission_queue_pending">1 de %1$d pendientes</string>
     <string name="chat_response_failed_empty">La respuesta falló.</string>
+    <string name="chat_v2_question_placeholder">Escribe tu respuesta…</string>
+    <string name="chat_v2_question_skip">Omitir</string>
+    <string name="chat_v2_question_submit">Enviar</string>
+    <string name="chat_v2_ui_unavailable">Interfaz interactiva no disponible</string>
+    <string name="chat_v2_ui_interaction_failed">Error en la interacción</string>
+    <string name="chat_v2_context_compacted">Contexto compactado</string>
+    <string name="chat_v2_context_compacted_range">Contexto compactado (%1$s → %2$s tokens)</string>
+    <string name="chat_v2_context_compacted_after">Contexto compactado (%1$s tokens)</string>
+    <string name="chat_v2_context_compaction_failed">Error al compactar el contexto</string>
+    <string name="chat_v2_branch_conversation">Bifurcar conversación</string>
+    <string name="chat_v2_branch_failed">No se pudo bifurcar la conversación</string>
+    <string name="chat_v2_workspace_review">Revisión del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_empty">No se detectaron cambios en el espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_host_required">Conéctate a un Web Agent Host para revisar los cambios del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_staged">Cambios preparados</string>
+    <string name="chat_v2_workspace_review_unstaged">Cambios sin preparar</string>
+    <string name="chat_v2_workspace_review_files">Archivos del espacio de trabajo</string>
+    <string name="chat_v2_workspace_review_truncated">Salida truncada para vista previa</string>
+    <string name="chat_v2_edit_resend_failed">No se pudo truncar y reenviar el mensaje</string>
 </resources>

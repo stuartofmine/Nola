@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,7 +27,11 @@ import (
 
 const ServicePort = 5001
 
-const closeWaitTimeout = 2 * time.Second
+const (
+	closeWaitTimeout     = 2 * time.Second
+	maxConcurrentProxies = 128
+	proxyIdleTimeout     = 5 * time.Minute
+)
 
 type classifiedError struct {
 	code string
@@ -78,7 +84,32 @@ func validRelay(raw string) bool {
 		return true
 	}
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "ip6-localhost" || host == "ip6-loopback" {
+		return false
+	}
+	if _, err := strconv.ParseUint(host, 0, 64); err == nil {
+		return false
+	}
+	ipStr := host
+	if zone := strings.IndexByte(ipStr, '%'); zone >= 0 {
+		ipStr = ipStr[:zone]
+	}
+	if ip := net.ParseIP(ipStr); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return false
+		}
+		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func checkHostStatus(body io.Reader, expected string) error {
@@ -137,8 +168,13 @@ func NewHost(config HostConfig) (*Host, error) {
 			return nil
 		}
 		return func(conn net.Conn) {
-			h.active.proxy(conn, func(ctx context.Context) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "tcp", h.target)
+			if !h.active.tryAcquire() {
+				log.Printf("tailcattransport: concurrent proxy limit (%d) reached; rejecting incoming connection", maxConcurrentProxies)
+				_ = conn.Close()
+				return
+			}
+			h.active.proxyAcquired(conn, func(ctx context.Context) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", h.target)
 			})
 		}
 	}
@@ -202,10 +238,14 @@ func (c *Client) Connect(address, relay string) error {
 	return nil
 }
 func (c *Client) dial(ctx context.Context) (net.Conn, error) {
-	if c.tunnel == nil {
+	c.mu.Lock()
+	tunnel := c.tunnel
+	closed := c.closed
+	c.mu.Unlock()
+	if closed || tunnel == nil {
 		return nil, errors.New("client has no explicit server")
 	}
-	return c.tunnel.DialTCPPort(ctx, ServicePort)
+	return tunnel.DialTCPPort(ctx, ServicePort)
 }
 
 // Classify only standard error types; raw URLs, peer addresses and provider
@@ -232,7 +272,10 @@ func inspectionFailureCode(err error) string {
 // VerifyHost completes the encrypted path and checks the application identity
 // before a caller exposes a local endpoint as connected. It sends no credential.
 func (c *Client) VerifyHost(ctx context.Context, expected string) error {
-	if c.tunnel == nil || expected == "" {
+	c.mu.Lock()
+	ready := !c.closed && c.tunnel != nil
+	c.mu.Unlock()
+	if !ready || expected == "" {
 		return errors.New("explicit expected Host identity required")
 	}
 	request, _ := http.NewRequestWithContext(ctx, "GET", "http://nola-transport.invalid/api/web/session", nil)
@@ -268,7 +311,12 @@ func (c *Client) ServeLocal(listener net.Listener) error {
 		if err != nil {
 			return err
 		}
-		go c.active.proxy(conn, c.dial)
+		if !c.active.tryAcquire() {
+			log.Printf("tailcattransport: concurrent proxy limit (%d) reached; rejecting local connection", maxConcurrentProxies)
+			_ = conn.Close()
+			continue
+		}
+		go c.active.proxyAcquired(conn, c.dial)
 	}
 }
 func (c *Client) Close() error {
@@ -285,6 +333,78 @@ func (c *Client) Close() error {
 	return err
 }
 
+type idleTimeoutConn struct {
+	net.Conn
+	start        time.Time
+	lastActivity *atomic.Int64
+	stop         func()
+}
+
+// newBidirectionalIdlePair wraps both halves of a proxied connection pair so traffic
+// in EITHER direction (e.g., server->client SSE heartbeats/deltas while client is silent)
+// refreshes the shared monotonic idle clock. Only genuinely idle pairs are closed after timeout.
+func newBidirectionalIdlePair(a, b net.Conn, timeout time.Duration) (net.Conn, net.Conn, func()) {
+	if a == nil || b == nil || timeout <= 0 {
+		return a, b, func() {}
+	}
+	start := time.Now()
+	var last atomic.Int64
+	last.Store(0)
+	done := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() { close(done) })
+	}
+	checkEvery := timeout / 4
+	if checkEvery < 10*time.Millisecond {
+		checkEvery = 10 * time.Millisecond
+	}
+	if checkEvery > 5*time.Second {
+		checkEvery = 5 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(checkEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				elapsed := int64(time.Since(start))
+				if elapsed-last.Load() >= int64(timeout) {
+					_ = a.Close()
+					_ = b.Close()
+					return
+				}
+			}
+		}
+	}()
+	return &idleTimeoutConn{Conn: a, start: start, lastActivity: &last, stop: stop},
+		&idleTimeoutConn{Conn: b, start: start, lastActivity: &last, stop: stop},
+		stop
+}
+
+func (c *idleTimeoutConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.lastActivity.Store(int64(time.Since(c.start)))
+	}
+	return n, err
+}
+
+func (c *idleTimeoutConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 {
+		c.lastActivity.Store(int64(time.Since(c.start)))
+	}
+	return n, err
+}
+
+func (c *idleTimeoutConn) Close() error {
+	c.stop()
+	return c.Conn.Close()
+}
+
 // Tracks only this component's sockets. Closing transport does not cancel a Run.
 type connections struct {
 	mu     sync.Mutex
@@ -292,12 +412,26 @@ type connections struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	items  map[net.Conn]bool
+	sem    chan struct{}
 	wg     sync.WaitGroup
 }
 
 func newConnections() *connections {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &connections{ctx: ctx, cancel: cancel, items: make(map[net.Conn]bool)}
+	return &connections{
+		ctx:    ctx,
+		cancel: cancel,
+		items:  make(map[net.Conn]bool),
+		sem:    make(chan struct{}, maxConcurrentProxies),
+	}
+}
+func (c *connections) tryAcquire() bool {
+	select {
+	case c.sem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 func (c *connections) add(conn net.Conn) bool {
 	c.mu.Lock()
@@ -310,6 +444,15 @@ func (c *connections) add(conn net.Conn) bool {
 	return true
 }
 func (c *connections) proxy(conn net.Conn, dial func(context.Context) (net.Conn, error)) {
+	if !c.tryAcquire() {
+		log.Printf("tailcattransport: concurrent proxy limit (%d) reached; rejecting connection", maxConcurrentProxies)
+		_ = conn.Close()
+		return
+	}
+	c.proxyAcquired(conn, dial)
+}
+func (c *connections) proxyAcquired(conn net.Conn, dial func(context.Context) (net.Conn, error)) {
+	defer func() { <-c.sem }()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -322,6 +465,9 @@ func (c *connections) proxy(conn net.Conn, dial func(context.Context) (net.Conn,
 	var remote net.Conn
 	defer func() {
 		_ = conn.Close()
+		if remote != nil {
+			_ = remote.Close()
+		}
 		c.mu.Lock()
 		delete(c.items, conn)
 		if remote != nil {
@@ -335,7 +481,9 @@ func (c *connections) proxy(conn net.Conn, dial func(context.Context) (net.Conn,
 	if err != nil || !c.add(remote) {
 		return
 	}
-	tailcat.ProxyConns(conn, remote)
+	wrappedLocal, wrappedRemote, stopIdle := newBidirectionalIdlePair(conn, remote, proxyIdleTimeout)
+	defer stopIdle()
+	tailcat.ProxyConns(wrappedLocal, wrappedRemote)
 }
 func (c *connections) beginClose() {
 	c.mu.Lock()

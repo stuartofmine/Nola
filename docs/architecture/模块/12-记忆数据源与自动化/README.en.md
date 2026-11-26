@@ -14,9 +14,9 @@ Test owner isolation in recall, an expired or denied data source, duplicate trig
 
 ## Implementation
 
-- [nola-application/src/memory.rs](../../../../core/nola-application/src/memory.rs)
-- [nola-application/src/data_source.rs](../../../../core/nola-application/src/data_source.rs)
-- [nola-application/src/automation_execution.rs](../../../../core/nola-application/src/automation_execution.rs)
+- [nola-application/src/memory.rs](../../../../crates/nola-modules/src/memory.rs)
+- [nola-application/src/data_source.rs](../../../../crates/nola-modules/src/data_sources.rs)
+- [nola-application/src/automation_execution.rs](../../../../crates/nola-modules/src/automations_messaging.rs)
 
 ## Detailed references
 

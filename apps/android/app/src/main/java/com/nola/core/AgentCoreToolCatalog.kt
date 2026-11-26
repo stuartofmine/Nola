@@ -44,7 +44,7 @@ object AgentCoreToolCatalog {
         val snapshot = AndroidAgentPermissionSnapshot(
             capturedAtMs = capturedAtMs,
             authorizations = capabilities.associateWith { capability ->
-                if (capability == "clipboard" && permissionMode != AndroidAgentPermissionMode.Cautious) {
+                if (capability == "clipboard" && permissionMode == AndroidAgentPermissionMode.AllowAll) {
                     "granted"
                 } else {
                     "ask"

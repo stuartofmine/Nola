@@ -113,7 +113,7 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testMobileAuthHeadersReplaceBearerToken() throws {
-        let url = try XCTUnwrap(URL(string: "https://host.example/api/mobile/agent/settings"))
+        let url = try XCTUnwrap(URL(string: "https://host.example/api/agent/settings"))
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer exposed-token", forHTTPHeaderField: "Authorization")
@@ -128,7 +128,7 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testBrowserHandoffPathUsesHostOriginWithoutLeakingMobileAPIPath() throws {
-        let baseURL = try XCTUnwrap(URL(string: "https://host.example:7443/api/mobile/agent/settings"))
+        let baseURL = try XCTUnwrap(URL(string: "https://host.example:7443/api/agent/settings"))
         let result = try XCTUnwrap(WebAgentProvider.controlPlaneURL(
             baseURL: baseURL,
             path: "/auth/mobile-handoff/one-time-code"
@@ -914,17 +914,17 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testMobileURLNormalizesCopiedMobileEndpoint() throws {
-        let base = try XCTUnwrap(URL(string: "http://192.168.1.8:5001/api/mobile/login"))
-        let url = WebAgentProvider.mobileURL(baseURL: base, path: "chat/agent/v2/stream")
+        let base = try XCTUnwrap(URL(string: "http://192.168.1.8:5001/api/login"))
+        let url = WebAgentProvider.mobileURL(baseURL: base, path: "chat/conversations/c1/messages")
 
         XCTAssertEqual(
             url.absoluteString,
-            "http://192.168.1.8:5001/api/mobile/chat/agent/v2/stream"
+            "http://192.168.1.8:5001/api/chat/conversations/c1/messages"
         )
     }
 
     func testControlPlaneURLUsesHostOriginInsteadOfAPIPath() throws {
-        let base = try XCTUnwrap(URL(string: "https://host.example:7443/api/mobile/agent/settings"))
+        let base = try XCTUnwrap(URL(string: "https://host.example:7443/api/agent/settings"))
         XCTAssertEqual(
             WebAgentProvider.controlPlaneURL(baseURL: base, path: "/settings#channels")?.absoluteString,
             "https://host.example:7443/settings#channels"
@@ -1092,7 +1092,7 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testResolveToolURLRewritesLoopbackAgainstLanHost() throws {
-        let base = try XCTUnwrap(URL(string: "http://192.168.1.8:5001/api/mobile/login"))
+        let base = try XCTUnwrap(URL(string: "http://192.168.1.8:5001/api/login"))
 
         XCTAssertEqual(
             WebAgentProvider.resolveToolURL(URL(string: "http://127.0.0.1:5001/static/call.png"), baseURL: base)?.absoluteString,
@@ -1113,7 +1113,7 @@ final class WebAgentProviderTests: XCTestCase {
     }
 
     func testResolveToolURLKeepsLoopbackWhenBaseIsLoopbackForSimulator() throws {
-        let base = try XCTUnwrap(URL(string: "http://127.0.0.1:5001/api/mobile/login"))
+        let base = try XCTUnwrap(URL(string: "http://127.0.0.1:5001/api/login"))
 
         XCTAssertEqual(
             WebAgentProvider.resolveToolURL(URL(string: "http://localhost:3000/app"), baseURL: base)?.absoluteString,

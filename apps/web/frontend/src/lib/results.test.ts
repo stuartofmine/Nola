@@ -30,9 +30,11 @@ test('result presentation follows every selected locale and preserves unknown pr
     for (const locale of supportedLocales) {
         assert.equal(resultTime(timestamp, locale), new Date(timestamp).toLocaleString(locale));
         for (const invalid of [null, undefined, '', 'invalid']) assert.equal(resultTime(invalid, locale), '—');
-        for (const status of ['answered', 'action_completed', 'delegation_accepted', 'incomplete', 'blocked', 'cancelled', 'failed', 'running', 'waiting_input', 'queued']) {
+        for (const status of ['answered', 'action_completed', 'delegation_accepted', 'incomplete', 'blocked', 'cancelled', 'failed', 'running', 'waiting_input', 'queued', 'idle']) {
             assert.equal(resultStatus(status, locale), t(locale, `activity.status.${status}`));
         }
+        assert.equal(resultStatus('waiting_for_input', locale), t(locale, 'activity.status.waiting_input'));
+        assert.equal(resultStatus('completed', locale), t(locale, 'activity.status.action_completed'));
         assert.equal(resultStatus('future_status', locale), 'future_status');
         assert.equal(resultFormat('custom_format', locale), 'custom_format');
         assert.equal(resultFormat('rss', locale), 'RSS');

@@ -479,6 +479,8 @@ struct ModelRow: View {
                                 Text(L10n.modelActionUse)
                             }
                             .buttonStyle(.borderedProminent)
+                            .tint(DesignTokens.actionColor)
+                            .foregroundStyle(DesignTokens.onActionColor)
                             .controlSize(.small)
                             .accessibilityIdentifier("model.download.use.\(model.rawValue)")
                         }

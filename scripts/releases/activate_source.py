@@ -50,8 +50,11 @@ def open_https(url):
 
 
 def verify_rust(root, candidate_path, feed_path, target):
-    subprocess.run(['cargo', 'run', '--locked', '-p', 'nola_update_host', '--example', 'verify_feed', '--',
-                    str(candidate_path), str(feed_path), target], cwd=root, check=True)
+    subprocess.run(
+        ['cargo', 'run', '--locked', '-p', 'nola-app', '--bin', 'nola', '--',
+         'update', 'verify-feed', '--source', str(candidate_path), '--feed', str(feed_path)],
+        cwd=root, check=True,
+    )
 
 
 def activate(root, candidate, target, dry_run=False, opener=open_https, verifier=verify_rust):

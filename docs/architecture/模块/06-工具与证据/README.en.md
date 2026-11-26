@@ -14,9 +14,9 @@ Test a missing browser page, partial output and a tool that exits successfully w
 
 ## Implementation
 
-- [nola-application/src/tool_source.rs](../../../../core/nola-application/src/tool_source.rs)
-- [nola-store/src/tool_source.rs](../../../../core/nola-store/src/tool_source.rs)
-- [nola-domain/src/execution_evidence.rs](../../../../core/nola-domain/src/execution_evidence.rs)
+- [nola-application/src/tool_source.rs](../../../../crates/nola-tools/src/lib.rs)
+- [nola-store/src/tool_source.rs](../../../../crates/nola-store/src/db.rs)
+- [nola-domain/src/execution_evidence.rs](../../../../crates/nola-types/src/tool.rs)
 
 ## Detailed references
 

@@ -406,20 +406,29 @@ class AndroidAgentTurnService @Inject constructor(
             promptFragmentIds = promptComposition.fragmentIds,
             stablePromptFragmentDigests = promptComposition.stableFragmentSha256,
         )
-        if (frozen != null && requestedPermissionMode == AndroidAgentPermissionMode.AllowAll) {
+        if (frozen != null && requestedPermissionMode != AndroidAgentPermissionMode.Cautious) {
             val frozenDigest = frozen.getValue("host_invocation").jsonObject["execution_policy_sha256"]
-            val cautiousPlan = toolPlan(request.sessionId, originalRequest.resultEgressAuthorized, AndroidAgentPermissionMode.Cautious)
-            val cautiousCoordinator = createCoordinator(cautiousPlan)
-            val cautiousTools = model.modelFacingTools(cautiousPlan.tools)
-            val cautiousConfig = cautiousCoordinator.buildRuntimeConfig(
-                request.sessionId,
-                effectiveHistory,
-                cautiousTools,
-                cautiousPlan,
-                runtimeConfigFor(cautiousPlan),
-            )
-            if (bindAndroidInvocation(prepared, cautiousConfig)["execution_policy_sha256"] == frozenDigest) {
-                request = request.copy(toolPlan = cautiousPlan)
+            val candidates = buildList {
+                add(AndroidAgentPermissionMode.Cautious)
+                if (requestedPermissionMode == AndroidAgentPermissionMode.AllowAll) {
+                    add(AndroidAgentPermissionMode.AcceptEdits)
+                }
+            }
+            for (candidateMode in candidates) {
+                val candidatePlan = toolPlan(request.sessionId, originalRequest.resultEgressAuthorized, candidateMode)
+                val candidateCoordinator = createCoordinator(candidatePlan)
+                val candidateTools = model.modelFacingTools(candidatePlan.tools)
+                val candidateConfig = candidateCoordinator.buildRuntimeConfig(
+                    request.sessionId,
+                    effectiveHistory,
+                    candidateTools,
+                    candidatePlan,
+                    runtimeConfigFor(candidatePlan),
+                )
+                if (bindAndroidInvocation(prepared, candidateConfig)["execution_policy_sha256"] == frozenDigest) {
+                    request = request.copy(toolPlan = candidatePlan)
+                    break
+                }
             }
         }
         val coordinator = createCoordinator(request.toolPlan)

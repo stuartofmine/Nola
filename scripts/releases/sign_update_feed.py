@@ -12,6 +12,25 @@ import subprocess
 import tempfile
 
 
+def default_openssl():
+    configured = os.environ.get('OPENSSL_BIN')
+    if configured:
+        return configured
+    for candidate in (
+        '/opt/homebrew/opt/openssl@3/bin/openssl',
+        '/opt/homebrew/bin/openssl',
+        '/usr/local/opt/openssl@3/bin/openssl',
+    ):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            try:
+                version = subprocess.check_output([candidate, 'version'], text=True, stderr=subprocess.PIPE)
+                if version.startswith('OpenSSL 3'):
+                    return candidate
+            except (OSError, subprocess.SubprocessError):
+                continue
+    return 'openssl'
+
+
 def public_key(openssl, key):
     if os.name != 'nt' and stat.S_IMODE(key.stat().st_mode) & 0o077:
         raise ValueError('Private signing key must be readable only by its owner')
@@ -67,7 +86,11 @@ def sign(args):
     envelope = {'payload_base64': base64.b64encode(payload).decode('ascii'), 'signature_base64': base64.b64encode(signature).decode('ascii')}
     with output.open('x') as handle:
         json.dump(envelope, handle, indent=2); handle.write('\n')
-    print(f'Signed feed: {output}. Verify it with the Rust verify_feed tool before publishing.')
+    print(
+        f'Signed feed: {output}. Verify it with '
+        f'`cargo run --locked -p nola-app --bin nola -- update verify-feed --source {args.source} --feed {output}` '
+        'before publishing.'
+    )
 
 
 def main():
@@ -75,7 +98,7 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     for command in ('public-key', 'sign'):
         item = sub.add_parser(command)
-        item.add_argument('--openssl', default=os.environ.get('OPENSSL_BIN', 'openssl'))
+        item.add_argument('--openssl', default=default_openssl())
         item.add_argument('--private-key', required=True)
         if command == 'sign':
             for name in ('source', 'manifest', 'artifact-dir', 'output'):

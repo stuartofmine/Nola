@@ -51,6 +51,11 @@
         else if (event.key === 'ArrowLeft') next = entries[(index + entries.length - 1) % entries.length].key;
         else if (event.key === 'Home') next = entries[0].key;
         else if (event.key === 'End') next = entries.at(-1)?.key;
+        else if (event.key === 'F2' && key === conversationTabKey && tabsState.selected === conversationTabKey && canRename) {
+            event.preventDefault();
+            await beginRename();
+            return;
+        }
         else if (event.key === 'Delete' && key !== conversationTabKey) {
             event.preventDefault(); await close(key);
             strip.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus(); return;
@@ -97,5 +102,5 @@
     .tab-rename { display: flex; align-items: center; }
     .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--input-focus-border); border-radius: 7px; background: var(--input-bg); font-size: 12.5px; }
     @media (pointer: coarse) { .tab > .edit-hint { opacity: .85; width: 30px; height: 30px; min-height: 30px; } }
-    @media (max-width: 700px) { .content-tabs { justify-content: flex-start; } .tab { height: 40px; max-width: 200px; } .tab > .close { min-width: 44px; min-height: 44px; } }
+    @media (max-width: 760px) { .content-tabs { justify-content: flex-start; padding-inline: 2px; } .tab { height: 40px; max-width: 200px; min-width: 72px; } .tab > .close { min-width: 44px; min-height: 44px; } }
 </style>

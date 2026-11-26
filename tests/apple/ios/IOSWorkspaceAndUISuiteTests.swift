@@ -178,7 +178,7 @@ final class IOSConversationInspectorTests: XCTestCase {
     @MainActor func testPairedProgressReadsEncryptedSourceProjectionEnvelope() async throws {
         let provider = WebAgentProvider(config: .init(baseURL: URL(string: "http://127.0.0.1:9")!,
             token: "fixture-token", expectedHostId: "host", clientId: "client")) { request in
-            XCTAssertEqual(request.url?.path, "/api/mobile/chat/agent/v2/progress")
+            XCTAssertEqual(request.url?.path, "/api/chat/conversations/c1/messages")
             XCTAssertEqual(request.httpMethod, "POST")
             let requestEnvelope = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as! [String: Any]
             let query = try WebAgentProvider.decryptMobileJSON(requestEnvelope, token: "fixture-token")

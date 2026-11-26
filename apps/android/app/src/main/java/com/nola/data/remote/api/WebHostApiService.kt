@@ -117,4 +117,115 @@ interface WebHostApiService {
         submission: FrozenRemoteSubmission,
         pinnedCertificateSha256: String = "",
     ): kotlinx.coroutines.flow.Flow<SseEvent>
+
+    /** Direct Rust v2 WebHost REST + AgentEvent SSE endpoints (zero v1 compat). */
+    suspend fun v2CreateConversation(
+        hostBaseUrl: String,
+        token: String,
+        title: String = "New conversation",
+        pinnedCertificateSha256: String = "",
+    ): String {
+        error("v2 conversation creation is unavailable")
+    }
+
+    suspend fun v2DeleteConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ) {}
+
+    fun v2StreamMessage(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        content: String,
+        pinnedCertificateSha256: String = "",
+        attachments: kotlinx.serialization.json.JsonArray? = null,
+        modelId: String? = null,
+        reasoningEffort: String? = null,
+        permissionProfile: String? = null,
+        selectedExperts: kotlinx.serialization.json.JsonArray? = null,
+        deviceBridge: JsonObject? = null,
+    ): kotlinx.coroutines.flow.Flow<SseEvent> {
+        error("v2 SSE message streaming is unavailable")
+    }
+
+    suspend fun v2CancelConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ) {}
+
+    suspend fun v2RespondPermission(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        allow: Boolean,
+        scope: String = "once",
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 permission response is unavailable")
+
+    suspend fun v2RespondUserInput(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        requestId: String,
+        answer: String?,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 user-input response is unavailable")
+
+    suspend fun v2ListUiSurfaces(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI surfaces are unavailable")
+
+    suspend fun v2PreviewUiSurface(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        input: JsonObject,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI preview is unavailable")
+
+    suspend fun v2SubmitUiInteraction(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        interaction: JsonObject,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 A2UI interaction is unavailable")
+
+    suspend fun v2TruncateConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        fromSeq: Long,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 truncate is unavailable")
+
+    suspend fun v2CompactConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 compact is unavailable")
+
+    suspend fun v2BranchConversation(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 branch is unavailable")
+
+    suspend fun v2WorkspaceReview(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        pinnedCertificateSha256: String = "",
+    ): JsonObject = error("v2 workspace review is unavailable")
 }

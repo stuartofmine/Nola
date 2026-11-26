@@ -1,4 +1,3 @@
-import { BrowserRecoveryIntentStore } from './unknownEffectRecovery.ts';
 import { uiIdentityKey } from './generativeUi.ts';
 import type { UiEdit, UiInteraction } from './generativeUi';
 
@@ -9,8 +8,6 @@ export interface UiDraftState {
     unresolved: UiPendingAttempt | null;
 }
 
-/** Recover the exact unacknowledged edits as well as the request identity.
- * A later rejection must not erase values that survived a cold page reload. */
 export function draftStateFromAttempt(attempt: UiPendingAttempt): UiDraftState {
     return {
         drafts: Object.fromEntries(attempt.input.edits.map(edit =>
@@ -19,10 +16,11 @@ export function draftStateFromAttempt(attempt: UiPendingAttempt): UiDraftState {
         unresolved: structuredClone(attempt),
     };
 }
-/** Tab-lifetime presentation state only. Core remains the committed authority.
- * Full authority identities isolate Hosts, participants and generations. Values
- * are not written to disk or supplied to a model outside the normal submission. */
+
 const entries = new Map<string, UiDraftState>();
+const attempts = new Map<string, string>();
+const attemptKey = (identity: string) => `nola.v2.ui_attempt:${identity}`;
+
 export function readUiDraftState(identity: string): UiDraftState | undefined {
     const value = entries.get(identity);
     return value ? structuredClone(value) : undefined;
@@ -32,9 +30,11 @@ export function saveUiDraftState(identity: string, state: UiDraftState): void {
     else entries.set(identity, JSON.parse(JSON.stringify(state)) as UiDraftState);
 }
 
-const durable = new BrowserRecoveryIntentStore();
 export async function restoreUiAttempt(identity: string): Promise<UiPendingAttempt | null> {
-    const wire = await durable.readUiAttempt(identity);
+    let wire: string | null = attempts.get(identity) ?? null;
+    if (wire === null && typeof sessionStorage !== 'undefined') {
+        try { wire = sessionStorage.getItem(attemptKey(identity)); } catch { wire = null; }
+    }
     if (wire === null) return null;
     const value = JSON.parse(wire) as UiPendingAttempt;
     if (!value?.input?.identity || uiIdentityKey(value.input.identity) !== identity || !value.requestId?.trim()
@@ -43,9 +43,18 @@ export async function restoreUiAttempt(identity: string): Promise<UiPendingAttem
         || !Array.isArray(value.input.edits)) throw new Error('Invalid persisted UI submission');
     return value;
 }
+
 export async function persistUiAttempt(identity: string, value: UiPendingAttempt): Promise<void> {
-    await durable.writeUiAttempt(identity, JSON.stringify(value));
+    const wire = JSON.stringify(value);
+    attempts.set(identity, wire);
+    if (typeof sessionStorage !== 'undefined') {
+        try { sessionStorage.setItem(attemptKey(identity), wire); } catch { /* optional */ }
+    }
 }
-export async function retireUiAttempt(identity: string, value: UiPendingAttempt): Promise<void> {
-    await durable.writeUiAttempt(identity, JSON.stringify(value), true);
+
+export async function retireUiAttempt(identity: string, _value: UiPendingAttempt): Promise<void> {
+    attempts.delete(identity);
+    if (typeof sessionStorage !== 'undefined') {
+        try { sessionStorage.removeItem(attemptKey(identity)); } catch { /* optional */ }
+    }
 }

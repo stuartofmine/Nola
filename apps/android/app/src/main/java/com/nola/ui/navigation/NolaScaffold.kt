@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -209,7 +210,7 @@ fun NolaScaffold(
                     compact = !usesSideNavigation,
                     modifier = Modifier
                         .weight(1f)
-                        .then(if (usesSideNavigation) Modifier.statusBarsPadding().navigationBarsPadding().displayCutoutPadding() else Modifier)
+                        .then(if (usesSideNavigation) Modifier.statusBarsPadding().navigationBarsPadding().consumeWindowInsets(WindowInsets.navigationBars).displayCutoutPadding() else Modifier)
                 )
             }
         }
@@ -335,7 +336,7 @@ private fun NolaWideNavigation(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "N",
+                            text = "n",
                             color = MaterialTheme.colorScheme.onPrimary,
                             fontWeight = FontWeight.Bold
                         )

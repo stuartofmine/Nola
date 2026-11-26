@@ -180,7 +180,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     let databaseURL: URL
     let socketURL: URL
     let clientID: String
-    private let ownsSupervisorReference: Bool
+    private var ownsSupervisorReference: Bool = false
     private let expertHostJournal: ApplePendingCommandJournal
 
     init(databaseURL: URL) throws {
@@ -188,9 +188,8 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         self.databaseURL = databaseURL
         expertHostJournal = Self.makeExpertHostJournal(databaseURL)
         let hash = Self.databaseIdentityHash(for: databaseURL)
-        socketURL = Self.serviceSocketURL(hash: hash)
+        socketURL = Self.serviceSocketURL(for: databaseURL)
         clientID = Self.serviceClientID(hash: hash)
-        ownsSupervisorReference = true
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -200,6 +199,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
             socketURL: socketURL
         )
         MacApplicationServiceSupervisor.shared.retainClient(socketURL: socketURL)
+        ownsSupervisorReference = true
     }
 
     deinit {
@@ -225,7 +225,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         let hash = databaseIdentityHash(for: databaseURL)
         return MacApplicationServiceClient(
             databaseURL: databaseURL,
-            socketURL: serviceSocketURL(hash: hash),
+            socketURL: serviceSocketURL(for: databaseURL),
             clientID: serviceClientID(hash: hash),
             retainsSupervisor: true
         )
@@ -282,6 +282,7 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
         let isProjectionQuery: Bool
         switch commandType {
         case "projection_cursor_wait", "projection_event_suffix", "projection_snapshot",
+             "sessions_list", "events_after", "module_list", "memory_search", "get_product_setting",
              "command_receipt", "health", "resolve_model_reasoning", "resolve_remote_model_profile", "query_automation_occurrences", "resolve_chat_model", "canonical_run_terminal", "inspect_run_recovery", "read_permission_configuration", "inspect_unknown_effect_recovery",
              "load_conversation_projection_window_v1", "load_conversation_projection_window_update_v1",
              "read_conversation_text_range",
@@ -747,7 +748,58 @@ nonisolated final class MacApplicationServiceClient: @unchecked Sendable {
     }
 
     static func serviceSocketURL(for databaseURL: URL) -> URL {
-        serviceSocketURL(hash: databaseIdentityHash(for: databaseURL))
+        if let discovered = readDiscoveredSocketURL(for: databaseURL) {
+            return discovered
+        }
+        return serviceSocketURL(hash: databaseIdentityHash(for: databaseURL))
+    }
+
+    /// Reads `<db>.service.json` written atomically by `nola-store::ServiceLock`,
+    /// validating symlink safety (`O_NOFOLLOW`), owner EUID, permissions, live PID,
+    /// and target socket ownership (`S_ISSOCK` + same EUID) before trusting the socket path.
+    private static func readDiscoveredSocketURL(for databaseURL: URL) -> URL? {
+        let discoveryPath = "\(databaseURL.path).service.json"
+        let fd = Darwin.open(discoveryPath, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        defer { Darwin.close(fd) }
+
+        var st = stat()
+        guard Darwin.fstat(fd, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,
+              st.st_uid == Darwin.geteuid(),
+              (st.st_mode & 0o077) == 0,
+              st.st_size > 0,
+              st.st_size <= 16_384 else {
+            return nil
+        }
+
+        var bytes = [UInt8](repeating: 0, count: Int(st.st_size))
+        let readCount = bytes.withUnsafeMutableBytes { buf in
+            Darwin.read(fd, buf.baseAddress, buf.count)
+        }
+        guard readCount > 0 else { return nil }
+        let data = Data(bytes[0..<readCount])
+
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let proto = obj["protocol_version"] as? Int,
+              proto == protocolVersion,
+              let euid = (obj["euid"] as? NSNumber)?.uint32Value,
+              euid == Darwin.geteuid(),
+              let pid = (obj["pid"] as? NSNumber)?.int32Value,
+              pid > 0,
+              Darwin.kill(pid, 0) == 0,
+              let socketPath = obj["socket_path"] as? String,
+              !socketPath.isEmpty else {
+            return nil
+        }
+
+        var sockStat = stat()
+        guard Darwin.lstat(socketPath, &sockStat) == 0,
+              (sockStat.st_mode & S_IFMT) == S_IFSOCK,
+              sockStat.st_uid == Darwin.geteuid() else {
+            return nil
+        }
+        return URL(fileURLWithPath: socketPath, isDirectory: false)
     }
 
     private static func serviceSocketURL(hash: UInt64) -> URL {
@@ -854,6 +906,7 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
         archiveIncompatibleStoreAt archiveURL: URL? = nil
     ) -> [String] {
         var arguments = [
+            "server",
             "--database", databaseURL.path,
             "--socket", socketURL.path,
             "--parent-pid", String(parentPID),
@@ -1195,11 +1248,11 @@ nonisolated final class MacApplicationServiceSupervisor: @unchecked Sendable {
            FileManager.default.isExecutableFile(atPath: configured) {
             return URL(fileURLWithPath: configured)
         }
-        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-service") {
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "nola-runtime") {
             return bundled
         }
         let adjacent = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/nola-service", isDirectory: false)
+            .appendingPathComponent("Contents/MacOS/nola-runtime", isDirectory: false)
         return FileManager.default.isExecutableFile(atPath: adjacent.path) ? adjacent : nil
     }
 }

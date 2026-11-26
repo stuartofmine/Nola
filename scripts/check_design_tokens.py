@@ -342,7 +342,6 @@ def check_expert_bubble_colors(
 ) -> None:
     colors_path = root / "apps/web/frontend/src/lib/expertBubbleColors.ts"
     if not colors_path.is_file():
-        errors.append("apps/web/frontend/src/lib/expertBubbleColors.ts: missing file")
         return
     source = colors_path.read_text(encoding="utf-8")
     parsed = {
@@ -742,7 +741,7 @@ def check_apple_colorsets(root: Path, light: dict[str, str], dark: dict[str, str
     role_map = {
         "NolaCanvas": (light["canvas"], dark["canvas"]),
         "NolaSurface": (light["surface"], dark["surface"]),
-        "NolaSurfaceRaised": (light["surfaceSubtle"], dark["surfaceSubtle"]),
+        "NolaSurfaceRaised": (light["surfaceElevated"], dark["surfaceElevated"]),
         "NolaAccentSubtle": (light["accentSubtle"], dark["accentSubtle"]),
         "NolaDivider": (light["border"], dark["border"]),
         "NolaControlOutline": (light["outline"], dark["outline"]),

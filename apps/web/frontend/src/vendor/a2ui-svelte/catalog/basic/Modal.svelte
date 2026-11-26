@@ -129,6 +129,7 @@
 			max-width: 100vw;
 			width: 100%;
 			border-radius: var(--a2ui-radius) var(--a2ui-radius) 0 0;
+			padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 		}
 	}
 </style>

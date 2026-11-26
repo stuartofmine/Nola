@@ -28,12 +28,12 @@ python3 scripts/releases/export_public.py --commit "$reviewed_commit" --destinat
 
 ## 制作完整发行包
 
-先生成前端资源并构建匹配的 executables，再打包。macOS ARM64 CLI 的包同时包含 nola、nola-agent-host、nola-service、Web 资源和托管浏览器 runtime；保留目录结构。
+先生成前端资源并构建匹配的 unified executable，再打包。macOS ARM64 CLI 的包包含 `nola`、Web 资源和托管浏览器 runtime；保留目录结构。
 
 ```sh
 npm --prefix apps/web/frontend ci
 npm --prefix apps/web/frontend run build
-cargo build --release --locked -p nola_cli -p nola_service --bins
+cargo build --release --locked -p nola-app --bin nola
 python3 scripts/releases/package_cli.py --output /staging/Nola-cli-macos-aarch64-1.0.0.zip \
   --browser-runtime /staging/managed-browser-runtime --node-license /staging/Node-LICENSE.txt
 ```

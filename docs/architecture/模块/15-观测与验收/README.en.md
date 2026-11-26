@@ -14,8 +14,8 @@ Test duplicate and late usage, genuine zero hits and missing counts. In a long-t
 
 ## Implementation
 
-- [nola-measurement/src/lib.rs](../../../../core/nola-measurement/src/lib.rs)
-- [tests/suites/dependency_boundary.rs](../../../../apps/cli/tests/suites/dependency_boundary.rs)
+- [nola-measurement/src/lib.rs](../../../../crates/nola-types/src/budget.rs)
+- [tests/suites/dependency_boundary.rs](../../../../crates/nola-engine/src/tests.rs)
 - [../scripts/test_mac_layers.sh](../../../../scripts/test_mac_layers.sh)
 
 ## Detailed references

@@ -2552,8 +2552,10 @@
 "personal.capabilities.retry" = "再試行";
 "personal.capabilities.invalid_import" = "48,000 文字以内の空でない UTF-8 Skill ファイルを選択してください。";
 "permission.mode.cautious" = "慎重";
+"permission.mode.accept_edits" = "編集を自動許可";
 "permission.mode.allow_all" = "すべて許可";
 "permission.mode.cautious.detail" = "削除、上書き、機密データへのアクセス、外部送信、新規接続を確認します。通常の読み取りと新規作成は続行します。";
+"permission.mode.accept_edits.detail" = "ワークスペース内のファイル編集を自動許可します。シェルコマンド、ワークスペース外への書き込み、外部送信、新規接続は確認します。";
 "permission.mode.allow_all.detail" = "この会話では Nola の確認を省略します。システム権限は引き続き必要です。";
 "chat.compaction.show_sources_format" = "元のコンテキストを表示（%d件）";
 "chat.style.inherit_model" = "モデルの既定値を使用";
@@ -3405,3 +3407,6 @@
 "chat.task.state.failed" = "失敗";
 "chat.task.state.cancelled" = "キャンセル済み";
 "chat.context.skills.template.body" = "# スキル：新しいスキル\n\n## 使う場面\nこのスキルを使う具体的な状況を説明します。\n\n## 手順\n1. ユーザーの目的を明確にする。\n2. 関連する情報を確認する。\n3. 簡潔で実行に移せる結果を示す。\n\n## 回答の形式\n- 内容を整理する。\n- 前提とリスクを明示する。";
+"chat.v2.question.placeholder" = "回答を入力…";
+"chat.v2.question.submit" = "送信";
+"chat.v2.question.skip" = "スキップ";

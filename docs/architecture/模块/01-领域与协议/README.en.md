@@ -14,9 +14,9 @@ A timeout leaves the command outcome unresolved. Look up the original receipt. T
 
 ## Implementation
 
-- [nola-domain/src/lib.rs](../../../../core/nola-domain/src/lib.rs)
-- [nola-protocol/src/lib.rs](../../../../core/nola-protocol/src/lib.rs)
-- [nola-host-protocol/src/lib.rs](../../../../core/nola-host-protocol/src/lib.rs)
+- [nola-domain/src/lib.rs](../../../../crates/nola-types/src/lib.rs)
+- [nola-protocol/src/lib.rs](../../../../crates/nola-types/src/lib.rs)
+- [nola-host-protocol/src/lib.rs](../../../../crates/nola-types/src/lib.rs)
 
 ## Detailed references
 

@@ -66,5 +66,10 @@ internal fun ChatUiState.newConversationPresentation(defaultPermission: AndroidA
     coreTaskProjection = AgentCoreTaskProjection(),
     coreSkillProjection = AgentCoreSkillRuntimeProjection(),
     traceProjection = AgentTraceProjection(),
+    pendingUserQuestion = null,
+    v2UiSurfaces = emptyList(),
+    v2SessionId = null,
+    v2CompactionSummary = null,
+    v2WorkspaceReview = null,
     error = null,
 )

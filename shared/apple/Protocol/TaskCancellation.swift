@@ -57,17 +57,10 @@ nonisolated public enum AppleTaskCancellationTransport {
             try receipt.validate(intent)
             return receipt
         }
-        let observed = try await read("chat/agent/v2/task/cancel/receipt")
-        if observed.terminal { return observed }
-        do {
-            let receipt = try await read("chat/agent/v2/task/cancel")
-            guard receipt.cancelRequested || receipt.terminal else { throw Failure.unconfirmed }
-            return receipt
-        } catch {
-            let observed = try await read("chat/agent/v2/task/cancel/receipt")
-            guard observed.terminal else { throw error }
-            return observed
-        }
+        let cancelPath = "chat/conversations/\(intent.conversationId)/cancel"
+        let receipt = try await read(cancelPath)
+        guard receipt.cancelRequested || receipt.terminal else { throw Failure.unconfirmed }
+        return receipt
     }
 }
 

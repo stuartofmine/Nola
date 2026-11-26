@@ -51,8 +51,8 @@
             <h2>{request.title}</h2>
             <p class="muted">{request.description}</p>
             <div class="actions">
-                <button bind:this={cancelButton} onclick={() => finish(false)}>{request.cancelLabel ?? t($locale, 'shell.cancel')}</button>
-                <button class:danger={request.destructive} class:primary={!request.destructive} onclick={() => finish(true)}>{request.confirmLabel}</button>
+                <button type="button" bind:this={cancelButton} onclick={() => finish(false)}>{request.cancelLabel ?? t($locale, 'shell.cancel')}</button>
+                <button type="button" class:danger={request.destructive} class:primary={!request.destructive} onclick={() => finish(true)}>{request.confirmLabel}</button>
             </div>
         </div>
     {/if}

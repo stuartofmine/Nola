@@ -23,7 +23,7 @@
     color-scheme: light dark;
     --content: #111113;
     color: var(--content); background: var(--canvas); font-size: 100%; line-height: 1.5;
-    --canvas: #fafafa; --surface: #ffffff; --surface-elevated: #ffffff; --rail: #f2f2f4; --panel: #f2f2f4; --border: #e4e4e7; --muted: #52525b;
+    --canvas: #fafafa; --surface: #ffffff; --surface-subtle: #f2f2f4; --surface-elevated: #ffffff; --rail: #f2f2f4; --panel: #f2f2f4; --border: #e4e4e7; --muted: #52525b; --ink-muted: #63636e;
     --primary: #18181b; --on-primary: #ffffff;
     --accent: #18181b; --on-accent: #ffffff; --accent-subtle: #ebebef; --outline: #71717a;
     --switch-on: #147537; --switch-off: #e4e4e7; --switch-off-border: #d4d4d8;
@@ -46,7 +46,7 @@
     --radius-control: 10px; --radius-message: 18px;
     --success: #147537; --warning: #925605; --info: #2563eb;
     --a2ui-color-text: var(--content); --a2ui-color-text-muted: var(--muted);
-    --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary);
+    --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary); --a2ui-color-accent: var(--accent);
     --a2ui-color-surface: var(--surface); --a2ui-color-surface-raised: var(--panel);
     --a2ui-color-border: var(--border); --a2ui-color-danger: var(--danger);
     --motion-fast: 100ms; --motion-base: 180ms; --motion-slow: 220ms;
@@ -56,7 +56,7 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-appearance="light"]) {
         color-scheme: dark;
-        --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa;
+        --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-subtle: #1a1a1d; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa; --ink-muted: #8e8e93;
         --primary: #f5f5f7; --on-primary: #0b0b0c; --accent: #f5f5f7; --on-accent: #0b0b0c; --accent-subtle: #202024; --outline: #7a7a82;
         --switch-on: #2e8b57; --switch-off: #2c2c30; --switch-off-border: #3f3f46;
         --hover: var(--accent-subtle);
@@ -72,7 +72,7 @@
         --control-shadow: none;
         --danger: #f28080; --success: #5cd68d; --warning: #f0b85a; --info: #78b4f8;
         --a2ui-color-text: var(--content); --a2ui-color-text-muted: var(--muted);
-        --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary);
+        --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary); --a2ui-color-accent: var(--accent);
         --a2ui-color-surface: var(--surface); --a2ui-color-surface-raised: var(--panel);
         --a2ui-color-border: var(--border); --a2ui-color-danger: var(--danger);
     }
@@ -97,23 +97,23 @@ button, .button { border: 1px solid var(--control-border); background: var(--con
 .button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
 button:disabled { opacity: 1; color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; }
 a.button[aria-disabled="true"] { opacity: 1; color: var(--muted); background: var(--panel); border-color: var(--border); cursor: not-allowed; }
-button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .20); }
-button.primary:disabled { color: var(--muted); background: var(--panel); border-color: var(--border); box-shadow: none; }
+button.primary, .button.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .20); }
+button.primary:disabled, .button.primary[aria-disabled="true"] { color: var(--muted); background: var(--panel); border-color: var(--border); box-shadow: none; }
 @media (hover: hover) {
     button:not(:disabled):hover, .button:not([aria-disabled="true"]):hover { background: var(--control-hover-bg); border-color: var(--control-hover-border); }
-    button.primary:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 88%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 88%, var(--canvas)); }
+    button.primary:not(:disabled):hover, .button.primary:not([aria-disabled="true"]):hover { background: color-mix(in srgb, var(--primary) 88%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 88%, var(--canvas)); color: var(--on-primary); }
     button.danger:not(:disabled):hover { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: var(--danger); }
     input:not(:disabled):hover, select:not(:disabled):hover, textarea:not(:disabled):hover { border-color: var(--input-hover-border); }
 }
 button:not(:disabled):active, .button:not([aria-disabled="true"]):active { background: var(--control-active-bg); }
-button.primary:not(:disabled):active { background: color-mix(in srgb, var(--primary) 78%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 78%, var(--canvas)); color: var(--on-primary); }
+button.primary:not(:disabled):active, .button.primary:not([aria-disabled="true"]):active { background: color-mix(in srgb, var(--primary) 78%, var(--canvas)); border-color: color-mix(in srgb, var(--primary) 78%, var(--canvas)); color: var(--on-primary); }
 button.danger:not(:disabled):active { background: color-mix(in srgb, var(--danger) 20%, transparent); border-color: var(--danger); }
 button.danger { color: var(--danger); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 a { color: inherit; text-decoration: none; }
 .workspace { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100dvh; }
 .sidebar { background: color-mix(in srgb, var(--rail) 88%, transparent); padding: 24px 16px; border-right: 1px solid var(--border); }
-.brand { display: block; font-size: 20px; font-weight: 650; padding: 0 12px 24px; }
+.sidebar .brand { display: block; font-size: 20px; font-weight: 650; padding: 0 12px 24px; }
 nav { display: grid; gap: 5px; } nav a { padding: 10px 12px; border: 1px solid transparent; border-radius: 12px; transition: background-color var(--motion-selection) var(--motion-disclosure), border-color var(--motion-selection) var(--motion-disclosure), color var(--motion-selection) var(--motion-disclosure); }
 nav a[aria-current], nav a[aria-current]:hover { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
 nav a:hover { background: var(--composer-pill-hover-bg); }
@@ -148,11 +148,11 @@ select {
 select option { background: var(--surface); color: var(--content); }
 input[type='search']::-webkit-search-cancel-button { cursor: pointer; opacity: .65; }
 label:has(select), label[for] { cursor: pointer; }
-label:has(> input:is([type='checkbox'], [type='radio'])) {
+:where(label:has(> input:is([type='checkbox'], [type='radio']))) {
     display: flex; align-items: center; gap: 8px; min-height: var(--control-hit-size);
     padding: 6px 8px; border-radius: var(--radius-control); cursor: pointer;
 }
-label:has(> input:is([type='checkbox'], [type='radio']):disabled), label:has(select:disabled) { cursor: not-allowed; }
+:where(label:has(> input:is([type='checkbox'], [type='radio']):disabled), label:has(select:disabled)) { cursor: not-allowed; }
 input[type='checkbox']:not([role='switch']), input[type='radio'] { flex-shrink: 0; width: auto; accent-color: var(--switch-on); }
 input[type='checkbox'][role='switch'] {
     appearance: none; -webkit-appearance: none;
@@ -259,7 +259,7 @@ dialog form { display: grid; gap: 20px; }
 @media (max-width: 760px) {
     :root { --control-hit-size: 44px; --text-body: 1.0625rem; --text-title: 1.75rem; --section-space: 24px; }
     .workspace { grid-template-columns: 1fr; } .sidebar { padding: 12px; border-right: 0; border-bottom: 1px solid var(--border); }
-    .brand { padding: 0 8px 8px; } nav { display: flex; overflow: auto; } nav a { white-space: nowrap; }
+    .sidebar .brand { padding: 0 8px 8px; } nav { display: flex; overflow: auto; } nav a { white-space: nowrap; }
     .fields { grid-template-columns: 1fr; } .content, .page-header { padding: 16px; }
     button, .button { min-height: 44px; }
     input, select, textarea { font-size: 1rem; }
@@ -269,14 +269,13 @@ dialog form { display: grid; gap: 20px; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
 }
-@media (prefers-contrast: more) { :root { --border: var(--outline); } }
 @media (forced-colors: active) { :focus-visible { outline-color: Highlight; } button, .button, input, select, textarea { border-color: ButtonText; } }
 
 @media (max-width: 760px) { .management-content form.card { padding: 16px; } .management-content { padding-top: 4px; } }
 
 :root[data-appearance="dark"] {
     color-scheme: dark;
-    --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa;
+    --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-subtle: #1a1a1d; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa; --ink-muted: #8e8e93;
     --primary: #f5f5f7; --on-primary: #0b0b0c; --accent: #f5f5f7; --on-accent: #0b0b0c; --accent-subtle: #202024; --outline: #7a7a82;
     --switch-on: #2e8b57; --switch-off: #2c2c30; --switch-off-border: #3f3f46;
     --hover: var(--accent-subtle);
@@ -292,7 +291,7 @@ dialog form { display: grid; gap: 20px; }
     --control-shadow: none;
     --danger: #f28080; --success: #5cd68d; --warning: #f0b85a; --info: #78b4f8;
     --a2ui-color-text: var(--content); --a2ui-color-text-muted: var(--muted);
-    --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary);
+    --a2ui-color-primary: var(--primary); --a2ui-color-on-primary: var(--on-primary); --a2ui-color-accent: var(--accent);
     --a2ui-color-surface: var(--surface); --a2ui-color-surface-raised: var(--panel);
     --a2ui-color-border: var(--border); --a2ui-color-danger: var(--danger);
 }
@@ -335,4 +334,12 @@ dialog form { display: grid; gap: 20px; }
 }
 .reply-disclosure > summary::before {
     transition: transform var(--motion-base) var(--motion-disclosure);
+}
+@media (prefers-contrast: more) {
+    :root,
+    :root[data-appearance="light"],
+    :root[data-appearance="dark"],
+    :root:not([data-appearance="light"]) {
+        --border: var(--outline);
+    }
 }

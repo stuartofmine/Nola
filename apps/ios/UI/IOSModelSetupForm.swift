@@ -198,6 +198,7 @@ struct IOSModelSetupForm: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent).tint(DesignTokens.actionColor)
+            .foregroundStyle(DesignTokens.onActionColor)
             .disabled(saveDisabled)
             .accessibilityIdentifier("model.setup.save")
         }

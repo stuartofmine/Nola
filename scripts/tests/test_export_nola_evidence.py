@@ -179,49 +179,81 @@ class EvidenceTests(unittest.TestCase):
             path = Path(directory) / 'trial.db'
             with sqlite3.connect(path) as db:
                 db.executescript('''
-                    CREATE TABLE runs(id,conversation_id,status,created_at_ms,completed_at_ms);
-                    CREATE TABLE run_attempts(id,run_id,operation_id,state,record_json);
-                    CREATE TABLE durable_tasks(id,kind,status,owner_session_id,parent_task_id,child_session_id,agent_type,created_at_ms,started_at_ms,ended_at_ms);
-                    CREATE TABLE run_events(run_id,sequence,event_kind,created_at_ms,payload_json);
-                    CREATE TABLE messages(id,conversation_id,run_id,role,status,ordinal);
-                    CREATE TABLE message_parts(id,message_id,kind,ordinal,state,content_text);
-                    CREATE TABLE message_part_body_references(part_id,field,reference_json);
-                    CREATE TABLE assistant_run_terminal_seals(run_id,conversation_id,seal_json,seal_digest);
-                    CREATE TABLE canonical_stream_heads(part_id,head_json);
-                    CREATE TABLE canonical_stream_manifests(part_id,root,previous_root,operation,head_json);
-                    CREATE TABLE canonical_stream_chunks(part_id,generation,chunk_index,offset_bytes,text,manifest_root);
-                    INSERT INTO canonical_stream_heads VALUES ('part','{"generation":1}');
-                    INSERT INTO canonical_stream_manifests VALUES ('part','old',NULL,'append','{"generation":0}');
-                    INSERT INTO canonical_stream_manifests VALUES ('part','new','old','replace','{"generation":1}');
-                    INSERT INTO canonical_stream_chunks VALUES ('part',1,0,0,'replacement','new');
-                    INSERT INTO canonical_stream_chunks VALUES ('part',0,0,0,'superseded','old');
-                    CREATE TABLE run_invocation_payloads(config_json);
+                    CREATE TABLE sessions(
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        workspace_root TEXT NOT NULL,
+                        model_connection TEXT,
+                        model_id TEXT,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE events(
+                        scope TEXT NOT NULL,
+                        seq INTEGER NOT NULL,
+                        kind TEXT NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (scope, seq)
+                    );
+                    CREATE TABLE memory_items(
+                        id TEXT PRIMARY KEY,
+                        namespace TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        tags_json TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE run_invocation_payloads(config_json TEXT);
                     INSERT INTO run_invocation_payloads VALUES ('SECRET_FIXTURE');
-                    INSERT INTO runs VALUES ('run','conversation','running',1,NULL);
-                    INSERT INTO message_parts VALUES ('part','message','text',0,'complete','answer');
+                    INSERT INTO sessions VALUES (
+                        'session-1', 'Eval Session', '/workspace', 'openai', 'gpt-4o', 100, 200
+                    );
+                    INSERT INTO events VALUES (
+                        'session-1', 1, 'assistant_text', '{"text":"answer"}', 150
+                    );
+                    INSERT INTO memory_items VALUES (
+                        'mem-1', 'default', 'Editor Preference', '完整输出', '["pref"]', 120, 180
+                    );
                 ''')
-                db.executescript('CREATE TABLE store_metadata(key PRIMARY KEY,value);')
-                db.executescript((Path(__file__).resolve().parents[2] /
-                    'core/nola-store/src/assistant_journal_schema.sql').read_text())
-                db.execute('INSERT INTO assistant_journal_chunks VALUES (?,?)',
-                           ('chunk', '完整输出'.encode('utf-8')))
             evidence = exporter.collect(path)
             self.assertNotIn('SECRET_FIXTURE', str(evidence))
-            self.assertEqual(evidence['parts'][0]['content_text'], 'answer')
-            self.assertEqual(evidence['seals'], [])
-            self.assertIsNone(evidence['runs'][0]['completed_at_ms'])
-            self.assertFalse(evidence['seal_digests_verified'])
-            self.assertEqual(evidence['schema_version'], 1)
-            self.assertEqual(bytes.fromhex(evidence['journal_chunks'][0]['bytes_hex']).decode('utf-8'), '完整输出')
-            self.assertFalse(evidence['stream_bodies_materialized'])
-            self.assertEqual(evidence['stream_heads'][0]['head_json'], '{"generation":1}')
-            self.assertEqual(
-                [(row['generation'], row['text'], row['manifest_root'])
-                 for row in evidence['stream_chunks']],
-                [(0, 'superseded', 'old'), (1, 'replacement', 'new')])
-            self.assertEqual(len(evidence['stream_manifests']), 2)
+            self.assertEqual(evidence['schema_version'], 2)
+            self.assertEqual(evidence['scope'], 'isolated_evaluation_database_v2')
+            self.assertEqual(evidence['sessions'][0]['id'], 'session-1')
+            self.assertEqual(evidence['events'][0]['kind'], 'assistant_text')
+            self.assertEqual(evidence['events'][0]['payload_json'], '{"text":"answer"}')
+            self.assertEqual(evidence['memory_items'][0]['id'], 'mem-1')
+            self.assertEqual(evidence['memory_items'][0]['title'], 'Editor Preference')
             with sqlite3.connect(path) as db:
-                self.assertEqual(db.execute('SELECT COUNT(*) FROM canonical_stream_chunks').fetchone()[0], 2)
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM events').fetchone()[0], 1)
+
+    def test_v2_flat_tool_finished_archives_referenced_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = root / 'db.outputs'
+            store.mkdir()
+            output = store / 'v2-out.txt'
+            content = b'v2 tool output\n'
+            output.write_bytes(content)
+            event = {
+                'type': 'tool_finished',
+                'call_id': 'call-v2-1',
+                'name': 'bash',
+                'is_error': False,
+                'summary': 'ok',
+                'effects': [],
+                'full_output_ref': str(output),
+            }
+            log = root / 'events.ndjson'
+            log.write_text(json.dumps(event) + '\n')
+            archive = exporter.materialize_tool_outputs(log, store, root / 'tool-outputs')
+            self.assertTrue(archive['all_references_materialized'])
+            self.assertEqual(archive['tool_events_seen'], 1)
+            self.assertEqual(archive['references'][0]['call_id'], 'call-v2-1')
+            self.assertEqual(archive['references'][0]['tool_name'], 'bash')
+            self.assertEqual((root / archive['references'][0]['archived_path']).read_bytes(), content)
 
 
 if __name__ == '__main__':

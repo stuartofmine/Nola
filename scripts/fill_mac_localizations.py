@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "scripts" / "localization_coverage.py"
-DEFAULT_BINARY = ROOT / "apps/cli" / "target" / "debug" / "nola"
+DEFAULT_BINARY = ROOT / "target" / "debug" / "nola"
 MEMORY_PATH = ROOT / "scripts" / "mac_translation_memory.json"
 CATALOGS = tuple((ROOT / "apps/macos").glob("*.xcstrings"))
 MISSING_RE = re.compile(r"^- mac: (.*): missing ([A-Za-z-]+)$")
