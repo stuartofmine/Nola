@@ -1,13 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { modelByteSize, modelMemorySize, downloadActive, contextLimitation, unslothQuantization, repositoryUrl, engineGuideUrl, type ModelCandidate } from './modelAcquisition.ts';
+import { modelByteSize, modelMemorySize, downloadActive, downloadSucceeded, cleanModelName, contextLimitation, unslothQuantization, repositoryUrl, engineGuideUrl, type ModelCandidate, type ModelDownload } from './modelAcquisition.ts';
 
 test('compact download estimates preserve the scale of small and large models', () => {
     assert.match(modelByteSize(6_477_163, 'en'), /6\.5 MB/);
     assert.match(modelByteSize(8_400_000_000, 'en'), /8\.4 GB/);
     assert.equal(modelMemorySize(16 * 1024 ** 3, 'en'), '16 GiB');
     assert.equal(downloadActive(null), false);
+    const makeJob = (status: ModelDownload['status']): ModelDownload => ({
+        id: 'job-1', engine: 'llama.cpp', source: 'huggingface', repository: 'owner/model',
+        status, downloadedBytes: 0, totalBytes: 100,
+    });
+    assert.equal(downloadActive(makeJob('queued')), true);
+    assert.equal(downloadActive(makeJob('downloading')), true);
+    assert.equal(downloadActive(makeJob('verifying')), true);
+    assert.equal(downloadActive(makeJob('cancelling')), true);
+    assert.equal(downloadActive(makeJob('installed')), false);
+    assert.equal(downloadActive(makeJob('completed')), false);
+    assert.equal(downloadSucceeded(makeJob('installed')), true);
+    assert.equal(downloadSucceeded(makeJob('completed')), true);
+    assert.equal(downloadSucceeded(makeJob('downloading')), false);
+    assert.equal(cleanModelName(undefined), '');
+    assert.equal(cleanModelName(''), '');
+    assert.equal(cleanModelName('unsloth/Qwen3-8B-GGUF'), 'Qwen3 8B');
 });
 
 test('context alternatives report planner evidence and an independent target', () => {

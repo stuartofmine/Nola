@@ -60,6 +60,7 @@ impl ToolHandler for GitTool {
                         "staged": { "type": "boolean", "description": "Diff staged changes (--cached) for action=diff" },
                         "stat_only": { "type": "boolean", "description": "Return compact --stat summary for action=diff" },
                         "branch": { "type": "string", "description": "Optional branch name for worktree_create or worktree_integrate" },
+                        "force": { "type": "boolean", "description": "Force removal of dirty worktree for action=worktree_remove (default false)" },
                         "strategy": {
                             "type": "string",
                             "enum": ["merge", "cherry_pick"],
@@ -204,8 +205,24 @@ impl ToolHandler for GitTool {
                         None,
                     );
                 }
+                let force = args
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let path_s = resolved.to_string_lossy().into_owned();
-                run_git(ctx, &["worktree", "remove", "--force", "--", &path_s], "git worktree remove")
+                if force {
+                    run_git(
+                        ctx,
+                        &["worktree", "remove", "--force", "--", &path_s],
+                        "git worktree remove",
+                    )
+                } else {
+                    run_git(
+                        ctx,
+                        &["worktree", "remove", "--", &path_s],
+                        "git worktree remove",
+                    )
+                }
             }
             "worktree_integrate" => worktree_integrate(ctx, &args),
             "commit" => {
@@ -720,5 +737,87 @@ fn run_git(ctx: &ToolContext, args: &[&str], label: &str) -> ToolExecutionResult
             ToolExecutionResult::err_structured("git_failed", msg, None)
         }
         Err(e) => ToolExecutionResult::err_structured("git_error", e.to_string(), None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worktree_remove_respects_force_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let init = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(init.success());
+        Command::new("git")
+            .args(["config", "user.name", "Nola Test"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@nola.local"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        std::fs::write(dir.path().join("README.md"), "hello\n").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-q", "-m", "init"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+
+        let ctx = ToolContext::new(dir.path());
+        let tool = GitTool;
+
+        // 1. Clean worktree removes cleanly with force: false
+        let c1 = tool.execute(
+            &ctx,
+            json!({"action": "worktree_create", "target": "wt-clean", "branch": "br-clean"}),
+        );
+        assert!(!c1.is_error, "{:?}", c1.payload);
+        let r1 = tool.execute(
+            &ctx,
+            json!({"action": "worktree_remove", "target": "wt-clean", "force": false}),
+        );
+        assert!(!r1.is_error, "clean worktree remove failed: {:?}", r1.payload);
+        assert!(!dir.path().join("wt-clean").exists());
+
+        // 2. Dirty worktree is refused when force is false or omitted, and removed when force: true
+        let c2 = tool.execute(
+            &ctx,
+            json!({"action": "worktree_create", "target": "wt-dirty", "branch": "br-dirty"}),
+        );
+        assert!(!c2.is_error, "{:?}", c2.payload);
+        std::fs::write(dir.path().join("wt-dirty/README.md"), "uncommitted\n").unwrap();
+
+        let r2_default = tool.execute(
+            &ctx,
+            json!({"action": "worktree_remove", "target": "wt-dirty"}),
+        );
+        assert!(r2_default.is_error, "dirty worktree must not be force-removed by default");
+        assert!(dir.path().join("wt-dirty").exists());
+
+        let r2_false = tool.execute(
+            &ctx,
+            json!({"action": "worktree_remove", "target": "wt-dirty", "force": false}),
+        );
+        assert!(r2_false.is_error, "dirty worktree must not be removed with force: false");
+        assert!(dir.path().join("wt-dirty").exists());
+
+        let r2_force = tool.execute(
+            &ctx,
+            json!({"action": "worktree_remove", "target": "wt-dirty", "force": true}),
+        );
+        assert!(!r2_force.is_error, "force: true should remove dirty worktree: {:?}", r2_force.payload);
+        assert!(!dir.path().join("wt-dirty").exists());
     }
 }

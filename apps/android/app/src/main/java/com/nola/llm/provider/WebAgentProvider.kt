@@ -75,6 +75,7 @@ class WebAgentProvider @Inject constructor(
     private val webHostApi: WebHostApiService,
     private val summaryTextSource: WebAgentSummaryTextSource
 ) : LlmClient {
+    private val uiJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     data class Config(
         val hostBaseUrl: String,
@@ -211,7 +212,7 @@ class WebAgentProvider @Inject constructor(
             put("expected_host_id", captured.expectedHostId); put("conversation_id", conversationId)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val surfaces = Json.decodeFromString<List<com.nola.data.local.UiSnapshot>>(response.getValue("result").toString())
+        val surfaces = uiJson.decodeFromString<List<com.nola.data.local.UiSnapshot>>(response.getValue("result").toString())
         require(surfaces.size <= 8 && surfaces.all { it.identity.owner.conversation_id == conversationId && it.identity.owner.authority_id == expectedSourceStoreEpoch })
         return surfaces
     }
@@ -221,11 +222,11 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank())
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "changes", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("identity", Json.parseToJsonElement(Json.encodeToString(identity)))
+            put("identity", uiJson.parseToJsonElement(uiJson.encodeToString(identity)))
             put("base_revision", baseRevision?.let(::JsonPrimitive) ?: JsonNull)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        return Json.decodeFromString(response.getValue("result").toString())
+        return uiJson.decodeFromString(response.getValue("result").toString())
     }
 
     suspend fun readUiSurfaceRevision(reference: com.nola.data.local.UiSurfaceRevisionRef, configuration: Config): com.nola.data.local.UiSnapshot? {
@@ -233,11 +234,11 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank() && reference.revision > 0)
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "revision", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("identity", Json.parseToJsonElement(Json.encodeToString(reference.identity)))
+            put("identity", uiJson.parseToJsonElement(uiJson.encodeToString(reference.identity)))
             put("revision", reference.revision)
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val snapshot = Json.decodeFromString<com.nola.data.local.UiSnapshot?>(response.getValue("result").toString())
+        val snapshot = uiJson.decodeFromString<com.nola.data.local.UiSnapshot?>(response.getValue("result").toString())
         require(snapshot == null || snapshot.identity == reference.identity && snapshot.revision == reference.revision &&
             snapshot.phase != com.nola.data.local.UiSurfacePhase.Ready && snapshot.nodes.values.all { it.actions.isEmpty() && it.bindings.isEmpty() })
         return snapshot
@@ -245,11 +246,11 @@ class WebAgentProvider @Inject constructor(
 
     suspend fun previewUiSurface(input: com.nola.data.local.UiPreviewInput, configuration: Config): com.nola.data.local.UiPreview {
         val captured = configuration.copy()
-        val fields = kotlinx.serialization.json.Json.encodeToJsonElement(com.nola.data.local.UiPreviewInput.serializer(), input).jsonObject
+        val fields = uiJson.encodeToJsonElement(com.nola.data.local.UiPreviewInput.serializer(), input).jsonObject
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "preview",
             JsonObject(fields + ("expected_host_id" to JsonPrimitive(captured.expectedHostId))), captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        return kotlinx.serialization.json.Json.decodeFromJsonElement(com.nola.data.local.UiPreview.serializer(), response.getValue("result"))
+        return uiJson.decodeFromJsonElement(com.nola.data.local.UiPreview.serializer(), response.getValue("result"))
     }
 
     suspend fun submitUiInteraction(input: com.nola.data.local.UiSubmission, configuration: Config): com.nola.data.local.UiRemoteInteractionResult {
@@ -257,10 +258,10 @@ class WebAgentProvider @Inject constructor(
         require(captured.expectedHostId.isNotBlank())
         val response = webHostApi.generativeUi(captured.hostBaseUrl, captured.token, "interactions", buildJsonObject {
             put("expected_host_id", captured.expectedHostId)
-            put("input", Json.parseToJsonElement(Json.encodeToString(input)))
+            put("input", uiJson.parseToJsonElement(uiJson.encodeToString(input)))
         }, captured.pinnedCertificateSha256)
         require(response["source_host_id"]?.jsonPrimitive?.content == captured.expectedHostId)
-        val result = Json.decodeFromString<com.nola.data.local.UiRemoteInteractionResult>(response.getValue("result").toString())
+        val result = uiJson.decodeFromString<com.nola.data.local.UiRemoteInteractionResult>(response.getValue("result").toString())
         require(result.status in setOf("committed", "rejected", "conflict", "unknown"))
         if (result.status == "committed") {
             val receipt = checkNotNull(result.receipt)

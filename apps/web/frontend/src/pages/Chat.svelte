@@ -159,6 +159,8 @@
     const panelLayout = $derived(visiblePanelWidths(viewportWidth, $workspaceWidths, true));
     const showPlanBanner = $derived(
         conversationPlan.status === 'awaiting_approval' ||
+            conversationPlan.status === 'proposed' ||
+            conversationPlan.status === 'pending' ||
             (conversationPlan.enabled &&
                 conversationPlan.status === 'draft' &&
                 (Boolean(conversationPlan.markdown) || conversationPlan.steps.length > 0)),
@@ -351,7 +353,10 @@
     async function reconnectActiveTurn(convId: string, serial: number) {
         try {
             const obs = await observeV2ConversationProgress(convId);
-            if (serial !== generation || active?.conversationId !== convId || !obs.active) return;
+            if (serial !== generation || active?.conversationId !== convId) return;
+            if (obs.pendingPermission) pendingPermission = obs.pendingPermission;
+            if (obs.pendingQuestion) pendingQuestion = obs.pendingQuestion;
+            if (!obs.active) return;
             reconnecting = true;
             streaming = true;
             statusNotice = t($locale, 'chatInspector.reconnecting');
@@ -1931,7 +1936,9 @@
                             <div class="plan-approval-banner" role="region" aria-label={t($locale, 'chatInspector.planMode')}>
                                 <div class="plan-banner-head">
                                     <strong>
-                                        {conversationPlan.status === 'awaiting_approval'
+                                        {conversationPlan.status === 'awaiting_approval' ||
+                                        conversationPlan.status === 'proposed' ||
+                                        conversationPlan.status === 'pending'
                                             ? t($locale, 'chatInspector.planPendingApproval')
                                             : conversationPlan.summary || t($locale, 'chatInspector.planActive')}
                                     </strong>

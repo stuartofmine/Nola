@@ -458,6 +458,19 @@ pub fn handle_inbound_webhook_turn(
     channel_id: &str,
     payload: &Value,
 ) -> Result<Value, String> {
+    handle_inbound_webhook_turn_with_secret(store, route, workspace_root, channel_id, payload, None)
+}
+
+/// Variant of `handle_inbound_webhook_turn` that forwards the resolved Vault secret/token
+/// (for DingTalk HMAC-SHA256 signing, WhatsApp/Feishu/Email bearer auth, etc.) to outbound replies.
+pub fn handle_inbound_webhook_turn_with_secret(
+    store: &Store,
+    route: ModelRouteConfig,
+    workspace_root: &Path,
+    channel_id: &str,
+    payload: &Value,
+    secret_or_token: Option<&str>,
+) -> Result<Value, String> {
     let client = LlmClient::new(120).map_err(|e| e.to_string())?;
     let caller: Arc<dyn ModelCaller> = Arc::new(MessagingLlmCaller {
         client: Arc::new(client),
@@ -469,7 +482,7 @@ pub fn handle_inbound_webhook_turn(
         workspace_root,
         channel_id,
         payload,
-        None,
+        secret_or_token,
     )
 }
 
@@ -740,12 +753,13 @@ where
                                                 max_id = max_id.max(uid + 1);
                                             }
                                             if let Some(route) = route_provider() {
-                                                match handle_inbound_webhook_turn(
+                                                match handle_inbound_webhook_turn_with_secret(
                                                     &store,
                                                     route,
                                                     &workspace_root,
                                                     &ch.id,
                                                     upd,
+                                                    Some(bot_token.as_str()),
                                                 ) {
                                                     Ok(_) => {
                                                         messages_processed =

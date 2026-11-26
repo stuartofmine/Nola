@@ -306,10 +306,29 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     .get("uiSurfaces")
                     .cloned()
                     .unwrap_or_else(|| json!([]));
+                let expert_replies = ev
+                    .payload
+                    .get("expertReplies")
+                    .or_else(|| ev.payload.get("expert_replies"))
+                    .cloned();
+                let room_id = ev
+                    .payload
+                    .get("roomId")
+                    .or_else(|| ev.payload.get("room_id"))
+                    .cloned();
                 let usage = ev.payload.get("usage").cloned();
                 let has_tools = tool_calls.as_array().is_some_and(|a| !a.is_empty());
                 let has_surfaces = ui_surfaces.as_array().is_some_and(|a| !a.is_empty());
-                if !text.is_empty() || !reasoning.is_empty() || has_surfaces || has_tools {
+                let has_expert_replies = expert_replies
+                    .as_ref()
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|a| !a.is_empty());
+                if !text.is_empty()
+                    || !reasoning.is_empty()
+                    || has_surfaces
+                    || has_tools
+                    || has_expert_replies
+                {
                     let mut entry = json!({
                         "id": format!("msg-{}", ev.seq),
                         "seq": ev.seq,
@@ -320,6 +339,12 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                         "uiSurfaces": ui_surfaces,
                         "createdAtMs": ev.created_at_ms
                     });
+                    if let Some(er) = expert_replies.filter(|v| !v.is_null()) {
+                        entry["expertReplies"] = er;
+                    }
+                    if let Some(rid) = room_id.filter(|v| !v.is_null()) {
+                        entry["roomId"] = rid;
+                    }
                     if let Some(u) = usage {
                         entry["usage"] = u;
                     }
@@ -736,14 +761,23 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
             "profile_id": pid
         }),
         _ => json!({
-            "kind": "unconfigured",
+            "kind": "no_automatic_candidate",
             "origin": "default",
-            "status": "unconfigured",
+            "status": "no_automatic_candidate",
             "connection_id": Value::Null,
             "model_id": Value::Null,
             "profile_id": Value::Null
         }),
     };
+    let native_browser_token_configured = std::env::var("NOLA_NATIVE_BROWSER_TOKEN")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+        || store
+            .get_kv("native_browser_token")
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_str().map(|s| !s.trim().is_empty()))
+            .unwrap_or(false);
 
     json!({
         "source_store_epoch": source_store_epoch,
@@ -770,9 +804,15 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
             "management_path": "/settings?section=messaging"
         },
         "computer_use": {
+            "feature_enabled": false,
+            "token_configured": false,
+            "connected": false,
             "available": false
         },
         "native_browser": {
+            "feature_enabled": true,
+            "token_configured": native_browser_token_configured,
+            "connected": false,
             "available": true
         },
         "model_profiles": model_profiles,
@@ -781,7 +821,7 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
         "skill_settings_backup_key": Value::Null,
         "execution_backends": [
             {
-                "id": "nola-v2",
+                "id": "nola",
                 "display_name": "Nola v2 Rust Engine",
                 "availability": "available",
                 "capabilities": {
@@ -875,6 +915,7 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
                     json!({
                         "control": "automatic",
                         "supportedLevels": caps.supported_reasoning_levels,
+                        "efforts": caps.supported_reasoning_levels,
                         "supportsSummary": caps.supports_reasoning_summary
                     })
                 } else {
@@ -963,6 +1004,15 @@ fn ensure_profile_snake_case_aliases(p: &mut Value) {
             .or_insert_with(|| json!(display_name));
         obj.entry("displayName".to_string())
             .or_insert_with(|| json!(display_name));
+    }
+    if let Some(reasoning) = obj.get_mut("reasoning").and_then(|v| v.as_object_mut()) {
+        let levels = reasoning.get("supportedLevels").cloned();
+        let efforts = reasoning.get("efforts").cloned();
+        if let (Some(l), None) = (levels.as_ref(), efforts.as_ref()) {
+            reasoning.insert("efforts".to_string(), l.clone());
+        } else if let (None, Some(e)) = (levels.as_ref(), efforts.as_ref()) {
+            reasoning.insert("supportedLevels".to_string(), e.clone());
+        }
     }
 }
 
@@ -1700,12 +1750,19 @@ mod tests {
         assert_eq!(snap["uploaded_documents"], json!([]));
         assert_eq!(snap["messaging"]["management_path"], "/settings?section=messaging");
         assert_eq!(snap["computer_use"]["available"], false);
+        assert_eq!(snap["computer_use"]["feature_enabled"], false);
+        assert_eq!(snap["computer_use"]["token_configured"], false);
+        assert_eq!(snap["computer_use"]["connected"], false);
         assert_eq!(snap["native_browser"]["available"], true);
+        assert_eq!(snap["native_browser"]["feature_enabled"], true);
+        assert!(snap["native_browser"]["token_configured"].is_boolean());
+        assert_eq!(snap["native_browser"]["connected"], false);
         assert_eq!(snap["default_chat_model_revision"], 1);
         assert!(snap["model_profiles"].is_array());
         assert!(snap["default_chat_model_resolution"].is_object());
-        assert_eq!(snap["default_chat_model_resolution"]["kind"], "unconfigured");
+        assert_eq!(snap["default_chat_model_resolution"]["kind"], "no_automatic_candidate");
         assert_eq!(snap["default_chat_model_resolution"]["origin"], "default");
+        assert_eq!(snap["execution_backends"][0]["id"], "nola");
         assert_eq!(snap["execution_backends"][0]["availability"], "available");
         assert_eq!(snap["execution_backends"][0]["capabilities"]["streams_text"], true);
         assert_eq!(snap["execution_backends"][0]["capabilities"]["streams_reasoning"], true);
@@ -1980,7 +2037,9 @@ mod tests {
                     "content": "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI.",
                     "reasoning": "checked metrics",
                     "toolCalls": [{"callId": "c1", "name": "render_ui_surface", "ok": true, "summary": "rendered"}],
-                    "uiSurfaces": []
+                    "uiSurfaces": [],
+                    "roomId": "room-1",
+                    "expertReplies": [{"expert_id": "exp-1", "expert_name": "Architect", "content": "Looks good"}]
                 }),
                 100,
             )
@@ -1991,5 +2050,7 @@ mod tests {
         assert_eq!(msgs[1]["content"], "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI.");
         assert_eq!(msgs[1]["reasoning"], "checked metrics");
         assert_eq!(msgs[1]["toolCalls"][0]["name"], "render_ui_surface");
+        assert_eq!(msgs[1]["roomId"], "room-1");
+        assert_eq!(msgs[1]["expertReplies"][0]["expert_name"], "Architect");
     }
 }

@@ -1070,6 +1070,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("nola-ios", forHTTPHeaderField: "X-Nola-Client")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "email": email,
             "password": password,

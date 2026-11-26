@@ -598,4 +598,16 @@ class WebHostApiServiceImplTest {
             executor.shutdownNow()
         }
     }
+
+    @Test
+    fun boundedWebHostErrorCodeReadsCodeAndErrorKeys() {
+        assertEquals(
+            "unknown_transport_operation",
+            boundedWebHostErrorCode(buildJsonObject { put("code", "unknown_transport_operation") }),
+        )
+        assertEquals(
+            "unknown_transport_operation",
+            boundedWebHostErrorCode(buildJsonObject { put("error", "unknown_transport_operation") }),
+        )
+    }
 }

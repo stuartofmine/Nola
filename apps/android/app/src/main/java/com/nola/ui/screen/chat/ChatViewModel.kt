@@ -5152,6 +5152,9 @@ class ChatViewModel @Inject constructor(
         is SseEvent.V2UiSurface,
         is SseEvent.V2PermissionRequested,
         is SseEvent.V2UserQuestion,
+        is SseEvent.V2ExpertReply,
+        is SseEvent.V2TaskSnapshot,
+        is SseEvent.V2TaskEvent,
         is SseEvent.V2TurnCompleted -> true
         else -> false
     }
@@ -5350,6 +5353,17 @@ class ChatViewModel @Inject constructor(
                         processingState = ProcessingState.Streaming,
                         thinkingFinished = true,
                     )
+                }
+            }
+            is SseEvent.V2ExpertReply -> Unit
+            is SseEvent.V2TaskSnapshot -> {
+                if (event.conversationId == convId && event.cursor > 0L) {
+                    remoteTaskObservation.advance(event.cursor)
+                }
+            }
+            is SseEvent.V2TaskEvent -> {
+                if (event.conversationId == convId && event.seq > 0L) {
+                    remoteTaskObservation.advance(event.seq)
                 }
             }
             is SseEvent.V2TurnCompleted -> {

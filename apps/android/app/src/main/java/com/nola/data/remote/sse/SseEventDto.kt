@@ -51,8 +51,17 @@ data class SseEventDto(
     @SerialName("conversation_id") val conversationIdSnake: String? = null,
     val cursor: Long? = null,
     val taskProjection: JsonElement? = null,
+    @SerialName("task_projection") val taskProjectionSnake: JsonElement? = null,
     val revision: Long? = null,
     @SerialName("source_host_id") val sourceHostId: String? = null,
+    @SerialName("room_id") val roomId: String? = null,
+    @SerialName("expert_id") val expertId: String? = null,
+    @SerialName("expert_name") val expertName: String? = null,
+    val role: String? = null,
+    val content: String? = null,
+    val seq: Long? = null,
+    val kind: String? = null,
+    val payload: JsonObject? = null,
 ) {
     fun toDomain(rawEnvelope: JsonObject? = null): com.nola.data.remote.sse.SseEvent {
         if (type == "context_usage") return com.nola.data.remote.sse.SseEvent.ContextUsageChanged(requireNotNull(rawEnvelope))
@@ -114,16 +123,37 @@ data class SseEventDto(
                 backendId = backendId ?: "",
                 sessionId = sessionId ?: externalSessionId ?: ""
             )
-            "task_projection" -> com.nola.data.remote.sse.SseEvent.TaskProjection(
-                conversationId = conversationId.orEmpty(),
-                cursor = cursor?.coerceAtLeast(0) ?: 0,
-                projection = com.nola.core.decodeAgentCoreTaskProjection(
-                    taskProjection,
-                    conversationId.orEmpty(),
-                ),
+            "expert_reply" -> com.nola.data.remote.sse.SseEvent.V2ExpertReply(
+                roomId = roomId.orEmpty(),
+                expertId = expertId.orEmpty(),
+                expertName = expertName.orEmpty(),
+                role = role.orEmpty(),
+                content = content ?: text.orEmpty(),
             )
+            "task_snapshot" -> com.nola.data.remote.sse.SseEvent.V2TaskSnapshot(
+                conversationId = conversationId ?: conversationIdSnake.orEmpty(),
+                cursor = cursor?.coerceAtLeast(0) ?: 0,
+                payload = rawEnvelope ?: JsonObject(emptyMap()),
+            )
+            "task_event" -> com.nola.data.remote.sse.SseEvent.V2TaskEvent(
+                conversationId = conversationId ?: conversationIdSnake.orEmpty(),
+                seq = (seq ?: id?.toLongOrNull() ?: 0L).coerceAtLeast(0),
+                kind = kind.orEmpty(),
+                payload = payload ?: rawEnvelope ?: JsonObject(emptyMap()),
+            )
+            "task_projection" -> {
+                val convId = conversationId ?: conversationIdSnake.orEmpty()
+                com.nola.data.remote.sse.SseEvent.TaskProjection(
+                    conversationId = convId,
+                    cursor = cursor?.coerceAtLeast(0) ?: 0,
+                    projection = com.nola.core.decodeAgentCoreTaskProjection(
+                        taskProjection ?: taskProjectionSnake,
+                        convId,
+                    ),
+                )
+            }
             "task_stream_checkpoint" -> com.nola.data.remote.sse.SseEvent.TaskStreamCheckpoint(
-                conversationId = conversationId.orEmpty(),
+                conversationId = conversationId ?: conversationIdSnake.orEmpty(),
                 cursor = cursor?.coerceAtLeast(0) ?: 0,
             )
             "error", "submission_rejected" -> com.nola.data.remote.sse.SseEvent.Error(

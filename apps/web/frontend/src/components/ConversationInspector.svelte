@@ -725,11 +725,11 @@
                         {effectivePlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
                     </button>
                 </div>
-                {#if effectivePlan.summary || effectivePlan.markdown || effectivePlan.steps.length}
+                {#if effectivePlan.summary || effectivePlan.markdown || effectivePlan.steps.length || effectivePlan.status === 'proposed' || effectivePlan.status === 'pending' || effectivePlan.status === 'awaiting_approval'}
                     <div class="plan-card" data-status={effectivePlan.status}>
                         <div class="section-row">
                             <strong>
-                                {effectivePlan.status === 'awaiting_approval'
+                                {effectivePlan.status === 'awaiting_approval' || effectivePlan.status === 'proposed' || effectivePlan.status === 'pending'
                                     ? t($locale, 'chatInspector.planPendingApproval')
                                     : effectivePlan.summary || t($locale, 'chatInspector.planMode')}
                             </strong>
@@ -748,7 +748,7 @@
                             <pre class="plan-preview">{effectivePlan.markdown.slice(0, 600)}</pre>
                         {/if}
                         <div class="inspector-btn-row">
-                            {#if effectivePlan.status === 'awaiting_approval' || effectivePlan.status === 'draft'}
+                            {#if effectivePlan.status === 'awaiting_approval' || effectivePlan.status === 'proposed' || effectivePlan.status === 'pending' || effectivePlan.status === 'draft'}
                                 <button
                                     type="button"
                                     class="primary compact-btn"

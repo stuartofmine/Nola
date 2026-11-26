@@ -444,6 +444,9 @@ class WebHostApiServiceImpl @Inject constructor(
         val convId = (request["conversation_id"] as? JsonPrimitive)?.content
             ?: ((request["identity"] as? JsonObject)?.get("owner") as? JsonObject)
                 ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
+            ?: ((((request["input"] as? JsonObject)?.get("interaction") as? JsonObject)
+                ?.get("identity") as? JsonObject)?.get("owner") as? JsonObject)
+                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
             ?: ""
         return when (operation) {
             "surfaces" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surfaces", pinnedCertificateSha256)
@@ -667,7 +670,8 @@ class WebHostStatusException(val statusCode: Int, val errorCode: String? = null,
     IllegalStateException("Web Host request failed ($statusCode)" + (errorCode?.let { ": $it" } ?: ""))
 
 internal fun boundedWebHostErrorCode(error: JsonObject): String? =
-    (error["code"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+    ((error["code"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        ?: (error["error"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content)
         ?.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,95}")) }
 
 /** Only bounded source identities are retained; arbitrary Host error text is never journaled. */

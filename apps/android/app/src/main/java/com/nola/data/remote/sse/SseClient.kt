@@ -95,6 +95,24 @@ sealed class SseEvent {
         val question: String,
         val options: List<String> = emptyList(),
     ) : SseEvent()
+    data class V2ExpertReply(
+        val roomId: String = "",
+        val expertId: String = "",
+        val expertName: String = "",
+        val role: String = "",
+        val content: String = "",
+    ) : SseEvent()
+    data class V2TaskSnapshot(
+        val conversationId: String,
+        val cursor: Long = 0L,
+        val payload: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+    ) : SseEvent()
+    data class V2TaskEvent(
+        val conversationId: String,
+        val seq: Long = 0L,
+        val kind: String = "",
+        val payload: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+    ) : SseEvent()
     data class V2TurnCompleted(val sessionId: String, val finalText: String) : SseEvent()
     data class Error(val message: String, val code: String? = null) : SseEvent()
 }
@@ -274,6 +292,41 @@ private fun decodeV2AgentEvent(envelope: kotlinx.serialization.json.JsonObject):
                 ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }
                 ?: emptyList(),
         )
+        "expert_reply" -> SseEvent.V2ExpertReply(
+            roomId = envelope["room_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            expertId = envelope["expert_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            expertName = envelope["expert_name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            role = envelope["role"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            content = envelope["content"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        )
+        "task_snapshot" -> SseEvent.V2TaskSnapshot(
+            conversationId = envelope["conversation_id"]?.jsonPrimitive?.contentOrNull
+                ?: envelope["conversationId"]?.jsonPrimitive?.contentOrNull
+                ?: "",
+            cursor = envelope["cursor"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+            payload = envelope,
+        )
+        "task_event" -> SseEvent.V2TaskEvent(
+            conversationId = envelope["conversation_id"]?.jsonPrimitive?.contentOrNull
+                ?: envelope["conversationId"]?.jsonPrimitive?.contentOrNull
+                ?: "",
+            seq = (envelope["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                ?: envelope["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                ?: 0L).coerceAtLeast(0L),
+            kind = envelope["kind"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            payload = (envelope["payload"] as? kotlinx.serialization.json.JsonObject) ?: envelope,
+        )
+        "task_projection" -> {
+            val convId = envelope["conversationId"]?.jsonPrimitive?.contentOrNull
+                ?: envelope["conversation_id"]?.jsonPrimitive?.contentOrNull
+                ?: ""
+            val projectionElement = envelope["taskProjection"] ?: envelope["task_projection"]
+            SseEvent.TaskProjection(
+                conversationId = convId,
+                cursor = envelope["cursor"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L,
+                projection = com.nola.core.decodeAgentCoreTaskProjection(projectionElement, convId),
+            )
+        }
         "turn_completed" -> SseEvent.V2TurnCompleted(
             sessionId = envelope["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             finalText = envelope["final_text"]?.jsonPrimitive?.contentOrNull.orEmpty(),

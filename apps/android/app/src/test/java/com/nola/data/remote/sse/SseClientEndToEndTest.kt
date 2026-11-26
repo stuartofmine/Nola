@@ -86,6 +86,40 @@ class SseClientEndToEndTest {
     }
 
     @Test
+    fun v2ExpertReplyAndTaskStreamEventsDecodeWithoutThrowing() {
+        val expert = decodeSsePayload(
+            """{"type":"expert_reply","room_id":"room-1","expert_id":"exp-1","expert_name":"Architect","role":"reviewer","content":"Looks solid."}""",
+            null,
+        ) as SseEvent.V2ExpertReply
+        assertEquals("room-1", expert.roomId)
+        assertEquals("exp-1", expert.expertId)
+        assertEquals("Architect", expert.expertName)
+        assertEquals("Looks solid.", expert.content)
+
+        val snapshot = decodeSsePayload(
+            """{"type":"task_snapshot","conversation_id":"conv-42","cursor":7,"todos":[{"id":"t1","title":"Ship","status":"pending"}]}""",
+            null,
+        ) as SseEvent.V2TaskSnapshot
+        assertEquals("conv-42", snapshot.conversationId)
+        assertEquals(7L, snapshot.cursor)
+
+        val taskEv = decodeSsePayload(
+            """{"type":"task_event","id":11,"seq":11,"kind":"tool_finished","conversation_id":"conv-42","payload":{"call_id":"c1","name":"read_file"}}""",
+            null,
+        ) as SseEvent.V2TaskEvent
+        assertEquals("conv-42", taskEv.conversationId)
+        assertEquals(11L, taskEv.seq)
+        assertEquals("tool_finished", taskEv.kind)
+
+        val projection = decodeSsePayload(
+            """{"type":"task_projection","conversation_id":"conv-42","cursor":15,"task_projection":{"session_id":"conv-42","revision":2,"tasks":[]}}""",
+            null,
+        ) as SseEvent.TaskProjection
+        assertEquals("conv-42", projection.conversationId)
+        assertEquals(15L, projection.cursor)
+    }
+
+    @Test
     fun rejectsLegacyProductEvents() {
         var failure: Throwable? = null
         try {

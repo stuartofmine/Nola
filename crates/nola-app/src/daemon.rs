@@ -41,7 +41,9 @@ use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
+#[cfg(unix)]
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(unix)]
 const MAX_CONCURRENT_DAEMON_CLIENTS: usize = 32;
 
 static WRITE_MUTEX: Mutex<()> = Mutex::new(());
@@ -271,7 +273,11 @@ pub fn run_daemon(
                     }
                     i += 1;
                 }
-                "--archive-incompatible-store" => {}
+                "--archive-incompatible-store" => {
+                    if args.get(i + 1).is_some_and(|next| !next.starts_with('-')) {
+                        i += 1;
+                    }
+                }
                 _ => {}
             }
             i += 1;
@@ -508,6 +514,7 @@ fn extract_sub_command<'a>(args: &'a Value) -> (&'a str, &'a Value) {
     if let Some(sub) = args.get("command").or_else(|| args.get("operation")) {
         let op = sub
             .get("type")
+            .or_else(|| sub.get("kind"))
             .or_else(|| sub.get("action"))
             .or_else(|| sub.get("operation"))
             .or(Some(sub))
@@ -646,6 +653,10 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "delete_conversation_resource"
         | "admit_conversation_user_message"
         | "begin_queued_user_turn"
+        | "capture_mobile_delegation_configuration"
+        | "prepare_mobile_delegated_task"
+        | "prepare_mobile_task_guidance"
+        | "admit_mobile_task_child"
         | "backup" => true,
         "automation" => {
             let (op, payload) = extract_sub_command(cmd_args);
@@ -5521,6 +5532,603 @@ pub fn dispatch_command(
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"backup": dest}))
         }
+        "capture_mobile_delegation_configuration" => {
+            let mut config = args
+                .get("config")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let settings = args
+                .get("settings")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let session_id = config
+                .get("session_id")
+                .or_else(|| args.get("session_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("default")
+                .to_string();
+            if let Some(cfg_obj) = config.as_object_mut() {
+                cfg_obj
+                    .entry("session_id".to_string())
+                    .or_insert_with(|| json!(session_id));
+                let identity = cfg_obj
+                    .entry("turn_identity".to_string())
+                    .or_insert_with(|| json!({}));
+                if !identity.is_object() {
+                    *identity = json!({});
+                }
+                if let Some(id_obj) = identity.as_object_mut() {
+                    id_obj.insert("delegation".into(), settings.clone());
+                }
+            }
+            store
+                .set_kv(&format!("mobile_delegation_cfg:{session_id}"), &config)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let _ = store.set_kv("mobile_delegation_cfg:latest", &config);
+            Ok(config)
+        }
+        "prepare_mobile_delegated_task" => {
+            let input = args.get("input").unwrap_or(args);
+            let req = input.get("request").unwrap_or(input);
+            let payload = req.get("payload").unwrap_or(req);
+            let tool_input = payload
+                .get("input")
+                .or_else(|| payload.get("arguments"))
+                .unwrap_or(payload);
+            let now = input
+                .get("now_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let parent_session_id = req
+                .get("conversation_id")
+                .or_else(|| req.get("session_id"))
+                .or_else(|| input.get("parent_conversation_id"))
+                .or_else(|| input.get("session_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("default")
+                .to_string();
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| req.get("effect_id"))
+                .or_else(|| input.get("call_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // Idempotent replay when the same parent_session_id + non-empty call_id already prepared a task.
+            let existing = if !call_id.is_empty() {
+                suite
+                    .list_records::<Value>("mobile_delegated_task")
+                    .ok()
+                    .and_then(|list| {
+                        list.into_iter().find(|r| {
+                            r.pointer("/task/owner_session_id").and_then(|v| v.as_str())
+                                == Some(parent_session_id.as_str())
+                                && r.pointer("/task/call_id").and_then(|v| v.as_str())
+                                    == Some(call_id.as_str())
+                        })
+                    })
+            } else {
+                None
+            };
+
+            let (task_id, task_obj, replayed) = if let Some(prev) = existing {
+                let tid = prev
+                    .pointer("/task/id")
+                    .or_else(|| prev.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let task = prev.get("task").cloned().unwrap_or(prev);
+                (tid, task, true)
+            } else {
+                let tid = tool_input
+                    .get("task_id")
+                    .or_else(|| input.get("task_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(new_id);
+                let child_session_id = tool_input
+                    .get("child_session_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("child-{tid}"));
+                let child_run_id = format!("run-{tid}");
+                let assistant_message_id = format!("{tid}:assistant");
+                let prompt = tool_input
+                    .get("prompt")
+                    .or_else(|| tool_input.get("task"))
+                    .or_else(|| tool_input.get("instruction"))
+                    .or_else(|| tool_input.get("message"))
+                    .or_else(|| tool_input.get("description"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let title = tool_input
+                    .get("title")
+                    .or_else(|| tool_input.get("name"))
+                    .or_else(|| tool_input.get("agent"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("Delegated Task")
+                    .to_string();
+
+                let mut child_config = store
+                    .get_kv(&format!("mobile_delegation_cfg:{parent_session_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object())
+                    .or_else(|| {
+                        store
+                            .get_kv("mobile_delegation_cfg:latest")
+                            .ok()
+                            .flatten()
+                            .filter(|v| v.is_object())
+                    })
+                    .unwrap_or_else(|| {
+                        json!({
+                            "tools": [],
+                            "host_catalog": {"host_id": "mobile-device"},
+                            "context_window": {
+                                "context_window_tokens": 128_000,
+                                "reserved_output_tokens": 4_096
+                            },
+                            "turn_identity": {}
+                        })
+                    });
+                if let Some(cfg_obj) = child_config.as_object_mut() {
+                    cfg_obj.insert("session_id".into(), json!(child_session_id));
+                }
+
+                let _ = store.upsert_session(&Session {
+                    id: child_session_id.clone(),
+                    title: title.clone(),
+                    workspace_root: suite.workspace_root.display().to_string(),
+                    model_connection: None,
+                    model_id: None,
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                });
+
+                let task = json!({
+                    "id": tid,
+                    "task_id": tid,
+                    "kind": "agent",
+                    "status": "queued",
+                    "title": title,
+                    "prompt": prompt,
+                    "owner_session_id": parent_session_id,
+                    "parent_conversation_id": parent_session_id,
+                    "conversation_id": parent_session_id,
+                    "child_session_id": child_session_id,
+                    "child_conversation_id": child_session_id,
+                    "run_id": child_run_id,
+                    "assistant_message_id": assistant_message_id,
+                    "call_id": call_id,
+                    "attempt": 0,
+                    "guidance": [],
+                    "created_at_ms": now,
+                    "updated_at_ms": now
+                });
+                let stored = json!({
+                    "id": tid,
+                    "task_id": tid,
+                    "task": task,
+                    "child_config": child_config,
+                    "updated_at_ms": now
+                });
+                suite
+                    .upsert_record("mobile_delegated_task", &tid, &stored)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                let _ = suite.upsert_record("runtime_task", &tid, &task);
+                let _ = store.set_kv(&format!("mobile_task_child_cfg:{tid}"), &child_config);
+                (tid, task, false)
+            };
+
+            let child_sid = task_obj
+                .get("child_session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let status = task_obj
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("queued");
+            Ok(json!({
+                "ok": true,
+                "prepared": {
+                    "task": task_obj,
+                    "replayed": replayed,
+                    "source_admitted": false
+                },
+                "response": {
+                    "type": "task_promoted",
+                    "call_id": call_id,
+                    "task_id": task_id,
+                    "child_session_id": child_sid,
+                    "status": status,
+                    "output": {
+                        "task_id": task_id,
+                        "child_session_id": child_sid,
+                        "status": status,
+                        "replayed": replayed
+                    }
+                }
+            }))
+        }
+        "prepare_mobile_task_guidance" => {
+            let input = args.get("input").unwrap_or(args);
+            let req = input.get("request").unwrap_or(input);
+            let payload = req.get("payload").unwrap_or(req);
+            let tool_input = payload
+                .get("input")
+                .or_else(|| payload.get("arguments"))
+                .unwrap_or(payload);
+            let now = input
+                .get("now_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let task_id = tool_input
+                .get("task_id")
+                .or_else(|| tool_input.get("id"))
+                .or_else(|| input.get("task_id"))
+                .or_else(|| args.get("task_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| req.get("effect_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let guidance = tool_input
+                .get("message")
+                .or_else(|| tool_input.get("guidance"))
+                .or_else(|| tool_input.get("content"))
+                .or_else(|| tool_input.get("text"))
+                .cloned()
+                .unwrap_or_else(|| json!(""));
+            let receipt_id = new_id();
+            let entry = json!({
+                "receipt_id": receipt_id,
+                "task_id": task_id,
+                "guidance": guidance,
+                "status": "accepted",
+                "created_at_ms": now
+            });
+            if let Ok(Some(mut rec)) = suite.get_record::<Value>("mobile_delegated_task", task_id) {
+                if let Some(task_obj) = rec.get_mut("task").and_then(|v| v.as_object_mut()) {
+                    let list = task_obj
+                        .entry("guidance".to_string())
+                        .or_insert_with(|| json!([]));
+                    if let Some(arr) = list.as_array_mut() {
+                        arr.push(entry.clone());
+                    }
+                    task_obj.insert("updated_at_ms".into(), json!(now));
+                }
+                if let Some(obj) = rec.as_object_mut() {
+                    obj.insert("updated_at_ms".into(), json!(now));
+                }
+                let _ = suite.upsert_record("mobile_delegated_task", task_id, &rec);
+                if let Some(task_val) = rec.get("task") {
+                    let _ = suite.upsert_record("runtime_task", task_id, task_val);
+                }
+            }
+            let _ = store.set_kv(&format!("task_guidance_receipt:{receipt_id}"), &entry);
+            let _ = store.set_kv(&format!("task_guidance_receipt:{task_id}"), &entry);
+            Ok(json!({
+                "ok": true,
+                "type": "tool_completed",
+                "call_id": call_id,
+                "outcome": "succeeded",
+                "task_id": task_id,
+                "receipt_id": receipt_id,
+                "accepted": true,
+                "output": {
+                    "execution": {"state": "completed"},
+                    "result": entry
+                },
+                "full_output_ref": Value::Null,
+                "artifacts": []
+            }))
+        }
+        "observe_mobile_task" => {
+            let input = args.get("input").unwrap_or(args);
+            let req = input.get("request").unwrap_or(input);
+            let payload = req.get("payload").unwrap_or(req);
+            let tool_input = payload
+                .get("input")
+                .or_else(|| payload.get("arguments"))
+                .unwrap_or(payload);
+            let task_id = tool_input
+                .get("task_id")
+                .or_else(|| tool_input.get("id"))
+                .or_else(|| input.get("task_id"))
+                .or_else(|| args.get("task_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| req.get("effect_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let capability = payload
+                .get("capability_id")
+                .or_else(|| payload.get("tool"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("read_task");
+
+            let stored = suite
+                .get_record::<Value>("mobile_delegated_task", task_id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let task_val = stored
+                .as_ref()
+                .and_then(|r| r.get("task").cloned())
+                .or_else(|| {
+                    suite
+                        .get_record::<Value>("runtime_task", task_id)
+                        .ok()
+                        .flatten()
+                });
+            let status = task_val
+                .as_ref()
+                .and_then(|t| t.get("status").and_then(|v| v.as_str()))
+                .unwrap_or("not_found")
+                .to_string();
+            let is_terminal = matches!(
+                status.as_str(),
+                "completed" | "failed" | "cancelled" | "not_found"
+            );
+            let wait_ms: i64 = if capability == "wait_task" && !is_terminal {
+                tool_input
+                    .get("wait_ms")
+                    .or_else(|| tool_input.get("timeout_ms"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(5_000)
+                    .clamp(0, 300_000)
+            } else {
+                0
+            };
+            let latest_output = task_val
+                .as_ref()
+                .and_then(|t| t.get("result").or_else(|| t.get("output")).cloned())
+                .filter(|v| !v.is_null())
+                .or_else(|| {
+                    let child_sid = task_val
+                        .as_ref()
+                        .and_then(|t| t.get("child_session_id").and_then(|v| v.as_str()))?;
+                    let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, child_sid);
+                    msgs.into_iter()
+                        .rev()
+                        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
+                        .and_then(|m| m.get("content").cloned())
+                })
+                .unwrap_or(Value::Null);
+            let outcome = if matches!(status.as_str(), "failed" | "not_found") {
+                "failed"
+            } else {
+                "succeeded"
+            };
+            let response = json!({
+                "type": "tool_completed",
+                "call_id": call_id,
+                "outcome": outcome,
+                "output": {
+                    "execution": {"state": if is_terminal { "completed" } else { "running" }},
+                    "task_id": task_id,
+                    "status": status,
+                    "terminal": is_terminal,
+                    "task": task_val.clone().unwrap_or(Value::Null),
+                    "result": latest_output
+                },
+                "full_output_ref": Value::Null,
+                "artifacts": []
+            });
+            Ok(json!({
+                "task_id": task_id,
+                "status": status,
+                "terminal": is_terminal,
+                "wait_ms": wait_ms,
+                "task": task_val.unwrap_or(Value::Null),
+                "response": response
+            }))
+        }
+        "load_mobile_task_child_configuration" => {
+            let input = args.get("input").unwrap_or(args);
+            let task_id = input
+                .get("task_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("task_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+            if let Ok(Some(cfg)) = store.get_kv(&format!("mobile_task_child_cfg:{task_id}")) {
+                if cfg.is_object() {
+                    return Ok(cfg);
+                }
+            }
+            if let Ok(Some(rec)) = suite.get_record::<Value>("mobile_delegated_task", task_id) {
+                if let Some(cfg) = rec.get("child_config").filter(|v| v.is_object()) {
+                    return Ok(cfg.clone());
+                }
+                let owner_sid = rec
+                    .pointer("/task/owner_session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                let child_sid = rec
+                    .pointer("/task/child_session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(task_id);
+                let mut cfg = store
+                    .get_kv(&format!("mobile_delegation_cfg:{owner_sid}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object())
+                    .unwrap_or_else(|| {
+                        json!({
+                            "tools": [],
+                            "host_catalog": {"host_id": "mobile-device"},
+                            "context_window": {
+                                "context_window_tokens": 128_000,
+                                "reserved_output_tokens": 4_096
+                            },
+                            "turn_identity": {}
+                        })
+                    });
+                if let Some(obj) = cfg.as_object_mut() {
+                    obj.insert("session_id".into(), json!(child_sid));
+                }
+                return Ok(cfg);
+            }
+            Err((
+                "not_found",
+                format!("mobile delegated task configuration '{task_id}' not found"),
+            ))
+        }
+        "admit_mobile_task_child" => {
+            let input = args.get("input").unwrap_or(args);
+            let task_id = input
+                .get("task_id")
+                .or_else(|| input.get("id"))
+                .or_else(|| args.get("task_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+            let now = input
+                .get("now_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let lease_until_ms = input
+                .get("lease_until_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(now + 60_000);
+            let worker = input.get("worker").cloned().unwrap_or_else(|| json!({}));
+            let candidate_cfg = input.get("candidate_config");
+
+            let Some(mut rec) = suite
+                .get_record::<Value>("mobile_delegated_task", task_id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+            else {
+                return Ok(Value::Null);
+            };
+            let current_status = rec
+                .pointer("/task/status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("queued")
+                .to_string();
+            if matches!(current_status.as_str(), "completed" | "failed") {
+                return Ok(Value::Null);
+            }
+            // Reject overlapping admission while an existing lease by another worker is still live.
+            let active_lease = rec
+                .pointer("/lease/lease_until_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let active_worker = rec.pointer("/lease/worker");
+            if current_status == "running"
+                && active_lease > now
+                && active_worker.is_some_and(|w| w != &worker)
+            {
+                return Ok(Value::Null);
+            }
+
+            let cancellation_only = current_status == "cancelled";
+            let attempt = rec
+                .pointer("/task/attempt")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                + 1;
+            let parent_conv_id = input
+                .get("parent_conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    rec.pointer("/task/owner_session_id")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                })
+                .unwrap_or_else(|| "default".into());
+            let child_conv_id = rec
+                .pointer("/task/child_session_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("child-{task_id}"));
+            let core_session_id = candidate_cfg
+                .and_then(|c| c.get("session_id").and_then(|v| v.as_str()))
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| child_conv_id.clone());
+            let run_id = rec
+                .pointer("/task/run_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("run-{task_id}"));
+            let assistant_message_id = rec
+                .pointer("/task/assistant_message_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{task_id}:assistant"));
+            let expert_target = rec
+                .pointer("/task/expert_target")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let lease_info = json!({
+                "attempt": attempt,
+                "worker": worker,
+                "lease_until_ms": lease_until_ms,
+                "admitted_at_ms": now
+            });
+            if let Some(task_obj) = rec.get_mut("task").and_then(|v| v.as_object_mut()) {
+                if !cancellation_only {
+                    task_obj.insert("status".into(), json!("running"));
+                }
+                task_obj.insert("attempt".into(), json!(attempt));
+                task_obj.insert("updated_at_ms".into(), json!(now));
+            }
+            if let Some(obj) = rec.as_object_mut() {
+                obj.insert("lease".into(), lease_info.clone());
+                obj.insert("updated_at_ms".into(), json!(now));
+                if let Some(cfg) = candidate_cfg.filter(|v| v.is_object()) {
+                    obj.insert("child_config".into(), cfg.clone());
+                }
+            }
+            suite
+                .upsert_record("mobile_delegated_task", task_id, &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(task_val) = rec.get("task") {
+                let _ = suite.upsert_record("runtime_task", task_id, task_val);
+            }
+            Ok(json!({
+                "task_id": task_id,
+                "parent_conversation_id": parent_conv_id,
+                "attempt": attempt,
+                "current": lease_info,
+                "cancellation_only": cancellation_only,
+                "invocation": {
+                    "conversation_id": child_conv_id,
+                    "run_id": run_id,
+                    "core_session_id": core_session_id,
+                    "assistant_message_id": assistant_message_id
+                },
+                "expert_target": expert_target
+            }))
+        }
         other => Err((
             "unsupported_command",
             format!("unsupported daemon command '{other}'"),
@@ -8410,7 +9018,7 @@ pub(crate) fn dispatch_agent_room_command(
             let rooms: Vec<AgentRoom> = suite
                 .list_records("agent_room")
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            let experts: Vec<ExpertPeer> = suite
+            let experts: Vec<Value> = suite
                 .list_records("expert_peer")
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({
@@ -8547,41 +9155,94 @@ pub(crate) fn dispatch_agent_room_command(
                 .get("expert_id")
                 .or_else(|| input.get("agent_id"))
                 .or_else(|| input.get("id"))
+                .or_else(|| payload.get("expert_id"))
+                .or_else(|| payload.get("agent_id"))
+                .or_else(|| payload.get("id"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
-            let prev = suite
-                .get_record::<ExpertPeer>("expert_peer", &id)
+            let prev_val = suite
+                .get_record::<Value>("expert_peer", &id)
                 .ok()
                 .flatten();
+            let prev = prev_val
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<ExpertPeer>(v.clone()).ok());
+            let model_override = if let Some(val) = input
+                .get("model_override")
+                .or_else(|| input.get("modelOverride"))
+                .or_else(|| payload.get("model_override"))
+                .or_else(|| payload.get("modelOverride"))
+            {
+                if val.is_null() {
+                    None
+                } else {
+                    val.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                }
+            } else {
+                prev.as_ref().and_then(|e| e.model_override.clone())
+            };
+            let description = if let Some(val) = input
+                .get("description")
+                .or_else(|| payload.get("description"))
+            {
+                if val.is_null() {
+                    None
+                } else {
+                    val.as_str().map(ToString::to_string)
+                }
+            } else {
+                prev_val
+                    .as_ref()
+                    .and_then(|v| v.get("description").and_then(|d| d.as_str()))
+                    .map(ToString::to_string)
+            };
+            let color = if let Some(val) = input.get("color").or_else(|| payload.get("color")) {
+                if val.is_null() {
+                    None
+                } else {
+                    val.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                }
+            } else {
+                prev_val
+                    .as_ref()
+                    .and_then(|v| v.get("color").and_then(|c| c.as_str()))
+                    .map(ToString::to_string)
+            };
             let expert = ExpertPeer {
                 id: id.clone(),
                 name: input
                     .get("name")
+                    .or_else(|| payload.get("name"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .or_else(|| prev.as_ref().map(|e| e.name.clone()))
                     .unwrap_or_else(|| "Expert".into()),
                 role: input
                     .get("role")
+                    .or_else(|| payload.get("role"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .or_else(|| prev.as_ref().map(|e| e.role.clone()))
                     .unwrap_or_else(|| "specialist".into()),
                 system_prompt: input
                     .get("system_prompt")
+                    .or_else(|| payload.get("system_prompt"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
                     .or_else(|| prev.as_ref().map(|e| e.system_prompt.clone()))
                     .unwrap_or_default(),
-                model_override: input
-                    .get("model_override")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-                    .or_else(|| prev.as_ref().and_then(|e| e.model_override.clone())),
+                model_override,
                 allowed_tools: input
                     .get("allowed_tools")
+                    .or_else(|| payload.get("allowed_tools"))
                     .and_then(|v| v.as_array())
                     .map(|a| {
                         a.iter()
@@ -8592,10 +9253,19 @@ pub(crate) fn dispatch_agent_room_command(
                     .unwrap_or_default(),
                 updated_at_ms: now_ms(),
             };
+            let mut expert_val = serde_json::to_value(&expert).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = expert_val.as_object_mut() {
+                if let Some(desc) = description {
+                    obj.insert("description".into(), json!(desc));
+                }
+                if let Some(col) = color {
+                    obj.insert("color".into(), json!(col));
+                }
+            }
             suite
-                .upsert_record("expert_peer", &expert.id, &expert)
+                .upsert_record("expert_peer", &expert.id, &expert_val)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "expert": expert}))
+            Ok(json!({"ok": true, "expert": expert_val}))
         }
         "join" | "rejoin" | "deactivate" => {
             let room_id = input
@@ -8666,7 +9336,7 @@ pub(crate) fn dispatch_agent_room_command(
             "role_templates": built_in_role_templates()
         })),
         "list_experts" => {
-            let experts: Vec<ExpertPeer> = suite
+            let experts: Vec<Value> = suite
                 .list_records("expert_peer")
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({
@@ -8744,6 +9414,7 @@ pub(crate) fn dispatch_agent_room_command(
                 .or_else(|| input.get("roomId"))
                 .or_else(|| payload.get("id"))
                 .or_else(|| payload.get("room_id"))
+                .or_else(|| payload.get("roomId"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .ok_or(("invalid_argument", "missing room id".into()))?;
@@ -8754,19 +9425,51 @@ pub(crate) fn dispatch_agent_room_command(
             if let Some(name) = input
                 .get("name")
                 .or_else(|| input.get("title"))
+                .or_else(|| payload.get("name"))
+                .or_else(|| payload.get("title"))
                 .and_then(|v| v.as_str())
             {
                 room.name = name.to_string();
             }
+            if let Some(ws) = input
+                .get("workspace_root")
+                .or_else(|| payload.get("workspace_root"))
+                .and_then(|v| v.as_str())
+            {
+                room.workspace_root = ws.to_string();
+            }
             if let Some(arr) = input
                 .get("participant_expert_ids")
                 .or_else(|| input.get("participantExpertIds"))
+                .or_else(|| payload.get("participant_expert_ids"))
+                .or_else(|| payload.get("participantExpertIds"))
                 .and_then(|v| v.as_array())
             {
                 room.participant_expert_ids = arr
                     .iter()
                     .filter_map(|x| x.as_str().map(ToString::to_string))
                     .collect();
+            }
+            let detach = input
+                .get("detach")
+                .or_else(|| payload.get("detach"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if detach {
+                room.session_id.clear();
+            } else if let Some(sess_val) = input
+                .get("session_id")
+                .or_else(|| input.get("conversation_id"))
+                .or_else(|| input.get("conversationId"))
+                .or_else(|| payload.get("session_id"))
+                .or_else(|| payload.get("conversation_id"))
+                .or_else(|| payload.get("conversationId"))
+            {
+                if sess_val.is_null() {
+                    room.session_id.clear();
+                } else if let Some(s) = sess_val.as_str() {
+                    room.session_id = s.trim().to_string();
+                }
             }
             room.updated_at_ms = now_ms();
             suite
@@ -9156,10 +9859,15 @@ pub(crate) fn dispatch_agent_room_command(
             }))
         }
         "delete_room" => {
-            let id = payload
+            let id = input
                 .get("id")
+                .or_else(|| input.get("room_id"))
+                .or_else(|| input.get("roomId"))
+                .or_else(|| payload.get("id"))
                 .or_else(|| payload.get("room_id"))
+                .or_else(|| payload.get("roomId"))
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
                 .ok_or(("invalid_argument", "missing 'id'".into()))?;
             let deleted = suite
                 .delete_record("agent_room", id)
@@ -9167,54 +9875,112 @@ pub(crate) fn dispatch_agent_room_command(
             Ok(json!({"ok": true, "deleted": deleted, "id": id}))
         }
         "create_expert" | "upsert_expert" => {
-            let id = payload
+            let id = input
                 .get("id")
+                .or_else(|| input.get("expert_id"))
+                .or_else(|| payload.get("id"))
+                .or_else(|| payload.get("expert_id"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
+            let prev_val = suite
+                .get_record::<Value>("expert_peer", &id)
+                .ok()
+                .flatten();
+            let prev = prev_val
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<ExpertPeer>(v.clone()).ok());
+            let model_override = if let Some(val) = input
+                .get("model_override")
+                .or_else(|| input.get("modelOverride"))
+                .or_else(|| payload.get("model_override"))
+                .or_else(|| payload.get("modelOverride"))
+            {
+                if val.is_null() {
+                    None
+                } else {
+                    val.as_str()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                }
+            } else {
+                prev.as_ref().and_then(|e| e.model_override.clone())
+            };
+            let description = if let Some(val) = input
+                .get("description")
+                .or_else(|| payload.get("description"))
+            {
+                if val.is_null() {
+                    None
+                } else {
+                    val.as_str().map(ToString::to_string)
+                }
+            } else {
+                prev_val
+                    .as_ref()
+                    .and_then(|v| v.get("description").and_then(|d| d.as_str()))
+                    .map(ToString::to_string)
+            };
             let expert = ExpertPeer {
                 id: id.clone(),
-                name: payload
+                name: input
                     .get("name")
+                    .or_else(|| payload.get("name"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Expert")
-                    .to_string(),
-                role: payload
+                    .map(ToString::to_string)
+                    .or_else(|| prev.as_ref().map(|e| e.name.clone()))
+                    .unwrap_or_else(|| "Expert".into()),
+                role: input
                     .get("role")
+                    .or_else(|| payload.get("role"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("specialist")
-                    .to_string(),
-                system_prompt: payload
+                    .map(ToString::to_string)
+                    .or_else(|| prev.as_ref().map(|e| e.role.clone()))
+                    .unwrap_or_else(|| "specialist".into()),
+                system_prompt: input
                     .get("system_prompt")
+                    .or_else(|| payload.get("system_prompt"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                model_override: payload
-                    .get("model_override")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string),
-                allowed_tools: payload
+                    .map(ToString::to_string)
+                    .or_else(|| prev.as_ref().map(|e| e.system_prompt.clone()))
+                    .unwrap_or_default(),
+                model_override,
+                allowed_tools: input
                     .get("allowed_tools")
+                    .or_else(|| payload.get("allowed_tools"))
                     .and_then(|v| v.as_array())
                     .map(|a| {
                         a.iter()
                             .filter_map(|v| v.as_str().map(ToString::to_string))
                             .collect()
                     })
+                    .or_else(|| prev.map(|e| e.allowed_tools))
                     .unwrap_or_default(),
                 updated_at_ms: now_ms(),
             };
+            let mut expert_val = serde_json::to_value(&expert).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = expert_val.as_object_mut() {
+                if let Some(desc) = description {
+                    obj.insert("description".into(), json!(desc));
+                }
+            }
             suite
-                .upsert_record("expert_peer", &expert.id, &expert)
+                .upsert_record("expert_peer", &expert.id, &expert_val)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "expert": expert}))
+            Ok(json!({"ok": true, "expert": expert_val}))
         }
-        "delete_expert" => {
-            let id = payload
+        "delete_expert" | "delete_agent" => {
+            let id = input
                 .get("id")
+                .or_else(|| input.get("expert_id"))
+                .or_else(|| input.get("agent_id"))
+                .or_else(|| payload.get("id"))
                 .or_else(|| payload.get("expert_id"))
+                .or_else(|| payload.get("agent_id"))
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
                 .ok_or(("invalid_argument", "missing 'id'".into()))?;
             let deleted = suite
                 .delete_record("expert_peer", id)
@@ -10028,5 +10794,238 @@ mod tests {
         assert_eq!(j_range["end_of_content"], false);
 
         clear_active_run(&store, "conv-src");
+    }
+
+    #[test]
+    fn daemon_expert_room_fixes_and_mobile_delegated_task_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // 1. Expert description preservation + explicit model_override clear + delete_agent alias with nested input
+        let exp = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({
+                "command": {
+                    "type": "configure_agent",
+                    "input": {
+                        "id": "exp-1",
+                        "name": "Reviewer",
+                        "role": "reviewer",
+                        "description": "Careful Rust code reviewer",
+                        "model_override": "gpt-5"
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(exp["expert"]["description"], "Careful Rust code reviewer");
+        assert_eq!(exp["expert"]["model_override"], "gpt-5");
+
+        let cleared = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({
+                "command": {
+                    "type": "configure_agent",
+                    "input": {
+                        "id": "exp-1",
+                        "model_override": null
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(cleared["expert"]["description"], "Careful Rust code reviewer");
+        assert!(cleared["expert"]["model_override"].is_null());
+
+        let del_agent = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({
+                "command": {
+                    "type": "delete_agent",
+                    "input": {"id": "exp-1", "expert_id": "exp-1"}
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(del_agent["deleted"], true);
+
+        // 2. Room session_id attach + detach/null clear + delete_room with nested input
+        let _ = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "create_room", "input": {"id": "rm-2", "name": "Ops"}}}),
+        )
+        .unwrap();
+        let attached = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "update_room", "input": {"id": "rm-2", "conversation_id": "conv-attach-1"}}}),
+        )
+        .unwrap();
+        assert_eq!(attached["room"]["session_id"], "conv-attach-1");
+        let detached = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "update_room", "input": {"id": "rm-2", "detach": true}}}),
+        )
+        .unwrap();
+        assert_eq!(detached["room"]["session_id"], "");
+        let attached2 = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "update_room", "input": {"id": "rm-2", "session_id": "conv-attach-2"}}}),
+        )
+        .unwrap();
+        assert_eq!(attached2["room"]["session_id"], "conv-attach-2");
+        let cleared_null = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "update_room", "input": {"id": "rm-2", "session_id": null}}}),
+        )
+        .unwrap();
+        assert_eq!(cleared_null["room"]["session_id"], "");
+        let del_room = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({"command": {"type": "delete_room", "input": {"id": "rm-2", "room_id": "rm-2"}}}),
+        )
+        .unwrap();
+        assert_eq!(del_room["deleted"], true);
+
+        // 3. All 6 mobile delegated task commands
+        let captured = dispatch_command(
+            &store,
+            &suite,
+            "capture_mobile_delegation_configuration",
+            &json!({
+                "config": {
+                    "session_id": "parent-sess-1",
+                    "tools": [{"function": {"name": "read_file"}}],
+                    "host_catalog": {"host_id": "ios-host-1"},
+                    "context_window": {"context_window_tokens": 128000, "reserved_output_tokens": 4096},
+                    "turn_identity": {
+                        "host_invocation": {"primary": {}, "generation": {}, "output_admission": {}},
+                        "host_dependencies": {},
+                        "model_capability": {}
+                    }
+                },
+                "settings": {"project_root": "ios-device"}
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            captured["turn_identity"]["delegation"]["project_root"],
+            "ios-device"
+        );
+
+        let prepared = dispatch_command(
+            &store,
+            &suite,
+            "prepare_mobile_delegated_task",
+            &json!({
+                "input": {
+                    "request": {
+                        "conversation_id": "parent-sess-1",
+                        "payload": {
+                            "call_id": "call-spawn-1",
+                            "capability_id": "spawn_agent",
+                            "input": {"prompt": "Inspect logs", "title": "Log Inspector"}
+                        }
+                    },
+                    "now_ms": 1000
+                }
+            }),
+        )
+        .unwrap();
+        let task_id = prepared["prepared"]["task"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(prepared["response"]["type"], "task_promoted");
+        assert_eq!(prepared["prepared"]["task"]["owner_session_id"], "parent-sess-1");
+
+        let child_cfg = dispatch_command(
+            &store,
+            &suite,
+            "load_mobile_task_child_configuration",
+            &json!({"task_id": task_id}),
+        )
+        .unwrap();
+        assert_eq!(
+            child_cfg["session_id"],
+            prepared["prepared"]["task"]["child_session_id"]
+        );
+        assert_eq!(child_cfg["host_catalog"]["host_id"], "ios-host-1");
+
+        let admitted = dispatch_command(
+            &store,
+            &suite,
+            "admit_mobile_task_child",
+            &json!({
+                "input": {
+                    "task_id": task_id,
+                    "parent_conversation_id": "parent-sess-1",
+                    "worker": {"pid": 42},
+                    "now_ms": 2000,
+                    "lease_until_ms": 62000,
+                    "candidate_config": child_cfg,
+                    "current_tools": []
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(admitted["task_id"], task_id);
+        assert_eq!(admitted["attempt"], 1);
+        assert_eq!(admitted["cancellation_only"], false);
+        assert_eq!(
+            admitted["invocation"]["core_session_id"],
+            child_cfg["session_id"]
+        );
+
+        let guided = dispatch_command(
+            &store,
+            &suite,
+            "prepare_mobile_task_guidance",
+            &json!({
+                "input": {
+                    "request": {
+                        "payload": {
+                            "call_id": "call-guide-1",
+                            "input": {"task_id": task_id, "message": "Check stderr too"}
+                        }
+                    },
+                    "now_ms": 2500
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(guided["type"], "tool_completed");
+        assert_eq!(guided["outcome"], "succeeded");
+
+        let observed = dispatch_command(
+            &store,
+            &suite,
+            "observe_mobile_task",
+            &json!({
+                "input": {
+                    "request": {
+                        "payload": {
+                            "call_id": "call-obs-1",
+                            "capability_id": "wait_task",
+                            "input": {"task_id": task_id, "wait_ms": 3000}
+                        }
+                    },
+                    "now_ms": 3000
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(observed["terminal"], false);
+        assert_eq!(observed["wait_ms"], 3000);
+        assert_eq!(observed["response"]["type"], "tool_completed");
     }
 }

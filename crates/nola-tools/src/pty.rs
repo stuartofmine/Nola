@@ -3,26 +3,41 @@
 //! `list`, `close`) backed by POSIX `openpty` + `vt100` terminal screen emulation.
 //! Maintains a bounded (2 MiB) append-only output log for non-destructive offset-based reading.
 
+#[cfg(unix)]
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use nola_types::{
-    CapabilityDomain, PermissionProfile, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier,
-};
-use serde_json::{json, Value};
+#[cfg(unix)]
+use nola_types::PermissionProfile;
+use nola_types::{CapabilityDomain, ToolExecutionResult, ToolSchema, ToolSpec, ToolTier};
+#[cfg(unix)]
+use serde_json::json;
+use serde_json::Value;
 
+#[cfg(unix)]
 use crate::file_pipeline::{path_within_workspace, resolve_path};
+#[cfg(unix)]
 use crate::output_store::utf8_byte_slice;
+#[cfg(unix)]
 use crate::sandbox::SandboxMode;
 use crate::{ToolContext, ToolHandler};
 
+#[cfg(unix)]
 const MAX_PTY_SESSIONS: usize = 8;
+#[cfg(unix)]
 const DEFAULT_COLS: u16 = 120;
+#[cfg(unix)]
 const DEFAULT_ROWS: u16 = 36;
+#[cfg(unix)]
 const MAX_PTY_LOG_BYTES: usize = 2 * 1024 * 1024;
+#[cfg(unix)]
 const DEFAULT_READ_MAX_BYTES: usize = 8 * 1024;
+#[cfg(unix)]
 const MAX_READ_MAX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +53,7 @@ pub struct PtySize {
 pub struct PtyManager {
     #[cfg(unix)]
     sessions: Mutex<BTreeMap<String, Arc<unix_pty::PtySession>>>,
+    #[cfg(unix)]
     next_id: Mutex<u64>,
 }
 
@@ -79,6 +95,7 @@ impl PtyManager {
         }
     }
 
+    #[cfg(unix)]
     fn alloc_id(&self) -> String {
         let mut n = self.next_id.lock().unwrap();
         *n += 1;

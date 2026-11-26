@@ -21,11 +21,13 @@ enum MacPersonalIntelligenceCore {
         let query: String
         let limit: Int
         let minimumScore: Double
+        let dbPath: String?
 
         enum CodingKeys: String, CodingKey {
             case query
             case limit
             case minimumScore = "minimum_score"
+            case dbPath = "db_path"
         }
     }
 
@@ -34,7 +36,11 @@ enum MacPersonalIntelligenceCore {
         let context: String
     }
 
-    static func recallContext(for query: String, limit: Int = 6) -> String {
+    static func recallContext(
+        for query: String,
+        limit: Int = 6,
+        databaseURL: URL = MacApplicationPort.defaultDatabaseURL
+    ) -> String {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return "" }
 
@@ -42,7 +48,8 @@ enum MacPersonalIntelligenceCore {
         let request = RecallRequest(
             query: query,
             limit: min(max(limit, 1), 12),
-            minimumScore: 0.2
+            minimumScore: 0.2,
+            dbPath: databaseURL.path
         )
         guard let data = try? JSONEncoder().encode(request) else { return "" }
         let pointer = data.withUnsafeBytes { bytes in

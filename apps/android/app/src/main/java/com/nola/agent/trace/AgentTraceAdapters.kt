@@ -55,6 +55,9 @@ class AgentTraceSession(
         is SseEvent.V2SessionStarted,
         is SseEvent.V2TextDelta,
         is SseEvent.V2ReasoningDelta,
+        is SseEvent.V2ExpertReply,
+        is SseEvent.V2TaskSnapshot,
+        is SseEvent.V2TaskEvent,
         is SseEvent.V2TurnCompleted -> null
         is SseEvent.V2Compacted -> event(
             kind = "context.compacted",

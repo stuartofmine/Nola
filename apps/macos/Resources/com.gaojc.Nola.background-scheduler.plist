@@ -4,13 +4,16 @@
 <dict>
     <key>Label</key>
     <string>com.gaojc.Nola.background-scheduler</string>
+    <!-- Invokes the headless Nola trampoline (`--nola-background-scheduler-tick`) so
+         `MacAppEnvironment.shared.launchAgentEnvironment` sets `NOLA_DB_PATH` to the
+         active macOS app database (`~/Library/Application Support/Nola/State/nola-v4.db`)
+         before running `Contents/MacOS/nola-runtime scheduler tick`. -->
     <key>BundleProgram</key>
-    <string>Contents/MacOS/nola-runtime</string>
+    <string>Contents/MacOS/Nola</string>
     <key>ProgramArguments</key>
     <array>
-        <string>Contents/MacOS/nola-runtime</string>
-        <string>scheduler</string>
-        <string>tick</string>
+        <string>Contents/MacOS/Nola</string>
+        <string>--nola-background-scheduler-tick</string>
     </array>
     <key>StartInterval</key>
     <integer>60</integer>

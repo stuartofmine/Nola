@@ -32,16 +32,16 @@ use nola_modules::a2ui::{
     read_ui_surface_changes, read_ui_surface_revision, register_scoped_tools as register_a2ui_tools,
     UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceRevisionRef,
 };
+use nola_modules::automations_messaging::handle_inbound_webhook_turn_with_secret;
 use nola_modules::{
-    built_in_role_templates, check_for_update, download_update_package,
-    handle_inbound_webhook_turn, index_data_source, install_plugin_package,
-    list_data_source_usage, list_desktop_plugin_pages, list_harness_plugins,
-    parse_inbound_webhook_payload, probe_engine_status, probe_hardware, recommend_local_models,
-    reconcile_enabled_plugins, run_engine_setup_with_opt_in, search_hub_models,
-    spawn_background_goal_worker, spawn_background_scheduler, spawn_messaging_channel_worker,
-    test_data_source_connection, verify_inbound_webhook_token, AutomationScheduler,
-    ExtendedGoalRecord, GoalWorker, LocalModelProcessManager, ModelDownloadManager,
-    ModelDownloadPlan, ModulesSuite, RoomRuntime,
+    built_in_role_templates, check_for_update, download_update_package, index_data_source,
+    install_plugin_package, list_data_source_usage, list_desktop_plugin_pages,
+    list_harness_plugins, parse_inbound_webhook_payload, probe_engine_status, probe_hardware,
+    recommend_local_models, reconcile_enabled_plugins, run_engine_setup_with_opt_in,
+    search_hub_models, spawn_background_goal_worker, spawn_background_scheduler,
+    spawn_messaging_channel_worker, test_data_source_connection, verify_inbound_webhook_token,
+    AutomationScheduler, ExtendedGoalRecord, GoalWorker, LocalModelProcessManager,
+    ModelDownloadManager, ModelDownloadPlan, ModulesSuite, RoomRuntime,
 };
 use nola_store::{EventPage, Store, Vault};
 use nola_tools::git::GitTool;
@@ -153,11 +153,15 @@ struct PendingApprovalEntry {
     conversation_id: String,
     tool_name: String,
     target_key: String,
+    reason: String,
+    arguments: Value,
     tx: mpsc::Sender<bool>,
 }
 
 struct PendingQuestionEntry {
     conversation_id: String,
+    question: String,
+    options: Vec<String>,
     tx: mpsc::Sender<Option<String>>,
 }
 
@@ -266,6 +270,59 @@ impl PendingInteractions {
             || !self.device_tools.lock().unwrap().is_empty()
     }
 
+    fn pending_permission_for(&self, conv_id: &str) -> Value {
+        self.approvals
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, e)| e.conversation_id == conv_id)
+            .map(|(req_id, e)| {
+                json!({
+                    "requestId": req_id,
+                    "request_id": req_id,
+                    "tool": e.tool_name,
+                    "reason": e.reason,
+                    "arguments": e.arguments
+                })
+            })
+            .unwrap_or(Value::Null)
+    }
+
+    fn pending_permissions_list(&self, conv_id: &str) -> Vec<Value> {
+        self.approvals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, e)| e.conversation_id == conv_id)
+            .take(64)
+            .map(|(req_id, e)| {
+                json!({
+                    "request_id": req_id,
+                    "tool": e.tool_name,
+                    "reason": e.reason,
+                    "arguments": e.arguments
+                })
+            })
+            .collect()
+    }
+
+    fn pending_question_for(&self, conv_id: &str) -> Value {
+        self.questions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, e)| e.conversation_id == conv_id)
+            .map(|(req_id, e)| {
+                json!({
+                    "requestId": req_id,
+                    "request_id": req_id,
+                    "question": e.question,
+                    "options": e.options
+                })
+            })
+            .unwrap_or(Value::Null)
+    }
+
     fn clear_conversation(&self, conv_id: &str) {
         self.session_grants
             .lock()
@@ -291,10 +348,69 @@ impl PendingInteractions {
 struct DeviceToolProxy {
     spec: ToolSpec,
     conversation_id: String,
+    host_id: String,
+    client_id: String,
+    capability: String,
     tx: mpsc::Sender<Vec<u8>>,
     pending: Arc<PendingInteractions>,
     cancel: Arc<AtomicBool>,
     crypto_tok: Option<String>,
+}
+
+fn build_device_tool_request_frame(
+    req_id: &str,
+    conversation_id: &str,
+    host_id: &str,
+    client_id: &str,
+    tool_name: &str,
+    capability: &str,
+    arguments: &Value,
+    nonce: &str,
+    expires_at_ms: i64,
+) -> Value {
+    let args_obj = if arguments.is_object() {
+        arguments.clone()
+    } else {
+        json!({})
+    };
+    json!({
+        "type": "device_tool_request",
+        "id": req_id,
+        "request_id": req_id,
+        "call_id": req_id,
+        "conversation_id": conversation_id,
+        "session_id": conversation_id,
+        "host_id": host_id,
+        "client_id": client_id,
+        "tool_name": tool_name,
+        "tool": tool_name,
+        "capability": capability,
+        "arguments": args_obj,
+        "args": args_obj,
+        "nonce": nonce,
+        "expires_at": expires_at_ms,
+        "expires_at_iso": ms_to_rfc3339(expires_at_ms),
+        "protocol_version": 1,
+        "trace": {
+            "type": "device_tool_request",
+            "id": req_id,
+            "request_id": req_id,
+            "tool_name": tool_name,
+            "session_id": conversation_id
+        }
+    })
+}
+
+fn device_tool_callback_is_ok(payload: &Value) -> bool {
+    payload
+        .get("ok")
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| match payload.get("error") {
+            Some(Value::Bool(b)) => !b,
+            Some(Value::Null) | None => true,
+            Some(Value::String(s)) => s.trim().is_empty(),
+            Some(_) => false,
+        })
 }
 
 impl ToolHandler for DeviceToolProxy {
@@ -304,17 +420,22 @@ impl ToolHandler for DeviceToolProxy {
 
     fn execute(&self, _ctx: &ToolContext, args: Value) -> ToolExecutionResult {
         let req_id = new_id();
+        let nonce = generate_hex_token_32();
+        let expires_at_ms = now_ms().saturating_add(120_000);
         let rx = self
             .pending
             .register_device_tool(req_id.clone(), self.conversation_id.clone());
-        let frame = json!({
-            "type": "device_tool_request",
-            "request_id": req_id,
-            "call_id": req_id,
-            "conversation_id": self.conversation_id,
-            "tool": self.spec.schema.name,
-            "arguments": args
-        });
+        let frame = build_device_tool_request_frame(
+            &req_id,
+            &self.conversation_id,
+            &self.host_id,
+            &self.client_id,
+            &self.spec.schema.name,
+            &self.capability,
+            &args,
+            &nonce,
+            expires_at_ms,
+        );
         let _ = self
             .tx
             .send(encode_sse_frame(&frame, self.crypto_tok.as_deref()));
@@ -337,10 +458,7 @@ impl ToolHandler for DeviceToolProxy {
         self.pending.device_tools.lock().unwrap().remove(&req_id);
         match resolved {
             Some(payload) => {
-                let is_ok = payload
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or_else(|| payload.get("error").is_none());
+                let is_ok = device_tool_callback_is_ok(&payload);
                 if is_ok {
                     let result_val = payload
                         .get("result")
@@ -357,6 +475,13 @@ impl ToolHandler for DeviceToolProxy {
                     let msg = payload
                         .get("error")
                         .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| {
+                            payload
+                                .get("output")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                        })
                         .unwrap_or("device tool execution failed");
                     ToolExecutionResult::err_structured("device_tool_error", msg, None)
                 }
@@ -944,7 +1069,13 @@ struct HandoffGrant {
 
 fn safe_handoff_target(raw: &str) -> String {
     let trimmed = raw.trim();
-    if trimmed.starts_with('/') && !trimmed.starts_with("//") && !trimmed.contains('\\') {
+    if trimmed.starts_with('/')
+        && !trimmed.starts_with("//")
+        && !trimmed.contains('\\')
+        && !trimmed
+            .bytes()
+            .any(|b| !b.is_ascii() || b.is_ascii_control() || b.is_ascii_whitespace())
+    {
         trimmed.to_string()
     } else {
         "/settings".to_string()
@@ -1633,9 +1764,24 @@ fn stdin_is_pipe() -> bool {
         let kind = st.st_mode & libc::S_IFMT;
         ok && (kind == libc::S_IFIFO || kind == libc::S_IFSOCK)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        true
+        const STD_INPUT_HANDLE: i32 = -10;
+        const FILE_TYPE_PIPE: u32 = 3;
+        extern "system" {
+            fn GetStdHandle(nStdHandle: i32) -> *mut std::ffi::c_void;
+            fn GetFileType(hFile: *mut std::ffi::c_void) -> u32;
+        }
+        unsafe {
+            let h = GetStdHandle(STD_INPUT_HANDLE);
+            !h.is_null()
+                && h != (-1isize as *mut std::ffi::c_void)
+                && GetFileType(h) == FILE_TYPE_PIPE
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
     }
 }
 
@@ -2268,8 +2414,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     }
                     Err(err) => {
                         let payload = match err.detail {
-                            Some(detail) => json!({"error": err.code, "detail": detail}),
-                            None => json!({"error": err.code}),
+                            Some(detail) => {
+                                json!({"error": err.code, "code": err.code, "detail": detail})
+                            }
+                            None => json!({"error": err.code, "code": err.code}),
                         };
                         let _ = respond_api_json(req, err.status, &payload, crypto_tok);
                     }
@@ -2656,11 +2804,29 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let mid = body
                     .get("manifest_id")
                     .or_else(|| body.get("manifestId"))
+                    .or_else(|| body.pointer("/reference/manifest_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let paired = has_expected_host_id(&body);
                 let cached = tool_plans.lock().unwrap().get(mid).cloned();
-                if let Some(plan) = cached {
-                    let _ = respond_api_json(req, 200, &plan, crypto_tok);
+                let plan = if let Some(existing) = cached {
+                    if paired && existing.get("schema_version").is_none() {
+                        // Rebuild in strict paired schema if cached plan was legacy flat format
+                        build_paired_tool_plan(&suite, host_id, &body, if mid.is_empty() { new_id() } else { mid.to_string() })
+                    } else {
+                        existing
+                    }
+                } else if paired {
+                    build_paired_tool_plan(
+                        &suite,
+                        host_id,
+                        &body,
+                        if mid.is_empty() {
+                            new_id()
+                        } else {
+                            mid.to_string()
+                        },
+                    )
                 } else {
                     let mut reg = ToolRegistry::with_builtin_tools();
                     suite.register_tools(&mut reg);
@@ -2678,18 +2844,15 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             })
                         })
                         .collect();
-                    let _ = respond_api_json(
-                        req,
-                        200,
-                        &json!({
-                            "manifest_id": if mid.is_empty() { new_id() } else { mid.to_string() },
-                            "catalog_revision": 1,
-                            "ttl_seconds": 300,
-                            "tools": flat
-                        }),
-                        crypto_tok,
-                    );
-                }
+                    json!({
+                        "manifest_id": if mid.is_empty() { new_id() } else { mid.to_string() },
+                        "catalog_revision": 1,
+                        "ttl_seconds": 300,
+                        "tools": flat
+                    })
+                };
+                let payload = wrap_paired_result(&store, host_id, &body, plan);
+                let _ = respond_api_json(req, 200, &payload, crypto_tok);
             }
             (Method::Post, "/api/web-handoff") => {
                 let raw_target = body
@@ -2723,7 +2886,11 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     );
                     let set_cookie =
                         Header::from_bytes(&b"Set-Cookie"[..], cookie_val.as_bytes()).unwrap();
-                    let loc = Header::from_bytes(&b"Location"[..], target.as_bytes()).unwrap();
+                    let safe_loc = safe_handoff_target(&target);
+                    let loc = Header::from_bytes(&b"Location"[..], safe_loc.as_bytes())
+                        .unwrap_or_else(|_| {
+                            Header::from_bytes(&b"Location"[..], &b"/settings"[..]).unwrap()
+                        });
                     let resp = Response::empty(StatusCode(302))
                         .with_header(loc)
                         .with_header(set_cookie)
@@ -3446,6 +3613,153 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let paired = has_expected_host_id(&body);
                 let op = body.get("operation").and_then(|v| v.as_str());
+                let action_obj = body.get("action").and_then(|v| v.as_object());
+                if let Some(act) = action_obj {
+                    let act_type = act
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("read");
+                    let apply_selection = |sess: &mut Session, sel: Option<&Value>| -> Value {
+                        let Some(sel_obj) = sel.and_then(|v| v.as_object()) else {
+                            return Value::Null;
+                        };
+                        let kind = sel_obj
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("inherit");
+                        if kind == "model" {
+                            if let Some(pid) = sel_obj
+                                .get("profile_id")
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                            {
+                                if let Some((ep, m)) = pid.split_once(':') {
+                                    sess.model_connection = Some(ep.to_string());
+                                    sess.model_id = Some(m.to_string());
+                                } else {
+                                    sess.model_id = Some(pid.to_string());
+                                }
+                                return json!(format!("configured:{pid}"));
+                            }
+                        }
+                        sess.model_connection = None;
+                        sess.model_id = None;
+                        Value::Null
+                    };
+                    let current_selection_id = |sess: &Session| -> Value {
+                        match (sess.model_connection.as_deref(), sess.model_id.as_deref()) {
+                            (Some(c), Some(m)) if !c.is_empty() && !m.is_empty() => {
+                                json!(format!("configured:{c}:{m}"))
+                            }
+                            (_, Some(m)) if !m.is_empty() => json!(format!("configured:{m}")),
+                            _ => Value::Null,
+                        }
+                    };
+                    let res_inner = match act_type {
+                        "read" => match store.get_session(&id) {
+                            Ok(Some(sess)) => {
+                                let meta = store
+                                    .get_kv(&session_meta_key(&id))
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| json!({}));
+                                let rev = meta
+                                    .get("configurationRevision")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1)
+                                    .max(1);
+                                let sel_id = meta
+                                    .get("modelSelectionId")
+                                    .cloned()
+                                    .unwrap_or_else(|| current_selection_id(&sess));
+                                json!({
+                                    "status": "read",
+                                    "configuration_revision": rev,
+                                    "model_selection_id": sel_id
+                                })
+                            }
+                            _ => json!({"status": "not_found"}),
+                        },
+                        "create" => {
+                            let ts = now_ms();
+                            let title = act
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or("Conversation")
+                                .to_string();
+                            let mut sess = Session {
+                                id: id.clone(),
+                                title,
+                                workspace_root: suite.workspace_root.display().to_string(),
+                                model_connection: None,
+                                model_id: None,
+                                created_at_ms: ts,
+                                updated_at_ms: ts,
+                            };
+                            let sel_id = apply_selection(&mut sess, act.get("selection"));
+                            let _ = store.upsert_session(&sess);
+                            let _ = store.set_kv(
+                                &session_meta_key(&id),
+                                &json!({
+                                    "isPinned": false,
+                                    "revision": 1,
+                                    "configurationRevision": 1,
+                                    "permissionProfile": "cautious",
+                                    "modelSelectionId": sel_id
+                                }),
+                            );
+                            json!({
+                                "status": "created",
+                                "configuration_revision": 1,
+                                "model_selection_id": sel_id
+                            })
+                        }
+                        "select" => match store.get_session(&id) {
+                            Ok(Some(mut sess)) => {
+                                let meta_key = session_meta_key(&id);
+                                let mut meta = store
+                                    .get_kv(&meta_key)
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| json!({"configurationRevision": 1}));
+                                let cur_rev = meta
+                                    .get("configurationRevision")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1)
+                                    .max(1);
+                                let next_rev = cur_rev + 1;
+                                let sel_id = apply_selection(&mut sess, act.get("selection"));
+                                meta["configurationRevision"] = json!(next_rev);
+                                meta["modelSelectionId"] = sel_id.clone();
+                                sess.updated_at_ms = now_ms();
+                                let _ = store.set_kv(&meta_key, &meta);
+                                let _ = store.upsert_session(&sess);
+                                json!({
+                                    "status": "committed",
+                                    "configuration_revision": next_rev,
+                                    "model_selection_id": sel_id
+                                })
+                            }
+                            _ => json!({"status": "not_found"}),
+                        },
+                        _ => json!({"status": "not_found"}),
+                    };
+                    let epoch = ensure_source_store_epoch(&store);
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "source_host_id": host_id,
+                            "source_store_epoch": epoch,
+                            "conversation_id": id,
+                            "result": res_inner
+                        }),
+                        crypto_tok,
+                    );
+                    return;
+                }
                 let is_post_read = method == Method::Post && is_read_only_post(&body);
                 if paired && method == Method::Post && op.is_none() {
                     // Paired iOS/macOS frontier query: auto-synthesize frontier even for non-existent conversations!
@@ -3501,10 +3815,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     .get("permissionProfile")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("cautious");
+                                let settings_snap = build_agent_settings_snapshot(&store, &suite);
                                 let perm_cfg = json!({
                                     "conversation_id": id,
                                     "configuration_revision": rev,
                                     "permission_profile": perm,
+                                    "settings": settings_snap,
                                     "active_run_id": Value::Null,
                                     "active_policy": Value::Null,
                                     "owner": {
@@ -3524,10 +3840,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         }
                         Ok(None) => {
                             if paired {
+                                let settings_snap = build_agent_settings_snapshot(&store, &suite);
                                 let perm_cfg = json!({
                                     "conversation_id": id,
                                     "configuration_revision": 1,
                                     "permission_profile": "cautious",
+                                    "settings": settings_snap,
                                     "active_run_id": Value::Null,
                                     "active_policy": Value::Null,
                                     "owner": {
@@ -3655,6 +3973,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 .get("permissionProfile")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("cautious");
+                            let settings_snap = build_agent_settings_snapshot(&store, &suite);
                             wrap_paired_result(
                                 &store,
                                 host_id,
@@ -3663,6 +3982,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     "conversation_id": id,
                                     "configuration_revision": next_cfg_rev,
                                     "permission_profile": perm,
+                                    "settings": settings_snap,
                                     "active_run_id": Value::Null,
                                     "active_policy": Value::Null,
                                     "owner": {
@@ -3708,6 +4028,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     "permissionProfile": perm
                                 }),
                             );
+                            let settings_snap = build_agent_settings_snapshot(&store, &suite);
                             let payload = wrap_paired_result(
                                 &store,
                                 host_id,
@@ -3716,6 +4037,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                     "conversation_id": id,
                                     "configuration_revision": next_rev,
                                     "permission_profile": perm,
+                                    "settings": settings_snap,
                                     "active_run_id": Value::Null,
                                     "active_policy": Value::Null,
                                     "owner": {
@@ -3939,22 +4261,16 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let req_id = body
                     .get("request_id")
                     .or_else(|| body.get("requestId"))
+                    .or_else(|| body.pointer("/resolution/request_id"))
+                    .or_else(|| body.get("id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let allow = body
-                    .get("allow")
-                    .or_else(|| body.get("approved"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let scope = body
-                    .get("scope")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("once");
+                let (allow, scope) = parse_permission_resolution(&body);
                 let resolved = pending_interactions.resolve_approval(req_id, allow, scope);
                 let _ = respond_api_json(
                     req,
                     200,
-                    &json!({"ok": true, "resolved": resolved, "scope": scope}),
+                    &json!({"ok": true, "resolved": resolved, "allow": allow, "scope": scope}),
                     crypto_tok,
                 );
             }
@@ -4348,7 +4664,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/tasks/events"),
                 );
+                let has_after_cursor = parse_query_str(query, "afterCursor").is_some()
+                    || parse_query_str(query, "after_cursor").is_some();
                 let after_cursor = parse_query_i64(query, "after")
+                    .or_else(|| parse_query_i64(query, "afterCursor"))
                     .or_else(|| parse_query_i64(query, "after_cursor"))
                     .or_else(|| parse_query_i64(query, "after_seq"))
                     .or_else(|| {
@@ -4356,16 +4675,70 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .and_then(|s| s.trim().parse::<i64>().ok())
                     })
                     .unwrap_or(0);
+                let timeout_ms = parse_query_i64(query, "timeoutMs")
+                    .or_else(|| parse_query_i64(query, "timeout_ms"))
+                    .map(|v| v.clamp(50, 30_000) as u64);
                 let oneshot = parse_query_str(query, "oneshot")
                     .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                let emit_task_projection = raw_path.starts_with("/api/mobile/") || has_after_cursor;
                 stream_conversation_task_events(
                     req,
                     store.clone(),
                     conv_id,
                     after_cursor,
                     oneshot,
+                    timeout_ms,
+                    emit_task_projection,
                     crypto_tok.map(ToString::to_string),
                 );
+            }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && p.contains("/tasks/")
+                    && p.ends_with("/stop") =>
+            {
+                let rest = p
+                    .trim_start_matches("/api/chat/conversations/")
+                    .trim_end_matches("/stop");
+                if let Some((raw_conv, raw_task)) = rest.split_once("/tasks/") {
+                    let conv_id = percent_decode_path(raw_conv);
+                    let task_id = percent_decode_path(raw_task);
+                    let cancelled = if let Some(flag) = active_cancels.lock().unwrap().get(&conv_id) {
+                        flag.store(true, Ordering::SeqCst);
+                        true
+                    } else {
+                        false
+                    };
+                    let _ = store.append_event(
+                        &conv_id,
+                        "task_stopped",
+                        json!({
+                            "task_id": task_id,
+                            "status": "cancelled",
+                            "cancelled": cancelled
+                        }),
+                        50_000,
+                    );
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "ok": true,
+                            "stopped": true,
+                            "cancelled": cancelled,
+                            "conversationId": conv_id,
+                            "taskId": task_id
+                        }),
+                        crypto_tok,
+                    );
+                } else {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({"ok": false, "error": "invalid_task_stop_path"}),
+                        crypto_tok,
+                    );
+                }
             }
             (Method::Get, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/progress") =>
@@ -4384,26 +4757,64 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .ok()
                     .flatten()
                     .unwrap_or(Value::Null);
-                let usage = session_usage_json(&store, &conv_id);
-                let (_, raw_events) = reconstruct_v2_messages(&store, &conv_id);
-                let _ = respond_api_json(
-                    req,
-                    200,
-                    &json!({
-                        "ok": true,
-                        "conversationId": conv_id,
-                        "source_host_id": host_id,
-                        "active": active,
-                        "needsResponse": needs_resp,
-                        "todos": todos,
-                        "plan": plan,
-                        "planMode": plan_mode,
-                        "goal": goal,
-                        "usage": usage,
-                        "eventCount": raw_events.len()
-                    }),
-                    crypto_tok,
-                );
+                let goal_projection = build_goal_projection(&store, &conv_id, &goal);
+                let expected_host_q =
+                    parse_query_str(query, "expected_host_id").filter(|s| !s.trim().is_empty());
+                if expected_host_q.is_some() {
+                    let paired_todos: Vec<Value> = todos
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .enumerate()
+                        .map(|(idx, t)| {
+                            json!({
+                                "id": t.get("id").and_then(|v| v.as_str()).map(ToString::to_string).unwrap_or_else(|| format!("todo-{idx}")),
+                                "content": t.get("content").or_else(|| t.get("title")).and_then(|v| v.as_str()).unwrap_or(""),
+                                "status": t.get("status").and_then(|v| v.as_str()).unwrap_or("pending")
+                            })
+                        })
+                        .collect();
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "source_host_id": host_id,
+                            "conversation_id": conv_id,
+                            "goal_projection": goal_projection,
+                            "plan": {
+                                "conversation_id": conv_id,
+                                "todos": paired_todos
+                            }
+                        }),
+                        crypto_tok,
+                    );
+                } else {
+                    let usage = session_usage_json(&store, &conv_id);
+                    let (_, raw_events) = reconstruct_v2_messages(&store, &conv_id);
+                    let pending_perm = pending_interactions.pending_permission_for(&conv_id);
+                    let pending_q = pending_interactions.pending_question_for(&conv_id);
+                    let _ = respond_api_json(
+                        req,
+                        200,
+                        &json!({
+                            "ok": true,
+                            "conversationId": conv_id,
+                            "source_host_id": host_id,
+                            "active": active,
+                            "needsResponse": needs_resp,
+                            "pendingPermission": pending_perm,
+                            "pendingQuestion": pending_q,
+                            "todos": todos,
+                            "plan": plan,
+                            "planMode": plan_mode,
+                            "goal": goal,
+                            "goal_projection": goal_projection,
+                            "usage": usage,
+                            "eventCount": raw_events.len()
+                        }),
+                        crypto_tok,
+                    );
+                }
             }
             (Method::Get, p) | (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/observe") =>
@@ -4414,57 +4825,165 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let active = active_cancels.lock().unwrap().contains_key(&conv_id);
                 let needs_resp = pending_interactions.conversation_needs_response(&conv_id);
-                let events = match store.events_after(&conv_id, 0, 500) {
-                    Ok(EventPage::Events(ev)) => ev,
-                    _ => Vec::new(),
-                };
-                let latest_seq = events.last().map(|e| e.seq).unwrap_or(0);
-                let recent: Vec<Value> = events
-                    .iter()
-                    .rev()
-                    .take(50)
-                    .rev()
-                    .filter_map(|e| serde_json::to_value(e).ok())
-                    .collect();
-                let todos = load_session_todos(&store, &conv_id);
-                let plan = load_session_plan(&store, &conv_id);
-                let plan_mode = is_plan_mode(&store, &conv_id);
-                let goal = store
-                    .get_kv(&format!("conv_goal:{conv_id}"))
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Value::Null);
+                let expected_host_q = parse_query_str(query, "expected_host_id")
+                    .or_else(|| {
+                        body.get("expected_host_id")
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                    })
+                    .filter(|s| !s.trim().is_empty());
+                let client_id_q = parse_query_str(query, "client_id")
+                    .or_else(|| {
+                        body.get("client_id")
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                    })
+                    .filter(|s| !s.trim().is_empty());
                 let epoch = ensure_source_store_epoch(&store);
-                let inner = json!({
-                    "ok": true,
-                    "conversationId": conv_id,
-                    "source_host_id": host_id,
-                    "source_store_epoch": epoch,
-                    "active": active,
-                    "needsResponse": needs_resp,
-                    "latestSeq": latest_seq,
-                    "eventCount": events.len(),
-                    "todos": todos,
-                    "plan": plan,
-                    "planMode": plan_mode,
-                    "goal": goal,
-                    "recentEvents": recent
-                });
-                let payload = if method == Method::Post {
-                    wrap_paired_result(&store, host_id, &body, inner)
+                if expected_host_q.is_some() || client_id_q.is_some() {
+                    let client_id = client_id_q.unwrap_or_else(|| "nola-client".into());
+                    let expected_run_id = parse_query_str(query, "expected_run_id")
+                        .or_else(|| {
+                            body.get("expected_run_id")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .filter(|s| !s.trim().is_empty());
+                    let expected_asst_id = parse_query_str(query, "assistant_message_id")
+                        .or_else(|| {
+                            body.get("assistant_message_id")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .filter(|s| !s.trim().is_empty());
+                    let run_id = expected_run_id
+                        .unwrap_or_else(|| format!("run-{}", conv_id));
+                    let asst_id = expected_asst_id
+                        .unwrap_or_else(|| format!("asst-{}", conv_id));
+                    let perms = if active {
+                        pending_interactions.pending_permissions_list(&conv_id)
+                    } else {
+                        Vec::new()
+                    };
+                    let (status_str, worker_state, recovery_str, can_submit, terminal_seal) =
+                        if active {
+                            ("running", "running", "observe", false, Value::Null)
+                        } else {
+                            (
+                                "sealed",
+                                "absent",
+                                "terminal",
+                                true,
+                                json!({
+                                    "protocol_version": 1,
+                                    "identity": {
+                                        "conversation_id": conv_id,
+                                        "run_id": run_id,
+                                        "assistant_message_id": asst_id,
+                                        "source_store_epoch": epoch
+                                    },
+                                    "result": {
+                                        "conversation_id": conv_id,
+                                        "run_id": run_id
+                                    }
+                                }),
+                            )
+                        };
+                    let paired_obs = json!({
+                        "source_host_id": host_id,
+                        "conversation_id": conv_id,
+                        "client_id": client_id,
+                        "result": {
+                            "protocol_version": 1,
+                            "client_id": client_id,
+                            "conversation_id": conv_id,
+                            "run_id": run_id,
+                            "assistant_message_id": asst_id,
+                            "status": status_str,
+                            "worker": {
+                                "state": worker_state,
+                                "generation": Value::Null
+                            },
+                            "recovery": recovery_str,
+                            "permissions": perms,
+                            "can_submit": can_submit,
+                            "admission": Value::Null,
+                            "terminal_seal": terminal_seal,
+                            "context_usage": Value::Null,
+                            "submission_receipt": Value::Null
+                        }
+                    });
+                    let _ = respond_api_json(req, 200, &paired_obs, crypto_tok);
                 } else {
-                    inner
-                };
-                let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                    let events = match store.events_after(&conv_id, 0, 500) {
+                        Ok(EventPage::Events(ev)) => ev,
+                        _ => Vec::new(),
+                    };
+                    let latest_seq = events.last().map(|e| e.seq).unwrap_or(0);
+                    let recent: Vec<Value> = events
+                        .iter()
+                        .rev()
+                        .take(50)
+                        .rev()
+                        .filter_map(|e| serde_json::to_value(e).ok())
+                        .collect();
+                    let todos = load_session_todos(&store, &conv_id);
+                    let plan = load_session_plan(&store, &conv_id);
+                    let plan_mode = is_plan_mode(&store, &conv_id);
+                    let goal = store
+                        .get_kv(&format!("conv_goal:{conv_id}"))
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Value::Null);
+                    let pending_perm = pending_interactions.pending_permission_for(&conv_id);
+                    let pending_q = pending_interactions.pending_question_for(&conv_id);
+                    let inner = json!({
+                        "ok": true,
+                        "conversationId": conv_id,
+                        "source_host_id": host_id,
+                        "source_store_epoch": epoch,
+                        "active": active,
+                        "needsResponse": needs_resp,
+                        "pendingPermission": pending_perm,
+                        "pendingQuestion": pending_q,
+                        "latestSeq": latest_seq,
+                        "eventCount": events.len(),
+                        "todos": todos,
+                        "plan": plan,
+                        "planMode": plan_mode,
+                        "goal": goal,
+                        "recentEvents": recent
+                    });
+                    let _ = respond_api_json(req, 200, &inner, crypto_tok);
+                }
             }
-            (Method::Post, p)
+            (Method::Get, p) | (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/recall") =>
             {
                 let conv_id = percent_decode_path(
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/recall"),
                 );
-                let res = handle_conversation_recall(&store, &conv_id, &body);
+                let recall_body = if method == Method::Get {
+                    let mut m = serde_json::Map::new();
+                    if let Some(q) = parse_query_str(query, "q")
+                        .or_else(|| parse_query_str(query, "query"))
+                    {
+                        m.insert("query".into(), json!(q));
+                    }
+                    if let Some(lim) = parse_query_i64(query, "limit") {
+                        m.insert("limit".into(), json!(lim));
+                    }
+                    if let Some(fs) = parse_query_i64(query, "from_seq")
+                        .or_else(|| parse_query_i64(query, "fromSeq"))
+                    {
+                        m.insert("from_seq".into(), json!(fs));
+                    }
+                    Value::Object(m)
+                } else {
+                    body.clone()
+                };
+                let res = handle_conversation_recall(&store, &conv_id, &recall_body);
                 let _ = respond_api_json(req, 200, &res, crypto_tok);
             }
             (Method::Get, p)
@@ -4614,7 +5133,9 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/messages"),
                 );
-                if is_messages_read_post(&body) {
+                let accepts_sse = header_value(&req, "accept")
+                    .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"));
+                if is_messages_read_post_with_accept(&body, accepts_sse) {
                     let (messages, events) = reconstruct_v2_messages(&store, &conv_id);
                     let latest_seq = events
                         .last()
@@ -5228,22 +5749,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         m
                     })
                     .collect();
-                let dl_status = ModelDownloadManager::global().current_status(&store);
+                let mut dl_status = ModelDownloadManager::global().current_status(&store);
+                enrich_download_status_json(&store, &mut dl_status);
                 let acquisition = if dl_status.get("status").and_then(|v| v.as_str()) == Some("idle") {
                     Value::Null
                 } else {
-                    let mut job = dl_status.clone();
-                    if let Some(obj) = job.as_object_mut() {
-                        if !obj.contains_key("id") {
-                            if let Some(dl_id) = obj.get("downloadId").cloned() {
-                                obj.insert("id".into(), dl_id);
-                            }
-                        }
-                        if obj.get("totalBytes").is_none() || obj.get("totalBytes") == Some(&Value::Null) {
-                            obj.insert("totalBytes".into(), json!(0));
-                        }
-                    }
-                    job
+                    dl_status.clone()
                 };
                 let _ = respond_api_json(
                     req,
@@ -5362,7 +5873,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .or_else(|| body.get("optInInstall"))
                     .or_else(|| body.get("autoInstall"))
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 let setup = run_engine_setup_with_opt_in(eng, opt_in);
                 let ready = setup.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
                 let _ = respond_api_json(
@@ -5389,6 +5900,14 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .filter(|s| !s.is_empty())
                     .unwrap_or("llama.cpp")
                     .to_string();
+                let source = body
+                    .get("source")
+                    .or_else(|| body.pointer("/plan/source"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("huggingface")
+                    .to_ascii_lowercase();
                 let repo = body
                     .get("repository")
                     .or_else(|| body.pointer("/plan/repository"))
@@ -5419,23 +5938,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string)
-                    .or_else(|| {
-                        if !repo.is_empty() {
-                            let fname = file_name.as_deref().unwrap_or("model.gguf");
-                            let mirror = std::env::var("NOLA_HF_MIRROR")
-                                .ok()
-                                .filter(|s| !s.trim().is_empty())
-                                .unwrap_or_else(|| "https://huggingface.co".to_string());
-                            Some(format!(
-                                "{}/{}/resolve/main/{}",
-                                mirror.trim_end_matches('/'),
-                                repo.trim_matches('/'),
-                                fname.trim_start_matches('/')
-                            ))
-                        } else {
-                            None
-                        }
-                    });
+                    .or_else(|| build_local_model_download_url(&source, &repo, file_name.as_deref()));
                 let Some(download_url) = url else {
                     let _ = respond_api_json(
                         req,
@@ -5455,30 +5958,13 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .or_else(|| file_name.clone())
                     .or_else(|| (!repo.is_empty()).then(|| repo.clone()))
                     .unwrap_or_else(|| format!("model-{}", &new_id()[..8]));
-                let safe_file: String = model_name
-                    .chars()
-                    .map(|c| {
-                        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                            c
-                        } else {
-                            '-'
-                        }
-                    })
-                    .collect();
-                let dest_path = body
+                let requested_dest = body
                     .get("dest_path")
                     .or_else(|| body.get("destPath"))
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| {
-                        default_home_dir()
-                            .join(".nola/models")
-                            .join(&safe_file)
-                            .display()
-                            .to_string()
-                    });
+                    .and_then(|v| v.as_str());
+                let dest_path = confined_local_model_dest_path(requested_dest, &model_name)
+                    .display()
+                    .to_string();
                 let expected_bytes = body
                     .get("expected_bytes")
                     .or_else(|| body.get("expectedBytes"))
@@ -5513,12 +5999,19 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 };
                 match ModelDownloadManager::global().start_download(&store, plan) {
                     Ok(dl_state) => {
+                        let _ = store.set_kv(
+                            "local_model_download_meta",
+                            &json!({
+                                "id": dl_state.download_id,
+                                "repository": repo,
+                                "source": source
+                            }),
+                        );
                         let mut job = serde_json::to_value(&dl_state).unwrap_or_else(|_| json!({}));
                         if let Some(obj) = job.as_object_mut() {
                             obj.insert("id".into(), json!(dl_state.download_id));
-                            if !repo.is_empty() {
-                                obj.insert("repository".into(), json!(repo));
-                            }
+                            obj.insert("repository".into(), json!(repo));
+                            obj.insert("source".into(), json!(source));
                             if obj.get("totalBytes").is_none() || obj.get("totalBytes") == Some(&Value::Null) {
                                 obj.insert("totalBytes".into(), json!(expected_bytes.unwrap_or(0)));
                             }
@@ -5561,7 +6054,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let res = ModelDownloadManager::global()
                     .cancel_download(&store, &dl_id)
                     .unwrap_or_else(|e| json!({"error": e}));
-                let updated = ModelDownloadManager::global().current_status(&store);
+                let mut updated = ModelDownloadManager::global().current_status(&store);
+                enrich_download_status_json(&store, &mut updated);
                 let _ = respond_api_json(
                     req,
                     200,
@@ -5595,6 +6089,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_ascii_lowercase());
                 if let Some(cands) = rec.get_mut("candidates").and_then(|v| v.as_array_mut()) {
+                    // Append curated vLLM candidates so `engine == "vllm"` (or unfiltered) includes vLLM options!
+                    cands.extend(build_vllm_recommend_candidates(&hw));
                     cands.retain_mut(|item| {
                         if let Some(ref eng) = engine_filter {
                             let item_eng = item
@@ -7742,6 +8238,19 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
             }
             (Method::Post, "/api/data-sources") => {
                 let mut ds_body = normalize_data_source_record(&body);
+                if is_sensitive_data_source_record(&suite, &ds_body) {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({
+                            "ok": false,
+                            "error": "sensitive_local_path_forbidden",
+                            "message": "access to sensitive local path is forbidden"
+                        }),
+                        crypto_tok,
+                    );
+                    return;
+                }
                 let id = ds_body["id"].as_str().unwrap_or("").to_string();
                 let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
                 let ds_body = normalize_data_source_record(&ds_body);
@@ -7777,6 +8286,19 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 }
                 ds_body["id"] = json!(id);
                 let mut ds_body = normalize_data_source_record(&ds_body);
+                if is_sensitive_data_source_record(&suite, &ds_body) {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({
+                            "ok": false,
+                            "error": "sensitive_local_path_forbidden",
+                            "message": "access to sensitive local path is forbidden"
+                        }),
+                        crypto_tok,
+                    );
+                    return;
+                }
                 let (ok, probe) = probe_and_attach_data_source_validation(&suite, &id, &mut ds_body);
                 let ds_body = normalize_data_source_record(&ds_body);
                 match suite.upsert_record("data_source", &id, &ds_body) {
@@ -8062,15 +8584,18 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             let ws_bg = suite.workspace_root.clone();
                             let id_bg = id.clone();
                             let body_bg = body.clone();
+                            let secret_bg = (!expected_secret.trim().is_empty())
+                                .then(|| expected_secret.clone());
                             let _ = std::thread::Builder::new()
                                 .name(format!("nola-webhook-{}", &id_bg[..id_bg.len().min(8)]))
                                 .spawn(move || {
-                                    let _ = handle_inbound_webhook_turn(
+                                    let _ = handle_inbound_webhook_turn_with_secret(
                                         &store_bg,
                                         route,
                                         &ws_bg,
                                         &id_bg,
                                         &body_bg,
+                                        secret_bg.as_deref(),
                                     );
                                 });
                             true
@@ -8286,6 +8811,32 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     req,
                     200,
                     &json!({"revision": 1, "templates": templates}),
+                    crypto_tok,
+                );
+            }
+            (Method::Delete, p)
+                if p.starts_with("/api/agent-rooms/experts/")
+                    && !p.trim_start_matches("/api/agent-rooms/experts/").contains('/') =>
+            {
+                let id = percent_decode_path(p.trim_start_matches("/api/agent-rooms/experts/"));
+                let deleted = suite.delete_record("expert_peer", &id).unwrap_or(false);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "deleted": deleted, "id": id}),
+                    crypto_tok,
+                );
+            }
+            (Method::Delete, p)
+                if p.starts_with("/api/agent-rooms/")
+                    && !p.trim_start_matches("/api/agent-rooms/").contains('/') =>
+            {
+                let id = percent_decode_path(p.trim_start_matches("/api/agent-rooms/"));
+                let deleted = suite.delete_record("agent_room", &id).unwrap_or(false);
+                let _ = respond_api_json(
+                    req,
+                    200,
+                    &json!({"ok": true, "deleted": deleted, "id": id}),
                     crypto_tok,
                 );
             }
@@ -8682,7 +9233,12 @@ fn is_conversations_list_read_post(body: &Value) -> bool {
     false
 }
 
+#[cfg(test)]
 fn is_messages_read_post(body: &Value) -> bool {
+    is_messages_read_post_with_accept(body, false)
+}
+
+fn is_messages_read_post_with_accept(body: &Value, accepts_sse: bool) -> bool {
     let Some(obj) = body.as_object() else {
         return true;
     };
@@ -8697,6 +9253,18 @@ fn is_messages_read_post(body: &Value) -> bool {
         ) {
             return true;
         }
+    }
+    // macOS remote chat sends `messages: [...]`; iOS `resumeObservedRun` sends `expected_run_id`
+    // with `Accept: text/event-stream`. Neither should be hijacked into JSON history reads!
+    if obj
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty())
+    {
+        return false;
+    }
+    if accepts_sse && obj.get("expected_run_id").is_some() {
+        return false;
     }
     let has_text = ["content", "message", "text", "prompt", "user_message"]
         .iter()
@@ -8910,6 +9478,440 @@ fn build_endpoint_credential_response(store: &Store, ep_id: &str) -> Option<Valu
         "configured": configured,
         "hasApiKey": configured
     }))
+}
+
+fn build_paired_tool_plan(
+    suite: &Arc<ModulesSuite>,
+    host_id: &str,
+    body: &Value,
+    manifest_id: String,
+) -> Value {
+    let mut reg = ToolRegistry::with_builtin_tools();
+    suite.register_tools(&mut reg);
+    let specs = reg.all_specs();
+    let issued_at_ms = now_ms();
+    let expires_at_ms = issued_at_ms.saturating_add(300_000);
+    let client_id = body
+        .get("client_id")
+        .or_else(|| body.get("clientId"))
+        .or_else(|| body.pointer("/reference/client_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("nola-client");
+    let session_id = body
+        .get("session_id")
+        .or_else(|| body.get("sessionId"))
+        .or_else(|| body.get("conversation_id"))
+        .or_else(|| body.pointer("/reference/session_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("default-session");
+    let tools: Vec<Value> = specs
+        .iter()
+        .map(|s| {
+            json!({
+                "tool_id": s.schema.name,
+                "route": "agent_host",
+                "schema": {
+                    "type": "function",
+                    "function": {
+                        "name": s.schema.name,
+                        "description": s.schema.description,
+                        "parameters": s.schema.parameters
+                    }
+                }
+            })
+        })
+        .collect();
+    let catalog_bytes = serde_json::to_vec(&tools).unwrap_or_default();
+    let catalog_revision = sha256_hex(&catalog_bytes);
+    json!({
+        "schema_version": 1,
+        "reference": {
+            "manifest_id": manifest_id,
+            "host_id": host_id,
+            "client_id": client_id,
+            "session_id": session_id,
+            "catalog_revision": catalog_revision
+        },
+        "issued_at_ms": issued_at_ms,
+        "expires_at_ms": expires_at_ms,
+        "tools": tools
+    })
+}
+
+fn parse_permission_resolution(body: &Value) -> (bool, &'static str) {
+    if let Some(decision) = body
+        .pointer("/resolution/decision")
+        .or_else(|| body.get("decision"))
+        .and_then(|v| v.as_str())
+    {
+        match decision.trim().to_ascii_lowercase().as_str() {
+            "allow_once" | "approve_once" => return (true, "once"),
+            "allow_conversation" | "allow_session" | "allow_always" => return (true, "session"),
+            "deny" | "reject" => return (false, "once"),
+            _ => {}
+        }
+    }
+    let allow = body
+        .get("allow")
+        .or_else(|| body.get("approved"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let scope = match body
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("session") | Some("conversation") | Some("always") => "session",
+        _ => "once",
+    };
+    (allow, scope)
+}
+
+fn build_goal_projection(store: &Store, conv_id: &str, goal: &Value) -> Value {
+    let applied_operations = store
+        .get_kv(&format!("conv_goal_ops:{conv_id}"))
+        .ok()
+        .flatten()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| json!({}));
+    if let Some(obj) = goal.as_object() {
+        let id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !id.is_empty() {
+            let objective = obj
+                .get("objective")
+                .or_else(|| obj.get("description"))
+                .or_else(|| obj.get("title"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = obj
+                .get("controlState")
+                .or_else(|| obj.get("status"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending")
+                .to_ascii_lowercase();
+            let control_token = obj
+                .get("control_token")
+                .and_then(|v| v.as_str())
+                .map(|s| json!(s))
+                .unwrap_or(Value::Null);
+            let constraints = obj
+                .get("constraints")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let next_wake = obj
+                .get("next_wake_at_epoch_ms")
+                .and_then(|v| v.as_i64())
+                .map(|w| json!(w))
+                .unwrap_or(Value::Null);
+            let is_terminal = matches!(status.as_str(), "completed" | "cancelled" | "failed");
+            let can_pause = !is_terminal && status != "paused";
+            let can_resume = status == "paused";
+            let can_cancel = !is_terminal;
+            return json!({
+                "active": {
+                    "id": id,
+                    "objective": objective,
+                    "constraints": constraints,
+                    "status": status,
+                    "next_wake_at_epoch_ms": next_wake,
+                    "requirements": {},
+                    "work": { "entries": [] }
+                },
+                "control_token": control_token,
+                "can_pause": can_pause,
+                "can_resume": can_resume,
+                "can_cancel": can_cancel,
+                "applied_operations": applied_operations
+            });
+        }
+    }
+    json!({
+        "active": Value::Null,
+        "control_token": Value::Null,
+        "can_pause": false,
+        "can_resume": false,
+        "can_cancel": false,
+        "applied_operations": applied_operations
+    })
+}
+
+fn is_sensitive_data_source_record(suite: &ModulesSuite, record: &Value) -> bool {
+    let kind_lc = record
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(
+        kind_lc.as_str(),
+        "localfile"
+            | "local_file"
+            | "file"
+            | "localfolder"
+            | "local_folder"
+            | "folder"
+            | "dir"
+            | "directory"
+    ) {
+        return false;
+    }
+    let Some(loc) = record
+        .get("location")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    let candidate = if Path::new(loc).is_absolute() {
+        PathBuf::from(loc)
+    } else {
+        suite.workspace_root.join(loc)
+    };
+    is_sensitive_local_path(&candidate)
+}
+
+fn confined_local_model_dest_path(requested_dest: Option<&str>, fallback_name: &str) -> PathBuf {
+    let sanitize_name = |raw: &str| -> String {
+        let cleaned: String = raw
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        cleaned.trim_matches('.').to_string()
+    };
+    // Always ignore arbitrary directory components / absolute paths supplied by HTTP callers;
+    // extract at most a sanitized basename under `~/.nola/models/`.
+    let from_req = requested_dest
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|s| Path::new(s).file_name().and_then(|n| n.to_str()))
+        .map(sanitize_name)
+        .filter(|s| !s.is_empty() && s != "." && s != "..");
+    let final_name = from_req
+        .or_else(|| {
+            let s = sanitize_name(fallback_name);
+            (!s.is_empty() && s != "." && s != "..").then_some(s)
+        })
+        .unwrap_or_else(|| format!("model-{}.gguf", &new_id()[..8]));
+    default_home_dir().join(".nola/models").join(final_name)
+}
+
+fn build_local_model_download_url(
+    source: &str,
+    repo: &str,
+    file_name: Option<&str>,
+) -> Option<String> {
+    if repo.trim().is_empty() {
+        return None;
+    }
+    let fname = file_name.unwrap_or("model.gguf").trim_start_matches('/');
+    let clean_repo = repo.trim_matches('/');
+    if source.eq_ignore_ascii_case("modelscope") {
+        let ms_base = std::env::var("NOLA_MODELSCOPE_MIRROR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://modelscope.cn".to_string());
+        Some(format!(
+            "{}/models/{}/resolve/master/{}",
+            ms_base.trim_end_matches('/'),
+            clean_repo,
+            fname
+        ))
+    } else {
+        let mirror = std::env::var("NOLA_HF_MIRROR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "https://huggingface.co".to_string());
+        Some(format!(
+            "{}/{}/resolve/main/{}",
+            mirror.trim_end_matches('/'),
+            clean_repo,
+            fname
+        ))
+    }
+}
+
+fn enrich_download_status_json(store: &Store, status: &mut Value) {
+    let meta = store
+        .get_kv("local_model_download_meta")
+        .ok()
+        .flatten();
+    if let Some(obj) = status.as_object_mut() {
+        if !obj.contains_key("id") {
+            let id_val = obj
+                .get("downloadId")
+                .cloned()
+                .or_else(|| meta.as_ref().and_then(|m| m.get("id").cloned()))
+                .unwrap_or(Value::Null);
+            obj.insert("id".into(), id_val);
+        }
+        if !obj.contains_key("repository") {
+            let repo_val = meta
+                .as_ref()
+                .and_then(|m| m.get("repository").cloned())
+                .unwrap_or_else(|| json!(""));
+            obj.insert("repository".into(), repo_val);
+        }
+        if !obj.contains_key("source") {
+            let src_val = meta
+                .as_ref()
+                .and_then(|m| m.get("source").cloned())
+                .unwrap_or_else(|| json!("huggingface"));
+            obj.insert("source".into(), src_val);
+        }
+        if obj.get("totalBytes").is_none() || obj.get("totalBytes") == Some(&Value::Null) {
+            obj.insert("totalBytes".into(), json!(0));
+        }
+    }
+}
+
+fn build_vllm_recommend_candidates(hardware: &Value) -> Vec<Value> {
+    let unified = hardware
+        .get("unifiedMemory")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let budget_bytes = if unified {
+        hardware.get("memoryBytes").and_then(|v| v.as_u64())
+    } else {
+        hardware
+            .get("gpuMemoryBytes")
+            .and_then(|v| v.as_u64())
+            .or_else(|| hardware.get("memoryBytes").and_then(|v| v.as_u64()))
+    }
+    .unwrap_or(16 * 1024 * 1024 * 1024);
+    let device = if unified {
+        "unified"
+    } else if hardware.get("gpuMemoryBytes").and_then(|v| v.as_u64()).is_some() {
+        "gpu"
+    } else {
+        "cpu"
+    };
+    let catalog = [
+        (
+            "Qwen/Qwen2.5-Coder-3B-Instruct",
+            "model.safetensors",
+            6_200_000_000u64,
+            7_500_000_000u64,
+            32_768u64,
+        ),
+        (
+            "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "model.safetensors",
+            14_800_000_000u64,
+            16_500_000_000u64,
+            32_768u64,
+        ),
+        (
+            "Qwen/Qwen3-8B",
+            "model.safetensors",
+            16_200_000_000u64,
+            18_000_000_000u64,
+            131_072u64,
+        ),
+    ];
+    let max_fit = (budget_bytes as f64 * 0.9) as u64;
+    let mut out: Vec<Value> = catalog
+        .iter()
+        .filter(|(_, _, _, est_mem, _)| *est_mem <= max_fit || *est_mem <= 8_000_000_000)
+        .map(|(repo, variant, dl_bytes, est_mem, ctx)| {
+            json!({
+                "repository": repo,
+                "revision": "main",
+                "variant": variant,
+                "quantized": false,
+                "downloadBytes": dl_bytes,
+                "estimatedMemoryBytes": est_mem,
+                "contextTokens": ctx,
+                "nativeContextTokens": ctx,
+                "contextLimitReason": if *ctx >= 131_072 { "target_met" } else { "native_limit" },
+                "plan": {
+                    "engine": "vllm",
+                    "repository": repo,
+                    "variant": variant,
+                    "quantized": false,
+                    "device": device,
+                    "files": [{ "path": variant, "bytes": dl_bytes }]
+                }
+            })
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
+fn extract_hybrid_device_tool_specs(body: &Value) -> Vec<(ToolSpec, String)> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let sources = [
+        body.get("deviceTools").and_then(|v| v.as_array()),
+        body.get("device_tools").and_then(|v| v.as_array()),
+        body.pointer("/device_bridge/tools").and_then(|v| v.as_array()),
+        body.pointer("/deviceBridge/tools").and_then(|v| v.as_array()),
+    ];
+    for arr in sources.into_iter().flatten() {
+        for dt in arr {
+            let fn_obj = dt.pointer("/schema/function");
+            let Some(name) = dt
+                .get("name")
+                .or_else(|| dt.get("tool_id"))
+                .or_else(|| fn_obj.and_then(|f| f.get("name")))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            if !seen.insert(name.to_string()) {
+                continue;
+            }
+            let desc = dt
+                .get("description")
+                .or_else(|| fn_obj.and_then(|f| f.get("description")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Client-executed hybrid device tool")
+                .to_string();
+            let params = dt
+                .get("parameters")
+                .or_else(|| fn_obj.and_then(|f| f.get("parameters")))
+                .filter(|v| v.is_object())
+                .cloned()
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+            let capability = dt
+                .get("capability")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("none")
+                .to_string();
+            let spec = ToolSpec {
+                schema: ToolSchema {
+                    name: name.to_string(),
+                    description: desc,
+                    parameters: params,
+                },
+                tier: ToolTier::Core,
+                domain: CapabilityDomain::InteractiveUi,
+                read_only: dt.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+            out.push((spec, capability));
+        }
+    }
+    out
 }
 
 fn is_sensitive_local_path(path: &Path) -> bool {
@@ -11050,8 +12052,30 @@ fn handle_sse_chat_turn(
         .flatten()
         .unwrap_or_else(|| json!({}));
 
-    // Respect per-conversation or per-request model override (including running `selectedModelSource == "local"`
-    // AND user-created remote model UUIDs in KV `web_model_profiles`!)
+    // Respect per-conversation or per-request model override (including `model_intent`,
+    // running `selectedModelSource == "local"`, AND user-created remote model UUIDs in KV `web_model_profiles`!)
+    let model_intent_val = body.get("model_intent").or_else(|| body.get("modelIntent"));
+    let intent_source = model_intent_val.and_then(|mi| {
+        mi.get("source")
+            .or_else(|| mi.get("connection_id"))
+            .or_else(|| mi.get("model_source"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+    });
+    let intent_model = model_intent_val.and_then(|mi| {
+        mi.as_str()
+            .or_else(|| {
+                mi.get("profile_id")
+                    .or_else(|| mi.get("model_id"))
+                    .or_else(|| mi.get("modelId"))
+                    .and_then(|v| v.as_str())
+            })
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && *s != "automatic" && *s != "inherit")
+            .map(ToString::to_string)
+    });
     let override_source = body
         .get("selectedModelSource")
         .or_else(|| body.get("modelSource"))
@@ -11059,6 +12083,7 @@ fn handle_sse_chat_turn(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
+        .or(intent_source)
         .or_else(|| sess.as_ref().and_then(|s| s.model_connection.clone()));
     let override_model = body
         .get("modelId")
@@ -11067,6 +12092,7 @@ fn handle_sse_chat_turn(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(ToString::to_string)
+        .or(intent_model)
         .or_else(|| sess.as_ref().and_then(|s| s.model_id.clone()));
     if override_source.as_deref() == Some("local")
         || override_source
@@ -11347,6 +12373,7 @@ fn handle_sse_chat_turn(
                             .unwrap_or("");
                         let expert_frame = json!({
                             "type": "expert_reply",
+                            "session_id": conv_id_room,
                             "room_id": room_id,
                             "expert_id": reply.get("expert_id").cloned().unwrap_or(Value::Null),
                             "expert_name": expert_name,
@@ -11362,17 +12389,6 @@ fn handle_sse_chat_turn(
                             content.to_string()
                         };
                         if !section.trim().is_empty() {
-                            let delta_text = if combined_sections.is_empty() {
-                                section.clone()
-                            } else {
-                                format!("\n\n{section}")
-                            };
-                            let delta_frame = json!({
-                                "type": "text_delta",
-                                "delta": delta_text
-                            });
-                            let _ = tx_room
-                                .send(encode_sse_frame(&delta_frame, crypto_for_room.as_deref()));
                             combined_sections.push(section);
                         }
                     }
@@ -11390,9 +12406,22 @@ fn handle_sse_chat_turn(
                         }),
                         50_000,
                     );
+                    let completed_frame = json!({
+                        "type": "turn_completed",
+                        "session_id": conv_id_room,
+                        "room_id": room_id,
+                        "final_text": final_content,
+                        "expert_replies": replies
+                    });
+                    let _ = tx_room
+                        .send(encode_sse_frame(&completed_frame, crypto_for_room.as_deref()));
                 }
                 Err(e) => {
-                    let err_frame = json!({"type": "error", "message": e});
+                    let err_frame = json!({
+                        "type": "error",
+                        "session_id": conv_id_room,
+                        "message": e
+                    });
                     let _ = tx_room.send(encode_sse_frame(&err_frame, crypto_for_room.as_deref()));
                 }
             }
@@ -11445,6 +12474,8 @@ fn handle_sse_chat_turn(
                 conversation_id: conv_id_for_approval.clone(),
                 tool_name: tool_name.clone(),
                 target_key,
+                reason: reason.to_string(),
+                arguments: args.clone(),
                 tx: resp_tx,
             },
         );
@@ -11488,6 +12519,8 @@ fn handle_sse_chat_turn(
             req_id.clone(),
             PendingQuestionEntry {
                 conversation_id: conv_id_for_question.clone(),
+                question: question.to_string(),
+                options: options.to_vec(),
                 tx: resp_tx,
             },
         );
@@ -11531,52 +12564,31 @@ fn handle_sse_chat_turn(
     }
     // Override A2UI tools with conversation + host scoped authority!
     register_a2ui_tools(&suite, &mut registry, &host_id, &conversation_id);
-    // Register any client-declared hybrid device tools so model calls emit SSE `device_tool_request`
+    // Register any client-declared hybrid device tools (from `deviceTools`, `device_tools`,
+    // or `device_bridge.tools[].schema.function`) so model calls emit full SSE `device_tool_request`
     // and suspend until `POST /api/chat/conversations/{id}/device-tool` resolves them!
-    if let Some(dev_tools) = body
-        .get("deviceTools")
-        .or_else(|| body.get("device_tools"))
-        .and_then(|v| v.as_array())
-    {
-        for dt in dev_tools {
-            let Some(name) = dt
-                .get("name")
-                .or_else(|| dt.get("tool_id"))
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            else {
-                continue;
-            };
-            let desc = dt
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Client-executed hybrid device tool")
-                .to_string();
-            let params = dt
-                .get("parameters")
-                .filter(|v| v.is_object())
-                .cloned()
-                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-            let spec = ToolSpec {
-                schema: ToolSchema {
-                    name: name.to_string(),
-                    description: desc,
-                    parameters: params,
-                },
-                tier: ToolTier::Core,
-                domain: CapabilityDomain::InteractiveUi,
-                read_only: dt.get("read_only").and_then(|v| v.as_bool()).unwrap_or(false),
-            };
-            registry.register(Arc::new(DeviceToolProxy {
-                spec,
-                conversation_id: conversation_id.clone(),
-                tx: tx.clone(),
-                pending: Arc::clone(&pending),
-                cancel: Arc::clone(&cancel),
-                crypto_tok: crypto_tok.clone(),
-            }));
-        }
+    let client_id_for_device_tools = body
+        .get("client_id")
+        .or_else(|| body.get("clientId"))
+        .or_else(|| body.pointer("/device_bridge/client_id"))
+        .or_else(|| body.pointer("/deviceBridge/clientId"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("nola-client")
+        .to_string();
+    for (spec, capability) in extract_hybrid_device_tool_specs(&body) {
+        registry.register(Arc::new(DeviceToolProxy {
+            spec,
+            conversation_id: conversation_id.clone(),
+            host_id: host_id.clone(),
+            client_id: client_id_for_device_tools.clone(),
+            capability,
+            tx: tx.clone(),
+            pending: Arc::clone(&pending),
+            cancel: Arc::clone(&cancel),
+            crypto_tok: crypto_tok.clone(),
+        }));
     }
     let subagents = Arc::new(SubagentManager::new(store.clone(), Arc::clone(&caller)));
     subagents.configure_parent(route.clone(), policy.clone());
@@ -11700,7 +12712,11 @@ fn handle_sse_chat_turn(
                 );
             }
             Err(e) => {
-                let err_frame = json!({"type": "error", "message": e.to_string()});
+                let err_frame = json!({
+                    "type": "error",
+                    "session_id": conv_id_c,
+                    "message": e.to_string()
+                });
                 let _ = tx.send(encode_sse_frame(&err_frame, crypto_for_stream.as_deref()));
             }
         }
@@ -11834,12 +12850,15 @@ fn parse_git_worktree_porcelain(raw: &str) -> Vec<Value> {
                  bare: &mut bool,
                  detached: &mut bool| {
         if let Some(p) = path.take() {
+            let is_main = out.is_empty();
             out.push(json!({
                 "path": p,
                 "head": head.take().unwrap_or_default(),
                 "branch": branch.take(),
                 "bare": *bare,
-                "detached": *detached
+                "detached": *detached,
+                "isMain": is_main,
+                "is_main": is_main
             }));
             *bare = false;
             *detached = false;
@@ -11916,18 +12935,55 @@ fn handle_workspace_worktrees(workspace_root: &Path, is_post: bool, body: &Value
         }
     };
     let mut args = json!({ "action": git_action });
-    if let Some(target) = body
+    let explicit_target = body
         .get("target")
         .or_else(|| body.get("path"))
         .and_then(|v| v.as_str())
-    {
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let branch_opt = body
+        .get("branch")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let mut generated_target: Option<String> = None;
+    if let Some(target) = explicit_target {
         args["target"] = json!(target);
+    } else if git_action == "worktree_create" {
+        if let Some(branch) = branch_opt {
+            let safe_branch: String = branch
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect();
+            let safe_branch = safe_branch.trim_matches(|c| c == '.' || c == '-');
+            let folder = if safe_branch.is_empty() {
+                format!("wt-{}", &new_id()[..8])
+            } else {
+                safe_branch.to_string()
+            };
+            let wt_parent = workspace_root.join(".nola/worktrees");
+            let _ = fs::create_dir_all(&wt_parent);
+            let rel_target = format!(".nola/worktrees/{folder}");
+            args["target"] = json!(rel_target);
+            generated_target = Some(rel_target);
+        }
     }
-    if let Some(branch) = body.get("branch").and_then(|v| v.as_str()) {
+    if let Some(branch) = branch_opt {
         args["branch"] = json!(branch);
     }
     if let Some(strategy) = body.get("strategy").and_then(|v| v.as_str()) {
         args["strategy"] = json!(strategy);
+    }
+    if git_action == "worktree_remove" {
+        if let Some(force) = body.get("force").and_then(|v| v.as_bool()) {
+            args["force"] = json!(force);
+        }
     }
 
     let ctx = ToolContext::new(workspace_root);
@@ -11977,12 +13033,28 @@ fn handle_workspace_worktrees(workspace_root: &Path, is_post: bool, body: &Value
     } else {
         Vec::new()
     };
+    let created_wt = if git_action == "worktree_create" {
+        worktrees
+            .iter()
+            .find(|w| {
+                branch_opt.is_some_and(|b| w.get("branch").and_then(|v| v.as_str()) == Some(b))
+                    || generated_target.as_deref().is_some_and(|t| {
+                        w.get("path")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|p| p.ends_with(t))
+                    })
+            })
+            .cloned()
+    } else {
+        None
+    };
     (
         200,
         json!({
             "ok": true,
             "action": git_action,
             "result": model_val,
+            "worktree": created_wt,
             "worktrees": worktrees,
             "summary": summary_text
         }),
@@ -12116,6 +13188,18 @@ fn handle_conversation_goal_control(
     }
 
     let mut cancelled = false;
+    let mut wake_at_epoch_ms = body
+        .get("wakeAtEpochMs")
+        .or_else(|| body.get("wake_at_epoch_ms"))
+        .or_else(|| {
+            control_obj.and_then(|c| c.get("wakeAtEpochMs").or_else(|| c.get("wake_at_epoch_ms")))
+        })
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            existing_kv
+                .as_ref()
+                .and_then(|g| g.get("next_wake_at_epoch_ms").and_then(|v| v.as_i64()))
+        });
     match action.to_ascii_lowercase().as_str() {
         "create" | "upsert" => {
             record.status = GoalStatus::Pending;
@@ -12127,6 +13211,18 @@ fn handle_conversation_goal_control(
             record.lease_until_ms = None;
             record.next_retry_at_ms = None;
             record.needs_user_question = None;
+        }
+        "schedule" => {
+            record.status = GoalStatus::Pending;
+            record.lease_until_ms = None;
+            record.next_retry_at_ms = wake_at_epoch_ms;
+            if wake_at_epoch_ms.is_none() {
+                wake_at_epoch_ms = Some(now.saturating_add(60_000));
+                record.next_retry_at_ms = wake_at_epoch_ms;
+            }
+            record
+                .progress_notes
+                .push("Scheduled via goal control".into());
         }
         "pause" => {
             record.status = GoalStatus::Paused;
@@ -12169,6 +13265,8 @@ fn handle_conversation_goal_control(
 
     let control_state = if cancelled {
         "cancelled"
+    } else if action.eq_ignore_ascii_case("schedule") {
+        "scheduled"
     } else {
         match record.status {
             GoalStatus::Pending => "pending",
@@ -12178,6 +13276,35 @@ fn handle_conversation_goal_control(
             GoalStatus::Failed => "failed",
         }
     };
+    let prev_rev = existing_kv
+        .as_ref()
+        .and_then(|g| g.get("revision").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+    let goal_revision = prev_rev.saturating_add(1);
+    let control_token = existing_kv
+        .as_ref()
+        .and_then(|g| g.get("control_token").and_then(|v| v.as_str()).map(ToString::to_string))
+        .unwrap_or_else(new_id);
+    let constraints: Vec<String> = body
+        .get("constraints")
+        .or_else(|| control_obj.and_then(|c| c.get("constraints")))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            existing_kv
+                .as_ref()
+                .and_then(|g| g.get("constraints").and_then(|v| v.as_array()))
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(ToString::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
     let mut goal_json = serde_json::to_value(&record).unwrap_or_else(|_| json!({}));
     if let Some(obj) = goal_json.as_object_mut() {
         obj.insert("conversationId".into(), json!(conv_id));
@@ -12185,9 +13312,48 @@ fn handle_conversation_goal_control(
         obj.insert("description".into(), json!(record.objective));
         obj.insert("controlState".into(), json!(control_state));
         obj.insert("cancelled".into(), json!(cancelled));
+        obj.insert("revision".into(), json!(goal_revision));
+        obj.insert("control_token".into(), json!(control_token));
+        obj.insert("constraints".into(), json!(constraints));
+        obj.insert(
+            "next_wake_at_epoch_ms".into(),
+            wake_at_epoch_ms.map(|w| json!(w)).unwrap_or(Value::Null),
+        );
         obj.insert("updatedAt".into(), json!(ms_to_rfc3339(record.updated_at_ms)));
     }
     let _ = store.set_kv(&key, &goal_json);
+
+    let operation_id = body
+        .get("operationId")
+        .or_else(|| body.get("operation_id"))
+        .or_else(|| {
+            control_obj.and_then(|c| c.get("operationId").or_else(|| c.get("operation_id")))
+        })
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let cmd_bytes = serde_json::to_vec(control_obj.unwrap_or(body)).unwrap_or_default();
+    let command_sha256 = sha256_hex(&cmd_bytes);
+    let ops_key = format!("conv_goal_ops:{conv_id}");
+    let mut applied_ops = store
+        .get_kv(&ops_key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    applied_ops.insert(
+        operation_id.clone(),
+        json!({
+            "command_sha256": command_sha256,
+            "goal_revision": goal_revision,
+            "rejection": Value::Null
+        }),
+    );
+    let _ = store.set_kv(&ops_key, &Value::Object(applied_ops));
+    let goal_projection = build_goal_projection(store, conv_id, &goal_json);
+
     let _ = store.append_event(
         conv_id,
         "goal_updated",
@@ -12195,7 +13361,8 @@ fn handle_conversation_goal_control(
             "action": action,
             "goal_id": record.id,
             "status": control_state,
-            "title": record.title
+            "title": record.title,
+            "operation_id": operation_id
         }),
         50_000,
     );
@@ -12237,18 +13404,26 @@ fn handle_conversation_goal_control(
             "ok": true,
             "source_host_id": host_id,
             "source_store_epoch": epoch,
+            "conversationId": conv_id,
+            "operationId": operation_id,
+            "authoritative": true,
+            "controlPending": false,
             "action": action,
-            "goal": goal_json
+            "goal": goal_json,
+            "goalProjection": goal_projection
         }),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_conversation_task_events(
     req: Request,
     store: Store,
     conv_id: String,
     after_cursor: i64,
     oneshot: bool,
+    timeout_ms: Option<u64>,
+    emit_task_projection: bool,
     crypto_tok: Option<String>,
 ) {
     let cancel = Arc::new(AtomicBool::new(false));
@@ -12258,23 +13433,55 @@ fn stream_conversation_task_events(
         .name(format!("nola-task-sse-{}", &conv_id[..conv_id.len().min(8)]))
         .spawn(move || {
             let mut cursor = after_cursor.max(0);
-            // Emit initial snapshot of current goal + todos so newly attached clients hydrate immediately.
+            let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
+            // Emit initial snapshot of current goal + todos/tasks so newly attached clients hydrate immediately.
             let goal = store
                 .get_kv(&format!("conv_goal:{conv_id}"))
                 .ok()
                 .flatten()
                 .unwrap_or(Value::Null);
             let todos = load_session_todos(&store, &conv_id);
-            let snapshot_frame = json!({
-                "type": "task_snapshot",
-                "conversation_id": conv_id,
-                "cursor": cursor,
-                "goal": goal,
-                "todos": todos,
-                "plan_mode": is_plan_mode(&store, &conv_id)
-            });
+            let tasks: Vec<Value> = todos
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(idx, t)| {
+                    json!({
+                        "id": t.get("id").and_then(|v| v.as_str()).map(ToString::to_string).unwrap_or_else(|| format!("task-{idx}")),
+                        "title": t.get("content").or_else(|| t.get("title")).and_then(|v| v.as_str()).unwrap_or("Task"),
+                        "status": t.get("status").and_then(|v| v.as_str()).unwrap_or("pending")
+                    })
+                })
+                .collect();
+            let initial_frame = if emit_task_projection {
+                json!({
+                    "type": "task_projection",
+                    "conversationId": conv_id,
+                    "conversation_id": conv_id,
+                    "cursor": cursor,
+                    "tasks": tasks,
+                    "todos": todos,
+                    "taskProjection": {
+                        "session_id": conv_id,
+                        "revision": cursor.max(1),
+                        "tasks": tasks
+                    }
+                })
+            } else {
+                json!({
+                    "type": "task_snapshot",
+                    "conversationId": conv_id,
+                    "conversation_id": conv_id,
+                    "cursor": cursor,
+                    "goal": goal,
+                    "tasks": tasks,
+                    "todos": todos,
+                    "plan_mode": is_plan_mode(&store, &conv_id)
+                })
+            };
             if tx
-                .send(encode_sse_frame(&snapshot_frame, crypto_tok.as_deref()))
+                .send(encode_sse_frame(&initial_frame, crypto_tok.as_deref()))
                 .is_err()
             {
                 return;
@@ -12295,15 +13502,46 @@ fn stream_conversation_task_events(
                             || ev.kind.starts_with("plan_")
                             || ev.kind.starts_with("device_tool_");
                         if is_task_event {
-                            let frame = json!({
-                                "type": "task_event",
-                                "id": ev.seq,
-                                "seq": ev.seq,
-                                "kind": ev.kind,
-                                "conversation_id": conv_id,
-                                "created_at_ms": ev.created_at_ms,
-                                "payload": ev.payload
-                            });
+                            let frame = if emit_task_projection {
+                                let fresh_todos = load_session_todos(&store, &conv_id);
+                                let fresh_tasks: Vec<Value> = fresh_todos
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .enumerate()
+                                    .map(|(idx, t)| {
+                                        json!({
+                                            "id": t.get("id").and_then(|v| v.as_str()).map(ToString::to_string).unwrap_or_else(|| format!("task-{idx}")),
+                                            "title": t.get("content").or_else(|| t.get("title")).and_then(|v| v.as_str()).unwrap_or("Task"),
+                                            "status": t.get("status").and_then(|v| v.as_str()).unwrap_or("pending")
+                                        })
+                                    })
+                                    .collect();
+                                json!({
+                                    "type": "task_projection",
+                                    "conversationId": conv_id,
+                                    "conversation_id": conv_id,
+                                    "cursor": ev.seq,
+                                    "tasks": fresh_tasks,
+                                    "taskProjection": {
+                                        "session_id": conv_id,
+                                        "revision": ev.seq.max(1),
+                                        "tasks": fresh_tasks
+                                    }
+                                })
+                            } else {
+                                json!({
+                                    "type": "task_event",
+                                    "id": ev.seq,
+                                    "seq": ev.seq,
+                                    "cursor": ev.seq,
+                                    "kind": ev.kind,
+                                    "conversationId": conv_id,
+                                    "conversation_id": conv_id,
+                                    "created_at_ms": ev.created_at_ms,
+                                    "payload": ev.payload
+                                })
+                            };
                             if tx
                                 .send(encode_sse_frame(&frame, crypto_tok.as_deref()))
                                 .is_err()
@@ -12313,7 +13551,7 @@ fn stream_conversation_task_events(
                         }
                     }
                 }
-                if oneshot {
+                if oneshot || deadline.is_some_and(|d| Instant::now() >= d) {
                     let _ = tx.send(b"data: [DONE]\n\n".to_vec());
                     break;
                 }
@@ -12324,7 +13562,7 @@ fn stream_conversation_task_events(
                         break;
                     }
                 }
-                std::thread::sleep(Duration::from_millis(250));
+                std::thread::sleep(Duration::from_millis(50));
             }
         })
         .ok();
@@ -12385,11 +13623,14 @@ fn handle_conversation_recall(store: &Store, conv_id: &str, body: &Value) -> Val
         .into_iter()
         .map(|ev| {
             json!({
+                "messageId": format!("msg-{}", ev.seq),
+                "message_id": format!("msg-{}", ev.seq),
                 "scope": ev.scope,
                 "seq": ev.seq,
                 "kind": ev.kind,
                 "payload": ev.payload,
-                "createdAtMs": ev.created_at_ms
+                "createdAtMs": ev.created_at_ms,
+                "created_at_ms": ev.created_at_ms
             })
         })
         .collect();
@@ -12407,41 +13648,104 @@ fn handle_conversation_recall(store: &Store, conv_id: &str, body: &Value) -> Val
 
 fn collect_conversation_artifacts(store: &Store, conv_id: &str) -> Vec<Value> {
     let mut artifacts: Vec<Value> = Vec::new();
-    for res in collect_conversation_resources(store, conv_id) {
-        artifacts.push(json!({
-            "kind": "attachment",
-            "source": "conversation_resource",
-            "item": res
-        }));
+    for (idx, res) in collect_conversation_resources(store, conv_id)
+        .into_iter()
+        .enumerate()
+    {
+        let mut flat = serde_json::Map::new();
+        if let Some(obj) = res.as_object() {
+            for (k, v) in obj {
+                flat.insert(k.clone(), v.clone());
+            }
+        }
+        let id = flat
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("res-{idx}"));
+        let title = flat
+            .get("title")
+            .or_else(|| flat.get("name"))
+            .or_else(|| flat.get("filename"))
+            .or_else(|| flat.get("path"))
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| id.clone());
+        let created_ms = flat
+            .get("createdAtMs")
+            .or_else(|| flat.get("created_at_ms"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or_else(now_ms);
+        flat.insert("id".into(), json!(id));
+        flat.insert("title".into(), json!(title));
+        flat.insert("kind".into(), json!("attachment"));
+        flat.insert("source".into(), json!("conversation_resource"));
+        flat.insert("createdAtMs".into(), json!(created_ms));
+        flat.insert("created_at_ms".into(), json!(created_ms));
+        artifacts.push(Value::Object(flat));
     }
     for snap in list_conversation_surfaces(store, conv_id) {
         if let Ok(v) = serde_json::to_value(&snap) {
+            let title = v
+                .pointer("/document/title")
+                .or_else(|| v.get("title"))
+                .and_then(|x| x.as_str())
+                .unwrap_or(&snap.identity.surface_id)
+                .to_string();
+            let created_ms = now_ms();
             artifacts.push(json!({
-                "kind": "ui_surface",
                 "id": snap.identity.surface_id,
-                "item": v
+                "title": title,
+                "kind": "ui_surface",
+                "createdAtMs": created_ms,
+                "created_at_ms": created_ms,
+                "snapshot": v
             }));
         }
     }
     if let Ok(EventPage::Events(events)) = store.events_after(conv_id, 0, 1000) {
         for ev in events {
             if let Some(arr) = ev.payload.get("output_artifacts").and_then(|v| v.as_array()) {
-                for art in arr {
-                    artifacts.push(json!({
-                        "kind": "tool_output_artifact",
-                        "seq": ev.seq,
-                        "createdAtMs": ev.created_at_ms,
-                        "item": art
-                    }));
+                for (aidx, art) in arr.iter().enumerate() {
+                    let mut flat = serde_json::Map::new();
+                    if let Some(obj) = art.as_object() {
+                        for (k, v) in obj {
+                            flat.insert(k.clone(), v.clone());
+                        }
+                    } else if let Some(s) = art.as_str() {
+                        flat.insert("content".into(), json!(s));
+                    }
+                    flat.entry("id".to_string())
+                        .or_insert_with(|| json!(format!("art-{}-{aidx}", ev.seq)));
+                    let default_title = flat
+                        .get("title")
+                        .or_else(|| flat.get("name"))
+                        .or_else(|| flat.get("path"))
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("Artifact {}", ev.seq));
+                    flat.entry("title".to_string())
+                        .or_insert_with(|| json!(default_title));
+                    flat.entry("kind".to_string())
+                        .or_insert_with(|| json!("tool_output_artifact"));
+                    flat.insert("seq".into(), json!(ev.seq));
+                    flat.insert("messageId".into(), json!(format!("msg-{}", ev.seq)));
+                    flat.insert("createdAtMs".into(), json!(ev.created_at_ms));
+                    flat.insert("created_at_ms".into(), json!(ev.created_at_ms));
+                    artifacts.push(Value::Object(flat));
                 }
             }
             if ev.kind == "tool_finished" || ev.kind == "file_modified" {
                 if let Some(path) = ev.payload.get("path").and_then(|v| v.as_str()) {
                     artifacts.push(json!({
+                        "id": format!("file-{}", ev.seq),
+                        "title": path,
                         "kind": "file",
                         "seq": ev.seq,
                         "path": path,
-                        "createdAtMs": ev.created_at_ms
+                        "messageId": format!("msg-{}", ev.seq),
+                        "createdAtMs": ev.created_at_ms,
+                        "created_at_ms": ev.created_at_ms
                     }));
                 }
             }
@@ -12491,6 +13795,63 @@ fn handle_conversation_plan(store: &Store, conv_id: &str, body: &Value) -> (u16,
                 }),
             ),
         };
+    }
+
+    if action.as_deref() == Some("reject") {
+        let feedback = body
+            .get("feedback")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let mut plan_val = store
+            .get_kv(&format!("plan:{conv_id}"))
+            .ok()
+            .flatten()
+            .filter(|v| v.is_object())
+            .unwrap_or_else(|| json!({}));
+        if let Some(obj) = plan_val.as_object_mut() {
+            obj.insert("status".into(), json!("rejected"));
+            obj.insert("updatedAt".into(), json!(Utc::now().to_rfc3339()));
+            if let Some(fb) = feedback {
+                obj.insert("feedback".into(), json!(fb));
+            }
+        }
+        let _ = store.set_kv(&format!("plan:{conv_id}"), &plan_val);
+        let _ = set_plan_mode(store, conv_id, false);
+        let _ = store.append_event(
+            conv_id,
+            "plan_rejected",
+            json!({"plan": plan_val, "feedback": feedback}),
+            50_000,
+        );
+        return (
+            200,
+            json!({
+                "ok": true,
+                "rejected": true,
+                "conversationId": conv_id,
+                "planMode": false,
+                "plan": plan_val,
+                "todos": load_session_todos(store, conv_id)
+            }),
+        );
+    }
+
+    if action.as_deref() == Some("clear") {
+        let _ = store.set_kv(&format!("plan:{conv_id}"), &Value::Null);
+        let _ = set_plan_mode(store, conv_id, false);
+        let _ = store.append_event(conv_id, "plan_cleared", json!({}), 50_000);
+        return (
+            200,
+            json!({
+                "ok": true,
+                "cleared": true,
+                "conversationId": conv_id,
+                "planMode": false,
+                "plan": Value::Null,
+                "todos": load_session_todos(store, conv_id)
+            }),
+        );
     }
 
     let enabled_opt = body
@@ -12569,20 +13930,99 @@ fn handle_auxiliary_dispatch(
         .map(ToString::to_string)
         .unwrap_or_else(|| format!("{op_id}:physical"));
 
-    let make_receipt = |state: &str, output: Option<&Value>, error: Option<&str>| -> Value {
+    let prev_env = auxiliary_ops
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&op_id)
+        .cloned()
+        .or_else(|| store.get_kv(&format!("aux_op:{op_id}")).ok().flatten());
+    let scenario = body
+        .get("scenario")
+        .or_else(|| body.pointer("/operation/scenario"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            prev_env
+                .as_ref()
+                .and_then(|e| e.pointer("/receipt/operation/scenario").and_then(|v| v.as_str()))
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "completion".to_string());
+    let input_digest = body
+        .get("input_digest")
+        .or_else(|| body.pointer("/configuration/input_digest"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            body.get("input_json")
+                .and_then(|v| v.as_str())
+                .map(|s| sha256_hex(s.as_bytes()))
+        })
+        .or_else(|| {
+            prev_env.as_ref().and_then(|e| {
+                e.pointer("/receipt/operation/configuration/input_digest")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
+        })
+        .unwrap_or_else(|| {
+            let fallback = body
+                .get("prompt")
+                .or_else(|| body.get("content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            sha256_hex(fallback.as_bytes())
+        });
+    let max_attempts = body
+        .get("max_attempts")
+        .or_else(|| body.pointer("/configuration/max_attempts"))
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            prev_env.as_ref().and_then(|e| {
+                e.pointer("/receipt/operation/configuration/max_attempts")
+                    .and_then(|v| v.as_i64())
+            })
+        })
+        .unwrap_or(1)
+        .max(1);
+
+    let make_receipt = |op_state: &str,
+                        attempt_state: Option<&str>,
+                        output: Option<&Value>,
+                        error: Option<&str>|
+     -> Value {
+        let attempt_obj = match attempt_state {
+            Some(st) => json!({
+                "id": attempt_id,
+                "operation_id": op_id,
+                "state": st,
+                "output": output.cloned().unwrap_or(Value::Null),
+                "error": error
+            }),
+            None => Value::Null,
+        };
         json!({
+            "dispatch_permitted": false,
             "operation": {
                 "id": op_id,
                 "attempt_id": attempt_id,
-                "state": state,
+                "scenario": scenario,
+                "state": op_state,
                 "revision": now_ms(),
                 "owner": {
                     "kind": "source_authority",
                     "source_host_id": host_id
                 },
+                "configuration": {
+                    "input_digest": input_digest,
+                    "max_attempts": max_attempts
+                },
                 "output": output.cloned().unwrap_or(Value::Null),
                 "error": error
-            }
+            },
+            "attempt": attempt_obj
         })
     };
 
@@ -12616,7 +14056,7 @@ fn handle_auxiliary_dispatch(
             )
         }
         "admit" => {
-            let receipt = make_receipt("admitted", None, None);
+            let receipt = make_receipt("ready", None, None, None);
             let envelope = json!({
                 "ok": true,
                 "source_host_id": host_id,
@@ -12632,29 +14072,21 @@ fn handle_auxiliary_dispatch(
             let _ = store.set_kv(&format!("aux_op:{op_id}"), &envelope);
             (200, envelope)
         }
-        "inspect" => {
-            let found = auxiliary_ops
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&op_id)
-                .cloned()
-                .or_else(|| store.get_kv(&format!("aux_op:{op_id}")).ok().flatten());
-            match found {
-                Some(env) => (200, env),
-                None => (
-                    404,
-                    json!({
-                        "ok": false,
-                        "error": "auxiliary_operation_not_found",
-                        "source_host_id": host_id,
-                        "operation_id": op_id,
-                        "attempt_id": attempt_id
-                    }),
-                ),
-            }
-        }
+        "inspect" => match prev_env {
+            Some(env) => (200, env),
+            None => (
+                404,
+                json!({
+                    "ok": false,
+                    "error": "auxiliary_operation_not_found",
+                    "source_host_id": host_id,
+                    "operation_id": op_id,
+                    "attempt_id": attempt_id
+                }),
+            ),
+        },
         "cancel" => {
-            let receipt = make_receipt("cancelled", None, None);
+            let receipt = make_receipt("cancelled", None, None, None);
             let envelope = json!({
                 "ok": true,
                 "cancelled": true,
@@ -12676,7 +14108,7 @@ fn handle_auxiliary_dispatch(
             let route = match resolve_model_route(&cfg) {
                 Ok(r) => r,
                 Err(e) => {
-                    let receipt = make_receipt("failed", None, Some(&e));
+                    let receipt = make_receipt("failed", Some("failed"), None, Some(&e));
                     let env = json!({
                         "ok": false,
                         "error": e,
@@ -12724,7 +14156,7 @@ fn handle_auxiliary_dispatch(
                 Ok(c) => Arc::new(c),
                 Err(e) => {
                     let msg = e.to_string();
-                    let receipt = make_receipt("failed", None, Some(&msg));
+                    let receipt = make_receipt("failed", Some("failed"), None, Some(&msg));
                     return (
                         500,
                         json!({
@@ -12802,7 +14234,7 @@ fn handle_auxiliary_dispatch(
 
             match run_result {
                 Ok(output) => {
-                    let receipt = make_receipt("succeeded", Some(&output), None);
+                    let receipt = make_receipt("succeeded", Some("succeeded"), Some(&output), None);
                     let env = json!({
                         "ok": true,
                         "source_host_id": host_id,
@@ -12822,7 +14254,7 @@ fn handle_auxiliary_dispatch(
                     (200, env)
                 }
                 Err(e) => {
-                    let receipt = make_receipt("failed", None, Some(&e));
+                    let receipt = make_receipt("failed", Some("failed"), None, Some(&e));
                     let env = json!({
                         "ok": false,
                         "error": e,
@@ -12846,6 +14278,26 @@ fn handle_auxiliary_dispatch(
             json!({"ok": false, "error": "unknown_auxiliary_action", "action": other}),
         ),
     }
+}
+
+fn validate_oauth_origin(raw: &str) -> Result<String, &'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("invalid_origin");
+    }
+    let parsed = Url::parse(trimmed).map_err(|_| "invalid_origin")?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("invalid_origin");
+    }
+    match parsed.scheme() {
+        "https" => {}
+        "http" if is_loopback_url(trimmed) => {}
+        _ => return Err("invalid_origin"),
+    }
+    if parsed.host_str().is_none() {
+        return Err("invalid_origin");
+    }
+    Ok(trimmed.trim_end_matches('/').to_string())
 }
 
 fn handle_source_oauth_route(
@@ -12903,12 +14355,11 @@ fn handle_source_oauth_route(
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
-            let origin = body
+            let raw_origin = body
                 .get("origin")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
-                .trim()
-                .to_string();
+                .trim();
             let bearer = body
                 .get("server_bearer")
                 .or_else(|| body.get("api_key"))
@@ -12916,12 +14367,18 @@ fn handle_source_oauth_route(
                 .unwrap_or("")
                 .trim()
                 .to_string();
-            if origin.is_empty() || bearer.is_empty() {
+            if raw_origin.is_empty() || bearer.is_empty() {
                 return (
                     400,
                     json!({"ok": false, "error": "origin_and_bearer_required"}),
                 );
             }
+            let Ok(origin) = validate_oauth_origin(raw_origin) else {
+                return (
+                    400,
+                    json!({"ok": false, "error": "invalid_origin", "message": "origin must be https:// or loopback http://"}),
+                );
+            };
             if let Some(ref v) = vault {
                 let _ = v.set_secret(&format!("kimi_bearer:{account_id}"), &bearer);
             }
@@ -12945,7 +14402,7 @@ fn handle_source_oauth_route(
                 "origin": origin,
                 "server_id": server_id,
                 "revision": rev,
-                "state": "connected",
+                "state": "idle",
                 "updated_at_ms": now_ms()
             });
             let _ = suite.upsert_record("source_account", &account_id, &rec);
@@ -12955,12 +14412,12 @@ fn handle_source_oauth_route(
                     "account": { "revision": rev, "account": { "id": account_id } },
                     "origin": origin,
                     "server_id": server_id,
-                    "state": "connected",
+                    "state": "idle",
                     "flow_id": Value::Null,
                     "verification_url": Value::Null,
                     "user_code": Value::Null,
                     "poll_interval_seconds": Value::Null,
-                    "inference_supported": true,
+                    "inference_supported": false,
                     "cancellation_confirmed": Value::Null
                 }),
             )
@@ -12971,7 +14428,6 @@ fn handle_source_oauth_route(
             let account_id = body
                 .get("account_id")
                 .and_then(|v| v.as_str())
-                .or_else(|| parse_query_str(query, "account_id").as_deref().map(|_| ""))
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .or_else(|| parse_query_str(query, "account_id"))
@@ -13013,15 +14469,14 @@ fn handle_source_oauth_route(
                     origin.trim_end_matches('/').to_string()
                 };
                 let verification_url = format!(
-                    "{base_origin}/oauth/device?user_code={user_code}&code_challenge={challenge}&code_challenge_method=S256&state={}",
-                    &csrf_state[..16]
+                    "{base_origin}/oauth/device?user_code={user_code}&code_challenge={challenge}&code_challenge_method=S256&state={csrf_state}"
                 );
                 let flow = OAuthFlowState {
                     request_id: flow_id.clone(),
                     account_id: account_id.clone(),
                     provider: "kimi".into(),
                     method: 0,
-                    state: "pending".into(),
+                    state: "awaiting_authorization".into(),
                     csrf_state,
                     code_challenge: challenge,
                     authorization_url: Some(verification_url.clone()),
@@ -13039,12 +14494,12 @@ fn handle_source_oauth_route(
                         "account": { "revision": rev, "account": { "id": account_id } },
                         "origin": origin,
                         "server_id": server_id,
-                        "state": "pending",
+                        "state": "awaiting_authorization",
                         "flow_id": flow_id,
                         "verification_url": verification_url,
                         "user_code": user_code,
                         "poll_interval_seconds": 5,
-                        "inference_supported": true,
+                        "inference_supported": false,
                         "cancellation_confirmed": Value::Null
                     }),
                 )
@@ -13068,7 +14523,7 @@ fn handle_source_oauth_route(
                         "verification_url": Value::Null,
                         "user_code": Value::Null,
                         "poll_interval_seconds": Value::Null,
-                        "inference_supported": true,
+                        "inference_supported": false,
                         "cancellation_confirmed": confirmed
                     }),
                 )
@@ -13077,10 +14532,6 @@ fn handle_source_oauth_route(
                     .as_deref()
                     .and_then(|id| flows.get(id))
                     .or_else(|| flows.values().rev().find(|f| f.account_id == account_id));
-                let has_secret = vault
-                    .as_ref()
-                    .and_then(|v| v.get_secret(&format!("kimi_bearer:{account_id}")).ok().flatten())
-                    .is_some();
                 match flow_opt {
                     Some(f) => (
                         200,
@@ -13093,7 +14544,7 @@ fn handle_source_oauth_route(
                             "verification_url": f.verification_url,
                             "user_code": f.user_code,
                             "poll_interval_seconds": f.poll_interval_seconds,
-                            "inference_supported": true,
+                            "inference_supported": false,
                             "cancellation_confirmed": f.cancellation_confirmed
                         }),
                     ),
@@ -13103,12 +14554,12 @@ fn handle_source_oauth_route(
                             "account": { "revision": rev, "account": { "id": account_id } },
                             "origin": origin,
                             "server_id": server_id,
-                            "state": if has_secret { "connected" } else { "idle" },
+                            "state": "idle",
                             "flow_id": Value::Null,
                             "verification_url": Value::Null,
                             "user_code": Value::Null,
                             "poll_interval_seconds": Value::Null,
-                            "inference_supported": has_secret,
+                            "inference_supported": false,
                             "cancellation_confirmed": Value::Null
                         }),
                     ),
@@ -13129,12 +14580,11 @@ fn handle_source_oauth_route(
                 .ok()
                 .flatten();
             let (origin, directory, rev) = if path.ends_with("/connect") {
-                let origin = body
+                let raw_origin = body
                     .get("origin")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .trim()
-                    .to_string();
+                    .trim();
                 let directory = body
                     .get("directory")
                     .and_then(|v| v.as_str())
@@ -13146,9 +14596,15 @@ fn handle_source_oauth_route(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .trim();
-                if origin.is_empty() {
+                if raw_origin.is_empty() {
                     return (400, json!({"ok": false, "error": "origin_required"}));
                 }
+                let Ok(origin) = validate_oauth_origin(raw_origin) else {
+                    return (
+                        400,
+                        json!({"ok": false, "error": "invalid_origin", "message": "origin must be https:// or loopback http://"}),
+                    );
+                };
                 if !password.is_empty() {
                     if let Some(ref v) = vault {
                         let _ = v.set_secret(&format!("opencode_password:{account_id}"), password);
@@ -13167,7 +14623,7 @@ fn handle_source_oauth_route(
                     "directory": directory,
                     "username": body.get("username").and_then(|v| v.as_str()).unwrap_or("opencode"),
                     "revision": rev,
-                    "state": "connected",
+                    "state": "idle",
                     "updated_at_ms": now_ms()
                 });
                 let _ = suite.upsert_record("source_account", &account_id, &rec);
@@ -13200,6 +14656,7 @@ fn handle_source_oauth_route(
                     "account": { "revision": rev, "account": { "id": account_id } },
                     "origin": origin,
                     "directory": directory,
+                    "state": "idle",
                     "methods": methods
                 }),
             )
@@ -13232,16 +14689,15 @@ fn handle_source_oauth_route(
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4096".to_string());
             let auth_url = format!(
-                "{}/oauth/authorize?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={}",
-                origin.trim_end_matches('/'),
-                &csrf_state[..16]
+                "{}/oauth/authorize?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={csrf_state}",
+                origin.trim_end_matches('/')
             );
             let flow = OAuthFlowState {
                 request_id: request_id.clone(),
                 account_id,
                 provider: provider.clone(),
                 method: method_idx,
-                state: "pending".into(),
+                state: "awaiting_authorization".into(),
                 csrf_state,
                 code_challenge: challenge,
                 authorization_url: Some(auth_url.clone()),
@@ -13262,7 +14718,7 @@ fn handle_source_oauth_route(
                     "request_id": request_id,
                     "provider": provider,
                     "method": method_idx,
-                    "state": "pending",
+                    "state": "awaiting_authorization",
                     "authorization_url": auth_url,
                     "callback_mode": "code",
                     "instructions": "Complete authorization and paste the returned code."
@@ -13275,6 +14731,11 @@ fn handle_source_oauth_route(
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string)
                 .or_else(|| parse_query_str(query, "request_id"))
+                .unwrap_or_default();
+            let provided_state = body
+                .get("state")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
                 .or_else(|| parse_query_str(query, "state"))
                 .unwrap_or_default();
             let code = body
@@ -13283,19 +14744,20 @@ fn handle_source_oauth_route(
                 .map(ToString::to_string)
                 .or_else(|| parse_query_str(query, "code"))
                 .unwrap_or_default();
+            if provided_state.trim().is_empty() {
+                return (
+                    400,
+                    json!({"ok": false, "error": "invalid_oauth_state", "message": "full OAuth CSRF state is required"}),
+                );
+            }
             let mut flows = oauth_flows.lock().unwrap_or_else(|e| e.into_inner());
-            let matched_key = if flows.contains_key(&request_id) {
+            let matched_key = if !request_id.is_empty() && flows.contains_key(&request_id) {
                 Some(request_id.clone())
             } else {
-                let st = parse_query_str(query, "state").unwrap_or_default();
-                if st.is_empty() {
-                    None
-                } else {
-                    flows
-                        .iter()
-                        .find(|(_, f)| f.csrf_state.starts_with(&st))
-                        .map(|(k, _)| k.clone())
-                }
+                flows
+                    .iter()
+                    .find(|(_, f)| ct_eq(&f.csrf_state, provided_state.trim()))
+                    .map(|(k, _)| k.clone())
             };
             let Some(flow_key) = matched_key else {
                 return (404, json!({"ok": false, "error": "oauth_flow_not_found"}));
@@ -13303,13 +14765,20 @@ fn handle_source_oauth_route(
             let Some(flow) = flows.get_mut(&flow_key) else {
                 return (404, json!({"ok": false, "error": "oauth_flow_not_found"}));
             };
+            // Always require constant-time full-state verification even when request_id is supplied!
+            if !ct_eq(&flow.csrf_state, provided_state.trim()) {
+                return (
+                    400,
+                    json!({"ok": false, "error": "invalid_oauth_state", "message": "OAuth CSRF state verification failed"}),
+                );
+            }
             if code.trim().is_empty() {
                 return (400, json!({"ok": false, "error": "authorization_code_required"}));
             }
             if let Some(ref v) = vault {
                 let _ = v.set_secret(&format!("source_account_token:{}", flow.account_id), code.trim());
             }
-            flow.state = "connected".into();
+            flow.state = "source_callback_completed".into();
             flow.authorization_url = None;
             flow.instructions = None;
             (
@@ -13380,8 +14849,7 @@ fn handle_source_oauth_route(
             let (_verifier, challenge) = generate_pkce_pair();
             let csrf_state = generate_hex_token_32();
             let auth_url = format!(
-                "http://127.0.0.1:1455/auth/callback?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={}",
-                &csrf_state[..16]
+                "https://auth.openai.com/oauth/authorize?response_type=code&code_challenge={challenge}&code_challenge_method=S256&state={csrf_state}"
             );
             let prev_rev = suite
                 .get_record::<Value>("source_account", &account_id)
@@ -13427,7 +14895,7 @@ fn handle_source_oauth_route(
                     "authorization_url": auth_url,
                     "pkce_challenge": challenge,
                     "pkce_method": "S256",
-                    "inference_supported": true,
+                    "inference_supported": false,
                     "account": {
                         "revision": rev,
                         "account": {
@@ -13481,9 +14949,13 @@ fn handle_source_oauth_route(
                     json!({
                         "request_id": f.request_id,
                         "state": f.state,
-                        "authorization_url": f.authorization_url,
+                        "authorization_url": if f.state == "pending" {
+                            f.authorization_url.as_ref().map(|u| json!(u)).unwrap_or(Value::Null)
+                        } else {
+                            Value::Null
+                        },
                         "pkce_challenge": f.code_challenge,
-                        "inference_supported": true,
+                        "inference_supported": false,
                         "account": acct_val
                     }),
                 ),
@@ -13491,9 +14963,9 @@ fn handle_source_oauth_route(
                     200,
                     json!({
                         "request_id": request_id,
-                        "state": if acct_val.is_some() { "connected" } else { "idle" },
+                        "state": if acct_val.is_some() { "authenticated_source_only" } else { "starting" },
                         "authorization_url": Value::Null,
-                        "inference_supported": acct_val.is_some(),
+                        "inference_supported": false,
                         "account": acct_val
                     }),
                 ),
@@ -13565,13 +15037,53 @@ fn handle_source_oauth_route(
                 .get_record::<Value>("source_account", &account_id)
                 .ok()
                 .flatten()
-                .unwrap_or_else(|| json!({"id": account_id, "source": "custom", "display_name": account_id}));
+                .unwrap_or_else(|| json!({"id": account_id, "source": "codex", "display_name": account_id, "path": ""}));
             let rev = prev.get("revision").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+            let display_name = body
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| prev.get("display_name").and_then(|v| v.as_str()).map(ToString::to_string))
+                .unwrap_or_else(|| account_id.clone());
+            let source = body
+                .get("source")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| prev.get("source").and_then(|v| v.as_str()).map(ToString::to_string))
+                .unwrap_or_else(|| "codex".to_string());
+            let cred_path = body
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .map(ToString::to_string)
+                .or_else(|| prev.get("path").and_then(|v| v.as_str()).map(ToString::to_string))
+                .unwrap_or_default();
+            let has_cred = token.is_some()
+                || (!cred_path.is_empty() && Path::new(&cred_path).exists());
+            let login_state = if has_cred {
+                "authenticated_source_only"
+            } else {
+                "unauthenticated"
+            };
+            let user_action = if has_cred {
+                "use_explicit_api_key_connection_for_inference"
+            } else if source == "kimi_code" {
+                "login_in_kimi_code_then_refresh"
+            } else {
+                "login_in_codex_then_refresh"
+            };
             let mut rec = prev;
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("id".into(), json!(account_id));
+                obj.insert("display_name".into(), json!(display_name));
+                obj.insert("source".into(), json!(source));
+                obj.insert("path".into(), json!(cred_path));
                 obj.insert("revision".into(), json!(rev));
-                obj.insert("state".into(), json!("connected"));
+                obj.insert("state".into(), json!(login_state));
                 obj.insert("updated_at_ms".into(), json!(now_ms()));
                 if let Some(conn_id) = body.get("connection_id").and_then(|v| v.as_str()) {
                     obj.insert("connection_id".into(), json!(conn_id));
@@ -13583,7 +15095,19 @@ fn handle_source_oauth_route(
                 json!({
                     "ok": true,
                     "bound": true,
-                    "account": rec
+                    "account": {
+                        "revision": rev,
+                        "account": {
+                            "id": account_id,
+                            "display_name": display_name,
+                            "source": source,
+                            "path": cred_path
+                        }
+                    },
+                    "login_state": login_state,
+                    "inference_supported": false,
+                    "user_action": user_action,
+                    "expires_at_ms": Value::Null
                 }),
             )
         }
@@ -13616,10 +15140,40 @@ fn handle_source_oauth_route(
                             .flatten()
                             .is_some()
                 });
+            let display_name = rec
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(account_id)
+                .to_string();
+            let source = rec
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("codex")
+                .to_string();
+            let cred_path = rec
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let has_cred =
+                has_token || (!cred_path.is_empty() && Path::new(&cred_path).exists());
+            let login_state = if has_cred {
+                "authenticated_source_only"
+            } else {
+                "unauthenticated"
+            };
+            let user_action = if has_cred {
+                "use_explicit_api_key_connection_for_inference"
+            } else if source == "kimi_code" {
+                "login_in_kimi_code_then_refresh"
+            } else {
+                "login_in_codex_then_refresh"
+            };
             let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1) + 1;
             if let Some(obj) = rec.as_object_mut() {
                 obj.insert("revision".into(), json!(rev));
                 obj.insert("has_token".into(), json!(has_token));
+                obj.insert("state".into(), json!(login_state));
                 obj.insert("refreshed_at_ms".into(), json!(now_ms()));
             }
             let _ = suite.upsert_record("source_account", account_id, &rec);
@@ -13629,7 +15183,19 @@ fn handle_source_oauth_route(
                     "ok": true,
                     "refreshed": true,
                     "has_token": has_token,
-                    "account": rec
+                    "account": {
+                        "revision": rev,
+                        "account": {
+                            "id": account_id,
+                            "display_name": display_name,
+                            "source": source,
+                            "path": cred_path
+                        }
+                    },
+                    "login_state": login_state,
+                    "inference_supported": false,
+                    "user_action": user_action,
+                    "expires_at_ms": Value::Null
                 }),
             )
         }
@@ -14435,6 +16001,8 @@ mod tests {
                 conversation_id: "conv-a".into(),
                 tool_name: "write_file".into(),
                 target_key: "path:src/main.rs".into(),
+                reason: "confirm write".into(),
+                arguments: json!({"path": "src/main.rs"}),
                 tx,
             },
         );
@@ -15325,7 +16893,11 @@ mod tests {
             &json!({"expected_host_id": "host-1", "operation_id": "op-1"}),
         );
         assert_eq!(s2, 200);
-        assert_eq!(adm["receipt"]["operation"]["state"], "admitted");
+        assert_eq!(adm["receipt"]["dispatch_permitted"], false);
+        assert_eq!(adm["receipt"]["operation"]["state"], "ready");
+        assert!(adm["receipt"]["operation"]["scenario"].is_string());
+        assert!(adm["receipt"]["operation"]["configuration"]["input_digest"].is_string());
+        assert_eq!(adm["receipt"]["operation"]["configuration"]["max_attempts"], 1);
         let (s3, insp) = handle_auxiliary_dispatch(
             &store,
             &suite,
@@ -15358,7 +16930,7 @@ mod tests {
             &json!({"account_id": "kimi-1", "origin": "http://127.0.0.1:58627", "server_bearer": "secret-tok"}),
         );
         assert_eq!(ks, 200);
-        assert_eq!(kconn["state"], "connected");
+        assert_eq!(kconn["state"], "idle");
         let (os, owners) = handle_source_oauth_route(
             &store,
             &suite,
@@ -15380,10 +16952,224 @@ mod tests {
         );
         assert_eq!(ss, 200);
         assert_eq!(started["state"], "pending");
+        assert_eq!(started["inference_supported"], false);
         assert_eq!(started["pkce_method"], "S256");
-        assert!(started["authorization_url"]
+        let auth_url = started["authorization_url"].as_str().unwrap();
+        assert!(auth_url.starts_with("https://auth.openai.com/oauth/authorize?"));
+        assert!(auth_url.contains("code_challenge="));
+    }
+
+    #[test]
+    fn second_pass_security_and_cross_client_contracts_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        crate::config::bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        let suite = Arc::new(ModulesSuite::new(
+            store.clone(),
+            dir.path().to_path_buf(),
+            None,
+        ));
+
+        // 1. Handoff target rejects control chars, whitespace, non-ASCII
+        assert_eq!(safe_handoff_target("/settings?tab=models"), "/settings?tab=models");
+        assert_eq!(safe_handoff_target("/settings\r\nSet-Cookie: evil=1"), "/settings");
+        assert_eq!(safe_handoff_target("/settings with space"), "/settings");
+        assert_eq!(safe_handoff_target("/settings/中文"), "/settings");
+
+        // 2. SEC-7 sensitive data source detection
+        assert!(is_sensitive_data_source_record(
+            &suite,
+            &json!({"kind": "localFile", "location": "/home/user/.ssh/id_rsa"})
+        ));
+        assert!(!is_sensitive_data_source_record(
+            &suite,
+            &json!({"kind": "localFile", "location": "README.md"})
+        ));
+
+        // 3. Local model dest_path confinement & ModelScope URL & vLLM recommend
+        let confined = confined_local_model_dest_path(Some("/etc/cron.d/pwned.gguf"), "fallback");
+        assert!(confined.starts_with(default_home_dir().join(".nola/models")));
+        assert_eq!(confined.file_name().unwrap(), "pwned.gguf");
+        let ms_url = build_local_model_download_url("modelscope", "Qwen/Qwen3-8B-GGUF", Some("q4.gguf")).unwrap();
+        assert!(ms_url.contains("modelscope.cn/models/Qwen/Qwen3-8B-GGUF/resolve/master/q4.gguf"));
+        let vllm_cands = build_vllm_recommend_candidates(&json!({"memoryBytes": 32_000_000_000u64, "unifiedMemory": true}));
+        assert!(!vllm_cands.is_empty());
+        assert_eq!(vllm_cands[0]["plan"]["engine"], "vllm");
+
+        // 4. OAuth origin validation & constant-time full-state verification on opencode-login/callback
+        assert!(validate_oauth_origin("https://example.com").is_ok());
+        assert!(validate_oauth_origin("http://127.0.0.1:4096").is_ok());
+        assert!(validate_oauth_origin("javascript:alert(1)").is_err());
+        assert!(validate_oauth_origin("http://evil.example.com").is_err());
+
+        let flows = Mutex::new(BTreeMap::new());
+        let (bad_st, _) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/kimi-login/connect",
+            "",
+            &json!({"account_id": "k-bad", "origin": "javascript:alert(1)", "server_bearer": "tok"}),
+        );
+        assert_eq!(bad_st, 400);
+        let (oc_st, oc_auth) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/opencode-login/authorize",
+            "",
+            &json!({"request_id": "oc-req-1", "account_id": "oc-1", "provider": "opencode", "method": 0}),
+        );
+        assert_eq!(oc_st, 200);
+        assert_eq!(oc_auth["state"], "awaiting_authorization");
+        let full_state = flows.lock().unwrap().get("oc-req-1").unwrap().csrf_state.clone();
+        // Prefix state MUST be rejected even when request_id matches!
+        let (prefix_st, _) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/opencode-login/callback",
+            "",
+            &json!({"request_id": "oc-req-1", "state": &full_state[..8], "code": "abc"}),
+        );
+        assert_eq!(prefix_st, 400);
+        // Full constant-time state succeeds -> source_callback_completed
+        let (ok_cb, cb_val) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/opencode-login/callback",
+            "",
+            &json!({"request_id": "oc-req-1", "state": full_state, "code": "abc"}),
+        );
+        assert_eq!(ok_cb, 200);
+        assert_eq!(cb_val["state"], "source_callback_completed");
+
+        // 5. SourceAccounts bind/refresh nested shape
+        let (bs, bound) = handle_source_oauth_route(
+            &store,
+            &suite,
+            &flows,
+            "/api/model-connections/source-accounts/bind",
+            "",
+            &json!({"account_id": "sa-1", "display_name": "My Codex", "source": "codex", "path": "/tmp/nonexistent"}),
+        );
+        assert_eq!(bs, 200);
+        assert_eq!(bound["account"]["revision"], 1);
+        assert_eq!(bound["account"]["account"]["id"], "sa-1");
+        assert_eq!(bound["account"]["account"]["display_name"], "My Codex");
+        assert_eq!(bound["account"]["account"]["source"], "codex");
+        assert_eq!(bound["account"]["account"]["path"], "/tmp/nonexistent");
+        assert_eq!(bound["login_state"], "unauthenticated");
+        assert!(bound["user_action"].is_string());
+
+        // 6. macOS remote chat & iOS resumeObservedRun NOT hijacked by is_messages_read_post
+        assert!(!is_messages_read_post_with_accept(
+            &json!({"expected_host_id": "h1", "messages": [{"role": "user", "content": "hello"}]}),
+            false
+        ));
+        assert!(!is_messages_read_post_with_accept(
+            &json!({"expected_host_id": "h1", "expected_run_id": "run-1"}),
+            true
+        ));
+        assert!(is_messages_read_post_with_accept(
+            &json!({"expected_host_id": "h1"}),
+            false
+        ));
+
+        // 7. Hybrid device_bridge tools + full device_tool_request frame + boolean error callback
+        let specs = extract_hybrid_device_tool_specs(&json!({
+            "device_bridge": {
+                "tools": [{
+                    "capability": "calendar",
+                    "schema": {
+                        "type": "function",
+                        "function": {
+                            "name": "list_events",
+                            "description": "List calendar events",
+                            "parameters": {"type": "object", "properties": {}}
+                        }
+                    }
+                }]
+            }
+        }));
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].0.schema.name, "list_events");
+        assert_eq!(specs[0].1, "calendar");
+        let frame = build_device_tool_request_frame(
+            "req-1",
+            "conv-1",
+            "host-1",
+            "client-1",
+            "list_events",
+            "calendar",
+            &json!({"limit": 5}),
+            "deadbeef",
+            1_900_000_000_000,
+        );
+        assert_eq!(frame["protocol_version"], 1);
+        assert_eq!(frame["tool_name"], "list_events");
+        assert_eq!(frame["tool"], "list_events");
+        assert_eq!(frame["nonce"], "deadbeef");
+        assert_eq!(frame["session_id"], "conv-1");
+        assert!(frame["trace"].is_object());
+        assert!(device_tool_callback_is_ok(&json!({"output": "ok", "error": false})));
+        assert!(device_tool_callback_is_ok(&json!({"output": "ok", "error": null})));
+        assert!(!device_tool_callback_is_ok(&json!({"error": true})));
+        assert!(!device_tool_callback_is_ok(&json!({"error": "boom"})));
+
+        // 8. iOS permission resolution parsing
+        assert_eq!(
+            parse_permission_resolution(&json!({"resolution": {"decision": "allow_once"}})),
+            (true, "once")
+        );
+        assert_eq!(
+            parse_permission_resolution(&json!({"resolution": {"decision": "allow_conversation"}})),
+            (true, "session")
+        );
+        assert_eq!(
+            parse_permission_resolution(&json!({"resolution": {"decision": "deny"}})),
+            (false, "once")
+        );
+
+        // 9. Goal schedule + applied_operations + plan reject/clear + recall messageId + worktree isMain
+        let (gs, sched) = handle_conversation_goal_control(
+            &store,
+            &suite,
+            "host-1",
+            "conv-sched",
+            &json!({
+                "action": "schedule",
+                "operationId": "op-sched-1",
+                "wakeAtEpochMs": 1_900_000_000_000i64
+            }),
+        );
+        assert_eq!(gs, 200);
+        assert_eq!(sched["conversationId"], "conv-sched");
+        assert_eq!(sched["operationId"], "op-sched-1");
+        assert_eq!(sched["authoritative"], true);
+        assert!(sched["goalProjection"]["applied_operations"]["op-sched-1"]["command_sha256"]
             .as_str()
-            .unwrap()
-            .contains("code_challenge="));
+            .is_some_and(|s| s.len() == 64));
+
+        let (rs, rej) = handle_conversation_plan(&store, "conv-p2", &json!({"action": "reject", "feedback": "revise"}));
+        assert_eq!(rs, 200);
+        assert_eq!(rej["plan"]["status"], "rejected");
+        let (cs, clr) = handle_conversation_plan(&store, "conv-p2", &json!({"action": "clear"}));
+        assert_eq!(cs, 200);
+        assert!(clr["plan"].is_null());
+
+        store
+            .append_event("conv-rec", "chat_user", json!({"content": "needle phrase"}), 100)
+            .unwrap();
+        let rec = handle_conversation_recall(&store, "conv-rec", &json!({"q": "needle"}));
+        assert!(rec["matches"][0]["messageId"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("msg-")));
+        assert!(rec["matches"][0]["createdAtMs"].is_i64());
+
+        let wts = parse_git_worktree_porcelain("worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/.nola/worktrees/feat\nHEAD def\nbranch refs/heads/feat\n");
+        assert_eq!(wts[0]["isMain"], true);
+        assert_eq!(wts[1]["isMain"], false);
     }
 }

@@ -348,7 +348,11 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
             json!({
                 "ok": false,
                 "request_id": "",
-                "error": {"code": "null_pointer", "message": "null application or request pointer"}
+                "error": {
+                    "code": "null_pointer",
+                    "message": "null application or request pointer",
+                    "outcome_pending": false
+                }
             })
             .to_string(),
         );
@@ -359,7 +363,11 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
             json!({
                 "ok": false,
                 "request_id": "",
-                "error": {"code": "invalid_json", "message": "invalid json request"}
+                "error": {
+                    "code": "invalid_json",
+                    "message": "invalid json request",
+                    "outcome_pending": false
+                }
             })
             .to_string(),
         );
@@ -385,7 +393,11 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
                 "operation": op_val
             }
         });
-        if let Some(op_type) = op_val.get("type").and_then(|v| v.as_str()) {
+        if let Some(op_type) = op_val
+            .get("kind")
+            .or_else(|| op_val.get("type"))
+            .and_then(|v| v.as_str())
+        {
             let is_template_subop = matches!(
                 op_type,
                 "list" | "list_templates" | "get" | "upsert" | "create" | "update" | "delete"
@@ -393,10 +405,15 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
             if is_template_subop {
                 handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &wrapped_native)
             } else {
+                let mut direct_cmd = op_val.clone();
+                if let Some(obj) = direct_cmd.as_object_mut() {
+                    obj.entry("type".to_string())
+                        .or_insert_with(|| json!(op_type));
+                }
                 let direct_env = json!({
                     "request_id": req_id,
                     "client_id": client_id,
-                    "command": op_val
+                    "command": direct_cmd
                 });
                 let direct_resp =
                     handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &direct_env);
@@ -437,10 +454,20 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
             .to_string(),
         )
     } else {
-        let err = envelope_resp
+        let mut err = envelope_resp
             .get("error")
             .cloned()
             .unwrap_or_else(|| json!({"code": "rejected", "message": "operation rejected"}));
+        if let Some(obj) = err.as_object_mut() {
+            obj.entry("outcome_pending".to_string())
+                .or_insert_with(|| json!(false));
+        } else {
+            err = json!({
+                "code": "rejected",
+                "message": err.to_string(),
+                "outcome_pending": false
+            });
+        }
         to_owned_c_string(
             json!({
                 "ok": false,
@@ -1427,6 +1454,24 @@ pub unsafe extern "C" fn nola_core_context_prepare(
     let mut archived = 0usize;
     let mut transactions = 0usize;
     let mut current_msg_tokens = msg_tokens_before;
+    let mut dropped_by_role: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
+    let mut record_dropped = |removed: &Value, seq_idx: usize| -> usize {
+        let role = removed
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mid = removed
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("{role}:dropped:{seq_idx}"));
+        let tok = estimate_text_tokens(&removed.to_string());
+        let entry = dropped_by_role.entry(role).or_insert_with(|| (0, Vec::new()));
+        entry.0 += tok;
+        entry.1.push(mid);
+        tok
+    };
     while current_msg_tokens + tool_tokens > prompt_limit && messages.len() > keep_recent.max(1) {
         let Some(group_indices) = oldest_removable_group_indices(&messages) else {
             break;
@@ -1436,8 +1481,8 @@ pub unsafe extern "C" fn nola_core_context_prepare(
         }
         for &idx in group_indices.iter().rev() {
             let removed = messages.remove(idx);
-            current_msg_tokens =
-                current_msg_tokens.saturating_sub(estimate_text_tokens(&removed.to_string()));
+            let tok = record_dropped(&removed, archived);
+            current_msg_tokens = current_msg_tokens.saturating_sub(tok);
             archived += 1;
         }
         transactions += 1;
@@ -1454,8 +1499,8 @@ pub unsafe extern "C" fn nola_core_context_prepare(
             let res_ids = message_tool_result_ids(&messages[idx]);
             if !res_ids.is_empty() && res_ids.iter().all(|id| !surviving_call_ids.contains(id)) {
                 let removed = messages.remove(idx);
-                current_msg_tokens =
-                    current_msg_tokens.saturating_sub(estimate_text_tokens(&removed.to_string()));
+                let tok = record_dropped(&removed, archived);
+                current_msg_tokens = current_msg_tokens.saturating_sub(tok);
                 archived += 1;
             } else {
                 idx += 1;
@@ -1463,7 +1508,8 @@ pub unsafe extern "C" fn nola_core_context_prepare(
         }
     }
 
-    // Compute real component metrics (both explicit request components and role/tool buckets).
+    // Compute real component metrics (both explicit request components and role/tool buckets),
+    // emitting all 7 canonical MacCoreComponentMetric keys alongside legacy fields.
     let mut component_metrics: Vec<Value> = Vec::new();
     if let Some(components) = req.get("components").and_then(|v| v.as_array()) {
         for comp in components {
@@ -1481,48 +1527,94 @@ pub unsafe extern "C" fn nola_core_context_prepare(
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string)
                 .unwrap_or_else(|| comp.to_string());
+            let tok = estimate_text_tokens(&text);
             component_metrics.push(json!({
                 "id": id,
                 "component": id,
                 "kind": kind,
-                "tokens": estimate_text_tokens(&text),
+                "tokens": tok,
+                "used_tokens": tok,
+                "dropped_tokens": 0,
+                "truncated_tokens": 0,
+                "used_ids": [id],
+                "dropped_ids": [],
+                "truncated_ids": [],
                 "chars": text.chars().count(),
                 "included": true
             }));
         }
     }
-    let mut role_stats: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
-    for m in &messages {
+    let mut role_stats: BTreeMap<String, (usize, usize, usize, Vec<String>)> = BTreeMap::new();
+    for (msg_idx, m) in messages.iter().enumerate() {
         let role = m
             .get("role")
             .and_then(|r| r.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let mid = m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("{role}:{msg_idx}"));
         let serialized = m.to_string();
-        let entry = role_stats.entry(role).or_insert((0, 0, 0));
+        let entry = role_stats
+            .entry(role)
+            .or_insert_with(|| (0, 0, 0, Vec::new()));
         entry.0 += 1;
         entry.1 += estimate_text_tokens(&serialized);
         entry.2 += serialized.chars().count();
+        entry.3.push(mid);
     }
-    for (role, (count, tokens, chars)) in role_stats {
+    let mut all_roles: BTreeSet<String> = role_stats.keys().cloned().collect();
+    all_roles.extend(dropped_by_role.keys().cloned());
+    for role in all_roles {
+        let (count, tokens, chars, used_ids) = role_stats
+            .remove(&role)
+            .unwrap_or_else(|| (0, 0, 0, Vec::new()));
+        let (dropped_tokens, dropped_ids) = dropped_by_role
+            .remove(&role)
+            .unwrap_or_else(|| (0, Vec::new()));
         component_metrics.push(json!({
             "id": format!("messages:{role}"),
             "component": role,
             "kind": "messages",
             "message_count": count,
             "tokens": tokens,
+            "used_tokens": tokens,
+            "dropped_tokens": dropped_tokens,
+            "truncated_tokens": 0,
+            "used_ids": used_ids,
+            "dropped_ids": dropped_ids,
+            "truncated_ids": [],
             "chars": chars,
-            "included": true
+            "included": count > 0
         }));
     }
     if !tools.is_empty() {
         let tools_chars: usize = tools.iter().map(|t| t.to_string().chars().count()).sum();
+        let tool_ids: Vec<String> = tools
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                t.get("name")
+                    .or_else(|| t.pointer("/function/name"))
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("tool:{i}"))
+            })
+            .collect();
         component_metrics.push(json!({
             "id": "tools:schema",
             "component": "tools",
             "kind": "tool_schema",
             "tool_count": tools.len(),
             "tokens": tool_tokens,
+            "used_tokens": tool_tokens,
+            "dropped_tokens": 0,
+            "truncated_tokens": 0,
+            "used_ids": tool_ids,
+            "dropped_ids": [],
+            "truncated_ids": [],
             "chars": tools_chars,
             "included": true
         }));
@@ -2836,6 +2928,48 @@ pub unsafe extern "C" fn nola_core_stitch_agent_model_continuation(
     to_owned_c_string(json!({"append": &cont[overlap..]}).to_string())
 }
 
+fn is_intermediate_child_pump_response(payload: &Value) -> bool {
+    let ty = payload
+        .pointer("/response/type")
+        .or_else(|| payload.get("type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    matches!(
+        ty,
+        "execution_started"
+            | "model_attempt_started"
+            | "model_delta"
+            | "model_tool_call_delta"
+            | "lease_renewed"
+            | "heartbeat"
+            | "progress"
+    )
+}
+
+fn parse_child_permission_decision(reply: &Value) -> bool {
+    if let Some(approved) = reply
+        .get("approved")
+        .or_else(|| reply.pointer("/response/approved"))
+        .and_then(|v| v.as_bool())
+    {
+        return approved;
+    }
+    if let Some(decision) = reply
+        .pointer("/response/resolution/decision")
+        .or_else(|| reply.pointer("/resolution/decision"))
+        .or_else(|| reply.pointer("/response/decision"))
+        .or_else(|| reply.get("decision"))
+        .and_then(|v| v.as_str())
+    {
+        return matches!(
+            decision.trim().to_ascii_lowercase().as_str(),
+            "allow_once" | "allow_conversation" | "allow" | "approve" | "approved" | "yes" | "true"
+        );
+    }
+    false
+}
+
 fn close_child_pump(pump: &NolaCoreChildPump) {
     pump.cancel.store(true, Ordering::Release);
     pump.closed.store(true, Ordering::Release);
@@ -2919,6 +3053,62 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
             .get("cancellation_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let task_id = req
+            .get("task_id")
+            .or_else(|| req.get("child_task_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let core_session_id = req
+            .get("core_session_id")
+            .or_else(|| req.get("session_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| conv_id.clone());
+        let turn_id = req
+            .get("turn_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("turn-{run_id}"));
+        let attempt = req
+            .get("attempt")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+
+        let prepared_task_rec = task_id
+            .as_deref()
+            .and_then(|tid| {
+                suite
+                    .get_record::<Value>("mobile_delegated_task", tid)
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        suite
+                            .get_record::<Value>("runtime_task", tid)
+                            .ok()
+                            .flatten()
+                    })
+            })
+            .or_else(|| {
+                suite
+                    .list_records::<Value>("mobile_delegated_task")
+                    .ok()
+                    .and_then(|list| {
+                        list.into_iter().find(|r| {
+                            r.pointer("/task/child_session_id").and_then(|v| v.as_str())
+                                == Some(conv_id.as_str())
+                                || r.pointer("/task/id").and_then(|v| v.as_str())
+                                    == Some(conv_id.as_str())
+                        })
+                    })
+            });
+
+        let mut loaded_from_mobile_task = false;
         let prompt = req
             .get("prompt")
             .or_else(|| req.get("task_prompt"))
@@ -2926,7 +3116,24 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(ToString::to_string);
+            .map(ToString::to_string)
+            .or_else(|| {
+                let p = prepared_task_rec.as_ref().and_then(|rec| {
+                    rec.pointer("/task/prompt")
+                        .or_else(|| rec.get("prompt"))
+                        .or_else(|| rec.pointer("/task/description"))
+                        .or_else(|| rec.get("description"))
+                        .or_else(|| rec.pointer("/task/title"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                });
+                if p.is_some() {
+                    loaded_from_mobile_task = true;
+                }
+                p
+            });
 
         if cancellation_only {
             finished_worker.store(true, Ordering::Release);
@@ -2958,7 +3165,7 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
             let force_host_exchange = req
                 .get("host_driven")
                 .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+                .unwrap_or(loaded_from_mobile_task || req.get("worker").is_some());
 
             if let (Some(route), false) = (resolved_route, force_host_exchange) {
                 match HttpModelCaller::new(120) {
@@ -2980,7 +3187,9 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                         let ticket_approval = Arc::clone(&ticket_counter);
                         let cancel_approval = Arc::clone(&cancel_worker);
                         let conv_approval = conv_id.clone();
+                        let core_sid_approval = core_session_id.clone();
                         let run_approval = run_id.clone();
+                        let turn_approval = turn_id.clone();
                         let approval_cb: nola_engine::ApprovalCallback =
                             Arc::new(move |spec: &ToolSpec, args: &Value, reason: &str| {
                                 if cancel_approval.load(Ordering::Acquire) {
@@ -2994,13 +3203,24 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                                 }
                                 let envelope = json!({
                                     "effect_id": effect_id,
+                                    "session_id": core_sid_approval,
                                     "conversation_id": conv_approval,
                                     "run_id": run_approval,
+                                    "turn_id": turn_approval,
+                                    "delivery": {
+                                        "ticket": ticket,
+                                        "attempt": attempt,
+                                        "sequence": 1
+                                    },
                                     "payload": {
                                         "type": "request_permission",
+                                        "permission_request_id": effect_id,
+                                        "capability_id": spec.schema.name,
                                         "tool": spec.schema.name,
                                         "arguments": args,
-                                        "reason": reason
+                                        "input": args,
+                                        "reason": reason,
+                                        "allow_conversation": true
                                     }
                                 });
                                 let _ = ev_tx_approval.send(ChildPumpEvent {
@@ -3010,22 +3230,25 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                                     transport_finished: false,
                                     error: None,
                                 });
-                                loop {
+                                let decision = loop {
                                     if cancel_approval.load(Ordering::Acquire) {
-                                        return false;
+                                        break false;
                                     }
                                     match rx.recv_timeout(Duration::from_millis(50)) {
                                         Ok(reply) => {
-                                            return reply
-                                                .get("approved")
-                                                .or_else(|| reply.pointer("/response/approved"))
-                                                .and_then(|v| v.as_bool())
-                                                .unwrap_or(false);
+                                            if is_intermediate_child_pump_response(&reply) {
+                                                continue;
+                                            }
+                                            break parse_child_permission_decision(&reply);
                                         }
                                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                                        Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                                        Err(mpsc::RecvTimeoutError::Disconnected) => break false,
                                     }
+                                };
+                                if let Ok(mut map) = pending_approval.lock() {
+                                    map.remove(&ticket);
                                 }
+                                decision
                             });
 
                         let run_cfg = AgentRunConfig {
@@ -3084,18 +3307,44 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                 // Host-driven child run exchange (mobile host executes model_stream/tool tickets).
                 let ticket = ticket_counter.fetch_add(1, Ordering::AcqRel);
                 let effect_id = format!("effect-{ticket}");
+                let text_part_id = format!("{assistant_message_id}:text");
+                let reasoning_part_id = format!("{assistant_message_id}:reasoning");
                 let (t_tx, t_rx) = mpsc::channel::<Value>();
                 if let Ok(mut map) = pending_worker.lock() {
                     map.insert(ticket, t_tx);
                 }
                 let envelope = json!({
                     "effect_id": effect_id,
+                    "session_id": core_session_id,
                     "conversation_id": conv_id,
                     "run_id": run_id,
+                    "turn_id": turn_id,
                     "assistant_message_id": assistant_message_id,
+                    "delivery": {
+                        "ticket": ticket,
+                        "attempt": attempt,
+                        "sequence": 1
+                    },
                     "payload": {
                         "type": "model_stream",
-                        "prompt": user_prompt
+                        "prompt": user_prompt,
+                        "text_part_id": text_part_id,
+                        "reasoning_part_id": reasoning_part_id,
+                        "messages": [{"role": "user", "content": user_prompt}],
+                        "settings": {
+                            "context_window_tokens": 128_000,
+                            "prompt_token_limit": 123_904,
+                            "model_invocation_plan": {
+                                "effective_max_output_tokens": 4_096,
+                                "native_tool_calls": true,
+                                "parallel_tool_calls": false,
+                                "reasoning": true,
+                                "prompt_cache": true,
+                                "stream_text": true,
+                                "stream_reasoning": true,
+                                "stream_tool_calls": true
+                            }
+                        }
                     }
                 });
                 let _ = ev_tx_worker.send(ChildPumpEvent {
@@ -3105,30 +3354,136 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                     transport_finished: false,
                     error: None,
                 });
-                loop {
+                let mut streamed_text = String::new();
+                let mut streamed_reasoning = String::new();
+                let run_result = loop {
                     if cancel_worker.load(Ordering::Acquire) {
                         break Err("child pump cancelled".into());
                     }
                     match t_rx.recv_timeout(Duration::from_millis(50)) {
                         Ok(reply) => {
-                            let final_text = reply
+                            let resp_type = reply
+                                .pointer("/response/type")
+                                .or_else(|| reply.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if is_intermediate_child_pump_response(&reply) {
+                                if resp_type == "model_delta" {
+                                    let channel = reply
+                                        .pointer("/response/channel")
+                                        .or_else(|| reply.get("channel"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("text");
+                                    let delta = reply
+                                        .pointer("/response/delta")
+                                        .or_else(|| reply.get("delta"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if channel == "reasoning" {
+                                        streamed_reasoning.push_str(delta);
+                                        let _ = ev_tx_worker.send(ChildPumpEvent {
+                                            kind: "reasoning_delta".into(),
+                                            request: None,
+                                            event: Some(json!({
+                                                "type": "reasoning_delta",
+                                                "delta": delta
+                                            })),
+                                            transport_finished: false,
+                                            error: None,
+                                        });
+                                    } else {
+                                        streamed_text.push_str(delta);
+                                        let _ = ev_tx_worker.send(ChildPumpEvent {
+                                            kind: "text_delta".into(),
+                                            request: None,
+                                            event: Some(json!({
+                                                "type": "text_delta",
+                                                "delta": delta
+                                            })),
+                                            transport_finished: false,
+                                            error: None,
+                                        });
+                                    }
+                                }
+                                continue;
+                            }
+                            if matches!(resp_type, "failed" | "cancelled") {
+                                let err_msg = reply
+                                    .pointer("/response/error/message")
+                                    .or_else(|| reply.pointer("/response/error"))
+                                    .or_else(|| reply.get("error"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(if resp_type == "cancelled" {
+                                        "child execution cancelled"
+                                    } else {
+                                        "child execution failed"
+                                    })
+                                    .to_string();
+                                if let Some(ref tid) = task_id {
+                                    if let Ok(Some(mut rec)) =
+                                        suite.get_record::<Value>("mobile_delegated_task", tid)
+                                    {
+                                        if let Some(t) =
+                                            rec.get_mut("task").and_then(|v| v.as_object_mut())
+                                        {
+                                            t.insert("status".into(), json!(resp_type));
+                                            t.insert("error".into(), json!(err_msg));
+                                            t.insert("updated_at_ms".into(), json!(now_ms()));
+                                        }
+                                        let _ =
+                                            suite.upsert_record("mobile_delegated_task", tid, &rec);
+                                        if let Some(tv) = rec.get("task") {
+                                            let _ = suite.upsert_record("runtime_task", tid, tv);
+                                        }
+                                    }
+                                }
+                                break Err(err_msg);
+                            }
+                            let explicit_text = reply
                                 .pointer("/response/content")
                                 .or_else(|| reply.pointer("/response/text"))
+                                .or_else(|| reply.pointer("/response/output/text"))
                                 .or_else(|| reply.get("content"))
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                                .unwrap_or("");
+                            let final_text = if !explicit_text.is_empty() {
+                                explicit_text.to_string()
+                            } else {
+                                streamed_text.clone()
+                            };
+                            let mut msg_event = json!({
+                                "id": assistant_message_id,
+                                "run_id": run_id,
+                                "role": "assistant",
+                                "content": final_text
+                            });
+                            if !streamed_reasoning.is_empty() {
+                                msg_event["reasoning"] = json!(streamed_reasoning);
+                            }
                             let _ = store.append_event(
                                 &conv_id,
                                 "assistant_message",
-                                json!({
-                                    "id": assistant_message_id,
-                                    "run_id": run_id,
-                                    "role": "assistant",
-                                    "content": final_text
-                                }),
+                                msg_event,
                                 50_000,
                             );
+                            if let Some(ref tid) = task_id {
+                                if let Ok(Some(mut rec)) =
+                                    suite.get_record::<Value>("mobile_delegated_task", tid)
+                                {
+                                    if let Some(t) =
+                                        rec.get_mut("task").and_then(|v| v.as_object_mut())
+                                    {
+                                        t.insert("status".into(), json!("completed"));
+                                        t.insert("result".into(), json!(final_text));
+                                        t.insert("updated_at_ms".into(), json!(now_ms()));
+                                    }
+                                    let _ =
+                                        suite.upsert_record("mobile_delegated_task", tid, &rec);
+                                    if let Some(tv) = rec.get("task") {
+                                        let _ = suite.upsert_record("runtime_task", tid, tv);
+                                    }
+                                }
+                            }
                             let _ = ev_tx_worker.send(ChildPumpEvent {
                                 kind: "turn_completed".into(),
                                 request: None,
@@ -3148,7 +3503,11 @@ pub unsafe extern "C" fn nola_core_child_pump_start(
                             break Err("child pump closed before response".into());
                         }
                     }
+                };
+                if let Ok(mut map) = pending_worker.lock() {
+                    map.remove(&ticket);
                 }
+                run_result
             }
         } else {
             // Idle/standby child pump waiting for host-delivered control messages until closed.
@@ -3346,17 +3705,25 @@ pub unsafe extern "C" fn nola_core_child_pump_respond(
     }
 
     if let Some(ticket) = payload.get("ticket").and_then(|v| v.as_u64()) {
-        let sender = pump
-            .pending_tickets
-            .lock()
-            .ok()
-            .and_then(|mut map| map.remove(&ticket));
+        let is_intermediate = is_intermediate_child_pump_response(&payload);
+        let sender = pump.pending_tickets.lock().ok().and_then(|mut map| {
+            if is_intermediate {
+                map.get(&ticket).cloned()
+            } else {
+                map.remove(&ticket)
+            }
+        });
         if let Some(tx) = sender {
             if tx.send(payload).is_ok() {
                 return to_owned_c_string(
                     json!({"ok": true, "result": {"committed": true, "pump_id": pump.pump_id, "ticket": ticket}})
                         .to_string(),
                 );
+            }
+            if is_intermediate {
+                if let Ok(mut map) = pump.pending_tickets.lock() {
+                    map.remove(&ticket);
+                }
             }
             return to_owned_c_string(
                 json!({"ok": false, "error": {"code": "ticket_closed", "message": "child ticket waiter closed"}})
@@ -3808,11 +4175,20 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
                 );
             };
             let arguments = nested_req
-                .and_then(|r| r.get("arguments"))
-                .or_else(|| nested_payload.and_then(|p| p.get("arguments")))
-                .or_else(|| req.get("arguments"))
+                .and_then(|r| r.get("arguments").or_else(|| r.get("input")))
+                .or_else(|| {
+                    nested_payload.and_then(|p| p.get("arguments").or_else(|| p.get("input")))
+                })
+                .or_else(|| req.get("arguments").or_else(|| req.get("input")))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            let call_id = nested_payload
+                .and_then(|p| p.get("call_id"))
+                .or_else(|| nested_req.and_then(|r| r.get("call_id")))
+                .or_else(|| req.get("call_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
 
             let mut cancel_keys: Vec<String> = Vec::new();
             for candidate in [
@@ -3850,16 +4226,40 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
             }
             let _cancel_guard = McpCancelGuard { keys: cancel_keys };
 
+            let make_nested_err = |code: &str, msg: &str, exec_state: &str| {
+                if nested_req.is_some() {
+                    to_owned_c_string(
+                        json!({
+                            "ok": false,
+                            "error": {"code": code, "message": msg},
+                            "result": {
+                                "type": "tool_completed",
+                                "call_id": call_id,
+                                "outcome": "failed",
+                                "output": {
+                                    "execution": {"state": exec_state},
+                                    "error": msg
+                                },
+                                "full_output_ref": Value::Null,
+                                "artifacts": [],
+                                "server_id": server_id,
+                                "tool_name": tool_name
+                            }
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    to_owned_c_string(
+                        json!({"ok": false, "error": {"code": code, "message": msg}}).to_string(),
+                    )
+                }
+            };
+
             if cancel_flag.load(Ordering::SeqCst) {
-                return to_owned_c_string(
-                    json!({
-                        "ok": false,
-                        "error": {
-                            "code": "cancelled",
-                            "message": "MCP tool call was cancelled before execution"
-                        }
-                    })
-                    .to_string(),
+                return make_nested_err(
+                    "cancelled",
+                    "MCP tool call was cancelled before execution",
+                    "not_started",
                 );
             }
 
@@ -3869,16 +4269,14 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
                 .list_mcp_servers()
                 .unwrap_or_default();
             let Some(srv) = servers.into_iter().find(|s| s.id == server_id) else {
-                return to_owned_c_string(
-                    json!({"ok": false, "error": {"code": "not_found", "message": format!("MCP server '{server_id}' not found")}})
-                        .to_string(),
+                return make_nested_err(
+                    "not_found",
+                    &format!("MCP server '{server_id}' not found"),
+                    "not_started",
                 );
             };
             if let Err(e) = app_ref.inner.mcp.connect(&srv) {
-                return to_owned_c_string(
-                    json!({"ok": false, "error": {"code": "mcp_connect_error", "message": e.to_string()}})
-                        .to_string(),
-                );
+                return make_nested_err("mcp_connect_error", &e.to_string(), "not_started");
             }
             match app_ref.inner.mcp.call_tool_with_options(
                 &srv.id,
@@ -3893,10 +4291,15 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
                             json!({
                                 "ok": true,
                                 "result": {
+                                    "type": "tool_completed",
+                                    "call_id": call_id,
+                                    "outcome": "succeeded",
                                     "output": {
                                         "execution": {"state": "completed"},
                                         "result": res
                                     },
+                                    "full_output_ref": Value::Null,
+                                    "artifacts": [],
                                     "server_id": srv.id,
                                     "tool_name": tool_name
                                 }
@@ -3907,14 +4310,8 @@ pub unsafe extern "C" fn nola_core_mobile_mcp_host(
                         to_owned_c_string(json!({"ok": true, "result": res}).to_string())
                     }
                 }
-                Err(McpError::Cancelled(msg)) => to_owned_c_string(
-                    json!({"ok": false, "error": {"code": "cancelled", "message": msg}})
-                        .to_string(),
-                ),
-                Err(e) => to_owned_c_string(
-                    json!({"ok": false, "error": {"code": "mcp_call_error", "message": e.to_string()}})
-                        .to_string(),
-                ),
+                Err(McpError::Cancelled(msg)) => make_nested_err("cancelled", &msg, "unknown"),
+                Err(e) => make_nested_err("mcp_call_error", &e.to_string(), "unknown"),
             }
         }
         "disconnect" => {
@@ -4404,7 +4801,39 @@ pub unsafe extern "C" fn nola_core_software_update_json(
         );
     }
 
-    match check_for_update(manifest_url, current_version) {
+    let check_res = {
+        static UPDATE_TARGET_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _env_lock = UPDATE_TARGET_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_already_set = std::env::var("NOLA_UPDATE_TARGET")
+            .ok()
+            .is_some_and(|s| !s.trim().is_empty());
+        struct EnvTargetGuard {
+            restore: bool,
+        }
+        impl Drop for EnvTargetGuard {
+            fn drop(&mut self) {
+                if self.restore {
+                    std::env::remove_var("NOLA_UPDATE_TARGET");
+                }
+            }
+        }
+        let _guard = if !env_already_set {
+            if let Some(target) = req_target {
+                std::env::set_var("NOLA_UPDATE_TARGET", target);
+                EnvTargetGuard { restore: true }
+            } else {
+                EnvTargetGuard { restore: false }
+            }
+        } else {
+            EnvTargetGuard { restore: false }
+        };
+        check_for_update(manifest_url, current_version)
+    };
+
+    match check_res {
         Ok(update) => {
             let effective_target = if std::env::var("NOLA_UPDATE_TARGET")
                 .ok()
@@ -4435,7 +4864,9 @@ fn format_update_check_response(
     channel: &str,
     effective_target: &str,
 ) -> *mut c_char {
-    let artifact_kind = if effective_target.eq_ignore_ascii_case("ios") {
+    let artifact_kind = if effective_target.eq_ignore_ascii_case("ios")
+        || effective_target.eq_ignore_ascii_case("android-store")
+    {
         "store"
     } else {
         "archive"
@@ -5364,5 +5795,248 @@ mod tests {
         assert_eq!(tp["disabled_tools"][0]["reason"], "risk_exceeds_user_policy");
 
         unsafe { nola_core_application_free(app) };
+    }
+
+    #[test]
+    fn ffi_second_pass_contracts_context_expert_updater_mcp_and_child_pump() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_str = dir.path().join("second_pass.db").display().to_string();
+        let app = unsafe { nola_core_application_open(db_str.as_ptr(), db_str.len()) };
+        assert!(!app.is_null());
+
+        // 1. context_prepare emits all 7 canonical MacCoreComponentMetric keys
+        let cp_req = json!({
+            "messages": [
+                {"id": "m1", "role": "user", "content": "hi"},
+                {"id": "m2", "role": "assistant", "content": "hello"}
+            ],
+            "tools": [{"name": "read_file", "parameters": {}}],
+            "components": [{"id": "sys-1", "kind": "system", "content": "You are Nola"}]
+        })
+        .to_string();
+        let cp_ptr = unsafe { nola_core_context_prepare(cp_req.as_ptr(), cp_req.len()) };
+        let cp_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(cp_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(cp_ptr) };
+        let metrics = cp_val["component_metrics"].as_array().unwrap();
+        assert!(!metrics.is_empty());
+        for m in metrics {
+            assert!(m["kind"].is_string());
+            assert!(m["used_tokens"].is_number());
+            assert!(m["dropped_tokens"].is_number());
+            assert!(m["truncated_tokens"].is_number());
+            assert!(m["used_ids"].is_array());
+            assert!(m["dropped_ids"].is_array());
+            assert!(m["truncated_ids"].is_array());
+        }
+
+        // 2. expert_host_operation reads operation.kind and sets error.outcome_pending = false on rejection
+        let exp_list = json!({
+            "request_id": "exp-req-1",
+            "operation": {"kind": "list"}
+        })
+        .to_string();
+        let el_ptr = unsafe {
+            nola_core_application_expert_host_operation(app, exp_list.as_ptr(), exp_list.len())
+        };
+        let el_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(el_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(el_ptr) };
+        assert_eq!(el_val["ok"], true);
+
+        let exp_bad = json!({
+            "request_id": "exp-req-2",
+            "operation": {"kind": "nonexistent_op_xyz"}
+        })
+        .to_string();
+        let eb_ptr = unsafe {
+            nola_core_application_expert_host_operation(app, exp_bad.as_ptr(), exp_bad.len())
+        };
+        let eb_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(eb_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(eb_ptr) };
+        assert_eq!(eb_val["ok"], false);
+        assert_eq!(eb_val["error"]["outcome_pending"], false);
+
+        // 3. software_update passes req_target into check_for_update and marks android-store as kind="store"
+        let su_req = json!({
+            "operation": "check",
+            "target": "android-store",
+            "current_version": "2.0.0",
+            "current_build": 200
+        })
+        .to_string();
+        let su_ptr = unsafe { nola_core_software_update_json(su_req.as_ptr(), su_req.len()) };
+        let su_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(su_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(su_ptr) };
+        assert_eq!(su_val["ok"], true);
+        assert_eq!(su_val["value"]["target"], "android-store");
+
+        let fake_update = nola_modules::UpdateCheckResult {
+            status: "update_available".into(),
+            current_version: "2.0.0".into(),
+            target: "android-store".into(),
+            update_available: true,
+            latest: Some(nola_modules::UpdateManifest {
+                version: "2.1.0".into(),
+                download_url: "https://play.google.com/store/apps/details?id=com.nola".into(),
+                sha256: "a".repeat(64),
+                notes: "Update".into(),
+                signature: Some("sig".into()),
+                build: Some(210),
+                size: None,
+                filename: None,
+                release_id: Some("rel-210".into()),
+            }),
+        };
+        let formatted_ptr =
+            format_update_check_response(fake_update, "2.0.0", 200, "stable", "android-store");
+        let formatted: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(formatted_ptr) }.to_str().unwrap())
+                .unwrap();
+        unsafe { nola_core_free_c_string(formatted_ptr) };
+        assert_eq!(formatted["value"]["release"]["artifact"]["kind"], "store");
+
+        // 4. mobile_mcp_host nested error carries tool_completed / call_id / outcome="failed"
+        let mcp_exec = json!({
+            "type": "execute",
+            "host_id": "ios-host-1",
+            "session_id": "sess-1",
+            "request": {
+                "effect_id": "eff-mcp-1",
+                "payload": {
+                    "call_id": "call-mcp-9",
+                    "capability_id": "mcp__missing-srv__lookup",
+                    "input": {"q": "rust"}
+                }
+            }
+        })
+        .to_string();
+        let me_ptr = unsafe { nola_core_mobile_mcp_host(app, mcp_exec.as_ptr(), mcp_exec.len()) };
+        let me_val: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(me_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(me_ptr) };
+        assert_eq!(me_val["ok"], false);
+        assert_eq!(me_val["result"]["type"], "tool_completed");
+        assert_eq!(me_val["result"]["call_id"], "call-mcp-9");
+        assert_eq!(me_val["result"]["outcome"], "failed");
+
+        // 5. child_pump loads prompt from prepared mobile_delegated_task, emits full envelope fields,
+        //    keeps ticket alive across execution_started + model_delta, and parses resolution.decision!
+        let app_ref = unsafe { &*app };
+        app_ref
+            .inner
+            .suite
+            .upsert_record(
+                "mobile_delegated_task",
+                "task-mobile-1",
+                &json!({
+                    "id": "task-mobile-1",
+                    "task": {
+                        "id": "task-mobile-1",
+                        "owner_session_id": "parent-1",
+                        "child_session_id": "child-task-mobile-1",
+                        "prompt": "Summarize release notes",
+                        "status": "running"
+                    }
+                }),
+            )
+            .unwrap();
+        let start_req = json!({
+            "task_id": "task-mobile-1",
+            "conversation_id": "child-task-mobile-1",
+            "core_session_id": "core-child-1",
+            "run_id": "run-mobile-1",
+            "assistant_message_id": "run-mobile-1:assistant",
+            "attempt": 1,
+            "worker": {"pid": 7}
+        })
+        .to_string();
+        let mut err_ptr: *mut c_char = std::ptr::null_mut();
+        let pump = unsafe {
+            nola_core_child_pump_start(app, start_req.as_ptr(), start_req.len(), &mut err_ptr)
+        };
+        assert!(!pump.is_null());
+        let p1_ptr = unsafe { nola_core_child_pump_poll(pump, 1000) };
+        let p1: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(p1_ptr) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(p1_ptr) };
+        assert_eq!(p1["result"]["kind"], "host_request");
+        let pump_id = p1["result"]["pump_id"].as_str().unwrap().to_string();
+        let ticket = p1["result"]["request"]["ticket"].as_u64().unwrap();
+        let env = &p1["result"]["request"]["envelope"];
+        assert_eq!(env["session_id"], "core-child-1");
+        assert!(!env["turn_id"].as_str().unwrap().is_empty());
+        assert!(env["delivery"].is_object());
+        assert_eq!(env["payload"]["prompt"], "Summarize release notes");
+        assert!(!env["payload"]["text_part_id"].as_str().unwrap().is_empty());
+        assert!(!env["payload"]["reasoning_part_id"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+
+        // Intermediate responses MUST NOT remove ticket!
+        for inter in [
+            json!({"pump_id": pump_id, "ticket": ticket, "response": {"type": "execution_started"}}),
+            json!({"pump_id": pump_id, "ticket": ticket, "response": {"type": "model_delta", "channel": "text", "delta": "Part 1 "}}),
+            json!({"pump_id": pump_id, "ticket": ticket, "response": {"type": "model_delta", "channel": "text", "delta": "Part 2"}}),
+        ] {
+            let s = inter.to_string();
+            let rp = unsafe { nola_core_child_pump_respond(pump, s.as_ptr(), s.len()) };
+            let rv: Value =
+                serde_json::from_str(unsafe { CStr::from_ptr(rp) }.to_str().unwrap()).unwrap();
+            unsafe { nola_core_free_c_string(rp) };
+            assert_eq!(rv["ok"], true);
+            assert_eq!(rv["result"]["committed"], true);
+        }
+        // Terminal response completes the ticket
+        let term = json!({
+            "pump_id": pump_id,
+            "ticket": ticket,
+            "response": {"type": "model_completed"}
+        })
+        .to_string();
+        let tp = unsafe { nola_core_child_pump_respond(pump, term.as_ptr(), term.len()) };
+        let tv: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(tp) }.to_str().unwrap()).unwrap();
+        unsafe { nola_core_free_c_string(tp) };
+        assert_eq!(tv["ok"], true);
+
+        // Drain events until turn_completed and check accumulated delta text
+        let mut got_final = String::new();
+        for _ in 0..10 {
+            let ep = unsafe { nola_core_child_pump_poll(pump, 1000) };
+            let ev: Value =
+                serde_json::from_str(unsafe { CStr::from_ptr(ep) }.to_str().unwrap()).unwrap();
+            unsafe { nola_core_free_c_string(ep) };
+            if ev["result"]["kind"] == "turn_completed" {
+                got_final = ev["result"]["event"]["final_text"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+            }
+            if ev["result"]["transport_finished"] == true {
+                break;
+            }
+        }
+        assert_eq!(got_final, "Part 1 Part 2");
+
+        // Permission resolution parser handles allow_once / allow_conversation / deny
+        assert!(parse_child_permission_decision(&json!({
+            "response": {"type": "permission_resolved", "resolution": {"decision": "allow_once"}}
+        })));
+        assert!(parse_child_permission_decision(&json!({
+            "response": {"type": "permission_resolved", "resolution": {"decision": "allow_conversation"}}
+        })));
+        assert!(!parse_child_permission_decision(&json!({
+            "response": {"type": "permission_resolved", "resolution": {"decision": "deny"}}
+        })));
+
+        unsafe {
+            nola_core_child_pump_close(pump);
+            nola_core_child_pump_free(pump);
+            nola_core_application_free(app);
+        }
     }
 }

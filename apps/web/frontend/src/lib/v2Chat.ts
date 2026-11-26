@@ -194,7 +194,7 @@ export interface V2ConversationPlanStep {
 
 export interface V2ConversationPlan {
     enabled: boolean;
-    status: 'idle' | 'draft' | 'awaiting_approval' | 'approved' | 'rejected' | 'executing' | 'completed';
+    status: 'idle' | 'draft' | 'proposed' | 'pending' | 'awaiting_approval' | 'approved' | 'rejected' | 'executing' | 'completed';
     summary?: string;
     markdown?: string;
     steps: V2ConversationPlanStep[];
@@ -227,6 +227,7 @@ export interface V2GitWorktree {
 
 export interface V2TurnObservation {
     active: boolean;
+    needsResponse?: boolean;
     status?: string;
     runId?: string;
     text?: string;
@@ -1559,25 +1560,117 @@ export async function listV2ConversationArtifacts(
                 ? (res as unknown[])
                 : [];
         return raw
-            .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-            .map((item, idx) => ({
-                id: String(item.id ?? item.artifact_id ?? item.artifactId ?? `art-${idx}`),
-                title: String(item.title ?? item.name ?? item.path ?? item.filename ?? `Artifact ${idx + 1}`),
-                kind: String(item.kind ?? item.type ?? 'file'),
-                path: typeof item.path === 'string' ? item.path : undefined,
-                mimeType: typeof item.mimeType === 'string' ? item.mimeType : typeof item.mime_type === 'string' ? item.mime_type : undefined,
-                size: typeof item.size === 'number' ? item.size : typeof item.byte_count === 'number' ? item.byte_count : undefined,
-                content: typeof item.content === 'string' ? item.content : typeof item.text === 'string' ? item.text : undefined,
-                preview: typeof item.preview === 'string' ? item.preview : typeof item.summary === 'string' ? item.summary : undefined,
-                createdAt: typeof item.createdAt === 'string'
-                    ? item.createdAt
-                    : typeof item.created_at === 'string'
-                      ? item.created_at
-                      : typeof item.created_at_ms === 'number'
-                        ? new Date(item.created_at_ms).toLocaleString()
-                        : undefined,
-                messageId: typeof item.messageId === 'string' ? item.messageId : typeof item.message_id === 'string' ? item.message_id : undefined,
-            }));
+            .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+            .map((entry, idx) => {
+                const item = (
+                    entry.item && typeof entry.item === 'object' && !Array.isArray(entry.item)
+                        ? entry.item
+                        : entry
+                ) as Record<string, unknown>;
+                const createdMs =
+                    typeof item.createdAtMs === 'number'
+                        ? item.createdAtMs
+                        : typeof item.created_at_ms === 'number'
+                          ? item.created_at_ms
+                          : typeof entry.createdAtMs === 'number'
+                            ? entry.createdAtMs
+                            : typeof entry.created_at_ms === 'number'
+                              ? entry.created_at_ms
+                              : undefined;
+                const pathVal =
+                    typeof item.path === 'string'
+                        ? item.path
+                        : typeof entry.path === 'string'
+                          ? entry.path
+                          : undefined;
+                const identityObj =
+                    item.identity && typeof item.identity === 'object'
+                        ? (item.identity as Record<string, unknown>)
+                        : null;
+                return {
+                    id: String(
+                        entry.id ??
+                            item.id ??
+                            item.artifact_id ??
+                            item.artifactId ??
+                            identityObj?.surface_id ??
+                            (entry.seq != null ? `art-seq-${entry.seq}-${idx}` : `art-${idx}`),
+                    ),
+                    title: String(
+                        item.title ??
+                            item.name ??
+                            item.filename ??
+                            item.path ??
+                            entry.title ??
+                            entry.name ??
+                            entry.path ??
+                            item.summary ??
+                            `Artifact ${idx + 1}`,
+                    ),
+                    kind: String(entry.kind ?? item.kind ?? item.type ?? 'file'),
+                    path: pathVal,
+                    mimeType:
+                        typeof item.mimeType === 'string'
+                            ? item.mimeType
+                            : typeof item.mime_type === 'string'
+                              ? item.mime_type
+                              : typeof entry.mimeType === 'string'
+                                ? entry.mimeType
+                                : typeof entry.mime_type === 'string'
+                                  ? entry.mime_type
+                                  : undefined,
+                    size:
+                        typeof item.size === 'number'
+                            ? item.size
+                            : typeof item.byte_count === 'number'
+                              ? item.byte_count
+                              : typeof item.size_bytes === 'number'
+                                ? item.size_bytes
+                                : typeof entry.size === 'number'
+                                  ? entry.size
+                                  : undefined,
+                    content:
+                        typeof item.content === 'string'
+                            ? item.content
+                            : typeof item.text === 'string'
+                              ? item.text
+                              : typeof entry.content === 'string'
+                                ? entry.content
+                                : undefined,
+                    preview:
+                        typeof item.preview === 'string'
+                            ? item.preview
+                            : typeof item.summary === 'string'
+                              ? item.summary
+                              : typeof entry.preview === 'string'
+                                ? entry.preview
+                                : typeof entry.summary === 'string'
+                                  ? entry.summary
+                                  : undefined,
+                    createdAt:
+                        typeof item.createdAt === 'string'
+                            ? item.createdAt
+                            : typeof item.created_at === 'string'
+                              ? item.created_at
+                              : typeof entry.createdAt === 'string'
+                                ? entry.createdAt
+                                : typeof entry.created_at === 'string'
+                                  ? entry.created_at
+                                  : createdMs !== undefined
+                                    ? new Date(createdMs).toLocaleString()
+                                    : undefined,
+                    messageId:
+                        typeof item.messageId === 'string'
+                            ? item.messageId
+                            : typeof item.message_id === 'string'
+                              ? item.message_id
+                              : typeof entry.messageId === 'string'
+                                ? entry.messageId
+                                : typeof entry.message_id === 'string'
+                                  ? entry.message_id
+                                  : undefined,
+                };
+            });
     } catch (cause) {
         if (cause instanceof ApiError && cause.status === 404) return [];
         throw cause;
@@ -1592,8 +1685,12 @@ export async function searchV2ConversationRecall(
     const trimmed = query.trim();
     if (!trimmed) return [];
     const res = await api<Record<string, unknown>>(
-        `${conversationUrl(conversationId)}/recall?q=${encodeURIComponent(trimmed)}`,
-        { signal },
+        `${conversationUrl(conversationId)}/recall`,
+        {
+            method: 'POST',
+            body: JSON.stringify({ query: trimmed }),
+            signal,
+        },
     );
     const raw = Array.isArray(res.hits)
         ? res.hits
@@ -1608,17 +1705,31 @@ export async function searchV2ConversationRecall(
         .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
         .map((item, idx) => {
             const payload = (item.payload && typeof item.payload === 'object' ? item.payload : item) as Record<string, unknown>;
-            return {
-                messageId: String(item.message_id ?? item.messageId ?? item.id ?? `hit-${idx}`),
-                seq: typeof item.seq === 'number' ? item.seq : undefined,
-                ordinal: typeof item.message_ordinal === 'number' ? item.message_ordinal : typeof item.seq === 'number' ? item.seq : idx + 1,
-                role: String(item.role ?? payload.role ?? item.kind ?? 'message'),
-                snippet: String(item.snippet ?? item.text ?? payload.text ?? payload.content ?? ''),
-                timestamp: typeof item.created_at === 'string'
-                    ? item.created_at
+            const seq = typeof item.seq === 'number' ? item.seq : undefined;
+            const createdMs =
+                typeof item.createdAtMs === 'number'
+                    ? item.createdAtMs
                     : typeof item.created_at_ms === 'number'
-                      ? new Date(item.created_at_ms).toLocaleString()
-                      : undefined,
+                      ? item.created_at_ms
+                      : undefined;
+            return {
+                messageId: String(
+                    item.messageId ??
+                        item.message_id ??
+                        item.id ??
+                        (seq != null ? `msg-${seq}` : `hit-${idx}`),
+                ),
+                seq,
+                ordinal: typeof item.message_ordinal === 'number' ? item.message_ordinal : seq !== undefined ? seq : idx + 1,
+                role: String(item.role ?? payload.role ?? item.kind ?? 'message'),
+                snippet: String(item.snippet ?? item.text ?? payload.text ?? payload.content ?? payload.summary ?? ''),
+                timestamp: typeof item.createdAt === 'string'
+                    ? item.createdAt
+                    : typeof item.created_at === 'string'
+                      ? item.created_at
+                      : createdMs !== undefined
+                        ? new Date(createdMs).toLocaleString()
+                        : undefined,
             };
         })
         .filter(h => h.snippet);
@@ -1633,6 +1744,7 @@ export async function searchV2Documents(query: string, signal?: AbortSignal): Pr
         signal,
     });
     const hits: V2DocumentSearchHit[] = [];
+    const seen = new Set<string>();
     const pushDocs = (arr: unknown, defaultKind: V2DocumentSearchHit['kind']) => {
         if (!Array.isArray(arr)) return;
         for (let i = 0; i < arr.length; i++) {
@@ -1641,8 +1753,12 @@ export async function searchV2Documents(query: string, signal?: AbortSignal): Pr
             const o = item as Record<string, unknown>;
             const kind: V2DocumentSearchHit['kind'] =
                 o.kind === 'memory' || o.kind === 'file' || o.kind === 'document' ? o.kind : defaultKind;
+            const id = String(o.id ?? o.chunk_id ?? o.path ?? `${kind}-${i}`);
+            const dedupeKey = `${kind}:${id}`;
+            if (seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
             hits.push({
-                id: String(o.id ?? o.chunk_id ?? o.path ?? `${kind}-${i}`),
+                id,
                 kind,
                 title: String(o.title ?? o.source_name ?? o.name ?? o.path ?? `Match ${i + 1}`),
                 snippet: typeof o.snippet === 'string'
@@ -1696,6 +1812,8 @@ function parsePlanResponse(raw: unknown): V2ConversationPlan {
     const statusRaw = String(inner.status ?? o.status ?? (enabled ? 'draft' : 'idle')).toLowerCase();
     const status: V2ConversationPlan['status'] =
         statusRaw === 'draft' ||
+        statusRaw === 'proposed' ||
+        statusRaw === 'pending' ||
         statusRaw === 'awaiting_approval' ||
         statusRaw === 'pending_approval' ||
         statusRaw === 'approved' ||
@@ -1723,7 +1841,16 @@ function parsePlanResponse(raw: unknown): V2ConversationPlan {
     return {
         enabled,
         status,
-        summary: typeof inner.summary === 'string' ? inner.summary : typeof o.summary === 'string' ? o.summary : undefined,
+        summary:
+            typeof inner.summary === 'string'
+                ? inner.summary
+                : typeof inner.title === 'string'
+                  ? inner.title
+                  : typeof o.summary === 'string'
+                    ? o.summary
+                    : typeof o.title === 'string'
+                      ? o.title
+                      : undefined,
         markdown: typeof inner.markdown === 'string'
             ? inner.markdown
             : typeof inner.content === 'string'
@@ -1776,25 +1903,27 @@ export async function updateV2ConversationPlan(
     return parsePlanResponse(res);
 }
 
+function normalizeSubagentTaskStatus(rawStatus: unknown, fallback: V2SubagentTask['status'] = 'queued'): V2SubagentTask['status'] {
+    const st = String(rawStatus ?? '').trim().toLowerCase();
+    if (!st) return fallback;
+    if (st === 'completed' || st === 'done' || st === 'succeeded' || st === 'finished') return 'completed';
+    if (st === 'failed' || st === 'error') return 'failed';
+    if (st === 'cancelled' || st === 'canceled' || st === 'stopped') return 'cancelled';
+    if (st === 'queued' || st === 'pending' || st === 'todo' || st === 'open') return 'queued';
+    if (st === 'waiting' || st === 'waiting_input' || st === 'waiting_for_input') return 'waiting';
+    if (st === 'running' || st === 'in_progress' || st === 'active' || st === 'working' || st === 'started') return 'running';
+    return fallback;
+}
+
 function parseSubagentTask(raw: unknown, idx: number): V2SubagentTask | null {
     if (!raw || typeof raw !== 'object') return null;
     const o = raw as Record<string, unknown>;
-    const id = String(o.id ?? o.task_id ?? o.taskId ?? o.subagent_id ?? `task-${idx}`).trim();
-    const title = String(o.title ?? o.label ?? o.name ?? o.goal ?? o.prompt ?? id).trim();
+    const rawId = o.id ?? o.task_id ?? o.taskId ?? o.subagent_id ?? o.call_id ?? o.callId;
+    const id = String(rawId ?? `task-${idx}`).trim();
+    const rawTitle = o.title ?? o.label ?? o.name ?? o.content ?? o.subject ?? o.task ?? o.goal ?? o.prompt;
+    const title = String(rawTitle ?? '').trim();
     if (!id || !title) return null;
-    const st = String(o.status ?? o.state ?? 'running').toLowerCase();
-    const status: V2SubagentTask['status'] =
-        st === 'completed' || st === 'done' || st === 'succeeded'
-            ? 'completed'
-            : st === 'failed' || st === 'error'
-              ? 'failed'
-              : st === 'cancelled' || st === 'canceled' || st === 'stopped'
-                ? 'cancelled'
-                : st === 'queued' || st === 'pending'
-                  ? 'queued'
-                  : st === 'waiting' || st === 'waiting_input'
-                    ? 'waiting'
-                    : 'running';
+    const status = normalizeSubagentTaskStatus(o.status ?? o.state, 'queued');
     return {
         id,
         parentId: typeof o.parent_id === 'string' ? o.parent_id : typeof o.parentId === 'string' ? o.parentId : undefined,
@@ -1810,7 +1939,102 @@ function parseSubagentTask(raw: unknown, idx: number): V2SubagentTask | null {
               ? o.updatedAt
               : typeof o.updated_at_ms === 'number'
                 ? new Date(o.updated_at_ms).toLocaleTimeString()
-                : undefined,
+                : typeof o.updatedAtMs === 'number'
+                  ? new Date(o.updatedAtMs).toLocaleTimeString()
+                  : undefined,
+    };
+}
+
+function parseTaskEventFrame(ev: Record<string, unknown>): { tasks?: V2SubagentTask[]; update?: V2SubagentTask } | null {
+    const kind = String(ev.kind ?? '').trim().toLowerCase();
+    const payload = (ev.payload && typeof ev.payload === 'object' && !Array.isArray(ev.payload)
+        ? ev.payload
+        : {}) as Record<string, unknown>;
+    const nestedList = Array.isArray(payload.tasks)
+        ? payload.tasks
+        : Array.isArray(payload.todos)
+          ? payload.todos
+          : null;
+    if (nestedList) {
+        return { tasks: nestedList.map(parseSubagentTask).filter((t): t is V2SubagentTask => !!t) };
+    }
+    const isTrackedKind =
+        kind.startsWith('tool_') ||
+        kind.startsWith('subagent_') ||
+        kind.startsWith('task_');
+    if (!isTrackedKind) return null;
+
+    const rawId =
+        payload.task_id ??
+        payload.taskId ??
+        payload.subagent_id ??
+        payload.call_id ??
+        payload.callId ??
+        payload.id;
+    const id = rawId != null ? String(rawId).trim() : '';
+    const title = String(
+        payload.title ??
+            payload.label ??
+            payload.name ??
+            payload.tool ??
+            payload.tool_name ??
+            payload.content ??
+            payload.goal ??
+            '',
+    ).trim();
+    if (!id || !title) return null;
+
+    let inferredStatus: V2SubagentTask['status'] | null = null;
+    if (payload.status !== undefined || payload.state !== undefined) {
+        inferredStatus = normalizeSubagentTaskStatus(payload.status ?? payload.state, 'queued');
+    } else if (kind.endsWith('_finished') || kind.endsWith('_completed') || kind.endsWith('_succeeded')) {
+        inferredStatus = payload.is_error === true || payload.ok === false ? 'failed' : 'completed';
+    } else if (kind.endsWith('_failed') || kind.endsWith('_error')) {
+        inferredStatus = 'failed';
+    } else if (kind.endsWith('_cancelled') || kind.endsWith('_canceled') || kind.endsWith('_stopped')) {
+        inferredStatus = 'cancelled';
+    } else if (kind.endsWith('_started') || kind.endsWith('_running') || kind.endsWith('_progress')) {
+        inferredStatus = 'running';
+    } else if (kind.endsWith('_queued') || kind.endsWith('_created')) {
+        inferredStatus = 'queued';
+    }
+    if (!inferredStatus) return null;
+
+    const createdMs =
+        typeof ev.created_at_ms === 'number'
+            ? ev.created_at_ms
+            : typeof ev.createdAtMs === 'number'
+              ? ev.createdAtMs
+              : undefined;
+    return {
+        update: {
+            id,
+            parentId:
+                typeof payload.parent_id === 'string'
+                    ? payload.parent_id
+                    : typeof payload.parentId === 'string'
+                      ? payload.parentId
+                      : undefined,
+            title,
+            status: inferredStatus,
+            kind: kind.startsWith('tool_') ? 'tool' : kind.startsWith('subagent_') ? 'subagent' : 'task',
+            agent:
+                typeof payload.agent === 'string'
+                    ? payload.agent
+                    : typeof payload.expert === 'string'
+                      ? payload.expert
+                      : undefined,
+            detail:
+                typeof payload.summary === 'string'
+                    ? payload.summary
+                    : typeof payload.detail === 'string'
+                      ? payload.detail
+                      : typeof payload.message === 'string'
+                        ? payload.message
+                        : undefined,
+            progress: typeof payload.progress === 'number' ? payload.progress : undefined,
+            updatedAt: createdMs !== undefined ? new Date(createdMs).toLocaleTimeString() : undefined,
+        },
     };
 }
 
@@ -1835,7 +2059,13 @@ export async function subscribeV2ConversationTasks(
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.includes('application/json')) {
         const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        const arr = Array.isArray(data.tasks) ? data.tasks : Array.isArray(data.items) ? data.items : [];
+        const arr = Array.isArray(data.tasks)
+            ? data.tasks
+            : Array.isArray(data.todos)
+              ? data.todos
+              : Array.isArray(data.items)
+                ? data.items
+                : [];
         callbacks.onTasks(arr.map(parseSubagentTask).filter((t): t is V2SubagentTask => !!t));
         return;
     }
@@ -1858,12 +2088,48 @@ export async function subscribeV2ConversationTasks(
         } catch {
             return;
         }
-        if (Array.isArray(ev.tasks)) {
-            callbacks.onTasks(ev.tasks.map(parseSubagentTask).filter((t): t is V2SubagentTask => !!t));
-        } else if (ev.task && typeof ev.task === 'object') {
+        const evType = typeof ev.type === 'string' ? ev.type : '';
+        const list = Array.isArray(ev.tasks)
+            ? ev.tasks
+            : Array.isArray(ev.todos)
+              ? ev.todos
+              : null;
+        if (list) {
+            callbacks.onTasks(list.map(parseSubagentTask).filter((t): t is V2SubagentTask => !!t));
+            return;
+        }
+        if (evType === 'task_snapshot') {
+            return;
+        }
+        if (evType === 'task_projection') {
+            const proj = (ev.taskProjection ?? ev.task_projection ?? ev.projection) as Record<string, unknown> | null | undefined;
+            const projList = proj && typeof proj === 'object'
+                ? (Array.isArray(proj.tasks)
+                    ? proj.tasks
+                    : Array.isArray(proj.todos)
+                      ? proj.todos
+                      : Array.isArray(proj.items)
+                        ? proj.items
+                        : null)
+                : null;
+            if (projList) {
+                callbacks.onTasks(projList.map(parseSubagentTask).filter((t): t is V2SubagentTask => !!t));
+            }
+            return;
+        }
+        if (evType === 'task_event') {
+            const normalized = parseTaskEventFrame(ev);
+            if (normalized?.tasks) {
+                callbacks.onTasks(normalized.tasks);
+            } else if (normalized?.update) {
+                callbacks.onTaskUpdate?.(normalized.update);
+            }
+            return;
+        }
+        if (ev.task && typeof ev.task === 'object') {
             const parsed = parseSubagentTask(ev.task, 0);
             if (parsed) callbacks.onTaskUpdate?.(parsed);
-        } else if (ev.id || ev.task_id) {
+        } else if (!evType && (typeof ev.id === 'string' || typeof ev.task_id === 'string') && (ev.status !== undefined || ev.state !== undefined)) {
             const parsed = parseSubagentTask(ev, 0);
             if (parsed) callbacks.onTaskUpdate?.(parsed);
         }
@@ -2003,19 +2269,23 @@ export async function removeV2WorkspaceWorktree(
     };
 }
 
+function firstRecord(value: unknown): Record<string, unknown> | null {
+    if (Array.isArray(value)) {
+        const first = value.find(item => !!item && typeof item === 'object' && !Array.isArray(item));
+        return first ? (first as Record<string, unknown>) : null;
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    return null;
+}
+
 function parseTurnObservation(raw: unknown): V2TurnObservation {
-    const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const outer = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const o = (outer.result && typeof outer.result === 'object' && !Array.isArray(outer.result)
+        ? outer.result
+        : outer) as Record<string, unknown>;
     const status = String(o.status ?? o.state ?? o.phase ?? '').toLowerCase();
-    const active =
-        o.active === true ||
-        o.running === true ||
-        o.in_progress === true ||
-        o.inProgress === true ||
-        status === 'running' ||
-        status === 'streaming' ||
-        status === 'working' ||
-        status === 'waiting_permission' ||
-        status === 'waiting_input';
     const rawTools = Array.isArray(o.toolCalls) ? o.toolCalls : Array.isArray(o.tool_calls) ? o.tool_calls : [];
     const toolCalls: V2ToolCall[] = rawTools
         .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
@@ -2026,27 +2296,62 @@ function parseTurnObservation(raw: unknown): V2TurnObservation {
             status: t.status === 'running' ? 'running' : t.ok === false || t.status === 'failed' ? 'failed' : 'completed',
             summary: typeof t.summary === 'string' ? t.summary : undefined,
         }));
-    const rawPerm = (o.pendingPermission ?? o.pending_permission) as Record<string, unknown> | null | undefined;
+    const rawPerm =
+        firstRecord(o.pendingPermission) ??
+        firstRecord(o.pending_permission) ??
+        firstRecord(o.pendingPermissions) ??
+        firstRecord(o.pending_permissions) ??
+        firstRecord(o.permissions);
+    const permId = rawPerm ? (rawPerm.requestId ?? rawPerm.request_id ?? rawPerm.id) : undefined;
     const pendingPermission: V2PermissionPrompt | null =
-        rawPerm && typeof rawPerm === 'object' && typeof (rawPerm.requestId ?? rawPerm.request_id) === 'string'
+        rawPerm && typeof permId === 'string' && permId.trim()
             ? {
-                  requestId: String(rawPerm.requestId ?? rawPerm.request_id),
-                  tool: String(rawPerm.tool ?? 'tool'),
-                  reason: typeof rawPerm.reason === 'string' ? rawPerm.reason : '',
-                  arguments: rawPerm.arguments,
+                  requestId: permId,
+                  tool: String(rawPerm.tool ?? rawPerm.tool_name ?? rawPerm.name ?? 'tool'),
+                  reason:
+                      typeof rawPerm.reason === 'string'
+                          ? rawPerm.reason
+                          : typeof rawPerm.message === 'string'
+                            ? rawPerm.message
+                            : '',
+                  arguments: rawPerm.arguments ?? rawPerm.args,
               }
             : null;
-    const rawQ = (o.pendingQuestion ?? o.pending_question) as Record<string, unknown> | null | undefined;
+    const rawQ =
+        firstRecord(o.pendingQuestion) ??
+        firstRecord(o.pending_question) ??
+        firstRecord(o.pendingQuestions) ??
+        firstRecord(o.pending_questions) ??
+        firstRecord(o.questions);
+    const qId = rawQ ? (rawQ.requestId ?? rawQ.request_id ?? rawQ.id) : undefined;
     const pendingQuestion: V2UserQuestion | null =
-        rawQ && typeof rawQ === 'object' && typeof (rawQ.requestId ?? rawQ.request_id) === 'string'
+        rawQ && typeof qId === 'string' && qId.trim()
             ? {
-                  requestId: String(rawQ.requestId ?? rawQ.request_id),
-                  question: String(rawQ.question ?? ''),
+                  requestId: qId,
+                  question: String(rawQ.question ?? rawQ.prompt ?? rawQ.text ?? ''),
                   options: Array.isArray(rawQ.options) ? rawQ.options.map(String) : [],
               }
             : null;
+    const needsResponse =
+        o.needsResponse === true ||
+        o.needs_response === true ||
+        Boolean(pendingPermission) ||
+        Boolean(pendingQuestion);
+    const active =
+        o.active === true ||
+        o.running === true ||
+        o.in_progress === true ||
+        o.inProgress === true ||
+        needsResponse ||
+        status === 'running' ||
+        status === 'streaming' ||
+        status === 'working' ||
+        status === 'waiting_permission' ||
+        status === 'waiting_input' ||
+        status === 'waiting_for_input';
     return {
         active,
+        needsResponse,
         status: status || undefined,
         runId: typeof o.run_id === 'string' ? o.run_id : typeof o.runId === 'string' ? o.runId : undefined,
         text: typeof o.text === 'string' ? o.text : typeof o.partial_text === 'string' ? o.partial_text : typeof o.content === 'string' ? o.content : undefined,
@@ -2063,20 +2368,39 @@ export async function observeV2ConversationProgress(
     conversationId: string,
     signal?: AbortSignal,
 ): Promise<V2TurnObservation> {
-    const endpoints = [
-        `${conversationUrl(conversationId)}/progress`,
-        `${conversationUrl(conversationId)}/observe`,
-    ];
-    for (const url of endpoints) {
-        try {
-            const res = await api<Record<string, unknown>>(url, { signal });
-            return parseTurnObservation(res);
-        } catch (cause) {
-            if (cause instanceof ApiError && cause.status === 404) continue;
-            if (signal?.aborted) throw cause;
+    let progressObs: V2TurnObservation | null = null;
+    try {
+        const res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/progress`, { signal });
+        progressObs = parseTurnObservation(res);
+        if (!progressObs.needsResponse || progressObs.pendingPermission || progressObs.pendingQuestion) {
+            return progressObs;
+        }
+    } catch (cause) {
+        if (signal?.aborted) throw cause;
+        if (!(cause instanceof ApiError && cause.status === 404)) {
+            progressObs = null;
         }
     }
-    return { active: false };
+    try {
+        const res = await api<Record<string, unknown>>(`${conversationUrl(conversationId)}/observe`, { signal });
+        const observeObs = parseTurnObservation(res);
+        if (!progressObs) return observeObs;
+        return {
+            ...progressObs,
+            ...observeObs,
+            active: progressObs.active || observeObs.active,
+            needsResponse: progressObs.needsResponse || observeObs.needsResponse,
+            pendingPermission: observeObs.pendingPermission ?? progressObs.pendingPermission ?? null,
+            pendingQuestion: observeObs.pendingQuestion ?? progressObs.pendingQuestion ?? null,
+            toolCalls: observeObs.toolCalls?.length ? observeObs.toolCalls : progressObs.toolCalls,
+            text: observeObs.text ?? progressObs.text,
+            reasoning: observeObs.reasoning ?? progressObs.reasoning,
+            usage: observeObs.usage ?? progressObs.usage,
+        };
+    } catch (cause) {
+        if (signal?.aborted) throw cause;
+    }
+    return progressObs ?? { active: false };
 }
 
 export async function streamV2ConversationObserve(

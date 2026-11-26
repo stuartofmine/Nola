@@ -2619,6 +2619,25 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
     }
 
     func providePermissionInstruction(request: MacRemotePermissionRequest, instruction: String) async throws {
+        if request.nonce.hasPrefix("v2-") {
+            let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, text.utf8.count <= 4096 else {
+                throw MacPermissionInstructionError.invalidInstruction
+            }
+            guard let configuration = configuration(for: request.sessionID)
+                ?? (try? configurationStore.load()) else {
+                throw MacRemoteHostError.notConfigured
+            }
+            try await v2RespondPermission(
+                conversationID: request.sessionID,
+                requestID: request.id,
+                allow: true,
+                scope: "once",
+                instruction: text,
+                configuration: configuration
+            )
+            return
+        }
         try await sendPermissionDecision(request: request, decision: request.instructionDecision(instruction))
     }
 
@@ -3509,11 +3528,15 @@ actor MacRemoteHostService: MacRemoteAgentRunning {
         requestID: String,
         allow: Bool,
         scope: String = "once",
+        instruction: String? = nil,
         configuration: MacRemoteHostConfiguration
     ) async throws {
         var req = URLRequest(url: mobileURL(baseURL: configuration.baseURL, path: "chat/conversations/\(conversationID)/permission"))
         req.httpMethod = "POST"
-        let payload: [String: Any] = ["request_id": requestID, "allow": allow, "scope": scope]
+        var payload: [String: Any] = ["request_id": requestID, "allow": allow, "scope": scope]
+        if let instruction, !instruction.isEmpty {
+            payload["instruction"] = instruction
+        }
         if !configuration.token.isEmpty {
             let envelope = try encrypt(payload, token: configuration.token)
             req.httpBody = try JSONSerialization.data(withJSONObject: envelope)

@@ -39,6 +39,173 @@ const SKIP_INDEX_DIRS: &[&str] = &[
     "__pycache__",
 ];
 
+const SENSITIVE_DIR_NAMES: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".kube",
+    ".docker",
+    ".azure",
+    ".gcloud",
+];
+
+const SENSITIVE_FILE_NAMES: &[&str] = &[
+    ".env",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".pgpass",
+    ".my.cnf",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_ed25519_sk",
+    "id_ecdsa_sk",
+    "authorized_keys",
+    "known_hosts",
+    "vault.json",
+    "vault.enc",
+    "vault.db",
+    "vault.key",
+    "master.key",
+    "credentials",
+    "credentials.json",
+    "secrets.json",
+    "secrets.yaml",
+    "secrets.yml",
+    "shadow",
+    "gshadow",
+    "master.passwd",
+];
+
+const SENSITIVE_EXTENSIONS: &[&str] = &[
+    "pem",
+    "key",
+    "p12",
+    "pfx",
+    "jks",
+    "keystore",
+    "kdbx",
+    "ppk",
+    "ovpn",
+];
+
+fn canonicalize_best_effort(path: &Path) -> Option<PathBuf> {
+    if let Ok(c) = fs::canonicalize(path) {
+        return Some(c);
+    }
+    let mut missing_tail = Vec::new();
+    let mut cur = path.to_path_buf();
+    while !cur.exists() {
+        let name = cur.file_name()?.to_os_string();
+        missing_tail.push(name);
+        if !cur.pop() {
+            return None;
+        }
+    }
+    let mut base = fs::canonicalize(&cur).ok()?;
+    for seg in missing_tail.into_iter().rev() {
+        base.push(seg);
+    }
+    Some(base)
+}
+
+fn check_single_path_sensitive(path: &Path) -> bool {
+    let norm = path.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+    let trimmed = norm.trim_end_matches('/');
+    const SYSTEM_SENSITIVE_PREFIXES: &[&str] = &[
+        "/etc/shadow",
+        "/etc/gshadow",
+        "/etc/sudoers",
+        "/etc/sudoers.d",
+        "/etc/master.passwd",
+        "/private/etc/shadow",
+        "/private/etc/gshadow",
+        "/private/etc/sudoers",
+        "/private/etc/sudoers.d",
+        "/private/etc/master.passwd",
+    ];
+    if SYSTEM_SENSITIVE_PREFIXES
+        .iter()
+        .any(|p| trimmed == *p || trimmed.starts_with(&format!("{p}/")))
+    {
+        return true;
+    }
+
+    let components: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect();
+
+    for (idx, seg) in components.iter().enumerate() {
+        if SENSITIVE_DIR_NAMES.contains(&seg.as_str()) {
+            return true;
+        }
+        if seg == ".nola" {
+            if let Some(next) = components.get(idx + 1) {
+                if next.starts_with("vault")
+                    || next == "master.key"
+                    || next == "secrets"
+                    || next == "credentials"
+                {
+                    return true;
+                }
+            }
+        }
+        if seg == ".config" {
+            if let Some(next) = components.get(idx + 1) {
+                if matches!(next.as_str(), "gcloud" | "gh" | "aws" | "kube") {
+                    return true;
+                }
+            }
+        }
+        if seg == "library" {
+            if let Some(next) = components.get(idx + 1) {
+                if next == "keychains" {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if let Some(file_name) = components.last() {
+        if SENSITIVE_FILE_NAMES.contains(&file_name.as_str())
+            || file_name.starts_with(".env.")
+            || file_name.starts_with("vault.")
+            || file_name.starts_with("id_rsa.")
+            || file_name.starts_with("id_ed25519.")
+        {
+            return true;
+        }
+        if let Some((_, ext)) = file_name.rsplit_once('.') {
+            if SENSITIVE_EXTENSIONS.contains(&ext) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Returns `true` if `path` (or its canonicalized target, preventing symlink escapes)
+/// points to a sensitive local credential/secret path that must never be indexed or exposed.
+pub fn is_sensitive_local_path(path: &Path) -> bool {
+    if check_single_path_sensitive(path) {
+        return true;
+    }
+    if let Some(canon) = canonicalize_best_effort(path) {
+        if check_single_path_sensitive(&canon) {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DataSourceUsageRecord {
     pub id: String,
@@ -82,6 +249,16 @@ pub fn test_data_source_connection(record: &Value) -> Value {
     match kind.as_str() {
         "localfile" | "local_file" | "file" => {
             let path = Path::new(location);
+            if is_sensitive_local_path(path) {
+                return json!({
+                    "status": "failed",
+                    "ok": false,
+                    "kind": kind_raw,
+                    "location": location,
+                    "latencyMs": start.elapsed().as_millis() as u64,
+                    "error": format!("refused to access sensitive local path: {location}")
+                });
+            }
             if !path.exists() {
                 return json!({
                     "status": "failed",
@@ -145,6 +322,16 @@ pub fn test_data_source_connection(record: &Value) -> Value {
         }
         "localfolder" | "local_folder" | "folder" | "dir" | "directory" => {
             let path = Path::new(location);
+            if is_sensitive_local_path(path) {
+                return json!({
+                    "status": "failed",
+                    "ok": false,
+                    "kind": kind_raw,
+                    "location": location,
+                    "latencyMs": start.elapsed().as_millis() as u64,
+                    "error": format!("refused to access sensitive local path: {location}")
+                });
+            }
             if !path.exists() {
                 return json!({
                     "status": "failed",
@@ -377,6 +564,12 @@ fn should_skip_index_path(rel_path: &Path) -> bool {
 fn collect_source_files(kind: &str, location: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     match kind {
         "localfile" | "local_file" | "file" => {
+            if is_sensitive_local_path(location) {
+                return Err(format!(
+                    "refused to index sensitive local path: {}",
+                    location.display()
+                ));
+            }
             if !location.is_file() {
                 return Err(format!(
                     "data source file does not exist or is not a file: {}",
@@ -391,6 +584,12 @@ fn collect_source_files(kind: &str, location: &Path) -> Result<Vec<(String, Path
             Ok(vec![(name, location.to_path_buf())])
         }
         "localfolder" | "local_folder" | "folder" | "dir" | "directory" => {
+            if is_sensitive_local_path(location) {
+                return Err(format!(
+                    "refused to index sensitive local path: {}",
+                    location.display()
+                ));
+            }
             if !location.is_dir() {
                 return Err(format!(
                     "data source folder does not exist or is not a directory: {}",
@@ -410,7 +609,16 @@ fn collect_source_files(kind: &str, location: &Path) -> Result<Vec<(String, Path
                     break;
                 }
                 let path = entry.path();
+                if entry
+                    .file_type()
+                    .is_some_and(|ft| ft.is_symlink())
+                {
+                    continue;
+                }
                 if !path.is_file() {
+                    continue;
+                }
+                if is_sensitive_local_path(path) {
                     continue;
                 }
                 let rel = path.strip_prefix(location).unwrap_or(path);
@@ -446,9 +654,15 @@ pub fn index_data_source(store: &Store, source_id: &str) -> Result<usize, String
     let mut indexed_files = 0usize;
 
     for (rel_path, abs_path) in files {
-        let Ok(meta) = fs::metadata(&abs_path) else {
+        if is_sensitive_local_path(&abs_path) {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&abs_path) else {
             continue;
         };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
         if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_INDEX_FILE_BYTES {
             continue;
         }
@@ -930,5 +1144,140 @@ mod tests {
             json!({"query": "ShouldNeverBeIndexedSecretToken"}),
         );
         assert_eq!(ignored.payload.to_model_value()["count"], 0);
+    }
+
+    #[test]
+    fn sensitive_local_paths_and_symlinks_are_rejected_from_indexing() {
+        assert!(is_sensitive_local_path(Path::new("/home/alice/.ssh/id_rsa")));
+        assert!(is_sensitive_local_path(Path::new("/home/alice/.aws/credentials")));
+        assert!(is_sensitive_local_path(Path::new("/home/alice/.gnupg/secring.gpg")));
+        assert!(is_sensitive_local_path(Path::new("/home/alice/.kube/config")));
+        assert!(is_sensitive_local_path(Path::new("/home/alice/.nola/vault.json")));
+        assert!(is_sensitive_local_path(Path::new("/project/.env")));
+        assert!(is_sensitive_local_path(Path::new("/project/.env.production")));
+        assert!(is_sensitive_local_path(Path::new("/project/id_ed25519")));
+        assert!(is_sensitive_local_path(Path::new("/project/tls.pem")));
+        assert!(is_sensitive_local_path(Path::new("/project/private.key")));
+        assert!(is_sensitive_local_path(Path::new("/etc/shadow")));
+        assert!(!is_sensitive_local_path(Path::new("/project/docs/guide.md")));
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+
+        // 1. Direct sensitive folder root (.ssh) is rejected
+        let ssh_dir = dir.path().join(".ssh");
+        fs::create_dir_all(&ssh_dir).unwrap();
+        fs::write(ssh_dir.join("id_rsa"), "PRIVATE_SSH_KEY_SECRET").unwrap();
+        store
+            .put_module_record(
+                KIND_DATA_SOURCE,
+                "ds-ssh",
+                &DataSourceRecord {
+                    id: "ds-ssh".into(),
+                    name: "SSH".into(),
+                    kind: "localFolder".into(),
+                    location: ssh_dir.display().to_string(),
+                    metadata: json!({}),
+                    usage_count: 0,
+                    updated_at_ms: now_ms(),
+                },
+            )
+            .unwrap();
+        let err = index_data_source(&store, "ds-ssh").unwrap_err();
+        assert!(err.contains("sensitive"), "expected sensitive error, got: {err}");
+
+        // 2. Direct sensitive file (.env) is rejected
+        let env_file = dir.path().join(".env");
+        fs::write(&env_file, "API_SECRET=SuperSecretEnvToken123").unwrap();
+        store
+            .put_module_record(
+                KIND_DATA_SOURCE,
+                "ds-env",
+                &DataSourceRecord {
+                    id: "ds-env".into(),
+                    name: "Env".into(),
+                    kind: "localFile".into(),
+                    location: env_file.display().to_string(),
+                    metadata: json!({}),
+                    usage_count: 0,
+                    updated_at_ms: now_ms(),
+                },
+            )
+            .unwrap();
+        assert!(index_data_source(&store, "ds-env").is_err());
+
+        // 3. Symlink to sensitive file cannot bypass guard (canonicalize check)
+        #[cfg(unix)]
+        {
+            let innocent_link = dir.path().join("harmless.txt");
+            std::os::unix::fs::symlink(&env_file, &innocent_link).unwrap();
+            assert!(is_sensitive_local_path(&innocent_link));
+            store
+                .put_module_record(
+                    KIND_DATA_SOURCE,
+                    "ds-sym",
+                    &DataSourceRecord {
+                        id: "ds-sym".into(),
+                        name: "Sym".into(),
+                        kind: "localFile".into(),
+                        location: innocent_link.display().to_string(),
+                        metadata: json!({}),
+                        usage_count: 0,
+                        updated_at_ms: now_ms(),
+                    },
+                )
+                .unwrap();
+            assert!(index_data_source(&store, "ds-sym").is_err());
+        }
+
+        // 4. Folder walk skips sensitive files while indexing safe docs
+        let mixed = dir.path().join("mixed");
+        fs::create_dir_all(mixed.join(".nola")).unwrap();
+        fs::write(mixed.join("readme.md"), "PublicEngineeringHandbookMarker").unwrap();
+        fs::write(mixed.join(".env"), "SecretDotEnvMarker").unwrap();
+        fs::write(mixed.join("server.pem"), "SecretPemCertMarker").unwrap();
+        fs::write(mixed.join("priv.key"), "SecretKeyMarker").unwrap();
+        fs::write(mixed.join("id_ed25519"), "SecretEd25519Marker").unwrap();
+        fs::write(mixed.join(".nola/vault.json"), "SecretVaultJsonMarker").unwrap();
+        store
+            .put_module_record(
+                KIND_DATA_SOURCE,
+                "ds-mixed",
+                &DataSourceRecord {
+                    id: "ds-mixed".into(),
+                    name: "Mixed".into(),
+                    kind: "localFolder".into(),
+                    location: mixed.display().to_string(),
+                    metadata: json!({}),
+                    usage_count: 0,
+                    updated_at_ms: now_ms(),
+                },
+            )
+            .unwrap();
+        let indexed_chunks = index_data_source(&store, "ds-mixed").unwrap();
+        assert_eq!(indexed_chunks, 1);
+        assert_eq!(
+            store
+                .search_doc_chunks(Some(&["ds-mixed".to_string()]), "PublicEngineeringHandbookMarker", 5)
+                .unwrap()
+                .len(),
+            1
+        );
+        for leaked in [
+            "SecretDotEnvMarker",
+            "SecretPemCertMarker",
+            "SecretKeyMarker",
+            "SecretEd25519Marker",
+            "SecretVaultJsonMarker",
+        ] {
+            assert_eq!(
+                store
+                    .search_doc_chunks(Some(&["ds-mixed".to_string()]), leaked, 5)
+                    .unwrap()
+                    .len(),
+                0,
+                "sensitive content '{leaked}' must never be indexed"
+            );
+        }
     }
 }

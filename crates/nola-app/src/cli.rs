@@ -903,10 +903,12 @@ fn execute_agent_turn(
         );
     }
 
-    if !opts.no_tools && opts.host_request_stdin {
+    let a2ui_session = effective_session_id
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
+    if !opts.no_tools && (opts.host_request_stdin || opts.json_mode) {
         let host_id = crate::web_api::ensure_host_id(store);
-        let a2ui_session = effective_session_id.as_deref().unwrap_or("default");
-        register_a2ui_tools(suite, &mut registry, &host_id, a2ui_session);
+        register_a2ui_tools(suite, &mut registry, &host_id, &a2ui_session);
     }
 
     if !opts.no_tools {
@@ -1264,13 +1266,37 @@ fn execute_agent_turn(
     };
 
     let out_lock_ev = Arc::clone(&stdout_lock);
+    let mut live_session_id = a2ui_session.clone();
     let res = engine
         .run(&ctx, prompt, run_cfg, |ev| {
+            if let AgentEvent::SessionStarted { ref session_id, .. } = ev {
+                if !session_id.trim().is_empty() {
+                    live_session_id = session_id.clone();
+                }
+            }
             if json_mode {
                 if let Ok(line) = serde_json::to_string(&ev) {
                     let _g = out_lock_ev.lock().unwrap();
                     println!("{line}");
                     let _ = io::stdout().flush();
+                }
+                if let AgentEvent::ToolFinished {
+                    ref name, is_error, ..
+                } = ev
+                {
+                    if !is_error && (name == "render_ui_surface" || name == "delete_ui_surface") {
+                        let frames =
+                            collect_a2ui_surface_frames(store, &a2ui_session, &live_session_id);
+                        if !frames.is_empty() {
+                            let _g = out_lock_ev.lock().unwrap();
+                            for frame in frames {
+                                if let Ok(line) = serde_json::to_string(&frame) {
+                                    println!("{line}");
+                                }
+                            }
+                            let _ = io::stdout().flush();
+                        }
+                    }
                 }
             } else if let AgentEvent::TextDelta { delta } = ev {
                 print!("{delta}");
@@ -1294,6 +1320,33 @@ fn execute_agent_turn(
         println!();
     }
     Ok(0)
+}
+
+fn collect_a2ui_surface_frames(
+    store: &Store,
+    primary_session: &str,
+    fallback_session: &str,
+) -> Vec<Value> {
+    let mut target_session = primary_session;
+    let mut surfaces = nola_modules::a2ui::list_conversation_surfaces(store, primary_session);
+    if surfaces.is_empty() && !fallback_session.is_empty() && fallback_session != primary_session {
+        let alt = nola_modules::a2ui::list_conversation_surfaces(store, fallback_session);
+        if !alt.is_empty() {
+            target_session = fallback_session;
+            surfaces = alt;
+        }
+    }
+    let mut frames = Vec::new();
+    for snap in surfaces {
+        if let Ok(snap_val) = serde_json::to_value(&snap) {
+            frames.push(json!({
+                "type": "ui_surface",
+                "session_id": target_session,
+                "snapshot": snap_val
+            }));
+        }
+    }
+    frames
 }
 
 fn resolve_route_with_overrides(
@@ -3796,17 +3849,18 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                     .and_then(|v| v.as_str())
                     .unwrap_or("chat_completions");
                 let cfg = load_active_config(store);
-                let conn = cfg.llm.connections.iter().find(|c| c.id == conn_id);
+                let meta = resolve_probe_connection_metadata(store, &cfg, conn_id, &req);
                 let binding_input = format!(
-                    "{conn_id}:{expected_rev}:{model_id}:{proto}:{}",
-                    conn.and_then(|c| c.api_key.as_deref()).unwrap_or("")
+                    "{conn_id}:{expected_rev}:{model_id}:{proto}:{}:{}",
+                    meta.account_id.as_deref().unwrap_or(""),
+                    meta.credential_secret
                 );
                 let confirmation = json!({
                     "request_id": new_id(),
                     "connection_id": conn_id,
                     "expected_revision": expected_rev,
-                    "account_id": Value::Null,
-                    "account_revision": Value::Null,
+                    "account_id": meta.account_id,
+                    "account_revision": meta.account_revision,
                     "credential_binding": sha256_hex(binding_input.as_bytes()),
                     "model_id": model_id,
                     "protocol": proto,
@@ -3844,30 +3898,22 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                         .get("protocol")
                         .and_then(|v| v.as_str())
                         .unwrap_or("chat_completions");
-                    let account_id = req.get("account_id").cloned().unwrap_or(Value::Null);
-                    let account_rev = req.get("account_revision").cloned().unwrap_or(Value::Null);
                     let cred_binding = req
                         .get("credential_binding")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let cfg = load_active_config(store);
-                    let conn = cfg.llm.connections.iter().find(|c| c.id == conn_id);
-                    let base_url = conn.map(|c| c.endpoint.as_str()).unwrap_or("");
-                    let display_name = cfg
-                        .connection_extras
-                        .get(conn_id)
-                        .and_then(|e| e.name.as_deref())
-                        .unwrap_or(conn_id);
+                    let meta = resolve_probe_connection_metadata(store, &cfg, conn_id, &req);
                     let snapshot = json!({
                         "revision": expected_rev + 1,
                         "document": {
                             "format_version": 1,
                             "connection": {
                                 "id": conn_id,
-                                "display_name": display_name,
-                                "base_url": base_url,
+                                "display_name": meta.display_name,
+                                "base_url": meta.base_url,
                                 "protocols": [proto],
-                                "account_id": account_id,
+                                "account_id": meta.account_id,
                                 "source": "nola",
                                 "source_id": conn_id,
                                 "enabled": true
@@ -3892,7 +3938,7 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                                 "protocol": proto,
                                 "evidence": {
                                     "text_generation": true,
-                                    "account_revision": account_rev,
+                                    "account_revision": meta.account_revision,
                                     "credential_binding": cred_binding,
                                     "observed_at_ms": now_ms()
                                 },
@@ -3962,6 +4008,188 @@ impl SiwcFlowState {
     }
 }
 
+struct ProbeConnectionMetadata {
+    base_url: String,
+    display_name: String,
+    account_id: Option<String>,
+    account_revision: Option<i64>,
+    credential_secret: String,
+}
+
+fn resolve_probe_connection_metadata(
+    store: &Store,
+    cfg: &AppliedConfig,
+    conn_id: &str,
+    req: &Value,
+) -> ProbeConnectionMetadata {
+    let cfg_conn = cfg.llm.connections.iter().find(|c| c.id == conn_id);
+    let store_conn = store
+        .get_module_record::<Value>("model_connection", conn_id)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            store
+                .get_kv("model_connections")
+                .ok()
+                .flatten()
+                .and_then(|val| match val {
+                    Value::Array(arr) => arr.into_iter().find(|item| {
+                        item.get("id")
+                            .or_else(|| item.get("connection_id"))
+                            .or_else(|| item.pointer("/document/connection/id"))
+                            .and_then(|v| v.as_str())
+                            == Some(conn_id)
+                    }),
+                    Value::Object(mut map) => map.remove(conn_id),
+                    _ => None,
+                })
+        });
+
+    let base_url = cfg_conn
+        .map(|c| c.endpoint.trim())
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            store_conn.as_ref().and_then(|rec| {
+                rec.get("base_url")
+                    .or_else(|| rec.get("endpoint"))
+                    .or_else(|| rec.get("baseURL"))
+                    .or_else(|| rec.pointer("/document/connection/base_url"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            })
+        })
+        .unwrap_or_default();
+
+    let display_name = cfg
+        .connection_extras
+        .get(conn_id)
+        .and_then(|e| e.name.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            store_conn.as_ref().and_then(|rec| {
+                rec.get("display_name")
+                    .or_else(|| rec.get("name"))
+                    .or_else(|| rec.pointer("/document/connection/display_name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            })
+        })
+        .unwrap_or_else(|| conn_id.to_string());
+
+    let account_id = req
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            store_conn.as_ref().and_then(|rec| {
+                rec.get("account_id")
+                    .or_else(|| rec.pointer("/document/connection/account_id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            })
+        })
+        .or_else(|| {
+            conn_id
+                .strip_prefix("siwc-")
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+        });
+
+    let account_record = account_id.as_deref().and_then(|aid| {
+        store
+            .get_module_record::<Value>("model_account", aid)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                store
+                    .get_kv(&format!("siwc_account:{aid}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object())
+            })
+            .or_else(|| {
+                store
+                    .get_kv("siwc_account")
+                    .ok()
+                    .flatten()
+                    .filter(|v| {
+                        v.get("account_id")
+                            .or_else(|| v.get("id"))
+                            .and_then(|s| s.as_str())
+                            == Some(aid)
+                    })
+            })
+    });
+
+    let account_revision = req
+        .get("account_revision")
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            account_record
+                .as_ref()
+                .and_then(|acc| {
+                    acc.get("revision")
+                        .or_else(|| acc.get("account_revision"))
+                        .and_then(|v| v.as_i64())
+                })
+        })
+        .or_else(|| {
+            store_conn
+                .as_ref()
+                .and_then(|rec| rec.get("account_revision").and_then(|v| v.as_i64()))
+        })
+        .or_else(|| account_record.as_ref().map(|_| 1));
+
+    let credential_secret = cfg_conn
+        .and_then(|c| c.api_key.as_deref())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            cfg.connection_extras
+                .get(conn_id)
+                .and_then(|e| e.credential_ref.as_deref())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            account_record.as_ref().and_then(|acc| {
+                acc.get("credential_ref")
+                    .or_else(|| acc.pointer("/account/credential_ref"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+            })
+        })
+        .or_else(|| {
+            store_conn.as_ref().and_then(|rec| {
+                rec.get("credential_ref")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+            })
+        })
+        .unwrap_or_default();
+
+    ProbeConnectionMetadata {
+        base_url,
+        display_name,
+        account_id,
+        account_revision,
+        credential_secret,
+    }
+}
+
 fn siwc_account_snapshot(
     account_id: &str,
     display_name: &str,
@@ -3974,8 +4202,8 @@ fn siwc_account_snapshot(
             "id": account_id,
             "display_name": if display_name.trim().is_empty() { "ChatGPT" } else { display_name },
             "source": "nola_chatgpt",
-            "credential_ref": if connected { json!(format!("siwc_access_token:{account_id}")) } else { Value::Null },
-            "state": if connected { "connected" } else { "disconnected" }
+            "credential_ref": if connected { json!(format!("siwc:{account_id}")) } else { Value::Null },
+            "state": if connected { "ready" } else { "disconnected" }
         }
     })
 }
@@ -6204,5 +6432,81 @@ mod tests {
             &["recommend".into(), "llama.cpp".into(), "huggingface".into()],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn siwc_snapshot_probe_metadata_and_a2ui_surface_frames_match_mac_contracts() {
+        let store = Store::open_in_memory().unwrap();
+
+        // 1. siwc_account_snapshot emits state="ready" and credential_ref="siwc:<id>"
+        let snap = siwc_account_snapshot("acct-42", "Work", 3, true);
+        assert_eq!(snap["account"]["state"], "ready");
+        assert_eq!(snap["account"]["credential_ref"], "siwc:acct-42");
+        let disconnected = siwc_account_snapshot("acct-42", "Work", 4, false);
+        assert_eq!(disconnected["account"]["state"], "disconnected");
+        assert!(disconnected["account"]["credential_ref"].is_null());
+
+        // 2. probe_prepare / probe metadata resolves connection & account from module_records + kv
+        store
+            .put_module_record(
+                "model_connection",
+                "conn-store-1",
+                &json!({
+                    "id": "conn-store-1",
+                    "display_name": "Stored OpenAI",
+                    "base_url": "https://api.stored.example/v1",
+                    "account_id": "acct-99"
+                }),
+            )
+            .unwrap();
+        store
+            .put_module_record(
+                "model_account",
+                "acct-99",
+                &json!({
+                    "id": "acct-99",
+                    "revision": 7,
+                    "credential_ref": "siwc:acct-99"
+                }),
+            )
+            .unwrap();
+        let cfg = load_active_config(&store);
+        let meta = resolve_probe_connection_metadata(&store, &cfg, "conn-store-1", &json!({}));
+        assert_eq!(meta.base_url, "https://api.stored.example/v1");
+        assert_eq!(meta.display_name, "Stored OpenAI");
+        assert_eq!(meta.account_id.as_deref(), Some("acct-99"));
+        assert_eq!(meta.account_revision, Some(7));
+
+        // 3. collect_a2ui_surface_frames emits ui_surface frames for rendered surfaces
+        let owner = nola_modules::a2ui::UiSurfaceOwner {
+            authority_id: "local-host".into(),
+            conversation_id: "sess-a2ui-1".into(),
+            participant_id: "assistant".into(),
+            context_id: "conversation".into(),
+            originating_run_id: "run-a2ui-1".into(),
+            message_id: "msg-a2ui-1".into(),
+            part_id: "part-a2ui-1".into(),
+        };
+        let (root_id, nodes) = nola_modules::a2ui::build_nodes_from_spec(&json!({
+            "components": [
+                {"id": "t1", "component": "Text", "text": "Hello A2UI"}
+            ]
+        }))
+        .unwrap();
+        nola_modules::a2ui::upsert_ui_surface(
+            &store,
+            owner,
+            "card-1",
+            "Summary Card",
+            root_id,
+            nodes,
+            json!({}),
+        )
+        .unwrap();
+        let frames = collect_a2ui_surface_frames(&store, "sess-a2ui-1", "sess-a2ui-1");
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["type"], "ui_surface");
+        assert_eq!(frames[0]["session_id"], "sess-a2ui-1");
+        assert_eq!(frames[0]["snapshot"]["identity"]["surface_id"], "card-1");
     }
 }

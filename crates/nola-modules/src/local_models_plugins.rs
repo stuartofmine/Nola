@@ -369,6 +369,22 @@ pub fn probe_engine_status(engine: &str) -> Value {
         ),
     };
 
+    let reason = if ready {
+        "ready"
+    } else if bin_candidates.is_empty() {
+        "unsupported"
+    } else if env_override
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty())
+    {
+        "invalid_override"
+    } else if canonical_engine == "lmstudio" && !lmstudio_reachable {
+        "not_running"
+    } else {
+        "binary_not_found"
+    };
+
     json!({
         "engine": canonical_engine,
         "ready": ready,
@@ -378,7 +394,7 @@ pub fn probe_engine_status(engine: &str) -> Value {
         "backend": backend,
         "canInstall": can_install,
         "guideUrl": guide_url,
-        "reason": message,
+        "reason": reason,
         "message": message
     })
 }
@@ -918,12 +934,229 @@ fn default_download_engine() -> String {
     "llama.cpp".into()
 }
 
+fn default_download_source() -> String {
+    "huggingface".into()
+}
+
+fn derive_download_repo_and_source(parsed: &Url, fallback_name: &str) -> (String, String) {
+    let host = parsed
+        .host_str()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let segments: Vec<&str> = parsed
+        .path_segments()
+        .map(|s| s.filter(|seg| !seg.is_empty()).collect())
+        .unwrap_or_default();
+    if host == "modelscope.cn" || host == "www.modelscope.cn" {
+        let repo = if segments.len() >= 3 && segments[0].eq_ignore_ascii_case("models") {
+            format!("{}/{}", segments[1], segments[2])
+        } else {
+            fallback_name.to_string()
+        };
+        return (repo, "modelscope".into());
+    }
+    let repo = if (host == "huggingface.co"
+        || host == "www.huggingface.co"
+        || host == "hf-mirror.com")
+        && segments.len() >= 2
+    {
+        format!("{}/{}", segments[0], segments[1])
+    } else {
+        fallback_name.to_string()
+    };
+    (repo, "huggingface".into())
+}
+
+fn default_models_dir() -> PathBuf {
+    for key in ["NOLA_MODELS_ROOT", "NOLA_MODELS_DIR"] {
+        if let Ok(val) = std::env::var(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
+    if let Ok(nola_home) = std::env::var("NOLA_HOME") {
+        let trimmed = nola_home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("models");
+        }
+    }
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join(".nola/models")
+}
+
+fn allowed_model_base_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for key in ["NOLA_MODELS_ROOT", "NOLA_MODELS_DIR"] {
+        if let Ok(val) = std::env::var(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                dirs.push(PathBuf::from(trimmed));
+            }
+        }
+    }
+    if let Ok(nola_home) = std::env::var("NOLA_HOME") {
+        let trimmed = nola_home.trim();
+        if !trimmed.is_empty() {
+            dirs.push(PathBuf::from(trimmed).join("models"));
+        }
+    }
+    if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            dirs.push(PathBuf::from(trimmed).join(".nola/models"));
+        }
+    }
+    #[cfg(test)]
+    {
+        dirs.push(std::env::temp_dir());
+    }
+    if dirs.is_empty() {
+        dirs.push(default_models_dir());
+    }
+    dirs
+}
+
+/// Safely join a relative model `filename` (or nested relative path with only normal segments)
+/// inside `base_dir`, rejecting `..`, absolute paths, symlinks, symlink escapes, and sensitive paths.
+pub fn safe_model_dest_path(base_dir: &Path, filename: &str) -> Result<PathBuf, String> {
+    let trimmed = filename.trim();
+    if trimmed.is_empty() {
+        return Err("model destination filename must not be empty".into());
+    }
+    let rel = Path::new(trimmed);
+    if rel.is_absolute()
+        || rel.components().count() == 0
+        || rel.components().any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err(format!(
+            "unsafe model destination filename '{trimmed}': must be a relative path with normal segments only"
+        ));
+    }
+    let candidate = base_dir.join(rel);
+    if crate::data_sources::is_sensitive_local_path(&candidate) {
+        return Err(format!(
+            "refused sensitive model destination path '{}'",
+            candidate.display()
+        ));
+    }
+    if !path_within_workspace(base_dir, &candidate) {
+        return Err(format!(
+            "model destination '{}' escapes base directory '{}'",
+            candidate.display(),
+            base_dir.display()
+        ));
+    }
+    let mut cur = base_dir.to_path_buf();
+    for comp in rel.components() {
+        cur.push(comp);
+        if let Ok(meta) = fs::symlink_metadata(&cur) {
+            if meta.file_type().is_symlink() {
+                return Err(format!(
+                    "model destination path '{}' traverses a symlink",
+                    cur.display()
+                ));
+            }
+        }
+    }
+    Ok(candidate)
+}
+
+fn validate_model_dest_path(dest_trimmed: &str) -> Result<PathBuf, String> {
+    if dest_trimmed.is_empty() {
+        return Err("dest_path must not be empty".into());
+    }
+    let raw = Path::new(dest_trimmed);
+    if raw
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err(format!(
+            "dest_path '{dest_trimmed}' must not contain '..' traversal components"
+        ));
+    }
+    let candidate = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        safe_model_dest_path(&default_models_dir(), dest_trimmed)?
+    };
+    if crate::data_sources::is_sensitive_local_path(&candidate) {
+        return Err(format!(
+            "refused sensitive model destination path '{}'",
+            candidate.display()
+        ));
+    }
+    let bases = allowed_model_base_dirs();
+    let Some(matched_base) = bases
+        .iter()
+        .find(|base| path_within_workspace(base, &candidate))
+    else {
+        return Err(format!(
+            "dest_path '{}' must reside inside the managed models directory",
+            candidate.display()
+        ));
+    };
+    if let Ok(rel) = candidate.strip_prefix(matched_base) {
+        let mut cur = matched_base.clone();
+        for comp in rel.components() {
+            cur.push(comp);
+            if let Ok(meta) = fs::symlink_metadata(&cur) {
+                if meta.file_type().is_symlink() {
+                    return Err(format!(
+                        "dest_path '{}' traverses a symlink",
+                        cur.display()
+                    ));
+                }
+            }
+        }
+    }
+    let part = PathBuf::from(format!("{}.part", candidate.display()));
+    if let Ok(meta) = fs::symlink_metadata(&part) {
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "download staging file '{}' must not be a symlink",
+                part.display()
+            ));
+        }
+    }
+    Ok(candidate)
+}
+
+fn validate_download_redirect_target(
+    current: &Url,
+    location: &str,
+) -> Result<(Url, String, Vec<std::net::SocketAddr>), String> {
+    let next = current
+        .join(location.trim())
+        .map_err(|e| format!("invalid redirect Location '{location}': {e}"))?;
+    if next.scheme() != "https" {
+        return Err(format!(
+            "blocked redirect to non-HTTPS URL '{}' (model downloads require https:// on redirects)",
+            next
+        ));
+    }
+    nola_tools::web::resolve_and_validate_public_url(next.as_str())
+}
+
 /// Live & persisted download state exposed by `ModelDownloadManager`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelDownloadState {
+    #[serde(default)]
+    pub id: String,
     pub download_id: String,
     pub name: String,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default = "default_download_source")]
+    pub source: String,
     pub engine: String,
     pub url: String,
     pub dest_path: String,
@@ -1025,17 +1258,16 @@ impl ModelDownloadManager {
         };
 
         let dest_trimmed = plan.dest_path.trim();
-        if dest_trimmed.is_empty() {
-            return Err("dest_path must not be empty".into());
-        }
-        let dest_path = PathBuf::from(dest_trimmed);
-        let part_path = PathBuf::from(format!("{}.part", dest_path.display()));
+        let dest_path = validate_model_dest_path(dest_trimmed)?;
         if let Some(parent) = dest_path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("failed to create download directory: {e}"))?;
             }
         }
+        // Re-validate after creating parent directories so no symlink appeared in parent chain.
+        let dest_path = validate_model_dest_path(&dest_path.display().to_string())?;
+        let part_path = PathBuf::from(format!("{}.part", dest_path.display()));
 
         let existing_bytes = fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
         let download_id = plan
@@ -1043,10 +1275,14 @@ impl ModelDownloadManager {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(new_id);
+        let (repository, source) = derive_download_repo_and_source(&parsed, &plan.name);
         let started_at_ms = now_ms();
         let initial_state = ModelDownloadState {
+            id: download_id.clone(),
             download_id: download_id.clone(),
             name: plan.name.clone(),
+            repository,
+            source,
             engine: plan.engine.clone(),
             url: plan.url.clone(),
             dest_path: dest_path.display().to_string(),
@@ -1075,25 +1311,61 @@ impl ModelDownloadManager {
             .name(format!("nola-model-dl-{}", &download_id[..download_id.len().min(8)]))
             .spawn(move || {
                 let outcome: Result<(), String> = (|| {
-                    let mut builder = reqwest::blocking::Client::builder()
-                        .timeout(Duration::from_secs(300))
-                        .redirect(reqwest::redirect::Policy::limited(5))
-                        .user_agent("Nola/2.0");
-                    if is_loopback {
-                        builder = builder.no_proxy();
-                    } else if let Some((_, ref host, ref addrs)) = resolved_remote {
-                        builder = builder.resolve_to_addrs(host, addrs);
-                    }
-                    let client = builder.build().map_err(|e| e.to_string())?;
+                    const MAX_REDIRECTS: usize = 5;
+                    let mut current_url = parsed;
+                    let mut current_is_loopback = is_loopback;
+                    let mut current_remote = resolved_remote;
+                    let mut resp_opt = None;
 
-                    let mut req = client.get(parsed);
-                    if existing_bytes > 0 {
-                        req = req.header(
-                            reqwest::header::RANGE,
-                            format!("bytes={existing_bytes}-"),
-                        );
+                    for hop in 0..=MAX_REDIRECTS {
+                        let mut builder = reqwest::blocking::Client::builder()
+                            .timeout(Duration::from_secs(300))
+                            .redirect(reqwest::redirect::Policy::none())
+                            .user_agent("Nola/2.0");
+                        if current_is_loopback {
+                            builder = builder.no_proxy();
+                        } else if let Some((_, ref host, ref addrs)) = current_remote {
+                            builder = builder.resolve_to_addrs(host, addrs);
+                        }
+                        let client = builder.build().map_err(|e| e.to_string())?;
+
+                        let mut req = client.get(current_url.clone());
+                        if existing_bytes > 0 {
+                            req = req.header(
+                                reqwest::header::RANGE,
+                                format!("bytes={existing_bytes}-"),
+                            );
+                        }
+                        let resp = req
+                            .send()
+                            .map_err(|e| format!("download request failed: {e}"))?;
+                        let status_u16 = resp.status().as_u16();
+                        if matches!(status_u16, 301 | 302 | 303 | 307 | 308) {
+                            if hop == MAX_REDIRECTS {
+                                return Err(format!(
+                                    "download exceeded maximum of {MAX_REDIRECTS} redirects"
+                                ));
+                            }
+                            let loc = resp
+                                .headers()
+                                .get(reqwest::header::LOCATION)
+                                .and_then(|v| v.to_str().ok())
+                                .ok_or_else(|| {
+                                    format!("redirect HTTP {status_u16} missing Location header")
+                                })?;
+                            let (next_url, next_host, next_addrs) =
+                                validate_download_redirect_target(&current_url, loc)?;
+                            current_url = next_url.clone();
+                            current_is_loopback = false;
+                            current_remote = Some((next_url, next_host, next_addrs));
+                            continue;
+                        }
+                        resp_opt = Some(resp);
+                        break;
                     }
-                    let mut resp = req.send().map_err(|e| format!("download request failed: {e}"))?;
+
+                    let mut resp = resp_opt
+                        .ok_or_else(|| "download failed without final HTTP response".to_string())?;
                     let status_code = resp.status();
 
                     if status_code.as_u16() == 416 && existing_bytes > 0 {
@@ -1221,7 +1493,7 @@ impl ModelDownloadManager {
                         .put_module_record(KIND_LOCAL_MODEL, &model_rec.id, &model_rec)
                         .map_err(|e| format!("failed to register local model: {e}"))?;
 
-                    state_bg.status = "completed".into();
+                    state_bg.status = "installed".into();
                     state_bg.downloaded_bytes = final_size;
                     state_bg.total_bytes = Some(final_size);
                     state_bg.percent = 100.0;
@@ -1280,11 +1552,53 @@ impl ModelDownloadManager {
                 }
             }
         }
-        store
+        let mut val = store
             .get_kv(KV_MODEL_DOWNLOAD_STATUS)
             .ok()
             .flatten()
-            .unwrap_or_else(|| json!({ "status": "idle" }))
+            .unwrap_or_else(|| json!({ "status": "idle" }));
+        if let Some(obj) = val.as_object_mut() {
+            let status = obj
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("idle");
+            if status != "idle" {
+                if status == "completed" {
+                    obj.insert("status".into(), json!("installed"));
+                }
+                if !obj.contains_key("id") {
+                    if let Some(dl_id) = obj.get("downloadId").cloned() {
+                        obj.insert("id".into(), dl_id);
+                    }
+                }
+                if obj
+                    .get("repository")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    let name = obj
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url_opt = obj
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .and_then(|u| Url::parse(u).ok());
+                    let (repo, src) = match url_opt {
+                        Some(u) => derive_download_repo_and_source(&u, &name),
+                        None => (name, default_download_source()),
+                    };
+                    obj.insert("repository".into(), json!(repo));
+                    obj.entry("source").or_insert_with(|| json!(src));
+                } else {
+                    obj.entry("source")
+                        .or_insert_with(|| json!(default_download_source()));
+                }
+            }
+        }
+        val
     }
 }
 
@@ -1525,6 +1839,35 @@ fn stage_plugin_directory(src_dir: &Path, dest_dir: &Path) -> Result<(usize, Str
     Ok((files.len(), hex::encode(hasher.finalize())))
 }
 
+fn validate_plugin_entry_rel(src_dir: &Path, entry_rel: &str) -> Result<PathBuf, String> {
+    let rel = Path::new(entry_rel);
+    if rel.is_absolute()
+        || rel.components().count() == 0
+        || rel.components().any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err(format!(
+            "unsafe plugin entry_path '{entry_rel}': must be a relative path with normal segments only"
+        ));
+    }
+    let mut cur = src_dir.to_path_buf();
+    for comp in rel.components() {
+        cur.push(comp);
+        if let Ok(meta) = fs::symlink_metadata(&cur) {
+            if meta.file_type().is_symlink() {
+                return Err(format!(
+                    "unsafe plugin entry_path '{entry_rel}': symlink component rejected"
+                ));
+            }
+        }
+    }
+    if !path_within_workspace(src_dir, &cur) {
+        return Err(format!(
+            "unsafe plugin entry_path '{entry_rel}': escapes plugin directory"
+        ));
+    }
+    Ok(rel.to_path_buf())
+}
+
 /// Install a plugin package either by staging a local directory/manifest into
 /// `<workspace>/.nola/plugins/<name>/` (with SHA-256 verification) OR by invoking
 /// `pi`/`dsh` CLI when present on `PATH`, then recording `PluginRecord` in `Store`.
@@ -1582,21 +1925,26 @@ pub fn install_plugin_package(
             return Err("could not derive valid plugin directory name".into());
         }
 
-        // Verify optional entry file SHA-256 digest declared in manifest before staging
+        // Verify optional entry file path safety & SHA-256 digest declared in manifest before staging
         let entry_rel = manifest
             .get("entry_path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim()
             .to_string();
+        let validated_entry_rel = if !entry_rel.is_empty() {
+            Some(validate_plugin_entry_rel(&src_dir, &entry_rel)?)
+        } else {
+            None
+        };
         if let Some(expected_sha) = manifest
             .get("sha256")
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            let target_to_hash = if !entry_rel.is_empty() {
-                src_dir.join(&entry_rel)
+            let target_to_hash = if let Some(ref rel) = validated_entry_rel {
+                src_dir.join(rel)
             } else {
                 manifest_path.clone()
             };
@@ -1662,6 +2010,13 @@ pub fn install_plugin_package(
             .put_module_record(KIND_PLUGIN, &rec.id, &rec)
             .map_err(|e| e.to_string())?;
         return Ok(rec);
+    }
+
+    // Reject CLI flag injection (e.g. `--...` / `-...`) before invoking `pi`/`dsh`
+    if src_trimmed.starts_with('-') {
+        return Err(format!(
+            "invalid plugin source '{src_trimmed}': package source must not start with '-'"
+        ));
     }
 
     // Remote / package-manager install via `pi` or `dsh` CLI if present on PATH
@@ -2973,14 +3328,17 @@ mod tests {
             final_status = mgr.current_status(&store);
             if matches!(
                 final_status["status"].as_str(),
-                Some("completed") | Some("failed") | Some("cancelled")
+                Some("installed") | Some("completed") | Some("failed") | Some("cancelled")
             ) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(40));
         }
         let _ = server_thread.join();
-        assert_eq!(final_status["status"], "completed", "status: {final_status}");
+        assert_eq!(final_status["status"], "installed", "status: {final_status}");
+        assert_eq!(final_status["id"], "dl-resume-1");
+        assert_eq!(final_status["repository"], "test-gguf");
+        assert_eq!(final_status["source"], "huggingface");
         assert_eq!(final_status["sha256"], expected_sha);
         assert_eq!(fs::read(&dest_path).unwrap(), payload);
         let models: Vec<LocalModelRecord> = store.list_module_records(KIND_LOCAL_MODEL).unwrap();
@@ -3034,5 +3392,171 @@ mod tests {
         assert_eq!(reconciled.skill_dirs.len(), 1);
         assert_eq!(reconciled.pages.len(), 1);
         assert_eq!(reconciled.pages[0]["id"], "acme-dash");
+    }
+
+    #[test]
+    fn ssrf_redirect_dest_confinement_plugin_traversal_and_engine_reason_codes() {
+        // 1. Structured engineStatus.reason codes
+        let unsupported = probe_engine_status("nonexistent-engine-xyz");
+        assert_eq!(unsupported["reason"], "unsupported");
+        let prev = std::env::var("NOLA_LLAMA_SERVER").ok();
+        std::env::set_var("NOLA_LLAMA_SERVER", "/definitely/missing/llama-server");
+        let overridden = probe_engine_status("llama.cpp");
+        if overridden["ready"] == false {
+            assert_eq!(overridden["reason"], "invalid_override");
+        }
+        if let Some(v) = prev {
+            std::env::set_var("NOLA_LLAMA_SERVER", v);
+        } else {
+            std::env::remove_var("NOLA_LLAMA_SERVER");
+        }
+
+        // 2. Direct redirect target validator blocks HTTP downgrade & private/loopback/metadata IPs
+        let base = Url::parse("https://huggingface.co/owner/repo/resolve/main/model.gguf").unwrap();
+        assert!(validate_download_redirect_target(&base, "http://huggingface.co/model.gguf").is_err());
+        assert!(validate_download_redirect_target(&base, "https://127.0.0.1/secret").is_err());
+        assert!(validate_download_redirect_target(&base, "https://169.254.169.254/latest/meta-data").is_err());
+        assert!(validate_download_redirect_target(&base, "http://169.254.169.254/latest/meta-data").is_err());
+        assert!(validate_download_redirect_target(&base, "file:///etc/passwd").is_err());
+
+        // 3. End-to-end download blocks SSRF 302 redirect to metadata IP
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let resp = "HTTP/1.1 302 Found\r\nLocation: https://169.254.169.254/latest/meta-data\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let dest_path = dir.path().join("redirected.gguf");
+        let mgr: &'static ModelDownloadManager = Box::leak(Box::new(ModelDownloadManager::new()));
+        mgr.start_download(
+            &store,
+            ModelDownloadPlan {
+                id: Some("dl-ssrf-redir".into()),
+                name: "ssrf-test".into(),
+                engine: "llama.cpp".into(),
+                url: format!("http://{addr}/model.gguf"),
+                dest_path: dest_path.display().to_string(),
+                sha256: None,
+                quantization: None,
+                expected_bytes: None,
+            },
+        )
+        .unwrap();
+        let mut final_status = json!({});
+        for _ in 0..50 {
+            final_status = mgr.current_status(&store);
+            if matches!(final_status["status"].as_str(), Some("failed") | Some("installed")) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let _ = server.join();
+        assert_eq!(final_status["status"], "failed", "SSRF redirect must fail: {final_status}");
+        assert!(
+            final_status["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("SSRF"),
+            "expected SSRF error, got: {final_status}"
+        );
+        assert!(!dest_path.exists());
+
+        // 4. dest_path confinement rejects .., sensitive paths, and symlink escapes
+        assert!(safe_model_dest_path(dir.path(), "../escape.gguf").is_err());
+        assert!(safe_model_dest_path(dir.path(), "/etc/passwd").is_err());
+        assert!(safe_model_dest_path(dir.path(), ".ssh/authorized_keys").is_err());
+        assert!(safe_model_dest_path(dir.path(), "vault.json").is_err());
+        assert!(safe_model_dest_path(dir.path(), "nested/ok.gguf").is_ok());
+        assert!(mgr
+            .start_download(
+                &store,
+                ModelDownloadPlan {
+                    id: None,
+                    name: "bad".into(),
+                    engine: "llama.cpp".into(),
+                    url: "http://127.0.0.1:9/a.gguf".into(),
+                    dest_path: dir.path().join("../escape.gguf").display().to_string(),
+                    sha256: None,
+                    quantization: None,
+                    expected_bytes: None,
+                },
+            )
+            .is_err());
+        assert!(mgr
+            .start_download(
+                &store,
+                ModelDownloadPlan {
+                    id: None,
+                    name: "bad-ssh".into(),
+                    engine: "llama.cpp".into(),
+                    url: "http://127.0.0.1:9/a.gguf".into(),
+                    dest_path: dir.path().join(".ssh/authorized_keys").display().to_string(),
+                    sha256: None,
+                    quantization: None,
+                    expected_bytes: None,
+                },
+            )
+            .is_err());
+
+        // 5. Plugin entry_path traversal, symlink, and -flag CLI injection rejection
+        let bad_trav = dir.path().join("bad-plugin-trav");
+        fs::create_dir_all(&bad_trav).unwrap();
+        fs::write(
+            bad_trav.join("nola-plugin.json"),
+            r#"{"id":"bad-trav","name":"Bad","entry_path":"../../etc/passwd"}"#,
+        )
+        .unwrap();
+        let trav_err = install_plugin_package(
+            &store,
+            dir.path(),
+            "dsh",
+            "web",
+            &bad_trav.display().to_string(),
+        )
+        .unwrap_err();
+        assert!(trav_err.contains("entry_path"), "got: {trav_err}");
+
+        #[cfg(unix)]
+        {
+            let outside_secret = dir.path().join("outside.js");
+            fs::write(&outside_secret, "secret").unwrap();
+            let bad_sym = dir.path().join("bad-plugin-sym");
+            fs::create_dir_all(&bad_sym).unwrap();
+            std::os::unix::fs::symlink(&outside_secret, bad_sym.join("entry.js")).unwrap();
+            fs::write(
+                bad_sym.join("nola-plugin.json"),
+                r#"{"id":"bad-sym","name":"BadSym","entry_path":"entry.js"}"#,
+            )
+            .unwrap();
+            let sym_err = install_plugin_package(
+                &store,
+                dir.path(),
+                "dsh",
+                "web",
+                &bad_sym.display().to_string(),
+            )
+            .unwrap_err();
+            assert!(sym_err.contains("symlink"), "got: {sym_err}");
+        }
+
+        let flag_err = install_plugin_package(
+            &store,
+            dir.path(),
+            "dsh",
+            "web",
+            "--malicious-flag=1",
+        )
+        .unwrap_err();
+        assert!(
+            flag_err.contains("must not start with '-'"),
+            "expected flag rejection, got: {flag_err}"
+        );
     }
 }

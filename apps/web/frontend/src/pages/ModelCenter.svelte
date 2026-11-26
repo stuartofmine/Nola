@@ -65,8 +65,11 @@
     let disposed = false;
     const catalogReads = latestRequest<Catalog>();
     const dirty = $derived(!!editing && JSON.stringify(draft) !== JSON.stringify(editing.parameters));
+    function isModelDownloadActive(status?: string) {
+        return status === 'queued' || status === 'downloading' || status === 'verifying' || status === 'cancelling';
+    }
     const visibleModels = $derived(
-        (catalog?.models.filter(model => model.installed || model.download?.status === 'downloading') ?? [])
+        (catalog?.models.filter(model => model.installed || isModelDownloadActive(model.download?.status)) ?? [])
             .sort((a, b) => Number(b.running) - Number(a.running) || Number(b.selected) - Number(a.selected))
     );
     function runtimeAvailable(id: LocalEngine) {
@@ -79,7 +82,7 @@
         engineSetup?.reveal();
     }
     function hasActiveDownload(value?: Catalog) {
-        return downloadActive(value?.acquisition) || value?.models.some(model => model.download?.status === 'downloading');
+        return downloadActive(value?.acquisition) || value?.models.some(model => isModelDownloadActive(model.download?.status));
     }
     let engineSetup = $state<{reveal(): void}>();
     let readiness = $state<Partial<Record<LocalEngine, boolean>>>({});

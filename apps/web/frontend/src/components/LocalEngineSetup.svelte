@@ -65,7 +65,7 @@
         installing = selected; error = '';
         try {
             const value = await api<{engineStatus:EngineStatus}>('/api/local-models/setup-engine',{
-                method:'POST',body:JSON.stringify({engine:selected})
+                method:'POST',body:JSON.stringify({engine:selected, opt_in_install:true})
             });
             if (alive) {
                 if (selected === engine) { ++checkVersion; reads.cancel(); checking = false; }

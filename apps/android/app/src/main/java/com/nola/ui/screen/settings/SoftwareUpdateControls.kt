@@ -114,6 +114,8 @@ private suspend fun updateCall(
     val request = buildJsonObject {
         put("operation", operation)
         put("target", softwareUpdateTarget(context))
+        put("current_version", BuildConfig.VERSION_NAME)
+        put("current_build", BuildConfig.VERSION_CODE)
         releaseId?.let { put("expected_release_id", it) }
         url?.let { put("url", it) }
         sha256?.let { put("sha256", it) }

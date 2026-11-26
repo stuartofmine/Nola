@@ -1032,11 +1032,43 @@ fn read_clipboard_payload() -> Result<ClipboardPayload, String> {
     if cfg!(target_os = "macos") && find_binary_on_path("osascript").is_some() {
         let tmp_png = std::env::temp_dir().join(format!("nola-clip-{}.png", new_id()));
         let _cleanup = TempFileCleanupGuard(tmp_png.clone());
-        let script = format!(
-            "try\nset theData to the clipboard as «class PNGf»\nset outFile to open for access POSIX file \"{}\" with write permission\nwrite theData to outFile\nclose access outFile\nreturn \"ok\"\non error\nreturn \"none\"\nend try",
-            tmp_png.display()
-        );
-        if let Ok(out) = Command::new("osascript").args(["-e", &script]).output() {
+        if let Ok(out) = Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "try",
+                "-e",
+                "set theData to the clipboard as «class PNGf»",
+                "-e",
+                "set p to POSIX file (item 1 of argv)",
+                "-e",
+                "set outFile to open for access p with write permission",
+                "-e",
+                "write theData to outFile",
+                "-e",
+                "close access outFile",
+                "-e",
+                "return \"ok\"",
+                "-e",
+                "on error",
+                "-e",
+                "try",
+                "-e",
+                "close access outFile",
+                "-e",
+                "end try",
+                "-e",
+                "return \"none\"",
+                "-e",
+                "end try",
+                "-e",
+                "end run",
+                "--",
+            ])
+            .arg(&tmp_png)
+            .output()
+        {
             if out.status.success()
                 && String::from_utf8_lossy(&out.stdout).trim() == "ok"
                 && tmp_png.is_file()

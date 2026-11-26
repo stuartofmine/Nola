@@ -12,7 +12,7 @@
     import { latestRequest } from '../lib/latestRequest';
     import { t, locale } from '../lib/i18n';
     import {
-        downloadActive, engineName, sourceName, modelByteSize, modelMemorySize,
+        downloadActive, downloadSucceeded, engineName, sourceName, modelByteSize, modelMemorySize,
         targetContextTokens, contextLimitation, repositoryUrl, unslothQuantization,
         parseDirectModelInput, cleanModelName, formatUnifiedGb, modelFitLevel, formatEta,
         type LocalEngine, type ModelDownload, type ModelSource
@@ -234,7 +234,7 @@
 </script>
 
 <section class="acquisition" aria-label={t($locale, 'local.find')}>
-    {#if job && job.status !== 'installed'}
+    {#if job && !downloadSucceeded(job)}
         <div class="download-banner" aria-live="polite">
             <div class="download-head">
                 <div class="download-title">
