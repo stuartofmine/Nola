@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
     import { errorMessage } from '../lib/api';
+    import { pushToast } from '../lib/toast';
     import {
         expertAccentPalette,
         expertBubbleColor,
@@ -247,14 +248,31 @@
         if (!conversationId || saving) return;
         saving = true;
         error = '';
+        notice = '';
         try {
-            const isSame = attachedRoomId === room.id;
-            const attached = await attachV2ConversationToRoom(conversationId, isSame ? null : room.id);
+            const isSame = attachedRoomId === room.id || room.sessionId === conversationId;
+            const attached = await attachV2ConversationToRoom(
+                conversationId,
+                isSame ? null : room.id,
+                undefined,
+                isSame ? room.id : undefined,
+            );
             if (disposed) return;
-            onattachRoom?.(isSame ? null : attached ?? room);
+            rooms = rooms.map(item => {
+                if (item.id === room.id) {
+                    return isSame ? { ...item, sessionId: undefined } : attached ?? { ...item, sessionId: conversationId };
+                }
+                return item;
+            });
+            onattachRoom?.(isSame ? null : attached ?? { ...room, sessionId: conversationId });
+            onupdated?.(experts, rooms);
             notice = isSame ? t($locale, 'chatInspector.detachRoom') : `${t($locale, 'chatInspector.attachRoom')}: ${room.name}`;
         } catch (cause) {
-            if (!disposed) error = errorMessage(cause);
+            if (!disposed) {
+                const msg = errorMessage(cause);
+                error = msg;
+                pushToast(msg, 'error');
+            }
         } finally {
             if (!disposed) saving = false;
         }

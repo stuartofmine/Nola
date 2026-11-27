@@ -263,7 +263,7 @@ class RemoteObservationTransportTest {
             assertEquals(
                 listOf(
                     "POST" to "/api/mobile/agent/tool-plan/prepare",
-                    "GET" to "/api/mobile/chat/conversations/c-1/events",
+                    "POST" to "/api/mobile/chat/conversations/c-1/events",
                     "POST" to "/api/mobile/chat/conversations/c-1/cancel",
                 ),
                 requests.toList(),

@@ -1450,28 +1450,16 @@ export async function updateV2AgentRoom(
         ...(input.participantExpertIds !== undefined ? { participant_expert_ids: input.participantExpertIds } : {}),
         ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
     };
-    try {
-        await api(`/api/agent-rooms/${encodeURIComponent(roomId)}`, {
-            method: 'PUT',
-            body: JSON.stringify(restBody),
-            signal,
-        });
-    } catch (cause) {
-        if (cause instanceof ApiError && (cause.status === 404 || cause.status === 405)) {
-            await api('/api/agent-rooms', {
-                method: 'POST',
-                body: JSON.stringify({
-                    command: {
-                        type: 'update_room',
-                        input: { id: roomId, room_id: roomId, ...restBody },
-                    },
-                }),
-                signal,
-            });
-        } else {
-            throw cause;
-        }
-    }
+    await api('/api/agent-rooms', {
+        method: 'POST',
+        body: JSON.stringify({
+            command: {
+                type: 'update_room',
+                input: { id: roomId, room_id: roomId, ...restBody },
+            },
+        }),
+        signal,
+    });
     invalidateV2ExpertsCache();
     return fetchV2AgentRoomsDirectory(signal);
 }
@@ -1500,9 +1488,26 @@ export async function attachV2ConversationToRoom(
     conversationId: string,
     roomId: string | null,
     signal?: AbortSignal,
+    currentRoomId?: string | null,
 ): Promise<V2AgentRoom | null> {
     if (!roomId) {
-        await patchV2ConversationConfiguration(conversationId, { knowledge: undefined }, signal).catch(() => {});
+        let targetRoomId = currentRoomId ?? null;
+        if (!targetRoomId) {
+            const dir = await fetchV2AgentRoomsDirectory(signal);
+            targetRoomId = dir.rooms.find(r => r.sessionId === conversationId)?.id ?? null;
+        }
+        if (!targetRoomId) return null;
+        await api<Record<string, unknown>>('/api/agent-rooms', {
+            method: 'POST',
+            body: JSON.stringify({
+                command: {
+                    type: 'update_room',
+                    input: { id: targetRoomId, detach: true, session_id: null },
+                },
+            }),
+            signal,
+        });
+        invalidateV2ExpertsCache();
         return null;
     }
     const res = await api<Record<string, unknown>>('/api/agent-rooms', {
@@ -1515,6 +1520,7 @@ export async function attachV2ConversationToRoom(
         }),
         signal,
     });
+    invalidateV2ExpertsCache();
     const result = (res.result && typeof res.result === 'object' ? res.result : res) as Record<string, unknown>;
     return parseRoomItem(result.room ?? res.item);
 }

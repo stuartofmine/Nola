@@ -463,6 +463,7 @@ class AndroidAgentHostExecutor(
                 )
             } else {
                 val text = clipboard.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
                     ?.getItemAt(0)
                     ?.coerceToText(context)
                     ?.toString()

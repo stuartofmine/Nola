@@ -3,6 +3,7 @@
     import { locale, t } from '../lib/i18n';
     import { darkAppearance, toggleAppearance } from '../lib/appearance';
     import { ApiError, errorMessage } from '../lib/api';
+    import { pushToast } from '../lib/toast';
     import { workspaceContentNavigationEvent, navigateWorkspace } from '../lib/workspaceNavigation';
     import { workspaceTabCloseEvent } from '../lib/workspacePageLocation';
     import { layoutDefaults, setWorkspaceWidth, visiblePanelWidths, workspaceWidths } from '../lib/workspaceLayout';
@@ -247,12 +248,32 @@
         streaming = false;
     }
 
-    /** Explicit user Stop button: aborts SSE reader AND cancels the active Host run. */
-    function cancelActiveRun() {
+    let cancelling = $state(false);
+
+    /** Explicit user Stop button: cancels the active Host run and detaches the SSE reader once confirmed. */
+    async function cancelActiveRun() {
+        if (cancelling) return;
         const targetId = active?.conversationId ?? null;
-        detachStream();
-        if (targetId) {
-            void cancelV2Turn(targetId).catch(() => {});
+        if (!targetId) {
+            detachStream();
+            return;
+        }
+        const serial = generation;
+        cancelling = true;
+        error = '';
+        try {
+            await cancelV2Turn(targetId);
+            if (serial === generation) {
+                detachStream();
+            }
+        } catch (cause) {
+            const msg = errorMessage(cause);
+            if (serial === generation) {
+                error = msg;
+            }
+            pushToast(msg, 'error');
+        } finally {
+            cancelling = false;
         }
     }
 
@@ -2149,8 +2170,8 @@
                                 ></textarea>
                                 <div class="composer-actions">
                                     {#if streaming}
-                                        <button type="button" class="danger" onclick={cancelActiveRun}>
-                                            {t($locale, 'chatPage.stop')}
+                                        <button type="button" class="danger" disabled={cancelling} onclick={() => void cancelActiveRun()}>
+                                            {t($locale, cancelling ? 'chatPage.cancelPending' : 'chatPage.stop')}
                                         </button>
                                     {:else}
                                         <button type="submit" class="primary" disabled={(!draft.trim() && !attachments.length) || loading}>

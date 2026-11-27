@@ -60,7 +60,10 @@ class ScheduledPermissionOccurrenceTest {
                 }.toString(), """{"maxContextLength":32768,"maxOutputTokens":1024}""", true, true, 0, 1, 1))
             dependencies.preferences().saveDefaultModelSelection(dependencies.modelRepository().listConfiguredModels().single { it.profileId == prefix })
             val now = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
-            val target = if (daily) now.plusMinutes(1).withSecond(0).withNano(0) else now.plusSeconds(2)
+            val target = if (daily) {
+                val nextMinute = now.plusMinutes(1).withSecond(0).withNano(0)
+                if (java.time.Duration.between(now, nextMinute).seconds < 5) nextMinute.plusMinutes(1) else nextMinute
+            } else now.plusSeconds(2)
             val scheduledAt = target.toInstant().toEpochMilli()
             val action = ScheduledActionEntity(prefix, "test", "Review scheduled permission", server.url + "/source",
                 "json", "Inspect the clipboard for this disposable test.", scheduleFrequency = if (daily) "daily" else "once",

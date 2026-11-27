@@ -104,7 +104,7 @@ object PublicPartSemanticsDecoder {
     fun origin(value: JsonElement): CapabilityOrigin {
         val obj = value.strictObject("origin", setOf("kind", "provider_id", "provider_title", "namespace"))
         val kind = if ("kind" in obj) obj.string("kind") else "unknown"
-        require(kind in setOf("unknown", "builtin", "skill", "mcp", "device", "extension", "internal"))
+        require(kind in setOf("unknown", "builtin", "core", "skill", "mcp", "device", "extension", "internal"))
         return CapabilityOrigin(kind, obj.optionalString("provider_id"), obj.optionalString("provider_title"), obj.optionalString("namespace"))
     }
 

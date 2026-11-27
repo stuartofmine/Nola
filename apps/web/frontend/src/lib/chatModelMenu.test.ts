@@ -1,38 +1,39 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { compile } from 'svelte/compiler';
-import { render } from 'svelte/server';
-import { locale, supportedLocales, t } from './i18n.ts';
+import { createServer } from 'vite';
+import { supportedLocales, t } from './i18n.ts';
 
-const source = readFileSync(new URL('../components/ChatModelMenu.svelte', import.meta.url), 'utf8');
-const code = compile(source, { generate: 'server', filename: 'ChatModelMenu.svelte' }).js.code
-    .replaceAll("'svelte'", JSON.stringify(import.meta.resolve('svelte')))
-    .replaceAll("'svelte/internal/server'", JSON.stringify(import.meta.resolve('svelte/internal/server')))
-    .replaceAll("'../lib/i18n'", JSON.stringify(new URL('./i18n.ts', import.meta.url).href));
-const { default: Menu } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
-test('header model menu displays selected names, groups and management in every locale', () => {
+test('composer model selector and unconfigured-model recovery link stay wired in v2 Chat', () => {
+    const source = readFileSync(new URL('../pages/Chat.svelte', import.meta.url), 'utf8');
+    assert.match(source, /aria-label=\{t\(\$locale,\s*'chatSession\.model'\)\}/);
+    assert.match(source, /onchange=\{e => void handleModelChange\(e\.currentTarget\.value\)\}/);
+    assert.match(source, /\{#if needsModelConfig\}[^]*?href="\/models"[^]*?chatSession\.configureModel/);
+    assert.match(source, /\{#if modelChoices\.length\}[^]*?<select/);
     for (const language of supportedLocales) {
-        locale.set(language);
-        const html = render(Menu, { props: {
-            selection: { choice: 'cloud:one', disabled: false, errorKey: '', options: [
-                { value: 'cloud:one', name: 'Cloud Alpha', detail: 'Host A', local: false },
-                { value: 'local:two', name: 'Local Beta', detail: '', local: true },
-            ] }, onselect() {}, onsettings() {}, onreload() {},
-        } }).body;
-        assert.ok(html.includes('Cloud Alpha'));
-        assert.ok(html.includes('Local Beta'));
-        assert.ok(html.includes('Host A'));
-        assert.ok(html.includes('aria-pressed="true"'));
-        assert.ok(html.includes(t(language, 'models.local')));
-        assert.ok(html.includes('href="/models"'));
+        for (const key of ['chatSession.model', 'chatSession.configureModel', 'models.local']) {
+            assert.notEqual(t(language, key), key);
+            assert.ok(t(language, key).trim());
+        }
     }
 });
-test('unavailable catalog offers recovery without presenting a dead model choice', () => {
-    locale.set('en');
-    const html = render(Menu, { props: { selection: { choice: 'cloud:missing', disabled: true, errorKey: 'chatSession.catalogFailed', options: [] }, onselect() {}, onsettings() {}, onreload() {} } }).body;
-    assert.doesNotMatch(html, /aria-pressed=/);
-    assert.ok(html.includes(t('en', 'chatSession.configureModel')));
-    assert.ok(html.includes('role="status"'));
-    assert.ok(html.includes('href="/models"'));
+
+test('v2 Chat toolbar renders localized permission and reasoning selectors without dead model choices', async () => {
+    const server = await createServer({ server: { middlewareMode: true, ws: false }, appType: 'custom' });
+    try {
+        const { default: Chat } = await server.ssrLoadModule('/src/pages/Chat.svelte');
+        const { render } = await server.ssrLoadModule('svelte/server');
+        const { locale, supportedLocales: languages, t: translate } = await server.ssrLoadModule('/src/lib/i18n.ts');
+        for (const language of languages) {
+            locale.set(language);
+            const html: string = render(Chat).body;
+            // Empty model catalog does not render an empty dead model <select>.
+            assert.ok(!html.includes(`aria-label="${translate(language, 'chatSession.model')}"`));
+            assert.ok(html.includes(`aria-label="${translate(language, 'chatSession.permission')}"`));
+            assert.ok(html.includes(`aria-label="${translate(language, 'chatSession.reasoning')}"`));
+            assert.ok(!html.includes('undefined'));
+        }
+    } finally {
+        await server.close();
+    }
 });

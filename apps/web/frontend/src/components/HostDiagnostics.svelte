@@ -4,10 +4,11 @@
     import { onMount } from 'svelte';
     import { api as unscopedApi } from '../lib/api';
     import { locale, t } from '../lib/i18n';
+    import { pushToast } from '../lib/toast';
     import { hostDiagnostics, hostDiagnosticReport, type HostDiagnostics } from '../lib/hostDiagnostics';
     import { resultTime } from '../lib/results';
     let snapshot = $state<HostDiagnostics>();
-    let loading = $state(false), failed = $state(false);
+    let loading = $state(false), failed = $state(false), logsError = $state(false);
     let copyNotice = $state('');
     let checkedAt = $state('');
     let canOpenLogs = $state(false);
@@ -17,11 +18,19 @@
     async function openLogs() {
         const bridge = (window as Window & { NolaDesktop?: DesktopLogsBridge }).NolaDesktop;
         if (!bridge?.openLogsFolder) return;
-        try { await bridge.openLogsFolder(); } catch { /* native open failure is non-fatal */ }
+        logsError = false;
+        try {
+            await bridge.openLogsFolder();
+        } catch {
+            if (!disposed) {
+                logsError = true;
+                pushToast(t($locale, 'diagnostics.openLogsFailed'), 'error');
+            }
+        }
     }
     async function refresh() {
         if (loading) return;
-        loading = true; failed = false; copyNotice = '';
+        loading = true; failed = false; copyNotice = ''; logsError = false;
         const request = new AbortController(); controller = request;
         try {
             const next = hostDiagnostics(await api('/api/health', { signal: request.signal }));
@@ -70,6 +79,7 @@
         <div class="actions"><button type="button" onclick={openLogs}>{t($locale, 'diagnostics.openLogs')}</button></div>
     {/if}
     {#if copyNotice}<p role="status">{t($locale, copyNotice)}</p>{/if}
+    {#if logsError}<p role="alert" class="error">{t($locale, 'diagnostics.openLogsFailed')}</p>{/if}
 </section>
 <style>
     header{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}

@@ -22,12 +22,14 @@ test('session contract distinguishes explicit unauthenticated from malformed suc
     assert.throws(() => parseInitializationSession({authenticated: false}), /invalid_host_session/);
 });
 
-test('retry is bound to initialization reads, not submit or resume', () => {
+test('initialization on mount is bound to read-only queries, not submit or mutation', () => {
     const source = readFileSync(new URL('../pages/Chat.svelte', import.meta.url), 'utf8');
-    const initialize = source.slice(source.indexOf('async function initialize()'), source.indexOf('onMount(() =>'));
-    assert.match(initialize, /initializationInFlight/);
-    assert.doesNotMatch(initialize, /\.submit\(|\.resume\(|method\s*:/);
-    assert.match(source, /onclick=\{\(\) => void initialize\(\)\} disabled=\{initializing\}/);
+    const mountBlock = source.slice(source.indexOf('onMount(() =>'), source.indexOf('</script>'));
+    assert.match(mountBlock, /refreshModelChoices\(\)/);
+    assert.match(mountBlock, /ensureExpertsLoaded\(\)/);
+    assert.match(mountBlock, /getV2Conversation\(/);
+    assert.match(mountBlock, /listV2Conversations\(\)/);
+    assert.doesNotMatch(mountBlock, /sendPrompt\(|streamV2ChatMessage\(|createV2Conversation\(|\.submit\(|\.resume\(|method\s*:/);
 });
 
 test('missing Web Locks explains the secure connection requirement separately from storage failure', () => {

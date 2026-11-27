@@ -579,8 +579,8 @@ class WebHostApiServiceImplTest {
             assertTrue(recordedRequests[0].first.startsWith("POST /api/mobile/chat/conversations/conv-9/device-tool "))
             assertTrue(recordedRequests[1].first.startsWith("POST /api/mobile/chat/conversations/conv-9/goal "))
             assertTrue(recordedRequests[2].first.startsWith("POST /api/mobile/auxiliary/invoke "))
-            assertTrue(recordedRequests[3].first.startsWith("GET /api/mobile/chat/conversations/conv-9/progress "))
-            assertTrue(recordedRequests[4].first.startsWith("GET /api/mobile/chat/conversations/conv-9/observe "))
+            assertTrue(recordedRequests[3].first.startsWith("POST /api/mobile/chat/conversations/conv-9/progress?conversation_id=conv-9 "))
+            assertTrue(recordedRequests[4].first.startsWith("POST /api/mobile/chat/conversations/conv-9/observe "))
             assertTrue(recordedRequests[5].first.startsWith("GET /api/mobile/chat/conversations/conv-9/tasks/events?afterCursor=7 "))
             assertTrue(recordedRequests[6].first.startsWith("GET /api/mobile/agent/settings "))
 
@@ -592,6 +592,188 @@ class WebHostApiServiceImplTest {
 
             assertEquals(listOf(SseEvent.TaskStreamCheckpoint("conv-9", 12L)), taskEvents)
             assertEquals(VerifiedHostTransport.DirectWithoutTailcat, settings.verifiedTransport)
+        } finally {
+            client.close()
+            server.close()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun pairedHostControlMethodsPostFullEncryptedRequestBodies() = runBlocking {
+        val token = "lan-paired-body-token"
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val recorded = CopyOnWriteArrayList<Triple<String, Map<String, String>, JsonObject>>()
+        val executor = Executors.newSingleThreadExecutor()
+        val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val expectedCalls = 11
+
+        executor.submit {
+            repeat(expectedCalls) {
+                server.accept().use { socket ->
+                    val input = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+                    val requestLine = input.readLine().orEmpty()
+                    val headers = mutableMapOf<String, String>()
+                    while (true) {
+                        val line = input.readLine() ?: break
+                        if (line.isEmpty()) break
+                        val sep = line.indexOf(':')
+                        if (sep > 0) {
+                            headers[line.substring(0, sep).trim().lowercase()] = line.substring(sep + 1).trim()
+                        }
+                    }
+                    val bodyLength = headers["content-length"]?.toIntOrNull() ?: 0
+                    val chars = CharArray(bodyLength)
+                    var offset = 0
+                    while (offset < bodyLength) {
+                        val read = input.read(chars, offset, bodyLength - offset)
+                        if (read < 0) break
+                        offset += read
+                    }
+                    val rawBody = String(chars, 0, offset)
+                    val decoded = MobileCrypto.decryptJsonObject(
+                        json.decodeFromString<EncryptedEnvelope>(rawBody),
+                        token,
+                    )
+                    recorded.add(Triple(requestLine, headers, decoded))
+
+                    val encryptedReply = json.encodeToString(
+                        MobileCrypto.encryptJsonObject(
+                            buildJsonObject { put("ok", true); put("source_host_id", "host-1") },
+                            token,
+                        ).copy(type = "encrypted")
+                    )
+                    val replyBytes = encryptedReply.toByteArray(Charsets.UTF_8)
+                    val output = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8))
+                    output.write(
+                        "HTTP/1.1 200 OK\r\n" +
+                            "Content-Type: application/json\r\n" +
+                            "Connection: close\r\n" +
+                            "Content-Length: ${replyBytes.size}\r\n\r\n"
+                    )
+                    output.write(encryptedReply)
+                    output.flush()
+                }
+            }
+        }
+
+        val client = HttpClient(CIO)
+        try {
+            val baseUrl = "http://127.0.0.1:${server.localPort}"
+            val service = WebHostApiServiceImpl(client, SseClient(client), WebHostHttpClientFactory(client))
+
+            service.permissionConfiguration(baseUrl, token, buildJsonObject {
+                put("operation", "read")
+                put("expected_host_id", "host-1")
+                put("conversation_id", "conv-1")
+            })
+            service.submissionFrontier(baseUrl, token, buildJsonObject {
+                put("expected_host_id", "host-1")
+                put("client_id", "client-1")
+                put("conversation_id", "conv-1")
+            })
+            service.conversationProgress(baseUrl, token, buildJsonObject {
+                put("expected_host_id", "host-1")
+                put("conversation_id", "conv-1")
+            })
+            service.observeRemoteConversation(baseUrl, token, buildJsonObject {
+                put("expected_host_id", "host-1")
+                put("client_id", "client-1")
+                put("conversation_id", "conv-1")
+            })
+            service.generativeUi(baseUrl, token, "surfaces", buildJsonObject {
+                put("expected_host_id", "host-1")
+                put("conversation_id", "conv-1")
+            })
+            service.generativeUi(baseUrl, token, "queued-input", buildJsonObject {
+                put("expected_host_id", "host-1")
+                put("client_id", "client-1")
+                put("conversation_id", "conv-1")
+            })
+            service.readAssistantJournal(baseUrl, token, buildJsonObject {
+                put("operation", "open_snapshot")
+                put("at", buildJsonObject {
+                    put("identity", buildJsonObject { put("conversation_id", "conv-at") })
+                })
+            })
+            service.readAssistantJournal(baseUrl, token, buildJsonObject {
+                put("operation", "record_chunk")
+                put("snapshot", buildJsonObject {
+                    put("at", buildJsonObject {
+                        put("identity", buildJsonObject { put("conversation_id", "conv-snap") })
+                    })
+                })
+            })
+            service.remoteSubmission(baseUrl, token, buildJsonObject {
+                put("operation", "cancel")
+                put("identity", buildJsonObject { put("conversation_id", "conv-sub") })
+                put("request_digest", "a".repeat(64))
+            })
+            service.taskCancellationCommand(baseUrl, token, buildJsonObject {
+                put("hostId", "host-1")
+                put("conversationId", "conv-task")
+                put("parentRunId", "run-1")
+                put("taskId", "task-42")
+            }, receiptOnly = true)
+            service.taskGuidanceCommand(baseUrl, token, buildJsonObject {
+                put("hostId", "host-1")
+                put("conversationId", "conv-task")
+                put("parentRunId", "run-1")
+                put("taskId", "task-42")
+                put("messageId", "msg-7")
+                put("message", "focus on tests")
+            }, receiptOnly = false)
+
+            assertEquals(expectedCalls, recorded.size)
+            assertTrue(recorded[0].first.startsWith("POST /api/mobile/chat/conversations/conv-1/configuration "))
+            assertEquals(JsonPrimitive("read"), recorded[0].third["operation"])
+            assertEquals(JsonPrimitive("host-1"), recorded[0].third["expected_host_id"])
+
+            assertTrue(recorded[1].first.startsWith("POST /api/mobile/chat/conversations/conv-1/configuration "))
+            assertEquals(JsonPrimitive("host-1"), recorded[1].third["expected_host_id"])
+            assertEquals(JsonPrimitive("client-1"), recorded[1].third["client_id"])
+
+            assertTrue(recorded[2].first.startsWith("POST /api/mobile/chat/conversations/conv-1/progress?expected_host_id=host-1&conversation_id=conv-1 "))
+            assertEquals(JsonPrimitive("host-1"), recorded[2].third["expected_host_id"])
+
+            assertTrue(recorded[3].first.startsWith("POST /api/mobile/chat/conversations/conv-1/observe "))
+            assertEquals(JsonPrimitive("host-1"), recorded[3].third["expected_host_id"])
+            assertEquals(JsonPrimitive("client-1"), recorded[3].third["client_id"])
+
+            assertTrue(recorded[4].first.startsWith("POST /api/mobile/chat/conversations/conv-1/ui-surfaces "))
+            assertEquals(JsonPrimitive("host-1"), recorded[4].third["expected_host_id"])
+
+            assertTrue(recorded[5].first.startsWith("POST /api/mobile/chat/conversations/conv-1/events "))
+            assertEquals(JsonPrimitive("host-1"), recorded[5].third["expected_host_id"])
+
+            assertTrue(recorded[6].first.startsWith("POST /api/mobile/chat/conversations "))
+            assertEquals(JsonPrimitive("open_snapshot"), recorded[6].third["operation"])
+            assertEquals(JsonPrimitive("conv-at"), recorded[6].third["conversation_id"])
+
+            assertTrue(recorded[7].first.startsWith("POST /api/mobile/chat/conversations "))
+            assertEquals(JsonPrimitive("record_chunk"), recorded[7].third["operation"])
+            assertEquals(JsonPrimitive("conv-snap"), recorded[7].third["conversation_id"])
+
+            assertTrue(recorded[8].first.startsWith("POST /api/mobile/chat/conversations/conv-sub "))
+            assertEquals(JsonPrimitive("cancel"), recorded[8].third["operation"])
+
+            assertTrue(recorded[9].first.startsWith("POST /api/mobile/chat/conversations/conv-task/tasks/task-42/stop "))
+            assertEquals(JsonPrimitive("task-42"), recorded[9].third["task_id"])
+            assertEquals(JsonPrimitive("run-1"), recorded[9].third["parent_run_id"])
+            assertEquals(JsonPrimitive(true), recorded[9].third["receipt_only"])
+            assertEquals(JsonPrimitive("host-1"), recorded[9].third["expected_host_id"])
+
+            assertTrue(recorded[10].first.startsWith("POST /api/mobile/chat/conversations/conv-task/messages "))
+            assertEquals("application/json", recorded[10].second["accept"])
+            assertEquals(JsonPrimitive("focus on tests"), recorded[10].third["message"])
+            assertEquals(JsonPrimitive(false), recorded[10].third["receipt_only"])
+            assertEquals(JsonPrimitive("host-1"), recorded[10].third["expected_host_id"])
+
+            for ((line, headers, _) in recorded) {
+                assertTrue("Expected JSON Content-Type on $line", headers["content-type"]?.startsWith("application/json") == true)
+                assertEquals("Expected JSON Accept on $line", "application/json", headers["accept"])
+                assertEquals("Missing aes-gcm-v1 on $line", "aes-gcm-v1", headers["x-nola-mobile-crypto"])
+            }
         } finally {
             client.close()
             server.close()

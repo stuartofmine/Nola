@@ -2,6 +2,7 @@
     import { onMount } from 'svelte';
     import { get } from 'svelte/store';
     import { api as unscopedApi, errorMessage } from '../lib/api';
+    import { pushToast } from '../lib/toast';
     import { workspacePageApi, workspacePageLocation } from '../lib/workspacePageLocation';
     import { locale, t } from '../lib/i18n';
     import { activeApiTestModel, activeLocalTestModel, modelTestParametersUrl, type LocalTestModel } from '../lib/modelTest';
@@ -171,9 +172,29 @@
         }
     }
 
-    function stop() {
-        controller?.abort();
-        if (activeConversationId) void cancelV2Turn(activeConversationId).catch(() => {});
+    let stopping = $state(false);
+
+    async function stop() {
+        if (stopping) return;
+        const convId = activeConversationId;
+        if (!convId) {
+            controller?.abort();
+            return;
+        }
+        stopping = true;
+        error = '';
+        try {
+            await cancelV2Turn(convId);
+            controller?.abort();
+        } catch (cause) {
+            if (!disposed) {
+                const msg = errorMessage(cause);
+                error = msg;
+                pushToast(msg, 'error');
+            }
+        } finally {
+            if (!disposed) stopping = false;
+        }
     }
 
     function clear() {
@@ -189,7 +210,9 @@
         void load();
         return () => {
             disposed = true;
-            stop();
+            const convId = activeConversationId;
+            controller?.abort();
+            if (convId) void cancelV2Turn(convId).catch(() => {});
         };
     });
 </script>
@@ -207,7 +230,7 @@
                     {t($locale, 'modelTest.parameters')}
                 </a>
             {/if}
-            <button type="button" class="primary" onclick={busy ? stop : run} disabled={loading || (!busy && !canRun)}>
+            <button type="button" class="primary" onclick={busy ? () => void stop() : run} disabled={loading || stopping || (!busy && !canRun)}>
                 {t($locale, busy ? 'modelTest.stop' : 'modelTest.run')}
             </button>
         </div>

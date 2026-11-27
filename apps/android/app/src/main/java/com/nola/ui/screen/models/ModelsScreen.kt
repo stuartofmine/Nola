@@ -1683,6 +1683,7 @@ fun WebHostConfigSheet(
                         title = stringResource(R.string.models_advanced_tls),
                         expanded = showAdvancedTls,
                         onToggle = { showAdvancedTls = !showAdvancedTls },
+                        modifier = Modifier.testTag("models.host.advancedTls"),
                         enabled = !isConnecting,
                     )
                     AnimatedVisibility(

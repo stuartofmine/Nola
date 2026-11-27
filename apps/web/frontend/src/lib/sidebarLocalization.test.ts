@@ -23,11 +23,15 @@ test('production list, resources and language controls render their current loca
                 for (const category of ['conversations', 'resources']) assert.ok(list.includes(t(language, `chatInspector.list.${category}`)));
             }
             const resources = render(ResourceNavigation, {props: {selectedPath: '/data-sources?tab=memory', onopen: () => {}}}).body;
-            for (const key of ['shell.nav.data', 'shell.nav.models', 'shell.nav.capabilities']) assert.ok(resources.includes(t(language, key).replaceAll('&', '&amp;')));
+            for (const key of ['chatInspector.today', 'shell.informationActivity', 'shell.nav.automation', 'shell.nav.data', 'shell.nav.models', 'shell.nav.capabilities']) {
+                assert.ok(resources.includes(t(language, key).replaceAll('&', '&amp;')), `${language}: ${key}`);
+            }
             assert.equal((resources.match(/aria-current="page"/g) ?? []).length, 1);
             assert.match(resources, /href="\/data-sources" aria-current="page"/);
-            assert.equal((resources.match(/<a /g) ?? []).length, 3);
-            assert.ok(!resources.includes('href="/activity"'));
+            assert.equal((resources.match(/<a /g) ?? []).length, 6);
+            assert.ok(resources.includes('href="/today"'));
+            assert.ok(resources.includes('href="/activity"'));
+            assert.ok(resources.includes('href="/automations"'));
             assert.doesNotMatch(resources, /conversation-manager|new-conversation/);
             const preferences = render(LanguagePreference).body;
             assert.ok(preferences.includes(t(language, 'shell.language')));

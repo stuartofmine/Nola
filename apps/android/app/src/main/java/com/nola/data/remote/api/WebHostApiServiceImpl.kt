@@ -380,52 +380,58 @@ class WebHostApiServiceImpl @Inject constructor(
         return postV2Json(hostBaseUrl, token, "agent-rooms", request, pinnedCertificateSha256)
     }
 
+    private fun extractConversationId(request: JsonObject): String {
+        fun JsonObject.nonBlankString(key: String): String? =
+            (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+
+        return request.nonBlankString("conversation_id")
+            ?: request.nonBlankString("conversationId")
+            ?: (request["identity"] as? JsonObject)?.nonBlankString("conversation_id")
+            ?: ((request["identity"] as? JsonObject)?.get("owner") as? JsonObject)?.nonBlankString("conversation_id")
+            ?: ((request["at"] as? JsonObject)?.get("identity") as? JsonObject)?.nonBlankString("conversation_id")
+            ?: (((request["snapshot"] as? JsonObject)?.get("at") as? JsonObject)?.get("identity") as? JsonObject)
+                ?.nonBlankString("conversation_id")
+            ?: ((request["through"] as? JsonObject)?.get("identity") as? JsonObject)?.nonBlankString("conversation_id")
+            ?: ((request["after"] as? JsonObject)?.get("identity") as? JsonObject)?.nonBlankString("conversation_id")
+            ?: ((request["seal"] as? JsonObject)?.get("identity") as? JsonObject)?.nonBlankString("conversation_id")
+            ?: ((((request["input"] as? JsonObject)?.get("interaction") as? JsonObject)
+                ?.get("identity") as? JsonObject)?.get("owner") as? JsonObject)
+                ?.nonBlankString("conversation_id")
+            ?: ""
+    }
+
     override suspend fun goalControl(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
-            ?: (request["conversationId"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() }
-            ?: ""
+        val convId = extractConversationId(request)
         return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/goal", request, pinnedCertificateSha256)
     }
 
     override suspend fun conversationProgress(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/progress", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        val expectedHostId = (request["expected_host_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val queryParts = buildList {
+            if (expectedHostId != null) {
+                add("expected_host_id=${java.net.URLEncoder.encode(expectedHostId, "UTF-8")}")
+            }
+            if (convId.isNotBlank()) {
+                add("conversation_id=${java.net.URLEncoder.encode(convId, "UTF-8")}")
+            }
+        }
+        val querySuffix = if (queryParts.isEmpty()) "" else "?${queryParts.joinToString("&")}"
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/progress$querySuffix", request, pinnedCertificateSha256)
     }
 
     override suspend fun submissionFrontier(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", request, pinnedCertificateSha256)
     }
 
     override suspend fun permissionConfiguration(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$convId/configuration")
-        val op = (request["operation"] as? JsonPrimitive)?.content
-        if (op == "patch") {
-            val useMobileCrypto = token.isNotBlank()
-            val bodyText = if (useMobileCrypto) {
-                json.encodeToString(MobileCrypto.encryptJsonObject(request, token))
-            } else {
-                request.toString()
-            }
-            val response = httpClientFactory.controlClientFor(hostBaseUrl, pinnedCertificateSha256).patch(url) {
-                header("X-Nola-Client", "android")
-                if (useMobileCrypto) {
-                    mobileAuthHeaders(token, "PATCH", url, body = bodyText).forEach { (k, v) -> header(k, v) }
-                    header("X-Nola-Mobile-Crypto", "aes-gcm-v1")
-                }
-                header("Accept", "application/json")
-                setBody(TextContent(bodyText, ContentType.Application.Json))
-            }
-            val text = response.body<String>()
-            if (response.status.value !in 200..299) error("WebHost v2 PATCH configuration failed (${response.status.value})")
-            return decryptOrParseJsonObject(text, token)
-        }
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/configuration", request, pinnedCertificateSha256)
     }
 
     override suspend fun auxiliaryCommand(hostBaseUrl: String, token: String, action: String, request: JsonObject,
@@ -441,20 +447,14 @@ class WebHostApiServiceImpl @Inject constructor(
     override suspend fun generativeUi(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
         require(operation in GENERATIVE_UI_OPERATIONS)
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content
-            ?: ((request["identity"] as? JsonObject)?.get("owner") as? JsonObject)
-                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
-            ?: ((((request["input"] as? JsonObject)?.get("interaction") as? JsonObject)
-                ?.get("identity") as? JsonObject)?.get("owner") as? JsonObject)
-                ?.get("conversation_id")?.let { (it as? JsonPrimitive)?.content }
-            ?: ""
+        val convId = extractConversationId(request)
         return when (operation) {
-            "surfaces" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surfaces", pinnedCertificateSha256)
+            "surfaces" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surfaces", request, pinnedCertificateSha256)
             "preview" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-preview", request, pinnedCertificateSha256)
             "changes" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-changes", request, pinnedCertificateSha256)
             "revision" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-surface-revision", request, pinnedCertificateSha256)
             "interactions" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/ui-interactions", request, pinnedCertificateSha256)
-            "queued-input" -> getV2Json(hostBaseUrl, token, "chat/conversations/$convId/events", pinnedCertificateSha256)
+            "queued-input" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/events", request, pinnedCertificateSha256)
             "queued-input/cancel" -> postV2Json(hostBaseUrl, token, "chat/conversations/$convId/cancel", request, pinnedCertificateSha256)
             else -> error("Unsupported generative UI operation: $operation")
         }
@@ -462,14 +462,19 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override suspend fun readAssistantJournal(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/messages", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        val payload = if (convId.isNotBlank() && !request.containsKey("conversation_id")) {
+            JsonObject(request + ("conversation_id" to JsonPrimitive(convId)))
+        } else {
+            request
+        }
+        return postV2Json(hostBaseUrl, token, "chat/conversations", payload, pinnedCertificateSha256)
     }
 
     override suspend fun observeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content.orEmpty()
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId/observe", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/observe", request, pinnedCertificateSha256)
     }
 
     override fun resumeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
@@ -578,14 +583,50 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override suspend fun taskCancellationCommand(hostBaseUrl: String, token: String, request: JsonObject,
         receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversationId"] as? JsonPrimitive)?.content.orEmpty()
-        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/cancel", request, pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        val taskId = (request["taskId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["task_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: ""
+        val hostId = (request["expected_host_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["hostId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val parentRunId = (request["parent_run_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["parentRunId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val payload = buildJsonObject {
+            request.forEach { (k, v) -> put(k, v) }
+            put("receipt_only", receiptOnly)
+            put("receiptOnly", receiptOnly)
+            if (taskId.isNotBlank() && !request.containsKey("task_id")) put("task_id", taskId)
+            if (parentRunId != null && !request.containsKey("parent_run_id")) put("parent_run_id", parentRunId)
+            if (convId.isNotBlank() && !request.containsKey("conversation_id")) put("conversation_id", convId)
+            if (hostId != null && !request.containsKey("expected_host_id")) put("expected_host_id", hostId)
+        }
+        val path = if (taskId.isNotBlank()) "chat/conversations/$convId/tasks/$taskId/stop"
+        else "chat/conversations/$convId/cancel"
+        return postV2Json(hostBaseUrl, token, path, payload, pinnedCertificateSha256)
     }
 
     override suspend fun taskGuidanceCommand(hostBaseUrl: String, token: String, request: JsonObject,
         receiptOnly: Boolean, pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversationId"] as? JsonPrimitive)?.content.orEmpty()
-        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/messages", request, pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        val hostId = (request["expected_host_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["hostId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val taskId = (request["task_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["taskId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val parentRunId = (request["parent_run_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["parentRunId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val messageId = (request["message_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+            ?: (request["messageId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+        val payload = buildJsonObject {
+            request.forEach { (k, v) -> put(k, v) }
+            put("receipt_only", receiptOnly)
+            put("receiptOnly", receiptOnly)
+            if (convId.isNotBlank() && !request.containsKey("conversation_id")) put("conversation_id", convId)
+            if (hostId != null && !request.containsKey("expected_host_id")) put("expected_host_id", hostId)
+            if (taskId != null && !request.containsKey("task_id")) put("task_id", taskId)
+            if (parentRunId != null && !request.containsKey("parent_run_id")) put("parent_run_id", parentRunId)
+            if (messageId != null && !request.containsKey("message_id")) put("message_id", messageId)
+        }
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId/messages", payload, pinnedCertificateSha256)
     }
 
     override fun streamAgentTaskEvents(
@@ -616,10 +657,8 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override suspend fun remoteSubmission(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
-        val convId = (request["conversationId"] as? JsonPrimitive)?.content
-            ?: ((request["identity"] as? JsonObject)?.get("conversation_id") as? JsonPrimitive)?.content
-            ?: ""
-        return getV2Json(hostBaseUrl, token, "chat/conversations/$convId", pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        return postV2Json(hostBaseUrl, token, "chat/conversations/$convId", request, pinnedCertificateSha256)
     }
 
     override suspend fun prepareToolPlan(hostBaseUrl: String, token: String, request: JsonObject,

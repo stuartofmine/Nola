@@ -42,6 +42,8 @@ export type DesktopStrings = {
     hostSupervisionFailed: string;
     diagnosticsUnavailable: string;
     retryUnavailable: string;
+    openFolderFailed: string;
+    licensesUnavailable: string;
 };
 
 const english: DesktopStrings = {
@@ -88,6 +90,8 @@ const english: DesktopStrings = {
     hostSupervisionFailed: "Cannot supervise the local Host process.",
     diagnosticsUnavailable: "Diagnostics folder is unavailable from this view.",
     retryUnavailable: "Startup retry is unavailable right now.",
+    openFolderFailed: "Could not open the folder.",
+    licensesUnavailable: "Third-party license files are not available in this installation.",
 };
 
 const simplifiedChinese: DesktopStrings = {
@@ -134,6 +138,8 @@ const simplifiedChinese: DesktopStrings = {
     hostSupervisionFailed: "无法监管本地 Host 进程。",
     diagnosticsUnavailable: "当前视图无法打开诊断目录。",
     retryUnavailable: "当前无法重试启动。",
+    openFolderFailed: "无法打开该文件夹。",
+    licensesUnavailable: "当前安装中未找到第三方许可证文件。",
 };
 
 const traditionalChinese: DesktopStrings = {
@@ -180,6 +186,8 @@ const traditionalChinese: DesktopStrings = {
     hostSupervisionFailed: "無法監管本機 Host 處理程序。",
     diagnosticsUnavailable: "此檢視無法開啟診斷資料夾。",
     retryUnavailable: "目前無法重試啟動。",
+    openFolderFailed: "無法開啟該資料夾。",
+    licensesUnavailable: "目前安裝中找不到第三方授權檔案。",
 };
 
 const japanese: DesktopStrings = {
@@ -226,6 +234,8 @@ const japanese: DesktopStrings = {
     hostSupervisionFailed: "ローカル Host プロセスを監視できません。",
     diagnosticsUnavailable: "この画面からは診断フォルダーを開けません。",
     retryUnavailable: "現在は起動の再試行を利用できません。",
+    openFolderFailed: "フォルダーを開けませんでした。",
+    licensesUnavailable: "このインストールではサードパーティライセンスファイルを利用できません。",
 };
 
 const korean: DesktopStrings = {
@@ -272,6 +282,8 @@ const korean: DesktopStrings = {
     hostSupervisionFailed: "로컬 Host 프로세스를 관리할 수 없습니다.",
     diagnosticsUnavailable: "이 화면에서는 진단 폴더를 열 수 없습니다.",
     retryUnavailable: "지금은 시작을 다시 시도할 수 없습니다.",
+    openFolderFailed: "폴더를 열 수 없습니다.",
+    licensesUnavailable: "이 설치에서는 서드파티 라이선스 파일을 찾을 수 없습니다.",
 };
 
 const german: DesktopStrings = {
@@ -318,6 +330,8 @@ const german: DesktopStrings = {
     hostSupervisionFailed: "Der lokale Host-Prozess kann nicht überwacht werden.",
     diagnosticsUnavailable: "Der Diagnoseordner ist in dieser Ansicht nicht verfügbar.",
     retryUnavailable: "Ein erneuter Startversuch ist derzeit nicht verfügbar.",
+    openFolderFailed: "Der Ordner konnte nicht geöffnet werden.",
+    licensesUnavailable: "Drittanbieter-Lizenzdateien sind in dieser Installation nicht verfügbar.",
 };
 
 const spanish: DesktopStrings = {
@@ -364,6 +378,8 @@ const spanish: DesktopStrings = {
     hostSupervisionFailed: "No se puede supervisar el proceso del Host local.",
     diagnosticsUnavailable: "La carpeta de diagnósticos no está disponible desde esta vista.",
     retryUnavailable: "No se puede reintentar el inicio en este momento.",
+    openFolderFailed: "No se pudo abrir la carpeta.",
+    licensesUnavailable: "Los archivos de licencias de terceros no están disponibles en esta instalación.",
 };
 
 const french: DesktopStrings = {
@@ -410,6 +426,8 @@ const french: DesktopStrings = {
     hostSupervisionFailed: "Impossible de superviser le processus de l’hôte local.",
     diagnosticsUnavailable: "Le dossier de diagnostics n’est pas disponible depuis cette vue.",
     retryUnavailable: "La nouvelle tentative de démarrage est indisponible pour le moment.",
+    openFolderFailed: "Impossible d’ouvrir le dossier.",
+    licensesUnavailable: "Les fichiers de licences tierces ne sont pas disponibles dans cette installation.",
 };
 
 const russian: DesktopStrings = {
@@ -456,6 +474,8 @@ const russian: DesktopStrings = {
     hostSupervisionFailed: "Не удаётся контролировать процесс локального Host.",
     diagnosticsUnavailable: "Папка диагностики недоступна из этого представления.",
     retryUnavailable: "Повторная попытка запуска сейчас недоступна.",
+    openFolderFailed: "Не удалось открыть папку.",
+    licensesUnavailable: "Файлы сторонних лицензий недоступны в этой установке.",
 };
 
 export function stringsFor(locale: string): DesktopStrings {

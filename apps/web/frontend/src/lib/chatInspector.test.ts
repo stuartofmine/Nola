@@ -14,21 +14,45 @@ test('all inspector actions and empty plan states have seven-language labels', (
 });
 
 
-test('overview keeps only current status and the action needed to unblock a conversation', async () => {
+test('inspector renders localized tabs, empty conversation state, and plan approval actions', async () => {
     const server = await createServer({server: {middlewareMode: true, ws: false}, appType: 'custom'});
     try {
-        const {default: Component} = await server.ssrLoadModule('/src/components/ChatDecisionOverview.svelte');
+        const {default: Inspector} = await server.ssrLoadModule('/src/components/ConversationInspector.svelte');
         const {render} = await server.ssrLoadModule('svelte/server');
         const {locale, supportedLocales, t} = await server.ssrLoadModule('/src/lib/i18n.ts');
+        const emptyUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0 };
         for (const language of supportedLocales) {
             locale.set(language);
-            for (const needsResponse of [false, true]) {
-                const html = render(Component, {props: {working: true, needsResponse, onconversation() {}}}).body;
-                assert.equal((html.match(/<button /g) ?? []).length, needsResponse ? 1 : 0);
-                assert.ok(!html.includes('<nav'));
-                assert.ok(!html.includes('class="deliverables"'));
-                if (needsResponse) assert.ok(html.includes(t(language, 'chatInspector.handleResponse')));
-            }
+            const idleHtml: string = render(Inspector, {
+                props: { conversationId: null, messages: [], usage: emptyUsage, onclose() {} },
+            }).body;
+            assert.equal((idleHtml.match(/role="tab"/g) ?? []).length, 8);
+            assert.equal((idleHtml.match(/aria-selected="true"/g) ?? []).length, 1);
+            assert.ok(idleHtml.includes(t(language, 'chatInspector.noConversationSelected')));
+            assert.ok(idleHtml.includes(t(language, 'chatInspector.close')));
+            assert.ok(!idleHtml.includes('undefined'));
+
+            const pendingPlanHtml: string = render(Inspector, {
+                props: {
+                    conversationId: 'conv-test',
+                    messages: [],
+                    usage: emptyUsage,
+                    plan: {
+                        enabled: true,
+                        status: 'awaiting_approval',
+                        summary: 'Refactor plan',
+                        steps: [{ id: 's1', title: 'Audit endpoints', status: 'pending' }],
+                    },
+                    onclose() {},
+                },
+            }).body;
+            assert.ok(pendingPlanHtml.includes(t(language, 'chatInspector.planPendingApproval')));
+            assert.ok(pendingPlanHtml.includes(t(language, 'chatInspector.planApprove')));
+            assert.ok(pendingPlanHtml.includes(t(language, 'chatInspector.planReject')));
+            assert.ok(pendingPlanHtml.includes(t(language, 'chatInspector.planClear')));
+            assert.ok(pendingPlanHtml.includes('Audit endpoints'));
+            assert.ok(pendingPlanHtml.includes(t(language, 'chatInspector.goal')));
+            assert.ok(!pendingPlanHtml.includes('undefined'));
         }
     } finally { await server.close(); }
 });

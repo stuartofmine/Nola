@@ -73,7 +73,8 @@ export function reasoningValidationError(value: ReasoningConfiguration, protocol
 export function reasoningExecutionValidationError(value: ReasoningConfiguration | null | undefined,
     execution: ModelExecutionCapabilities | null | undefined): ModelValidationIssue | null {
     if (execution == null) return { code: 'modelValidation.executionDeclaration' };
-    return value?.control !== undefined && value.control !== 'automatic' && !execution?.reasoning
+    const control = value?.control as string | undefined;
+    return control !== undefined && control !== 'automatic' && control !== 'unsupported' && !execution?.reasoning
         ? { code: 'modelValidation.executionReasoning' } : null;
 }
 
@@ -120,7 +121,8 @@ export function metadataChanges(profile: RemoteProfile, draft: ReturnType<typeof
 }
 
 export function reasoningDraft(value: ReasoningConfiguration | null | undefined): ReasoningConfiguration & { efforts: string[]; budgets: number[] } {
-    return { ...value, control: value?.control ?? 'automatic', efforts: [...(value?.efforts ?? [])], budgets: [...(value?.budgets ?? [1024, 4096, 8192])] };
+    const control = value?.control === 'effort' || value?.control === 'budget' ? value.control : 'automatic';
+    return { ...value, control, efforts: [...(value?.efforts ?? [])], budgets: [...(value?.budgets ?? [1024, 4096, 8192])] };
 }
 
 export function reasoningChanges(original: RemoteProfile['reasoning'], draft: ReasoningConfiguration) {

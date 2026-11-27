@@ -40,33 +40,31 @@ test('shared controls preserve zoom, readable disabled states and optional motio
 });
 test('chat and previews keep local reading widths without changing resource ownership', () => {
     const chat = source('../pages/Chat.svelte');
-    assert.match(chat, /article\.user \{[^}]*max-width: 85%/);
-    assert.match(chat, /\.composer \{[^}]*max-width: 720px/);
+    assert.match(chat, /\.messages-list \{[^}]*max-width: 780px/);
+    assert.match(chat, /\.composer-wrap \{[^}]*max-width: 820px/);
     assert.match(source('../components/Markdown.svelte'), /overflow-x: auto/);
-    const pdf = source('../components/ChatPdfResources.svelte');
-    assert.match(pdf, /height: min\(60dvh, 480px\)/);
-    assert.match(pdf, /loadConversationPdf\(resource, next.signal\)/);
-    assert.match(source('./chatPdfPreview.ts'), /conversationPdfUrl\(resource.conversationId, resource.resourceId\)/);
+    const browserPdf = source('../components/InspectorBrowserPdfPanel.svelte');
+    assert.match(browserPdf, /conversationPdfUrl\(conversationId,\s*pdf\.resourceId\)/);
+    assert.match(browserPdf, /parseConversationPdfResources\(raw,\s*id\)/);
+    assert.match(browserPdf, /referrerpolicy="no-referrer"/);
 });
-test('empty chat has one real creation entry and no inactive composer or inspector', () => {
+test('empty chat has one real creation entry and collapsed inspector by default', () => {
     const chat = source('../pages/Chat.svelte');
     assert.doesNotMatch(chat, /onclick=\{createFirstConversation\}/);
     assert.match(source('../components/ChatConversationManager.svelte'), /class="new-conversation"[^\n]*mutate\('create'\)/);
     assert.doesNotMatch(chat, /conversationManager\.createConversation\(\)/);
-    assert.match(chat, /conversationManager\?\.focusCreateEntry\(\)/);
-    assert.match(chat, /\{#if active && canInteract\}\s*(?:\{#if selectedExperts[^]*?\{\/if\}\s*)?<form class="composer"/);
-    assert.match(chat, /\{#if active\}<ChatResponsivePanel bind:this=\{inspectorPanel\}/);
-    assert.match(chat, /!active && !initializationFailed/);
-    assert.match(chat, /chatPage\.retryInitialization/);
+    assert.match(chat, /let inspectorOpen = \$state\(false\)/);
+    assert.match(chat, /\{#if inspectorOpen\}[^]*?<ConversationInspector\b/);
+    assert.match(chat, /class="composer-box"/);
 });
 test('phone navigation has its own list and desktop retains one focus-managed workspace', () => {
     const app = source('../App.svelte');
     const chat = source('../pages/Chat.svelte');
-    const responsivePanel = source('../components/ChatResponsivePanel.svelte');
-    assert.doesNotMatch(app, /<ChatResponsivePanel/);
+    const textReader = source('../components/ChatTextReaderDialog.svelte');
     assert.match(app, /path === '\/conversations'/);
     assert.match(app, /initialWorkspaceLocation/);
-    assert.match(chat, /ChatResponsivePanel bind:this=\{navigationPanel\} breakpoint=\{760\}/);
+    assert.match(app, /class="mobile-primary-navigation"/);
+    assert.match(chat, /navigateWorkspace\('\/conversations'\)/);
     assert.match(chat, /@media \(max-width: 760px\)/);
-    assert.match(responsivePanel, /opener\?\.isConnected[^\n]*opener\.focus\(\)/);
+    assert.match(textReader, /target\?\.isConnected[^\n]*target\.focus\(/);
 });

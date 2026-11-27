@@ -276,6 +276,55 @@ test("startup recovers from a missed status read and shows native action errors"
     await expect(retry).toBeFocused();
 });
 
+test("tray action errors surface visibly on both the startup page and the desktop shell", async ({ browser }) => {
+    const startupContext = await browser.newContext({ viewport: { width: 720, height: 520 }, colorScheme: "light" });
+    const index = fs.readFileSync(path.join(repoRoot, "apps/windows/src-tauri/startup/index.html"), "utf8");
+    await startupContext.route("http://tauri.localhost/**", route => route.request().url().endsWith("/startup.js")
+        ? route.fulfill({ contentType: "text/javascript", body: startup })
+        : route.fulfill({ contentType: "text/html", body: index }));
+    const startupPage = await startupContext.newPage();
+    try {
+        await startupPage.addInitScript({ content: preloadHarness });
+        await startupPage.goto("http://tauri.localhost/index.html");
+        await expect(startupPage.locator("#nola-open-logs")).toBeVisible();
+        const missingLicenses = `${stringsFor("en").thirdPartyLicenses} — ${stringsFor("en").licensesUnavailable}`;
+        await startupPage.evaluate((message) => {
+            window.dispatchEvent(new CustomEvent("nola:desktop-error", {
+                detail: { action: "licenses", message, detail: "Bundled third-party licenses directory was not found" },
+            }));
+        }, missingLicenses);
+        await expect(startupPage.locator("#nola-action-status")).toHaveText(missingLicenses);
+    } finally {
+        await startupContext.close();
+    }
+
+    const shellContext = await browser.newContext({ viewport: { width: 960, height: 640 }, colorScheme: "dark" });
+    await shellContext.route("http://127.0.0.1:45123/**", route => route.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><html><body><main>Workspace</main></body></html>",
+    }));
+    const shellPage = await shellContext.newPage();
+    try {
+        await shellPage.addInitScript({ content: preloadHarness });
+        await shellPage.goto("http://127.0.0.1:45123/chat");
+        const hostileMessage = `${stringsFor("en").openLogFolder} — <img src=x onerror=window.__xss=true>`;
+        await shellPage.evaluate((message) => {
+            window.dispatchEvent(new CustomEvent("nola:desktop-error", {
+                detail: { action: "logs", message, detail: "ShellExecute failed" },
+            }));
+        }, hostileMessage);
+        const banner = shellPage.locator("#nola-desktop-error-banner");
+        await expect(banner).toBeVisible();
+        await expect(banner).toHaveAttribute("role", "alert");
+        await expect(banner).toContainText(hostileMessage);
+        expect(await shellPage.evaluate(() => Boolean((window as Window & { __xss?: boolean }).__xss))).toBe(false);
+        await banner.getByRole("button", { name: "Dismiss" }).click();
+        await expect(banner).toHaveCount(0);
+    } finally {
+        await shellContext.close();
+    }
+});
+
 test("Windows desktop shell integration against isolated real nola web renders Svelte 5 chat, Settings login card, and /models runtime badge", async ({ browser }) => {
     const cliPath = resolveNolaBinary();
     const port = await allocatePort();

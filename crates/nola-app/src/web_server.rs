@@ -3411,6 +3411,23 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 }
             }
             (Method::Post, "/api/chat/conversations") => {
+                if is_assistant_journal_operation(&body) {
+                    let is_mobile = raw_path.starts_with("/api/mobile/");
+                    match handle_assistant_journal_http(&store, &suite, host_id, &body, is_mobile) {
+                        Ok(payload) => {
+                            let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                        }
+                        Err((code, msg)) => {
+                            let _ = respond_api_json(
+                                req,
+                                400,
+                                &json!({"error": code, "message": msg}),
+                                crypto_tok,
+                            );
+                        }
+                    }
+                    return;
+                }
                 if is_conversations_list_read_post(&body) {
                     let limit = body
                         .get("limit")
@@ -3536,10 +3553,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let after = parse_query_i64(query, "after_seq")
                     .or_else(|| body.get("after_seq").or_else(|| body.get("afterSeq")).and_then(|v| v.as_i64()))
                     .unwrap_or(0);
+                let paired_events = has_expected_host_id(&body)
+                    || parse_query_str(query, "expected_host_id")
+                        .is_some_and(|s| !s.trim().is_empty());
                 match store.events_after(&id, after, 500) {
                     Ok(EventPage::Events(ev)) => {
                         let inner = json!({"status": "ok", "events": ev});
-                        let payload = wrap_paired_result(&store, host_id, &body, inner);
+                        let payload = if paired_events {
+                            wrap_paired_envelope(&store, host_id, inner)
+                        } else {
+                            inner
+                        };
                         let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Ok(EventPage::ResyncRequired {
@@ -3551,7 +3575,11 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             "earliest_retained_seq": earliest_retained_seq,
                             "latest_seq": latest_seq
                         });
-                        let payload = wrap_paired_result(&store, host_id, &body, inner);
+                        let payload = if paired_events {
+                            wrap_paired_envelope(&store, host_id, inner)
+                        } else {
+                            inner
+                        };
                         let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Err(e) => {
@@ -3616,10 +3644,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/configuration"),
                 );
+                let paired_q = parse_query_str(query, "expected_host_id")
+                    .is_some_and(|s| !s.trim().is_empty());
                 match store.get_session(&id) {
                     Ok(Some(sess)) => {
                         let conv = conversation_configuration_json(&store, &sess);
-                        let _ = respond_api_json(req, 200, &conv, crypto_tok);
+                        let payload = if paired_q {
+                            wrap_paired_envelope(&store, host_id, conv)
+                        } else {
+                            conv
+                        };
+                        let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
                     Ok(None) => {
                         let _ = respond_api_json(req, 404, &json!({"error": "conversation_not_found"}), crypto_tok);
@@ -4272,6 +4307,19 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/cancel"),
                 );
+                if is_paired_task_cancellation_body(&body) {
+                    let receipt = handle_paired_task_cancellation(
+                        &store,
+                        &suite,
+                        active_cancels,
+                        host_id,
+                        &id,
+                        None,
+                        &body,
+                    );
+                    let _ = respond_api_json(req, 200, &receipt, crypto_tok);
+                    return;
+                }
                 let cancelled = if let Some(flag) = active_cancels.lock().unwrap().get(&id) {
                     flag.store(true, Ordering::SeqCst);
                     true
@@ -4323,7 +4371,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         .trim_end_matches("/ui-surfaces"),
                 );
                 let surfaces = list_conversation_surfaces(&store, &conv_id);
-                let resp_val = if has_expected_host_id(&body) {
+                let paired = has_expected_host_id(&body)
+                    || parse_query_str(query, "expected_host_id")
+                        .is_some_and(|s| !s.trim().is_empty());
+                let resp_val = if paired {
                     json!({
                         "source_host_id": host_id,
                         "result": surfaces
@@ -4728,6 +4779,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 if let Some((raw_conv, raw_task)) = rest.split_once("/tasks/") {
                     let conv_id = percent_decode_path(raw_conv);
                     let task_id = percent_decode_path(raw_task);
+                    if is_paired_task_cancellation_body(&body)
+                        || raw_path.starts_with("/api/mobile/")
+                    {
+                        let receipt = handle_paired_task_cancellation(
+                            &store,
+                            &suite,
+                            active_cancels,
+                            host_id,
+                            &conv_id,
+                            Some(&task_id),
+                            &body,
+                        );
+                        let _ = respond_api_json(req, 200, &receipt, crypto_tok);
+                        return;
+                    }
                     let cancelled = if let Some(flag) = active_cancels.lock().unwrap().get(&conv_id) {
                         flag.store(true, Ordering::SeqCst);
                         true
@@ -4765,7 +4831,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     );
                 }
             }
-            (Method::Get, p)
+            (Method::Get, p) | (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/progress") =>
             {
                 let conv_id = percent_decode_path(
@@ -4783,8 +4849,13 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .flatten()
                     .unwrap_or(Value::Null);
                 let goal_projection = build_goal_projection(&store, &conv_id, &goal);
-                let expected_host_q =
-                    parse_query_str(query, "expected_host_id").filter(|s| !s.trim().is_empty());
+                let expected_host_q = parse_query_str(query, "expected_host_id")
+                    .or_else(|| {
+                        body.get("expected_host_id")
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                    })
+                    .filter(|s| !s.trim().is_empty());
                 if expected_host_q.is_some() {
                     let paired_todos: Vec<Value> = todos
                         .as_array()
@@ -5117,6 +5188,27 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     crypto_tok,
                 );
             }
+            (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/") && p.ends_with("/resources") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/resources"),
+                );
+                match store_conversation_resource_upload(&store, &conv_id, &body) {
+                    Ok(meta) => {
+                        let _ = respond_api_json(req, 200, &meta, crypto_tok);
+                    }
+                    Err(msg) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"error": "invalid_resource", "message": msg}),
+                            crypto_tok,
+                        );
+                    }
+                }
+            }
             (Method::Get, p)
                 if p.starts_with("/api/chat/conversations/")
                     && p.contains("/resources/") =>
@@ -5125,15 +5217,62 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 if let Some((raw_conv, raw_res)) = rest.split_once("/resources/") {
                     let conv_id = percent_decode_path(raw_conv);
                     let resource_id = percent_decode_path(raw_res);
-                    let resources = collect_conversation_resources(&store, &conv_id);
+                    let resources = collect_conversation_resources_raw(&store, &conv_id);
                     if let Some(found) = resources.into_iter().find(|r| {
-                        r.get("id")
-                            .or_else(|| r.get("resource_id"))
-                            .or_else(|| r.get("name"))
-                            .and_then(|v| v.as_str())
-                            == Some(resource_id.as_str())
+                        let candidates = [
+                            r.get("resourceId").and_then(|v| v.as_str()),
+                            r.get("id").and_then(|v| v.as_str()),
+                            r.get("resource_id").and_then(|v| v.as_str()),
+                            r.get("displayName").and_then(|v| v.as_str()),
+                            r.get("name").and_then(|v| v.as_str()),
+                        ];
+                        candidates.into_iter().flatten().any(|c| c == resource_id)
                     }) {
-                        let _ = respond_api_json(req, 200, &found, crypto_tok);
+                        let mime = found
+                            .get("mimeType")
+                            .or_else(|| found.get("mime_type"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("application/pdf");
+                        let display_name = found
+                            .get("displayName")
+                            .or_else(|| found.get("filename"))
+                            .or_else(|| found.get("name"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("document.pdf");
+                        if let Some(raw_bytes) = extract_resource_raw_bytes(&found) {
+                            let safe_name: String = display_name
+                                .chars()
+                                .filter(|c| *c != '"' && *c != '\\' && !c.is_control())
+                                .take(200)
+                                .collect();
+                            let ct = Header::from_bytes(&b"Content-Type"[..], mime.as_bytes())
+                                .unwrap_or_else(|_| {
+                                    Header::from_bytes(
+                                        &b"Content-Type"[..],
+                                        &b"application/octet-stream"[..],
+                                    )
+                                    .unwrap()
+                                });
+                            let cd_val = format!("inline; filename=\"{safe_name}\"");
+                            let cd =
+                                Header::from_bytes(&b"Content-Disposition"[..], cd_val.as_bytes())
+                                    .unwrap();
+                            let nosniff = Header::from_bytes(
+                                &b"X-Content-Type-Options"[..],
+                                &b"nosniff"[..],
+                            )
+                            .unwrap();
+                            let resp = Response::from_data(raw_bytes)
+                                .with_status_code(StatusCode(200))
+                                .with_header(ct)
+                                .with_header(cd)
+                                .with_header(nosniff);
+                            let _ = req.respond(resp);
+                        } else {
+                            let _ = respond_api_json(req, 200, &found, crypto_tok);
+                        }
                     } else {
                         let _ = respond_api_json(
                             req,
@@ -5152,6 +5291,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 }
             }
             (Method::Post, p)
+                if p.starts_with("/api/chat/conversations/")
+                    && p.ends_with("/messages/receipt") =>
+            {
+                let conv_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/")
+                        .trim_end_matches("/messages/receipt"),
+                );
+                let resp = handle_task_guidance_http(&store, host_id, &conv_id, &body, true);
+                let _ = respond_api_json(req, 200, &resp, crypto_tok);
+            }
+            (Method::Post, p)
                 if p.starts_with("/api/chat/conversations/") && p.ends_with("/messages") =>
             {
                 let conv_id = percent_decode_path(
@@ -5160,6 +5310,73 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let accepts_sse = header_value(&req, "accept")
                     .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"));
+                let is_mobile = raw_path.starts_with("/api/mobile/");
+                if is_assistant_journal_operation(&body) {
+                    match handle_assistant_journal_http(&store, &suite, host_id, &body, is_mobile) {
+                        Ok(payload) => {
+                            let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                        }
+                        Err((code, msg)) => {
+                            let _ = respond_api_json(
+                                req,
+                                400,
+                                &json!({"error": code, "message": msg}),
+                                crypto_tok,
+                            );
+                        }
+                    }
+                    return;
+                }
+                if body.get("operation").and_then(|v| v.as_str()) == Some("task_child_window") {
+                    let child_conv_id = body
+                        .pointer("/destination/child_conversation_id")
+                        .or_else(|| body.pointer("/destination/childConversationID"))
+                        .or_else(|| body.get("child_conversation_id"))
+                        .or_else(|| body.get("conversation_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or(&conv_id);
+                    let query_args = json!({
+                        "conversation_id": child_conv_id,
+                        "before_ordinal": body.get("before_ordinal").cloned().unwrap_or(Value::Null),
+                        "limit": body.get("limit").cloned().unwrap_or_else(|| json!(80))
+                    });
+                    match crate::daemon::dispatch_command(
+                        &store,
+                        &suite,
+                        "load_conversation_projection_window_v1",
+                        &query_args,
+                    ) {
+                        Ok(window) => {
+                            let payload = if is_mobile || has_expected_host_id(&body) {
+                                wrap_paired_envelope(&store, host_id, window)
+                            } else {
+                                window
+                            };
+                            let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                        }
+                        Err((code, msg)) => {
+                            let _ = respond_api_json(
+                                req,
+                                400,
+                                &json!({"error": code, "message": msg}),
+                                crypto_tok,
+                            );
+                        }
+                    }
+                    return;
+                }
+                if is_task_guidance_post(&body, accepts_sse) {
+                    let receipt_only = body
+                        .get("receipt_only")
+                        .or_else(|| body.get("receiptOnly"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let resp =
+                        handle_task_guidance_http(&store, host_id, &conv_id, &body, receipt_only);
+                    let _ = respond_api_json(req, 200, &resp, crypto_tok);
+                    return;
+                }
                 if is_messages_read_post_with_accept(&body, accepts_sse) {
                     let (messages, events) = reconstruct_v2_messages(&store, &conv_id);
                     let latest_seq = events
@@ -5240,6 +5457,26 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     && !p.trim_start_matches("/api/chat/conversations/").contains('/') =>
             {
                 let id = percent_decode_path(p.trim_start_matches("/api/chat/conversations/"));
+                if method == Method::Post
+                    && body.get("identity").is_some_and(|v| v.is_object())
+                    && body.get("request_digest").is_some_and(|v| v.is_string())
+                {
+                    let is_mobile = raw_path.starts_with("/api/mobile/");
+                    let receipt = handle_remote_submission_reconciliation(
+                        &store,
+                        active_cancels,
+                        host_id,
+                        &id,
+                        &body,
+                    );
+                    let payload = if is_mobile || has_expected_host_id(&body) {
+                        wrap_paired_envelope(&store, host_id, receipt)
+                    } else {
+                        receipt
+                    };
+                    let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                    return;
+                }
                 if method == Method::Post && is_read_only_post(&body) {
                     match store.get_session(&id) {
                         Ok(Some(sess)) => {
@@ -9401,24 +9638,608 @@ fn filter_superseded_memories(store: &Store, items: Vec<MemoryItem>) -> (Vec<Val
     (active_records, active_items)
 }
 
-fn collect_conversation_resources(store: &Store, conv_id: &str) -> Vec<Value> {
+fn wrap_paired_envelope(store: &Store, host_id: &str, result: Value) -> Value {
+    let source_store_epoch = ensure_source_store_epoch(store);
+    json!({
+        "source_host_id": host_id,
+        "source_store_epoch": source_store_epoch,
+        "result": result
+    })
+}
+
+fn is_assistant_journal_operation(body: &Value) -> bool {
+    let Some(op) = body.get("operation").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    match op {
+        "open_snapshot"
+        | "release_snapshot"
+        | "terminal_seal"
+        | "terminal_manifest"
+        | "admission_head"
+        | "admissions"
+        | "context_usage"
+        | "heads"
+        | "parts"
+        | "changes"
+        | "range"
+        | "record_chunk" => true,
+        "read" => body.get("after").is_some() || body.get("through").is_some(),
+        _ => false,
+    }
+}
+
+fn handle_assistant_journal_http(
+    store: &Store,
+    suite: &ModulesSuite,
+    host_id: &str,
+    body: &Value,
+    is_mobile: bool,
+) -> Result<Value, (&'static str, String)> {
+    let op = body
+        .get("operation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let daemon_cmd = match op {
+        "open_snapshot" => "open_assistant_journal_snapshot",
+        "release_snapshot" => "release_assistant_journal_snapshot",
+        "terminal_seal" => "local_assistant_run_terminal_seal",
+        "terminal_manifest" => "read_local_assistant_run_terminal_manifest",
+        "admission_head" => "local_run_message_admission_head",
+        "admissions" => "read_run_message_admissions",
+        "context_usage" => "local_run_context_usage",
+        "heads" => "local_run_assistant_journal_heads",
+        "read" => "read_assistant_journal",
+        "parts" => "read_assistant_journal_parts",
+        "changes" => "read_assistant_journal_part_changes",
+        "range" => "read_assistant_journal_range",
+        "record_chunk" => "read_assistant_journal_record_chunk",
+        other => {
+            return Err((
+                "unsupported_journal_operation",
+                format!("unsupported assistant journal operation '{other}'"),
+            ))
+        }
+    };
+    let result = crate::daemon::dispatch_command(store, suite, daemon_cmd, body)?;
+    if is_mobile || has_expected_host_id(body) {
+        Ok(wrap_paired_envelope(store, host_id, result))
+    } else {
+        Ok(result)
+    }
+}
+
+fn is_paired_task_cancellation_body(body: &Value) -> bool {
+    let Some(obj) = body.as_object() else {
+        return false;
+    };
+    let has_task = obj
+        .get("taskId")
+        .or_else(|| obj.get("task_id"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_paired_field = obj.contains_key("hostId")
+        || obj.contains_key("expected_host_id")
+        || obj.contains_key("parentRunId")
+        || obj.contains_key("parent_run_id")
+        || obj.contains_key("receipt_only")
+        || obj.contains_key("receiptOnly");
+    has_task || has_paired_field
+}
+
+fn handle_paired_task_cancellation(
+    store: &Store,
+    suite: &ModulesSuite,
+    active_cancels: &Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>>,
+    host_id: &str,
+    conv_id: &str,
+    url_task_id: Option<&str>,
+    body: &Value,
+) -> Value {
+    let req_host_id = body
+        .get("hostId")
+        .or_else(|| body.get("expected_host_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(host_id);
+    let task_id = url_task_id
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            body.get("taskId")
+                .or_else(|| body.get("task_id"))
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or("default");
+    let parent_run_id = body
+        .get("parentRunId")
+        .or_else(|| body.get("parent_run_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let receipt_only = body
+        .get("receipt_only")
+        .or_else(|| body.get("receiptOnly"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut task_rec = suite.get_record::<Value>("runtime_task", task_id).ok().flatten();
+    if !receipt_only {
+        if let Some(flag) = active_cancels.lock().unwrap().get(conv_id) {
+            flag.store(true, Ordering::SeqCst);
+        }
+        let ts = now_ms();
+        if let Some(ref mut task) = task_rec {
+            if let Some(obj) = task.as_object_mut() {
+                obj.insert("cancel_requested".into(), json!(true));
+                obj.insert("updated_at_ms".into(), json!(ts));
+            }
+            let _ = suite.upsert_record("runtime_task", task_id, task);
+        }
+        let _ = store.set_kv(
+            &format!("cancel_requested:{task_id}"),
+            &json!({"task_id": task_id, "cancel_requested": true, "requested_at_ms": ts}),
+        );
+    }
+
+    let raw_state = task_rec
+        .as_ref()
+        .and_then(|t| t.get("status").or_else(|| t.get("state")).and_then(|v| v.as_str()))
+        .unwrap_or("cancelled");
+    let state = match raw_state {
+        "completed" | "sealed" => "sealed",
+        "failed" | "error" => "failed",
+        "cancelled" | "canceled" => "cancelled",
+        "queued" => "queued",
+        "running" => "running",
+        "retry_waiting" => "retry_waiting",
+        "waiting_permission" => "waiting_permission",
+        "suspended" => "suspended",
+        "awaiting_reconciliation" => "awaiting_reconciliation",
+        _ => "cancelled",
+    };
+    let terminal = matches!(state, "sealed" | "failed" | "cancelled");
+    let cancel_requested = if !receipt_only {
+        true
+    } else {
+        task_rec
+            .as_ref()
+            .and_then(|t| t.get("cancel_requested").and_then(|v| v.as_bool()))
+            .unwrap_or_else(|| {
+                store
+                    .get_kv(&format!("cancel_requested:{task_id}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("cancel_requested").and_then(|b| b.as_bool()))
+                    .unwrap_or(terminal)
+            })
+    };
+
+    // Strict 8-key RemoteTaskCancellation / AppleTaskCancellationReceipt contract
+    json!({
+        "hostId": req_host_id,
+        "conversationId": conv_id,
+        "parentRunId": parent_run_id,
+        "taskId": task_id,
+        "cancelRequested": cancel_requested,
+        "terminal": terminal,
+        "state": state,
+        "applicationPending": false
+    })
+}
+
+fn is_task_guidance_post(body: &Value, accepts_sse: bool) -> bool {
+    if accepts_sse {
+        return false;
+    }
+    let Some(obj) = body.as_object() else {
+        return false;
+    };
+    let has_task = obj
+        .get("taskId")
+        .or_else(|| obj.get("task_id"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_guidance_shape = obj.contains_key("guidance")
+        || obj.contains_key("messageId")
+        || obj.contains_key("message_id")
+        || obj.contains_key("parentRunId")
+        || obj.contains_key("parent_run_id");
+    has_task && has_guidance_shape
+}
+
+fn handle_task_guidance_http(
+    store: &Store,
+    host_id: &str,
+    conv_id: &str,
+    body: &Value,
+    receipt_only: bool,
+) -> Value {
+    let req_host_id = body
+        .get("hostId")
+        .or_else(|| body.get("expected_host_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(host_id);
+    let task_id = body
+        .get("taskId")
+        .or_else(|| body.get("task_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let message_id = body
+        .get("messageId")
+        .or_else(|| body.get("message_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let parent_run_id = body
+        .get("parentRunId")
+        .or_else(|| body.get("parent_run_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let submitted_at_ms = body
+        .get("submittedAtMs")
+        .or_else(|| body.get("submitted_at_ms"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(now_ms);
+    let content = body
+        .get("message")
+        .or_else(|| body.get("guidance"))
+        .or_else(|| body.get("content"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let key = format!("task_guidance_receipt:{task_id}:{message_id}");
+    let existing = store.get_kv(&key).ok().flatten();
+    let guidance_val = if receipt_only {
+        existing.unwrap_or(Value::Null)
+    } else if let Some(found) = existing {
+        found
+    } else {
+        let rec = json!({
+            "task_id": task_id,
+            "message_id": message_id,
+            "owner_session_id": conv_id,
+            "parent_turn_id": parent_run_id,
+            "content": content,
+            "submitted_at_ms": submitted_at_ms,
+            "status": "accepted"
+        });
+        let _ = store.set_kv(&key, &rec);
+        let _ = store.set_kv(&format!("task_guidance_receipt:{message_id}"), &rec);
+        let _ = store.set_kv(&format!("task_guidance_receipt:{task_id}"), &rec);
+        rec
+    };
+
+    json!({
+        "hostId": req_host_id,
+        "conversationId": conv_id,
+        "taskId": task_id,
+        "messageId": message_id,
+        "guidance": guidance_val
+    })
+}
+
+fn handle_remote_submission_reconciliation(
+    store: &Store,
+    active_cancels: &Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>>,
+    _host_id: &str,
+    conv_id: &str,
+    body: &Value,
+) -> Value {
+    let op = body
+        .get("operation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("observe");
+    let identity = body.get("identity").cloned().unwrap_or_else(|| json!({}));
+    let request_digest = body
+        .get("request_digest")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let sub_id = identity
+        .get("submission_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let asst_id = identity
+        .get("assistant_message_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("assistant");
+    let key = format!("remote_sub_server_receipt:{conv_id}:{sub_id}");
+
+    if op == "cancel" {
+        if let Some(flag) = active_cancels.lock().unwrap().get(conv_id) {
+            flag.store(true, Ordering::SeqCst);
+        }
+        let receipt = json!({
+            "protocol_version": 1,
+            "identity": identity,
+            "request_digest": request_digest,
+            "phase": "cancelled",
+            "admission": Value::Null,
+            "rejection_code": Value::Null
+        });
+        let _ = store.set_kv(&key, &receipt);
+        return receipt;
+    }
+
+    if let Ok(Some(saved)) = store.get_kv(&key) {
+        if saved.get("request_digest").and_then(|v| v.as_str()) == Some(request_digest) {
+            return saved;
+        }
+    }
+
+    let has_session = store.get_session(conv_id).ok().flatten().is_some();
+    if has_session {
+        let epoch = ensure_source_store_epoch(store);
+        let record_digest = nola_types::sha256_hex(
+            format!("{conv_id}:{sub_id}:{asst_id}:{request_digest}").as_bytes(),
+        );
+        let receipt = json!({
+            "protocol_version": 1,
+            "identity": identity,
+            "request_digest": request_digest,
+            "phase": "admitted",
+            "admission": {
+                "identity": {
+                    "conversation_id": conv_id,
+                    "run_id": sub_id,
+                    "assistant_message_id": asst_id,
+                    "source_store_epoch": epoch
+                },
+                "sequence": "1",
+                "record_digest": record_digest
+            },
+            "rejection_code": Value::Null
+        });
+        let _ = store.set_kv(&key, &receipt);
+        receipt
+    } else {
+        json!({
+            "protocol_version": 1,
+            "identity": identity,
+            "request_digest": request_digest,
+            "phase": "prepared",
+            "admission": Value::Null,
+            "rejection_code": Value::Null
+        })
+    }
+}
+
+fn percent_encode_path_segment(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        let unreserved = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if unreserved {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}
+
+fn extract_resource_raw_bytes(res: &Value) -> Option<Vec<u8>> {
+    if let Some(b64) = res
+        .get("data_base64")
+        .or_else(|| res.get("dataBase64"))
+        .or_else(|| res.get("content_base64"))
+        .or_else(|| res.get("data"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        let cleaned = b64
+            .split_once(",")
+            .map(|(_, rest)| rest)
+            .unwrap_or(b64);
+        if let Ok(bytes) = base64_decode(cleaned) {
+            return Some(bytes);
+        }
+    }
+    if let Some(data_url) = res
+        .get("dataUrl")
+        .or_else(|| res.get("data_url"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        if let Some((_, b64)) = data_url.split_once(",") {
+            if let Ok(bytes) = base64_decode(b64) {
+                return Some(bytes);
+            }
+        }
+    }
+    if let Some(text) = res
+        .get("extracted_text")
+        .or_else(|| res.get("text"))
+        .or_else(|| res.get("content"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(text.as_bytes().to_vec());
+    }
+    None
+}
+
+fn normalize_canonical_resource(conv_id: &str, rid: &str, raw: &Value, include_data: bool) -> Value {
+    let display_name = raw
+        .get("displayName")
+        .or_else(|| raw.get("filename"))
+        .or_else(|| raw.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("document.pdf");
+    let display_name: String = display_name.chars().take(256).collect();
+    let mime_type = raw
+        .get("mimeType")
+        .or_else(|| raw.get("mime_type"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            if display_name.to_ascii_lowercase().ends_with(".pdf") {
+                "application/pdf"
+            } else {
+                "application/octet-stream"
+            }
+        });
+    let raw_bytes = extract_resource_raw_bytes(raw);
+    let byte_count = raw
+        .get("byteCount")
+        .or_else(|| raw.get("size_bytes"))
+        .or_else(|| raw.get("size"))
+        .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
+        .or_else(|| raw_bytes.as_ref().map(|b| b.len() as u64))
+        .unwrap_or(1);
+    let sha256 = raw
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            if let Some(ref b) = raw_bytes {
+                nola_types::sha256_hex(b)
+            } else {
+                nola_types::sha256_hex(format!("{conv_id}:{rid}:{display_name}").as_bytes())
+            }
+        });
+    let preview_url = format!(
+        "/api/chat/conversations/{}/resources/{}",
+        percent_encode_path_segment(conv_id),
+        percent_encode_path_segment(rid)
+    );
+
+    let mut obj = raw.as_object().cloned().unwrap_or_default();
+    if !include_data {
+        obj.remove("data_base64");
+        obj.remove("dataBase64");
+        obj.remove("content_base64");
+        obj.remove("dataUrl");
+        obj.remove("data_url");
+        obj.remove("data");
+    }
+    obj.insert("id".into(), json!(rid));
+    obj.insert("resourceId".into(), json!(rid));
+    obj.insert("conversationId".into(), json!(conv_id));
+    obj.insert("displayName".into(), json!(display_name));
+    obj.insert("mimeType".into(), json!(mime_type));
+    obj.insert("byteCount".into(), json!(byte_count));
+    obj.insert("sha256".into(), json!(sha256));
+    obj.insert("previewUrl".into(), json!(preview_url));
+    Value::Object(obj)
+}
+
+fn store_conversation_resource_upload(
+    store: &Store,
+    conv_id: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    let display_name = body
+        .get("displayName")
+        .or_else(|| body.get("filename"))
+        .or_else(|| body.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("document.pdf");
+    let b64 = body
+        .get("dataBase64")
+        .or_else(|| body.get("data_base64"))
+        .or_else(|| body.get("content_base64"))
+        .or_else(|| body.get("base64"))
+        .or_else(|| body.get("data"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing dataBase64".to_string())?;
+    let bytes = base64_decode(b64)?;
+    if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+        return Err("resource size must be between 1 byte and 8 MiB".into());
+    }
+    let resource_id = body
+        .get("resourceId")
+        .or_else(|| body.get("resource_id"))
+        .or_else(|| body.get("id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let mime_type = body
+        .get("mimeType")
+        .or_else(|| body.get("mime_type"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("application/pdf");
+    let digest = nola_types::sha256_hex(&bytes);
+    let ts = now_ms();
+    let record = json!({
+        "resource_id": resource_id,
+        "resourceId": resource_id,
+        "id": resource_id,
+        "conversation_id": conv_id,
+        "conversationId": conv_id,
+        "kind": "pdf",
+        "mime_type": mime_type,
+        "mimeType": mime_type,
+        "filename": display_name,
+        "displayName": display_name,
+        "size_bytes": bytes.len() as u64,
+        "byteCount": bytes.len() as u64,
+        "sha256": digest,
+        "data_base64": base64_encode(&bytes),
+        "created_at_ms": ts,
+        "updated_at_ms": ts
+    });
+    store
+        .put_module_record(
+            "conversation_resource",
+            &format!("{conv_id}:{resource_id}"),
+            &record,
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(normalize_canonical_resource(conv_id, &resource_id, &record, false))
+}
+
+fn collect_conversation_resources_inner(
+    store: &Store,
+    conv_id: &str,
+    include_data: bool,
+) -> Vec<Value> {
     let mut resources: Vec<Value> = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
 
-    if let Ok(Some(Value::Array(saved))) = store.get_kv(&format!("conv_resources:{conv_id}")) {
-        for (idx, mut res) in saved.into_iter().enumerate() {
+    if let Ok(module_recs) = store.list_module_records::<Value>("conversation_resource") {
+        for (idx, res) in module_recs.into_iter().enumerate() {
+            let matches_conv = res
+                .get("conversation_id")
+                .or_else(|| res.get("conversationId"))
+                .and_then(|v| v.as_str())
+                == Some(conv_id);
+            if !matches_conv {
+                continue;
+            }
             let rid = res
-                .get("id")
+                .get("resourceId")
+                .or_else(|| res.get("resource_id"))
+                .or_else(|| res.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("mod-res-{idx}"));
+            if seen_ids.insert(rid.clone()) {
+                resources.push(normalize_canonical_resource(conv_id, &rid, &res, include_data));
+            }
+        }
+    }
+
+    if let Ok(Some(Value::Array(saved))) = store.get_kv(&format!("conv_resources:{conv_id}")) {
+        for (idx, res) in saved.into_iter().enumerate() {
+            let rid = res
+                .get("resourceId")
+                .or_else(|| res.get("id"))
                 .or_else(|| res.get("resource_id"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(|| format!("kv-res-{idx}"));
             if seen_ids.insert(rid.clone()) {
-                if let Some(obj) = res.as_object_mut() {
-                    obj.entry("id".to_string()).or_insert_with(|| json!(rid));
-                }
-                resources.push(res);
+                resources.push(normalize_canonical_resource(conv_id, &rid, &res, include_data));
             }
         }
     }
@@ -9428,7 +10249,8 @@ fn collect_conversation_resources(store: &Store, conv_id: &str) -> Vec<Value> {
             if let Some(attachments) = ev.payload.get("attachments").and_then(|v| v.as_array()) {
                 for (idx, att) in attachments.iter().enumerate() {
                     let rid = att
-                        .get("id")
+                        .get("resourceId")
+                        .or_else(|| att.get("id"))
                         .or_else(|| att.get("resource_id"))
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.trim().is_empty())
@@ -9437,36 +10259,46 @@ fn collect_conversation_resources(store: &Store, conv_id: &str) -> Vec<Value> {
                     if seen_ids.insert(rid.clone()) {
                         let mut entry = att.clone();
                         if let Some(obj) = entry.as_object_mut() {
-                            obj.entry("id".to_string()).or_insert_with(|| json!(rid));
-                            obj.entry("conversationId".to_string())
-                                .or_insert_with(|| json!(conv_id));
                             obj.entry("seq".to_string()).or_insert_with(|| json!(ev.seq));
                         }
-                        resources.push(entry);
+                        resources.push(normalize_canonical_resource(
+                            conv_id,
+                            &rid,
+                            &entry,
+                            include_data,
+                        ));
                     }
                 }
             }
             if let Some(res) = ev.payload.get("resource").filter(|v| v.is_object()) {
                 let rid = res
-                    .get("id")
+                    .get("resourceId")
+                    .or_else(|| res.get("id"))
                     .or_else(|| res.get("resource_id"))
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.trim().is_empty())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| format!("res-{}", ev.seq));
                 if seen_ids.insert(rid.clone()) {
-                    let mut entry = res.clone();
-                    if let Some(obj) = entry.as_object_mut() {
-                        obj.entry("id".to_string()).or_insert_with(|| json!(rid));
-                        obj.entry("conversationId".to_string())
-                            .or_insert_with(|| json!(conv_id));
-                    }
-                    resources.push(entry);
+                    resources.push(normalize_canonical_resource(
+                        conv_id,
+                        &rid,
+                        res,
+                        include_data,
+                    ));
                 }
             }
         }
     }
     resources
+}
+
+fn collect_conversation_resources_raw(store: &Store, conv_id: &str) -> Vec<Value> {
+    collect_conversation_resources_inner(store, conv_id, true)
+}
+
+fn collect_conversation_resources(store: &Store, conv_id: &str) -> Vec<Value> {
+    collect_conversation_resources_inner(store, conv_id, false)
 }
 
 fn discover_endpoint_models(conn: &ConnectionConfig) -> Vec<String> {
@@ -17296,5 +18128,135 @@ mod tests {
         // Non-loopback or env token override disables loopback trust
         assert!(!compute_local_trust(false, false, "/api/agent/settings", false));
         assert!(!compute_local_trust(true, true, "/api/agent/settings", false));
+    }
+
+    #[test]
+    fn web_server_pdf_resources_and_remote_host_contracts_work() {
+        let store = Store::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+        let cancels: Arc<Mutex<BTreeMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(BTreeMap::new()));
+
+        // 4a. PDF resource upload, canonical list fields, and raw bytes extraction
+        let conv_id = "conv-pdf-1";
+        let pdf_bytes = b"%PDF-1.4\n%test\n";
+        let rid = "11111111-2222-3333-4444-555555555555";
+        let uploaded = store_conversation_resource_upload(
+            &store,
+            conv_id,
+            &json!({
+                "resourceId": rid,
+                "displayName": "report.pdf",
+                "mimeType": "application/pdf",
+                "dataBase64": base64_encode(pdf_bytes)
+            }),
+        )
+        .unwrap();
+        assert_eq!(uploaded["resourceId"], rid);
+        assert_eq!(uploaded["displayName"], "report.pdf");
+        assert_eq!(uploaded["mimeType"], "application/pdf");
+        assert_eq!(uploaded["byteCount"], pdf_bytes.len() as u64);
+        assert_eq!(
+            uploaded["previewUrl"],
+            format!("/api/chat/conversations/{conv_id}/resources/{rid}")
+        );
+        assert_eq!(uploaded["sha256"].as_str().unwrap().len(), 64);
+
+        let listed = collect_conversation_resources(&store, conv_id);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["resourceId"], rid);
+        assert!(listed[0].get("data_base64").is_none());
+
+        let raw_list = collect_conversation_resources_raw(&store, conv_id);
+        let decoded = extract_resource_raw_bytes(&raw_list[0]).unwrap();
+        assert_eq!(decoded, pdf_bytes);
+
+        // 4b. Assistant journal operation detection & dispatch
+        let open_body = json!({
+            "operation": "open_snapshot",
+            "at": {
+                "identity": {
+                    "conversation_id": conv_id,
+                    "run_id": "run-1",
+                    "assistant_message_id": "asst-1",
+                    "source_store_epoch": "ep-1"
+                },
+                "sequence": "1",
+                "record_digest": "0".repeat(64)
+            }
+        });
+        assert!(is_assistant_journal_operation(&open_body));
+        let j_resp =
+            handle_assistant_journal_http(&store, &suite, "host-a", &open_body, true).unwrap();
+        assert_eq!(j_resp["source_host_id"], "host-a");
+        assert!(j_resp["result"]["snapshot_id"].is_string());
+
+        // 4b. Paired task cancellation strict 8-key schema
+        let cancel_body = json!({
+            "hostId": "host-a",
+            "conversationId": conv_id,
+            "parentRunId": "run-1",
+            "taskId": "task-1"
+        });
+        assert!(is_paired_task_cancellation_body(&cancel_body));
+        let cancel_resp = handle_paired_task_cancellation(
+            &store,
+            &suite,
+            &cancels,
+            "host-a",
+            conv_id,
+            None,
+            &cancel_body,
+        );
+        assert_eq!(cancel_resp.as_object().unwrap().len(), 8);
+        assert_eq!(cancel_resp["hostId"], "host-a");
+        assert_eq!(cancel_resp["taskId"], "task-1");
+        assert_eq!(cancel_resp["cancelRequested"], true);
+        assert_eq!(cancel_resp["applicationPending"], false);
+
+        // 4b. Task guidance receipt schema
+        let guid_body = json!({
+            "hostId": "host-a",
+            "conversationId": conv_id,
+            "parentRunId": "run-1",
+            "taskId": "task-1",
+            "messageId": "msg-g1",
+            "submittedAtMs": 1700000000000i64,
+            "message": "stay concise"
+        });
+        assert!(is_task_guidance_post(&guid_body, false));
+        assert!(!is_task_guidance_post(&guid_body, true));
+        let guid_resp = handle_task_guidance_http(&store, "host-a", conv_id, &guid_body, false);
+        assert_eq!(guid_resp["hostId"], "host-a");
+        assert_eq!(guid_resp["messageId"], "msg-g1");
+        assert_eq!(guid_resp["guidance"]["status"], "accepted");
+        assert_eq!(guid_resp["guidance"]["content"], "stay concise");
+
+        // 4b. Remote submission reconciliation schema
+        let digest = "a".repeat(64);
+        let sub_body = json!({
+            "operation": "observe",
+            "identity": {
+                "source_host_id": "host-a",
+                "client_id": "cli-1",
+                "conversation_id": conv_id,
+                "submission_id": "sub-1",
+                "user_message_id": "u-1",
+                "assistant_message_id": "a-1"
+            },
+            "request_digest": digest
+        });
+        let rec = handle_remote_submission_reconciliation(
+            &store,
+            &cancels,
+            "host-a",
+            conv_id,
+            &sub_body,
+        );
+        assert_eq!(rec["protocol_version"], 1);
+        assert_eq!(rec["phase"], "prepared");
+        assert!(rec["admission"].is_null());
+        assert!(rec["rejection_code"].is_null());
     }
 }

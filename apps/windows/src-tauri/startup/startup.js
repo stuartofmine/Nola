@@ -1,5 +1,31 @@
 const invoke = (name, args) => window.__TAURI_INTERNALS__.invoke(name, args);
 let phase = "initial";
+let latestDesktopError = "";
+function renderDesktopError(payload) {
+    const message = payload && typeof payload.message === "string" && payload.message.trim()
+        ? payload.message.trim()
+        : (payload && typeof payload.detail === "string" ? payload.detail.trim() : "");
+    if (!message) return;
+    latestDesktopError = message;
+    const feedback = document.getElementById("nola-action-status");
+    if (feedback) {
+        feedback.textContent = message;
+        return;
+    }
+    const host = document.querySelector("main") || document.body;
+    if (!host) return;
+    let status = document.getElementById("nola-tray-status");
+    if (!status) {
+        status = document.createElement("p");
+        status.id = "nola-tray-status";
+        status.setAttribute("role", "alert");
+        host.append(status);
+    }
+    status.textContent = message;
+}
+window.addEventListener("nola:desktop-error", event => {
+    renderDesktopError(event && event.detail);
+});
 async function update() {
     let state;
     try {
@@ -50,6 +76,12 @@ async function update() {
         }
         bindAction("nola-retry-host", "retry_startup");
         bindAction("nola-open-logs", "open_diagnostics");
+        if (latestDesktopError) {
+            renderDesktopError({ message: latestDesktopError });
+        }
+    }
+    if (state.trayError) {
+        renderDesktopError(state.trayError);
     }
     phase = state.phase;
     if (phase === "starting") setTimeout(update, 400);

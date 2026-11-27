@@ -1,10 +1,11 @@
 <script lang="ts">
     import { onMount, untrack } from 'svelte';
     import { locale, t } from '../lib/i18n';
+    import { pushToast } from '../lib/toast';
     type LoginItem = { available: boolean; enabled: boolean; labels: { title: string; body: string; enabled: string; disabled: string; unavailable: string } };
     type Desktop = { platform: string; loginItem?: () => Promise<LoginItem | null>; setLoginItem?: (enabled: boolean) => Promise<{ available: boolean; enabled: boolean } | null>; openLogsFolder?: () => Promise<unknown> };
     let bridge: Desktop | undefined;
-    let loginState = $state<LoginItem | null>(null), busy = $state(false), failed = $state(false);
+    let loginState = $state<LoginItem | null>(null), busy = $state(false), failed = $state(false), logsFailed = $state(false);
     let alive = true;
     let supported = $state(false);
     let canOpenLogs = $state(false);
@@ -35,7 +36,15 @@
     });
     async function openLogs() {
         if (!bridge?.openLogsFolder) return;
-        try { await bridge.openLogsFolder(); } catch { /* native open failure is non-fatal */ }
+        logsFailed = false;
+        try {
+            await bridge.openLogsFolder();
+        } catch {
+            if (alive) {
+                logsFailed = true;
+                pushToast(t($locale, 'diagnostics.openLogsFailed'), 'error');
+            }
+        }
     }
     async function toggle() {
         if (!loginState?.available || busy || !bridge?.setLoginItem) return;
@@ -67,6 +76,7 @@
     {#if busy}<p role="status">{t($locale, 'rooms.loading')}</p>{/if}
     {#if failed}<p role="alert" class="error">{t($locale, 'settings.desktop.failed')}</p><button type="button" disabled={busy} onclick={load}>{t($locale, 'models.reload')}</button>{/if}
     {#if canOpenLogs}<div class="desktop-actions"><button type="button" onclick={openLogs}>{t($locale, 'diagnostics.openLogs')}</button></div>{/if}
+    {#if logsFailed}<p role="alert" class="error">{t($locale, 'diagnostics.openLogsFailed')}</p>{/if}
 </section>
 {/if}
 <style>.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; cursor: pointer; }.desktop-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }</style>

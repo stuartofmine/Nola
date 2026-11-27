@@ -161,6 +161,7 @@ class CanonicalPublicPartSemanticsTest {
     @Test
     fun defaultsAreMissingOnlyAndDisplayStringsOrUnsignedFactsCannotBeCoerced() {
         assertEquals(CapabilityOrigin(), PublicPartSemanticsDecoder.origin(JsonObject(emptyMap())))
+        assertEquals(CapabilityOrigin("core"), PublicPartSemanticsDecoder.origin(Json.parseToJsonElement("""{"kind":"core"}""")))
         assertFails { PublicPartSemanticsDecoder.origin(Json.parseToJsonElement("""{"kind":null}""")) }
         assertFails { PublicPartSemanticsDecoder.origin(Json.parseToJsonElement("""{"kind":"builtin","provider_title":42}""")) }
         assertFails { PublicPartSemanticsDecoder.permission(Json.parseToJsonElement("""{"request_id":"r","permission_domain":"file","rationale":42}""")) }

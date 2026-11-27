@@ -22,6 +22,7 @@ use url::Url;
 struct Desktop {
     origin: Mutex<Option<url::Origin>>,
     failure: Mutex<Option<String>>,
+    tray_error: Mutex<Option<native::TrayActionError>>,
     host: Mutex<Option<host::Host>>,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
@@ -35,6 +36,7 @@ impl Desktop {
         Self {
             origin: Mutex::new(None),
             failure: Mutex::new(None),
+            tray_error: Mutex::new(None),
             host: Mutex::new(None),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
@@ -167,7 +169,8 @@ fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
 }
 
 pub(crate) fn stop_host(app: &AppHandle) {
-    let mut guard = lock_unpoisoned(&app.state::<Desktop>().host);
+    let state = app.state::<Desktop>();
+    let mut guard = lock_unpoisoned(&state.host);
     if let Some(mut host) = guard.take() {
         host.stop();
     }
@@ -245,8 +248,11 @@ fn startup_status(window: tauri::WebviewWindow, phase: String) -> Option<serde_j
         })
     });
     let theme = lock_unpoisoned(&state.theme_preference).clone();
+    let tray_error = lock_unpoisoned(&state.tray_error)
+        .as_ref()
+        .map(native::TrayActionError::to_json);
     Some(
-        serde_json::json!({"phase":current,"page":page,"language":native::language(),"failure":failure,"theme":theme}),
+        serde_json::json!({"phase":current,"page":page,"language":native::language(),"failure":failure,"theme":theme,"trayError":tray_error}),
     )
 }
 

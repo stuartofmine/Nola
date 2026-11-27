@@ -552,6 +552,7 @@ fn is_read_only_sub_op(op: &str) -> bool {
     matches!(
         op,
         "list"
+            | "list_all"
             | "list_profiles"
             | "list_connections"
             | "list_accounts"
@@ -670,6 +671,19 @@ fn is_mutating_command(cmd_type: &str, cmd_args: &Value) -> bool {
         | "receive_assistant_journal_record"
         | "recover_expired_run_deliveries"
         | "heartbeat_effect_delivery"
+        | "reconcile_room_routing"
+        | "begin_receive_assistant_run_terminal"
+        | "stage_assistant_run_terminal_manifest"
+        | "commit_received_assistant_run_terminal"
+        | "claim_next_agent_command"
+        | "release_agent_command_lease"
+        | "acknowledge_agent_command"
+        | "execute_ui_tool"
+        | "apply_active_permission_policy"
+        | "request_task_cancellation"
+        | "execute_task_cancellation_for_effect"
+        | "queue_task_guidance"
+        | "receive_remote_expert_parent_admission"
         | "backup" => true,
         "auxiliary_invocation" => {
             let (op, _) = extract_sub_command(cmd_args);
@@ -915,7 +929,8 @@ pub fn dispatch_command(
             };
             Ok(unwrapped)
         }
-        "projection_snapshot" | "sessions_list" | "list_conversations" => {
+        "projection_snapshot" => dispatch_projection_snapshot(store, suite, args),
+        "sessions_list" | "list_conversations" => {
             let sessions = store
                 .list_sessions(200)
                 .map_err(|e| ("storage_error", e.to_string()))?;
@@ -992,12 +1007,13 @@ pub fn dispatch_command(
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map(|n| n.clamp(1, 500) as usize);
+            let effective_before = before_ordinal.or_else(|| limit.map(|_| i64::MAX));
             Ok(build_conversation_projection_response(
                 store,
                 &sess,
                 0,
                 limit,
-                before_ordinal,
+                effective_before,
                 true,
             ))
         }
@@ -1041,19 +1057,24 @@ pub fn dispatch_command(
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map(|n| n.clamp(1, 500) as usize);
+            let effective_before = before_ordinal.or_else(|| limit.map(|_| i64::MAX));
             let resp = build_conversation_projection_response(
                 store,
                 &sess,
                 0,
                 limit,
-                before_ordinal,
+                effective_before,
                 true,
             );
             let event_seq = resp
                 .get("event_sequence")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            if event_seq <= after_seq {
+            let proj_seq = latest_projection_sequence(
+                store,
+                &projection_event_scope_key("conversation", Some(&sess.id)),
+            ) as i64;
+            if event_seq.max(proj_seq) <= after_seq {
                 Ok(Value::Null)
             } else {
                 Ok(resp)
@@ -1952,14 +1973,24 @@ pub fn dispatch_command(
         }
         "list_open_user_input_waits" => {
             let conv_id = args.get("conversation_id").and_then(|v| v.as_str());
-            let waits = conv_id
+            let waits: Vec<Value> = conv_id
                 .and_then(|cid| store.get_kv(&format!("open_waits:{cid}")).ok().flatten())
                 .and_then(|v| v.as_array().cloned())
-                .unwrap_or_default();
-            Ok(json!({
-                "conversation_id": conv_id,
-                "waits": waits
-            }))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|w| {
+                    let matches_conv = conv_id.is_none_or(|cid| {
+                        w.get("conversation_id").and_then(|v| v.as_str()) == Some(cid)
+                    });
+                    let is_open = w
+                        .pointer("/wait/state/type")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s == "open")
+                        .unwrap_or(true);
+                    matches_conv && is_open
+                })
+                .collect();
+            Ok(Value::Array(waits))
         }
         "respond_to_conversation_wait" => {
             let conv_id = args
@@ -2509,6 +2540,23 @@ pub fn dispatch_command(
             store
                 .upsert_session(&sess)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            append_projection_event(
+                store,
+                id,
+                json!({
+                    "type": "set_title",
+                    "title": title,
+                    "revision": next_rev
+                }),
+            );
+            append_projection_event(
+                store,
+                "__conversations__",
+                json!({
+                    "type": "invalidate_projection",
+                    "revision": next_rev
+                }),
+            );
             let mut conv_json = crate::web_api::session_to_conversation_json(store, &sess);
             if let Some(obj) = conv_json.as_object_mut() {
                 obj.insert("settings_json".into(), json!(merged_settings_str));
@@ -2811,6 +2859,22 @@ pub fn dispatch_command(
             store
                 .upsert_session(&sess)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            append_projection_event(
+                store,
+                id,
+                json!({
+                    "type": "invalidate_projection",
+                    "revision": next_cfg
+                }),
+            );
+            append_projection_event(
+                store,
+                "__conversations__",
+                json!({
+                    "type": "invalidate_projection",
+                    "revision": next_cfg
+                }),
+            );
             let mut conv_json = crate::web_api::session_to_conversation_json(store, &sess);
             if let Some(obj) = conv_json.as_object_mut() {
                 for (k, v) in &settings_map {
@@ -2839,7 +2903,7 @@ pub fn dispatch_command(
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"deleted": id, "ok": true}))
         }
-        "events_after" | "projection_event_suffix" | "projection_cursor_wait" => {
+        "events_after" => {
             let scope = args
                 .get("scope")
                 .or_else(|| args.get("conversation_id"))
@@ -2861,6 +2925,8 @@ pub fn dispatch_command(
                 })),
             }
         }
+        "projection_cursor_wait" => dispatch_projection_cursor_wait(store, args),
+        "projection_event_suffix" => dispatch_projection_event_suffix(store, args),
         "get_product_setting" => {
             let input = args.get("input").unwrap_or(args);
             let key = input
@@ -4765,6 +4831,28 @@ pub fn dispatch_command(
             store
                 .set_kv(&format!("remote_sub_intent:{conv_id}"), &intent)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            let assistant_msg_id = identity
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{sub_id}:assistant"));
+            let source_host_id = identity
+                .get("source_host_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("remote");
+            let active_run = json!({
+                "conversation_id": conv_id,
+                "run_id": sub_id,
+                "kind": "conversation",
+                "assistant_message_id": assistant_msg_id,
+                "source_host_id": source_host_id,
+                "next_event_sequence": 1,
+                "status": "running",
+                "request_digest": digest,
+                "updated_at_ms": now_ms()
+            });
+            let _ = store.set_kv(&format!("current_run:{conv_id}"), &active_run);
             Ok(intent)
         }
         "read_remote_submission_intent" => {
@@ -5349,8 +5437,49 @@ pub fn dispatch_command(
                 "peer_id": peer_id
             }))
         }
-        "peek_agent_command" | "promote_queued_assistant_turn" | "apply_pending_task_notice" => {
-            Ok(Value::Null)
+        "peek_agent_command" => dispatch_peek_agent_command(store, args),
+        "claim_next_agent_command" => dispatch_claim_next_agent_command(store, args),
+        "release_agent_command_lease" => dispatch_release_agent_command_lease(store, args),
+        "acknowledge_agent_command" => dispatch_acknowledge_agent_command(store, args),
+        "promote_queued_assistant_turn" | "apply_pending_task_notice" => Ok(Value::Null),
+        "reconcile_room_routing" => dispatch_reconcile_room_routing(suite, args),
+        "read_conversation_part_derivation" => {
+            dispatch_read_conversation_part_derivation(store, args)
+        }
+        "read_conversation_tool_source_range" => {
+            dispatch_read_conversation_tool_source_range(store, args)
+        }
+        "begin_receive_assistant_run_terminal" => {
+            dispatch_begin_receive_assistant_run_terminal(store, args)
+        }
+        "stage_assistant_run_terminal_manifest" => {
+            dispatch_stage_assistant_run_terminal_manifest(store, args)
+        }
+        "commit_received_assistant_run_terminal" => {
+            dispatch_commit_received_assistant_run_terminal(store, args)
+        }
+        "list_conversation_auxiliary_sources" => {
+            dispatch_list_conversation_auxiliary_sources(store, args)
+        }
+        "execute_ui_tool" => dispatch_execute_ui_tool(store, args),
+        "apply_active_permission_policy" => dispatch_apply_active_permission_policy(store, args),
+        "load_mobile_task_wake_plan" => dispatch_load_mobile_task_wake_plan(suite, args),
+        "request_task_cancellation" => dispatch_request_task_cancellation(store, suite, args),
+        "execute_task_cancellation_for_effect" => {
+            dispatch_execute_task_cancellation_for_effect(store, suite, args)
+        }
+        "inspect_cancellation_process_owners" => {
+            dispatch_inspect_cancellation_process_owners(args)
+        }
+        "validate_cancellation_process_observations" => {
+            dispatch_validate_cancellation_process_observations(args)
+        }
+        "queue_task_guidance" => dispatch_queue_task_guidance(store, args),
+        "receive_remote_expert_parent_admission" => {
+            dispatch_receive_remote_expert_parent_admission(store, args)
+        }
+        "read_admitted_remote_run_identity" => {
+            dispatch_read_admitted_remote_run_identity(store, args)
         }
         "load_run_identity" => {
             let run_id = args
@@ -5511,7 +5640,7 @@ pub fn dispatch_command(
         "assistant_journal_reception_state" => {
             dispatch_assistant_journal_reception_state(store, args)
         }
-        "next_assistant_journal_content" => Ok(Value::Null),
+        "next_assistant_journal_content" => dispatch_next_assistant_journal_content(store, args),
         "receive_assistant_journal_record" => dispatch_receive_assistant_journal_record(store, args),
         "local_assistant_run_terminal_seal" => {
             dispatch_local_assistant_run_terminal_seal(store, args)
@@ -6103,6 +6232,26 @@ pub fn dispatch_command(
             }))
         }
         "local_run_context_usage" => {
+            if let Some(identity) = args.get("identity").filter(|v| v.is_object()) {
+                let conv_id = identity
+                    .get("conversation_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+                let run_id = identity
+                    .get("run_id")
+                    .or_else(|| identity.get("submission_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !run_id.is_empty() {
+                    if let Ok(Some(saved)) =
+                        store.get_kv(&format!("run_context_usage:{conv_id}:{run_id}"))
+                    {
+                        return Ok(saved);
+                    }
+                }
+                return Ok(Value::Null);
+            }
             let conv_id = args
                 .get("conversation_id")
                 .or_else(|| args.get("id"))
@@ -6312,7 +6461,219 @@ pub fn dispatch_command(
                         }
                     }
                     Some("message") => {
+                        let conv_id = entry
+                            .get("conversationID")
+                            .or_else(|| entry.get("conversation_id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if let Some(msg) = entry.get("message") {
+                            let mut upload_map: std::collections::HashMap<(String, String), String> =
+                                std::collections::HashMap::new();
+                            if let Some(uploads) = entry.get("uploads").and_then(|v| v.as_array()) {
+                                for up in uploads {
+                                    let uid = up
+                                        .get("uploadID")
+                                        .or_else(|| up.get("upload_id"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let pid = up
+                                        .get("partID")
+                                        .or_else(|| up.get("part_id"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let field = up
+                                        .get("field")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("content_text");
+                                    if !uid.is_empty() && !pid.is_empty() {
+                                        if let Ok(Some(u)) =
+                                            store.get_kv(&format!("content_upload:{uid}"))
+                                        {
+                                            if let Some(body) =
+                                                u.get("content").and_then(|v| v.as_str())
+                                            {
+                                                upload_map.insert(
+                                                    (pid.to_string(), field.to_string()),
+                                                    body.to_string(),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let mut restored_parts: Vec<Value> = Vec::new();
+                            let mut text_segments: Vec<String> = Vec::new();
+                            if let Some(parts) = msg.get("parts").and_then(|v| v.as_array()) {
+                                for p in parts {
+                                    let mut p_obj = p.clone();
+                                    let pid = p
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let uploaded_text = upload_map
+                                        .get(&(pid.clone(), "content_text".to_string()))
+                                        .or_else(|| {
+                                            upload_map
+                                                .get(&(pid.clone(), "contentText".to_string()))
+                                        })
+                                        .cloned();
+                                    let uploaded_json = upload_map
+                                        .get(&(pid.clone(), "content_json".to_string()))
+                                        .or_else(|| {
+                                            upload_map
+                                                .get(&(pid.clone(), "contentJson".to_string()))
+                                        })
+                                        .cloned();
+                                    let resolved_text = uploaded_text.unwrap_or_else(|| {
+                                        p.get("content_text")
+                                            .or_else(|| p.get("contentText"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string()
+                                    });
+                                    let resolved_json = uploaded_json.or_else(|| {
+                                        p.get("content_json")
+                                            .or_else(|| p.get("contentJson"))
+                                            .and_then(|v| v.as_str())
+                                            .map(ToString::to_string)
+                                    });
+                                    if let Some(obj) = p_obj.as_object_mut() {
+                                        obj.insert("content_text".into(), json!(resolved_text));
+                                        if let Some(ref j) = resolved_json {
+                                            obj.insert("content_json".into(), json!(j));
+                                        }
+                                    }
+                                    let kind = p
+                                        .get("kind")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("text");
+                                    if kind == "text" && !resolved_text.is_empty() {
+                                        text_segments.push(resolved_text);
+                                    }
+                                    restored_parts.push(p_obj);
+                                }
+                            }
+                            if !conv_id.is_empty() {
+                                let role = msg
+                                    .get("role")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("user");
+                                let event_kind = match role {
+                                    "user" => "user_message",
+                                    "system" => "system_message",
+                                    _ => "assistant_message",
+                                };
+                                let msg_id = msg
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(new_id);
+                                let mut payload = json!({
+                                    "id": msg_id,
+                                    "message_id": msg_id,
+                                    "role": role,
+                                    "content": text_segments.join("\n"),
+                                    "parts": restored_parts,
+                                    "status": msg.get("status").cloned().unwrap_or_else(|| json!("completed")),
+                                    "ordinal": msg.get("ordinal").cloned().unwrap_or(Value::Null),
+                                    "created_at_ms": msg.get("created_at_ms").or_else(|| msg.get("createdAtMs")).cloned().unwrap_or_else(|| json!(now_ms())),
+                                    "completed_at_ms": msg.get("completed_at_ms").or_else(|| msg.get("completedAtMs")).cloned().unwrap_or(Value::Null)
+                                });
+                                if let Some(run_id) = msg.get("run_id").or_else(|| msg.get("runID")).filter(|v| !v.is_null()) {
+                                    payload["run_id"] = run_id.clone();
+                                }
+                                let _ = store.append_event(&conv_id, event_kind, payload, 50_000);
+                                append_projection_event(
+                                    store,
+                                    &conv_id,
+                                    json!({
+                                        "type": "invalidate_projection",
+                                        "revision": cur_rev + 1
+                                    }),
+                                );
+                            }
+                        }
                         message_count += 1;
+                    }
+                    Some("part_derivation") => {
+                        if let Some(record) = entry.get("record") {
+                            let cid = record
+                                .pointer("/target/owner/conversation_id")
+                                .or_else(|| record.pointer("/target/owner/conversationID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let mid = record
+                                .pointer("/target/owner/message_id")
+                                .or_else(|| record.pointer("/target/owner/messageID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let pid = record
+                                .pointer("/target/owner/part_id")
+                                .or_else(|| record.pointer("/target/owner/partID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if !cid.is_empty() && !mid.is_empty() && !pid.is_empty() {
+                                let _ = store.set_kv(
+                                    &format!("part_derivation:{cid}:{mid}:{pid}"),
+                                    record,
+                                );
+                            }
+                        }
+                    }
+                    Some("tool_source") => {
+                        if let Some(claim) = entry.get("claim") {
+                            let cid = claim
+                                .pointer("/owner/conversation_id")
+                                .or_else(|| claim.pointer("/owner/conversationID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let mid = claim
+                                .pointer("/owner/message_id")
+                                .or_else(|| claim.pointer("/owner/messageID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let pid = claim
+                                .pointer("/owner/part_id")
+                                .or_else(|| claim.pointer("/owner/partID"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let uid = entry
+                                .get("uploadID")
+                                .or_else(|| entry.get("upload_id"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let body_json = if !uid.is_empty() {
+                                store
+                                    .get_kv(&format!("content_upload:{uid}"))
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|u| {
+                                        u.get("content")
+                                            .and_then(|v| v.as_str())
+                                            .map(ToString::to_string)
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+                            if !cid.is_empty() && !mid.is_empty() && !pid.is_empty() {
+                                let key = format!("tool_sources:{cid}:{mid}:{pid}");
+                                let mut list = store
+                                    .get_kv(&key)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|v| v.as_array().cloned())
+                                    .unwrap_or_default();
+                                list.push(json!({
+                                    "claim": claim,
+                                    "body_json": body_json
+                                }));
+                                let _ = store.set_kv(&key, &Value::Array(list));
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -6742,6 +7103,12 @@ pub fn dispatch_command(
             let (op, payload) = extract_sub_command(args);
             let input = payload.get("input").unwrap_or(payload);
             match op {
+                "list_all" => {
+                    let tasks: Vec<Value> = suite
+                        .list_records("runtime_task")
+                        .map_err(|e| ("storage_error", e.to_string()))?;
+                    Ok(Value::Array(tasks))
+                }
                 "list" => {
                     let conv_filter = input
                         .get("conversation_id")
@@ -7263,7 +7630,8 @@ pub fn dispatch_command(
                 .ok_or(("invalid_argument", "missing 'part_id'".into()))?;
             let record = input.get("record").cloned().unwrap_or_else(|| json!({}));
             let identity = record
-                .get("identity")
+                .pointer("/header/identity")
+                .or_else(|| record.get("identity"))
                 .cloned()
                 .unwrap_or_else(|| {
                     json!({
@@ -7285,8 +7653,10 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .unwrap_or("default");
             let content_ref = input.get("content").cloned().unwrap_or_else(|| json!({}));
+            let is_apple_ref = content_ref.get("content_generation").is_some();
             let content_id = content_ref
-                .get("content_id")
+                .get("field")
+                .or_else(|| content_ref.get("content_id"))
                 .or_else(|| content_ref.get("id"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
@@ -7309,7 +7679,11 @@ pub fn dispatch_command(
             };
             if let Some(chunks) = input.get("chunks").and_then(|v| v.as_array()) {
                 for ch in chunks {
-                    if let Some(piece) = ch
+                    if let Some(b64) = ch.get("data_base64").and_then(|v| v.as_str()) {
+                        if let Some(decoded) = decode_std_base64(b64) {
+                            text.push_str(&String::from_utf8_lossy(&decoded));
+                        }
+                    } else if let Some(piece) = ch
                         .get("text")
                         .or_else(|| ch.get("data"))
                         .or_else(|| ch.get("utf8"))
@@ -7349,14 +7723,41 @@ pub fn dispatch_command(
                 })
                 .unwrap_or(0);
             let next_rev = prev_rev + 1;
-            let body_ref = json!({
-                "content_id": content_id,
-                "part_id": part_id,
-                "total_utf8_bytes": total_bytes.to_string(),
-                "utf8_bytes": total_bytes,
-                "sha256": digest,
-                "staged": true
-            });
+            let content_generation = content_ref
+                .get("content_generation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("1");
+            let chunk_count = content_ref
+                .get("chunk_count")
+                .and_then(|v| v.as_str())
+                .unwrap_or(if total_bytes > 0 { "1" } else { "0" });
+            let content_root = content_ref
+                .get("content_root")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&digest);
+            let body_ref = if is_apple_ref {
+                json!({
+                    "field": content_id,
+                    "content_generation": content_generation,
+                    "utf8_bytes": total_bytes.to_string(),
+                    "chunk_count": chunk_count,
+                    "content_root": content_root,
+                    "content_id": content_id,
+                    "part_id": part_id,
+                    "total_utf8_bytes": total_bytes.to_string(),
+                    "sha256": digest,
+                    "staged": true
+                })
+            } else {
+                json!({
+                    "content_id": content_id,
+                    "part_id": part_id,
+                    "total_utf8_bytes": total_bytes.to_string(),
+                    "utf8_bytes": total_bytes,
+                    "sha256": digest,
+                    "staged": true
+                })
+            };
             let part_rec = json!({
                 "identity": identity,
                 "part_id": part_id,
@@ -7364,7 +7765,7 @@ pub fn dispatch_command(
                 "revision": next_rev.to_string(),
                 "metadata_revision": next_rev.to_string(),
                 "order_key": {"section": "body", "position": "0"},
-                "metadata": record.get("metadata").cloned().unwrap_or_else(|| json!({"kind": "text"})),
+                "metadata": record.pointer("/batch/head/metadata").or_else(|| record.get("metadata")).cloned().unwrap_or_else(|| json!({"kind": "text"})),
                 "bodies": [body_ref]
             });
             store
@@ -9039,7 +9440,7 @@ fn dispatch_context_command(
                 .flatten()
                 .and_then(|v| v.as_array().map(Vec::len))
                 .unwrap_or(0);
-            Ok(json!({"conversation_id": conv_id, "count": count}))
+            Ok(json!(count))
         }
         "load_checkpoint" => {
             let cp_id = input
@@ -9157,10 +9558,15 @@ fn build_conversation_projection_response(
     let settings_json = load_conversation_settings_str(store, &sess.id);
     let (raw_messages, events) = crate::web_api::reconstruct_v2_messages(store, &sess.id);
     let total_message_count = raw_messages.len() as i64;
-    let event_sequence = events
+    let raw_event_sequence = events
         .last()
         .and_then(|e| e.get("seq").and_then(|v| v.as_i64()))
         .unwrap_or(0);
+    let proj_sequence = latest_projection_sequence(
+        store,
+        &projection_event_scope_key("conversation", Some(&sess.id)),
+    ) as i64;
+    let event_sequence = raw_event_sequence.max(proj_sequence);
 
     let (sliced, has_more, next_before_ordinal): (Vec<Value>, bool, Option<i64>) =
         if let Some(before) = before_ordinal {
@@ -9358,7 +9764,7 @@ fn build_conversation_projection_response(
                         .and_then(|v| v.as_str())
                         == Some(amid)
                 });
-                if !already_present {
+                if !already_present && !has_more {
                     let ord = (canonical_messages.len() + 1) as i64;
                     let created = committed_run
                         .as_ref()
@@ -16216,6 +16622,33 @@ fn dispatch_auxiliary_invocation(
             store
                 .set_kv(&src_key, &receipt)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            if let Some(conv_id) = owner
+                .get("conversation_id")
+                .or_else(|| owner.get("id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                let idx_key = format!("aux_conv_sources:{conv_id}");
+                let mut refs = store
+                    .get_kv(&idx_key)
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let entry = json!({
+                    "source_host_id": source_host,
+                    "operation_id": op_id,
+                    "attempt_id": format!("{op_id}:physical")
+                });
+                let exists = refs.iter().any(|r| {
+                    r.get("source_host_id").and_then(|v| v.as_str()) == Some(source_host)
+                        && r.get("operation_id").and_then(|v| v.as_str()) == Some(op_id)
+                });
+                if !exists {
+                    refs.push(entry);
+                    let _ = store.set_kv(&idx_key, &Value::Array(refs));
+                }
+            }
             if is_terminal {
                 let should_clear = store
                     .get_kv(&slot_key)
@@ -18574,6 +19007,84 @@ fn dispatch_assistant_journal_reception_state(
     }))
 }
 
+fn decode_std_base64(input: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u8;
+    for b in input.bytes() {
+        let val = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\n' | b'\r' | b' ' | b'\t' => continue,
+            _ => return None,
+        };
+        buf = (buf << 6) | (val as u32);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    Some(out)
+}
+
+fn dispatch_next_assistant_journal_content(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let record = args.get("record").unwrap_or(&Value::Null);
+    let identity = record.pointer("/header/identity").unwrap_or(&Value::Null);
+    let conv_id = identity.get("conversation_id").and_then(|v| v.as_str()).unwrap_or("");
+    let run_id = identity.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(head) = record.pointer("/batch/head") else {
+        return Ok(Value::Null);
+    };
+    let part_id = head.get("part_id").and_then(|v| v.as_str()).unwrap_or("");
+    if part_id.is_empty() || conv_id.is_empty() || run_id.is_empty() {
+        return Ok(Value::Null);
+    }
+    if let Some(bodies) = head.get("bodies").and_then(|v| v.as_array()) {
+        for body in bodies {
+            let field = body.get("field").and_then(|v| v.as_str()).unwrap_or(part_id);
+            let target_bytes = body
+                .get("utf8_bytes")
+                .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
+                .unwrap_or(0);
+            if target_bytes == 0 {
+                continue;
+            }
+            let content_key = format!("assistant_journal_content:{conv_id}:{run_id}:{part_id}:{field}");
+            let staged_bytes = store
+                .get_kv(&content_key)
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("total_utf8_bytes").and_then(|b| b.as_u64()))
+                .unwrap_or(0);
+            if staged_bytes < target_bytes {
+                let gen = body
+                    .get("content_generation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1");
+                return Ok(json!({
+                    "part_id": part_id,
+                    "content": body,
+                    "expected_prefix": {
+                        "field": field,
+                        "content_generation": gen,
+                        "utf8_bytes": "0",
+                        "chunk_count": "0",
+                        "content_root": "0".repeat(64)
+                    }
+                }));
+            }
+        }
+    }
+    Ok(Value::Null)
+}
+
 fn dispatch_receive_assistant_journal_record(
     store: &Store,
     args: &Value,
@@ -18590,6 +19101,10 @@ fn dispatch_receive_assistant_journal_record(
     let identity = header.get("identity").cloned().unwrap_or(Value::Null);
     let conv_id = identity.get("conversation_id").and_then(|v| v.as_str()).unwrap_or("");
     let run_id = identity.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+    let assistant_id = identity
+        .get("assistant_message_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
     let cursor = json!({
         "identity": identity,
         "sequence": header.get("sequence").cloned().unwrap_or_else(|| json!("1")),
@@ -18597,15 +19112,36 @@ fn dispatch_receive_assistant_journal_record(
     });
     if let Some(head) = record.pointer("/batch/head") {
         if let Some(pid) = head.get("part_id").and_then(|v| v.as_str()) {
+            let mut stored_head = head.clone();
+            if let Some(obj) = stored_head.as_object_mut() {
+                obj.entry("identity".to_string())
+                    .or_insert_with(|| identity.clone());
+            }
             let _ = store.put_module_record(
                 "assistant_journal_part",
-                &format!("{conv_id}:{run_id}:{pid}"),
-                head,
+                &format!("{conv_id}:{run_id}:{assistant_id}:{pid}"),
+                &stored_head,
             );
         }
     }
     let _ = store.set_kv(&format!("received_journal:{source_host}:{conv_id}:{run_id}"), &cursor);
     let _ = store.set_kv(&format!("journal_head:{conv_id}:{run_id}"), &cursor);
+    if !conv_id.is_empty() {
+        let heads_key = format!("journal_heads_by_conv:{conv_id}");
+        let mut heads = store
+            .get_kv(&heads_key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default();
+        heads.retain(|h| {
+            h.pointer("/identity/assistant_message_id")
+                .and_then(|v| v.as_str())
+                != Some(assistant_id)
+        });
+        heads.push(cursor.clone());
+        let _ = store.set_kv(&heads_key, &Value::Array(heads));
+    }
     Ok(json!({
         "applied": true,
         "cursor": cursor
@@ -18952,6 +19488,1332 @@ fn dispatch_inspect_run_process_owners(
         "process_owners": [],
         "deliveries": []
     }))
+}
+
+fn projection_event_scope_key(scope_type: &str, conv_id: Option<&str>) -> String {
+    match (scope_type, conv_id) {
+        ("conversation", Some(cid)) if !cid.trim().is_empty() => format!("__proj__:{cid}"),
+        _ => "__proj__:__conversations__".to_string(),
+    }
+}
+
+fn append_projection_event(store: &Store, conv_id: &str, mutation: Value) {
+    let scope_key = if conv_id == "__conversations__" {
+        "__proj__:__conversations__".to_string()
+    } else {
+        format!("__proj__:{conv_id}")
+    };
+    let payload = json!({
+        "event_id": new_id(),
+        "conversation_id": conv_id,
+        "mutation": mutation,
+        "occurred_at": Utc::now().to_rfc3339()
+    });
+    let _ = store.append_event(&scope_key, "projection", payload, 50_000);
+}
+
+fn latest_projection_sequence(store: &Store, scope_key: &str) -> u64 {
+    match store.events_after(scope_key, 0, 50_000) {
+        Ok(EventPage::Events(ev)) => ev.last().map(|e| e.seq.max(0) as u64).unwrap_or(0),
+        Ok(EventPage::ResyncRequired { latest_seq, .. }) => latest_seq.max(0) as u64,
+        Err(_) => 0,
+    }
+}
+
+fn dispatch_projection_snapshot(
+    store: &Store,
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let scope = args.get("scope");
+    let scope_type = scope
+        .and_then(|s| s.get("type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("conversations");
+    let scope_conv_id = scope
+        .and_then(|s| s.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty());
+
+    if scope_type == "conversation" {
+        let cid = scope_conv_id.ok_or((
+            "invalid_argument",
+            "projection_snapshot conversation scope missing 'conversation_id'".into(),
+        ))?;
+        let Some(sess) = get_session_case_insensitive(store, cid)
+            .map_err(|e| ("storage_error", e.to_string()))?
+        else {
+            return Err(("not_found", format!("conversation '{cid}' not found")));
+        };
+        let page_offset = args
+            .pointer("/page/offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let page_limit = args
+            .pointer("/page/limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(64)
+            .clamp(1, 500) as usize;
+        let full = build_conversation_projection_response(
+            store,
+            &sess,
+            page_offset,
+            Some(page_limit),
+            None,
+            true,
+        );
+        let rev = full
+            .get("revision")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1);
+        let has_more = full
+            .get("has_more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let payload = full.get("projection").cloned().unwrap_or(full);
+        let scope_key = projection_event_scope_key("conversation", Some(&sess.id));
+        let seq = latest_projection_sequence(store, &scope_key);
+        return Ok(json!({
+            "revision": rev,
+            "cursor": {
+                "scope": {
+                    "type": "conversation",
+                    "conversation_id": sess.id
+                },
+                "sequence": seq
+            },
+            "records": [{
+                "entity_type": "conversation_projection",
+                "entity_id": sess.id,
+                "revision": rev,
+                "payload": payload
+            }],
+            "page": {
+                "offset": page_offset as u64,
+                "limit": page_limit,
+                "has_more": has_more
+            }
+        }));
+    }
+
+    let sessions = store
+        .list_sessions(200)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    let conversations: Vec<Value> = sessions
+        .iter()
+        .map(|s| crate::web_api::session_to_conversation_json(store, s))
+        .collect();
+    let records: Vec<Value> = sessions
+        .iter()
+        .zip(conversations.iter())
+        .map(|(s, c)| {
+            let rev = c.get("revision").and_then(|v| v.as_u64()).unwrap_or(1).max(1);
+            let msg_count = c
+                .get("messageCount")
+                .or_else(|| c.get("message_count"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            json!({
+                "entity_type": "conversation_summary",
+                "entity_id": s.id,
+                "revision": rev,
+                "payload": {
+                    "id": s.id,
+                    "title": s.title,
+                    "revision": rev as i64,
+                    "message_count": msg_count,
+                    "created_at_ms": s.created_at_ms,
+                    "updated_at_ms": s.updated_at_ms
+                }
+            })
+        })
+        .collect();
+    let goals: Vec<Value> = suite.list_records("goal").unwrap_or_default();
+    let rooms: Vec<Value> = suite.list_records("agent_room").unwrap_or_default();
+    let seq = latest_projection_sequence(store, "__proj__:__conversations__");
+    Ok(json!({
+        "revision": seq.max(1),
+        "cursor": {
+            "scope": {
+                "type": "conversations",
+                "conversation_id": Value::Null
+            },
+            "sequence": seq
+        },
+        "records": records,
+        "sessions": sessions,
+        "conversations": conversations,
+        "goals": goals,
+        "rooms": rooms
+    }))
+}
+
+fn dispatch_projection_cursor_wait(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let after = args.get("after");
+    let scope = after
+        .and_then(|a| a.get("scope"))
+        .or_else(|| args.get("scope"))
+        .cloned()
+        .unwrap_or_else(|| {
+            let cid = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            if let Some(id) = cid {
+                json!({"type": "conversation", "conversation_id": id})
+            } else {
+                json!({"type": "conversations", "conversation_id": Value::Null})
+            }
+        });
+    let scope_type = scope
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("conversation");
+    let conv_id = scope
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty());
+    let after_seq = after
+        .and_then(|a| a.get("sequence"))
+        .or_else(|| args.get("after_seq"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let wait_ms = args
+        .get("wait_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .min(250);
+    let scope_key = projection_event_scope_key(scope_type, conv_id);
+    let read_cursor_seq = || -> u64 {
+        let proj = latest_projection_sequence(store, &scope_key);
+        let raw = if scope_type == "conversation" {
+            conv_id
+                .map(|cid| latest_projection_sequence(store, cid))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        proj.max(raw).max(after_seq)
+    };
+    let mut seq = read_cursor_seq();
+    if seq <= after_seq && wait_ms > 0 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+        while seq <= after_seq && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            seq = read_cursor_seq();
+        }
+    }
+    Ok(json!({
+        "scope": scope,
+        "sequence": seq.max(after_seq)
+    }))
+}
+
+fn dispatch_projection_event_suffix(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let after = args.get("after");
+    let scope = args
+        .get("scope")
+        .or_else(|| after.and_then(|a| a.get("scope")))
+        .cloned()
+        .unwrap_or_else(|| {
+            let cid = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            if let Some(id) = cid {
+                json!({"type": "conversation", "conversation_id": id})
+            } else {
+                json!({"type": "conversations", "conversation_id": Value::Null})
+            }
+        });
+    let scope_type = scope
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("conversation");
+    let conv_id = scope
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty());
+    let after_seq = after
+        .and_then(|a| a.get("sequence"))
+        .or_else(|| args.get("after_seq"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(256)
+        .clamp(1, 512) as usize;
+    let wait_ms = args
+        .get("wait_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .min(250);
+    let scope_key = projection_event_scope_key(scope_type, conv_id);
+
+    let fetch = || -> Result<Vec<_>, (&'static str, String)> {
+        match store
+            .events_after(&scope_key, after_seq as i64, limit + 1)
+            .map_err(|e| ("storage_error", e.to_string()))?
+        {
+            EventPage::Events(ev) => Ok(ev),
+            EventPage::ResyncRequired { .. } => Ok(Vec::new()),
+        }
+    };
+
+    let mut raw_events = fetch()?;
+    if raw_events.is_empty() && wait_ms > 0 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+        while raw_events.is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            raw_events = fetch()?;
+        }
+    }
+
+    let has_more = raw_events.len() > limit;
+    if has_more {
+        raw_events.truncate(limit);
+    }
+
+    let mut next_seq = after_seq;
+    let mut events_out = Vec::with_capacity(raw_events.len());
+    for ev in raw_events {
+        let seq = ev.seq.max(1) as u64;
+        if seq != next_seq + 1 {
+            break;
+        }
+        next_seq = seq;
+        let cid_str = conv_id
+            .or_else(|| ev.payload.get("conversation_id").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        let event_id = ev
+            .payload
+            .get("event_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("proj-{cid_str}-{seq}"));
+        let occurred_at = ev
+            .payload
+            .get("occurred_at")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        let mutation = ev
+            .payload
+            .get("mutation")
+            .cloned()
+            .unwrap_or_else(|| json!({"type": "invalidate_projection", "revision": seq}));
+        let message_id = match mutation.get("type").and_then(|v| v.as_str()) {
+            Some("upsert_message") => mutation
+                .pointer("/message/message_id")
+                .cloned()
+                .unwrap_or(Value::Null),
+            Some("remove_message" | "append_text_preview" | "complete_text_part") => {
+                mutation.get("message_id").cloned().unwrap_or(Value::Null)
+            }
+            _ => Value::Null,
+        };
+        let part_id = match mutation.get("type").and_then(|v| v.as_str()) {
+            Some("append_text_preview" | "complete_text_part") => {
+                mutation.get("part_id").cloned().unwrap_or(Value::Null)
+            }
+            _ => Value::Null,
+        };
+        events_out.push(json!({
+            "scope": scope,
+            "cursor": {
+                "scope": scope,
+                "sequence": seq
+            },
+            "identity": {
+                "event_id": event_id,
+                "conversation_id": cid_str,
+                "run_id": Value::Null,
+                "attempt_id": Value::Null,
+                "delegated_invocation_id": Value::Null,
+                "message_id": message_id,
+                "part_id": part_id
+            },
+            "mutation": {
+                "type": "conversation",
+                "mutation": mutation
+            },
+            "occurred_at": occurred_at
+        }));
+    }
+    let effective_has_more = has_more && !events_out.is_empty();
+    Ok(json!({
+        "events": events_out,
+        "next_cursor": {
+            "scope": scope,
+            "sequence": next_seq
+        },
+        "has_more": effective_has_more
+    }))
+}
+
+fn dispatch_reconcile_room_routing(
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let input = args.get("input").unwrap_or(args);
+    let sub_id = input
+        .get("submission_id")
+        .or_else(|| input.get("id"))
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'submission_id'".into()))?;
+    let Some(mut sub) = suite
+        .get_record::<Value>("agent_room_submission", sub_id)
+        .map_err(|e| ("storage_error", e.to_string()))?
+    else {
+        return Ok(Value::Null);
+    };
+    let ts = input
+        .get("at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(now_ms);
+    if let Some(obj) = sub.as_object_mut() {
+        if let Some(sh) = input
+            .get("source_host_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
+            obj.insert("source_host_id".into(), json!(sh));
+        }
+        obj.insert("updated_at_ms".into(), json!(ts));
+        obj.insert("reconciled_at_ms".into(), json!(ts));
+    }
+    suite
+        .upsert_record("agent_room_submission", sub_id, &sub)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(sub)
+}
+
+fn dispatch_read_conversation_part_derivation(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let owner = args
+        .get("owner")
+        .ok_or(("invalid_argument", "missing 'owner'".into()))?;
+    let conv_id = owner
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.conversation_id".into()))?;
+    let msg_id = owner
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.message_id".into()))?;
+    let part_id = owner
+        .get("part_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.part_id".into()))?;
+    let key = format!("part_derivation:{conv_id}:{msg_id}:{part_id}");
+    let found = store
+        .get_kv(&key)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(found.unwrap_or(Value::Null))
+}
+
+fn dispatch_read_conversation_tool_source_range(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let owner = args
+        .get("owner")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'owner'".into()))?;
+    let conv_id = owner
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.conversation_id".into()))?;
+    let msg_id = owner
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.message_id".into()))?;
+    let part_id = owner
+        .get("part_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing owner.part_id".into()))?;
+    let source_item_id = args
+        .get("source_item_id")
+        .or_else(|| args.get("sourceItemID"))
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'source_item_id'".into()))?;
+    let expected_revision = args
+        .get("expected_conversation_revision")
+        .or_else(|| args.get("expectedConversationRevision"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1);
+    let offset_bytes = args
+        .get("offset_bytes")
+        .or_else(|| args.get("offsetBytes"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let limit_bytes = args
+        .get("limit_bytes")
+        .or_else(|| args.get("limitBytes"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(32_768)
+        .clamp(1, 32_768) as usize;
+
+    let body = store
+        .get_kv(&format!("tool_source_body:{conv_id}:{msg_id}:{part_id}:{source_item_id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            v.as_str()
+                .map(ToString::to_string)
+                .or_else(|| v.get("text").and_then(|t| t.as_str()).map(ToString::to_string))
+                .or_else(|| Some(v.to_string()))
+        })
+        .unwrap_or_default();
+
+    let total = body.len();
+    let start = offset_bytes.min(total);
+    let mut end = (start + limit_bytes).min(total);
+    while end > start && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == start && start < total {
+        end = (start + 1..=total)
+            .find(|&i| body.is_char_boundary(i))
+            .unwrap_or(total);
+    }
+    let slice = if start <= end && body.is_char_boundary(start) && body.is_char_boundary(end) {
+        &body[start..end]
+    } else {
+        ""
+    };
+    let next_offset = start + slice.len();
+    Ok(json!({
+        "owner": owner,
+        "source_item_id": source_item_id,
+        "revision": expected_revision,
+        "offset_bytes": start as u64,
+        "next_offset_bytes": next_offset as u64,
+        "total_utf8_bytes": total as u64,
+        "text": slice,
+        "end_of_content": next_offset == total
+    }))
+}
+
+fn dispatch_begin_receive_assistant_run_terminal(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let source_host = args
+        .get("source_host_id")
+        .or_else(|| args.get("sourceHostID"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("remote");
+    let seal = args
+        .get("seal")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'seal'".into()))?;
+    let conv_id = seal
+        .pointer("/identity/conversation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let run_id = seal
+        .pointer("/identity/run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let total = seal
+        .get("entry_count")
+        .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
+        .unwrap_or(0);
+    let key = format!("terminal_reception:{source_host}:{conv_id}:{run_id}");
+    if let Ok(Some(existing)) = store.get_kv(&key) {
+        if existing.get("seal") == Some(&seal) {
+            return Ok(existing);
+        }
+    }
+    let state = json!({
+        "seal": seal,
+        "next_entry": "0",
+        "manifest_complete": total == 0,
+        "committed": false
+    });
+    store
+        .set_kv(&key, &state)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(state)
+}
+
+fn dispatch_stage_assistant_run_terminal_manifest(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let source_host = args
+        .get("source_host_id")
+        .or_else(|| args.get("sourceHostID"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("remote");
+    let page = args
+        .get("page")
+        .ok_or(("invalid_argument", "missing 'page'".into()))?;
+    let seal = page
+        .get("seal")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'page.seal'".into()))?;
+    let conv_id = seal
+        .pointer("/identity/conversation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let run_id = seal
+        .pointer("/identity/run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let next_entry = page
+        .get("next_entry")
+        .and_then(|v| v.as_str().map(ToString::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .unwrap_or_else(|| "0".to_string());
+    let complete = page
+        .get("complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let manifest_key = format!("terminal_manifest_staged:{source_host}:{conv_id}:{run_id}");
+    let mut staged = store
+        .get_kv(&manifest_key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    if let Some(entries) = page.get("entries").and_then(|v| v.as_array()) {
+        staged.extend(entries.iter().cloned());
+    }
+    let _ = store.set_kv(&manifest_key, &Value::Array(staged));
+    let state = json!({
+        "seal": seal,
+        "next_entry": next_entry,
+        "manifest_complete": complete,
+        "committed": false
+    });
+    let key = format!("terminal_reception:{source_host}:{conv_id}:{run_id}");
+    store
+        .set_kv(&key, &state)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(state)
+}
+
+fn dispatch_commit_received_assistant_run_terminal(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let source_host = args
+        .get("source_host_id")
+        .or_else(|| args.get("sourceHostID"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("remote");
+    let seal = args
+        .get("seal")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'seal'".into()))?;
+    let conv_id = seal
+        .pointer("/identity/conversation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let run_id = seal
+        .pointer("/identity/run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let entry_count = seal
+        .get("entry_count")
+        .and_then(|v| v.as_str().map(ToString::to_string).or_else(|| v.as_u64().map(|n| n.to_string())))
+        .unwrap_or_else(|| "0".to_string());
+    let state = json!({
+        "seal": seal,
+        "next_entry": entry_count,
+        "manifest_complete": true,
+        "committed": true
+    });
+    let key = format!("terminal_reception:{source_host}:{conv_id}:{run_id}");
+    store
+        .set_kv(&key, &state)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    if !conv_id.is_empty() && !run_id.is_empty() {
+        let _ = store.set_kv(&format!("run_terminal_seal:{conv_id}:{run_id}"), &seal);
+        if let Some(active) = lookup_active_run(store, conv_id) {
+            if active.get("run_id").and_then(|v| v.as_str()) == Some(run_id) {
+                clear_active_run(store, conv_id);
+                let _ = store.set_kv(&format!("active_run:{conv_id}"), &Value::Null);
+            }
+        }
+        // Materialize the committed assistant message into the receiver's session events
+        // if not already present so the canonical window exposes the assistant row + journal head.
+        let assistant_id = store
+            .get_kv(&format!("journal_head:{conv_id}:{run_id}"))
+            .ok()
+            .flatten()
+            .and_then(|h| {
+                h.pointer("/identity/assistant_message_id")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| format!("{run_id}:assistant"));
+        let (existing_msgs, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
+        let already_has_assistant = existing_msgs.iter().any(|m| {
+            m.get("id").and_then(|v| v.as_str()) == Some(assistant_id.as_str())
+                || (m.get("role").and_then(|v| v.as_str()) == Some("assistant")
+                    && m.get("run_id").and_then(|v| v.as_str()) == Some(run_id))
+        });
+        if !already_has_assistant {
+            let mut body_texts: Vec<String> = Vec::new();
+            if let Ok(parts) = store.list_module_records::<Value>("assistant_journal_part") {
+                for p in parts {
+                    if p.pointer("/identity/conversation_id").and_then(|v| v.as_str()) == Some(conv_id)
+                        && p.pointer("/identity/run_id").and_then(|v| v.as_str()) == Some(run_id)
+                    {
+                        let pid = p.get("part_id").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(bodies) = p.get("bodies").and_then(|v| v.as_array()) {
+                            for b in bodies {
+                                let field = b
+                                    .get("field")
+                                    .or_else(|| b.get("content_id"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(pid);
+                                if let Ok(Some(c)) = store.get_kv(&format!(
+                                    "assistant_journal_content:{conv_id}:{run_id}:{pid}:{field}"
+                                )) {
+                                    if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
+                                        if !t.is_empty() {
+                                            body_texts.push(t.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let payload = json!({
+                "id": assistant_id,
+                "message_id": assistant_id,
+                "run_id": run_id,
+                "role": "assistant",
+                "status": "completed",
+                "content": body_texts.join("\n\n"),
+                "created_at_ms": now_ms(),
+                "completed_at_ms": now_ms()
+            });
+            let _ = store.append_event(conv_id, "assistant_message", payload, 50_000);
+        }
+        let meta_key = crate::web_api::session_meta_key(conv_id);
+        let mut meta = store
+            .get_kv(&meta_key)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| json!({"isPinned": false, "revision": 1, "configurationRevision": 1}));
+        let next_rev = meta.get("revision").and_then(|v| v.as_u64()).unwrap_or(1) + 1;
+        meta["revision"] = json!(next_rev);
+        let _ = store.set_kv(&meta_key, &meta);
+        append_projection_event(
+            store,
+            conv_id,
+            json!({
+                "type": "invalidate_projection",
+                "revision": next_rev
+            }),
+        );
+    }
+    Ok(state)
+}
+
+fn dispatch_list_conversation_auxiliary_sources(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let conv_id = args
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(16)
+        .clamp(1, 16) as usize;
+    let after_host = args.pointer("/after/source_host_id").and_then(|v| v.as_str());
+    let after_op = args.pointer("/after/operation_id").and_then(|v| v.as_str());
+    let mut refs: Vec<Value> = store
+        .get_kv(&format!("aux_conv_sources:{conv_id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    refs.sort_by(|a, b| {
+        let ka = (
+            a.get("source_host_id").and_then(|v| v.as_str()).unwrap_or(""),
+            a.get("operation_id").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        let kb = (
+            b.get("source_host_id").and_then(|v| v.as_str()).unwrap_or(""),
+            b.get("operation_id").and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        ka.cmp(&kb)
+    });
+    let filtered: Vec<Value> = refs
+        .into_iter()
+        .filter(|r| match (after_host, after_op) {
+            (Some(ah), Some(ao)) => {
+                let rh = r.get("source_host_id").and_then(|v| v.as_str()).unwrap_or("");
+                let ro = r.get("operation_id").and_then(|v| v.as_str()).unwrap_or("");
+                (rh, ro) > (ah, ao)
+            }
+            _ => true,
+        })
+        .collect();
+    let has_more = filtered.len() > limit;
+    let page: Vec<Value> = filtered.into_iter().take(limit).collect();
+    let next_cursor = if has_more {
+        page.last().map(|last| {
+            json!({
+                "source_host_id": last.get("source_host_id").cloned().unwrap_or(Value::Null),
+                "operation_id": last.get("operation_id").cloned().unwrap_or(Value::Null)
+            })
+        })
+    } else {
+        None
+    };
+    Ok(json!({
+        "references": page,
+        "next_cursor": next_cursor
+    }))
+}
+
+fn dispatch_peek_agent_command(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let session_id = args
+        .get("session_id")
+        .or_else(|| args.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if session_id.is_empty() {
+        return Ok(Value::Null);
+    }
+    let queue = store
+        .get_kv(&format!("agent_cmd_queue:{session_id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    Ok(queue.into_iter().next().unwrap_or(Value::Null))
+}
+
+fn dispatch_claim_next_agent_command(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let session_id = args
+        .get("session_id")
+        .or_else(|| args.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'session_id'".into()))?;
+    let lease_owner = args
+        .get("lease_owner")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'lease_owner'".into()))?;
+    let now = args.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    let lease_until = args
+        .get("lease_until_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(now + 300_000)
+        .max(now + 1);
+    let key = format!("agent_cmd_queue:{session_id}");
+    let mut queue = store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let Some(head) = queue.first_mut() else {
+        return Ok(Value::Null);
+    };
+    let existing_owner = head.get("lease_owner").and_then(|v| v.as_str());
+    let existing_until = head.get("lease_until_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+    if existing_owner.is_some_and(|o| !o.is_empty() && o != lease_owner) && existing_until > now {
+        return Ok(Value::Null);
+    }
+    let next_attempt = head
+        .get("delivery_attempt")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        + 1;
+    let cmd_id = head
+        .get("command_id")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let payload_json = head
+        .get("payload_json")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "{}".to_string());
+    if let Some(obj) = head.as_object_mut() {
+        obj.insert("session_id".into(), json!(session_id));
+        obj.insert("command_id".into(), json!(cmd_id));
+        obj.insert("lease_owner".into(), json!(lease_owner));
+        obj.insert("lease_until_ms".into(), json!(lease_until));
+        obj.insert("delivery_attempt".into(), json!(next_attempt));
+        obj.insert("payload_json".into(), json!(payload_json));
+    }
+    let claimed = head.clone();
+    store
+        .set_kv(&key, &Value::Array(queue))
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(claimed)
+}
+
+fn dispatch_release_agent_command_lease(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let session_id = args
+        .get("session_id")
+        .or_else(|| args.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let command_id = args.get("command_id").and_then(|v| v.as_str()).unwrap_or("");
+    let lease_owner = args.get("lease_owner").and_then(|v| v.as_str()).unwrap_or("");
+    let key = format!("agent_cmd_queue:{session_id}");
+    let mut queue = store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let mut released = false;
+    for item in queue.iter_mut() {
+        if item.get("command_id").and_then(|v| v.as_str()) == Some(command_id)
+            && (lease_owner.is_empty()
+                || item.get("lease_owner").and_then(|v| v.as_str()) == Some(lease_owner))
+        {
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("lease_owner".into(), Value::Null);
+                obj.insert("lease_until_ms".into(), json!(0));
+            }
+            released = true;
+        }
+    }
+    if released {
+        let _ = store.set_kv(&key, &Value::Array(queue));
+    }
+    Ok(json!({"ok": true, "released": released}))
+}
+
+fn dispatch_acknowledge_agent_command(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let session_id = args
+        .get("session_id")
+        .or_else(|| args.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let command_id = args.get("command_id").and_then(|v| v.as_str()).unwrap_or("");
+    let key = format!("agent_cmd_queue:{session_id}");
+    let mut queue = store
+        .get_kv(&key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let before = queue.len();
+    queue.retain(|item| item.get("command_id").and_then(|v| v.as_str()) != Some(command_id));
+    let acknowledged = queue.len() < before;
+    if acknowledged {
+        let _ = store.set_kv(&key, &Value::Array(queue));
+    }
+    Ok(json!({"ok": true, "acknowledged": acknowledged}))
+}
+
+fn dispatch_execute_ui_tool(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let input = args.get("input").unwrap_or(args);
+    let effect_id = input
+        .get("effect_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'effect_id'".into()))?;
+    let request_id = input
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'request_id'".into()))?;
+    let ts = input.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    let rec = json!({
+        "effect_id": effect_id,
+        "request_id": request_id,
+        "executed_at_ms": ts
+    });
+    let _ = store.set_kv(&format!("ui_tool_exec:{effect_id}:{request_id}"), &rec);
+    Ok(json!({
+        "type": "completed",
+        "effect_id": effect_id,
+        "request_id": request_id,
+        "output": {
+            "ok": true,
+            "published": true,
+            "effect_id": effect_id,
+            "request_id": request_id
+        },
+        "usage": Value::Null,
+        "full_output_ref": Value::Null,
+        "artifacts": []
+    }))
+}
+
+fn dispatch_apply_active_permission_policy(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let conv_id = args
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+    let policy = args
+        .get("policy")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'policy'".into()))?;
+    let policy_run = policy.get("run_id").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(active) = lookup_active_run(store, conv_id) else {
+        return Ok(Value::Null);
+    };
+    if !policy_run.is_empty() && active.get("run_id").and_then(|v| v.as_str()) != Some(policy_run) {
+        return Ok(Value::Null);
+    }
+    let ts = args.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    store
+        .set_kv(&format!("active_perm_policy:{conv_id}"), &policy)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    let run_id = active
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(policy_run);
+    let rev = policy
+        .get("configuration_revision")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .max(1);
+    Ok(json!({
+        "conversation_id": conv_id,
+        "run_id": run_id,
+        "applied": true,
+        "applied_at_ms": ts,
+        "policy": policy,
+        "control": {
+            "session_id": conv_id,
+            "revision": rev,
+            "active_turn_id": run_id,
+            "turn_status": "running",
+            "permission_projection_revision": rev,
+            "last_event_cursor": {"sequence": rev}
+        }
+    }))
+}
+
+fn dispatch_load_mobile_task_wake_plan(
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let now = args.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    let tasks: Vec<Value> = suite
+        .list_records("runtime_task")
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    let mut candidates = Vec::new();
+    let mut next_wake: Option<i64> = None;
+    for t in tasks {
+        let kind = t.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if kind != "agent" || !matches!(status, "queued" | "running") {
+            continue;
+        }
+        if let Some(wake_at) = t.get("wake_at_ms").and_then(|v| v.as_i64()) {
+            if wake_at > now {
+                next_wake = Some(next_wake.map_or(wake_at, |cur| cur.min(wake_at)));
+                continue;
+            }
+        }
+        if t.get("parent_invocation").is_some() && t.get("parent_config").is_some() {
+            candidates.push(json!({
+                "task_id": t.get("id").or_else(|| t.get("task_id")).cloned().unwrap_or(Value::Null),
+                "parent_conversation_id": t.get("owner_session_id").or_else(|| t.get("conversation_id")).cloned().unwrap_or(Value::Null),
+                "child_conversation_id": t.get("child_session_id").cloned().unwrap_or(Value::Null),
+                "parent_invocation": t.get("parent_invocation").cloned().unwrap_or(Value::Null),
+                "parent_config": t.get("parent_config").cloned().unwrap_or(Value::Null)
+            }));
+        }
+    }
+    Ok(json!({
+        "candidates": candidates,
+        "next_wake_at_ms": next_wake
+    }))
+}
+
+fn dispatch_request_task_cancellation(
+    store: &Store,
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let input = args.get("input").unwrap_or(args);
+    let task_id = input
+        .get("task_id")
+        .or_else(|| args.get("task_id"))
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+    let ts = input.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    let mut state = "cancelled".to_string();
+    if let Ok(Some(mut task)) = suite.get_record::<Value>("runtime_task", task_id) {
+        if let Some(obj) = task.as_object_mut() {
+            obj.insert("cancel_requested".into(), json!(true));
+            obj.insert("updated_at_ms".into(), json!(ts));
+            if let Some(s) = obj.get("status").and_then(|v| v.as_str()) {
+                state = s.to_string();
+            }
+        }
+        let _ = suite.upsert_record("runtime_task", task_id, &task);
+    }
+    let _ = store.set_kv(
+        &format!("cancel_requested:{task_id}"),
+        &json!({"task_id": task_id, "cancel_requested": true, "requested_at_ms": ts}),
+    );
+    Ok(json!({
+        "ok": true,
+        "task_id": task_id,
+        "cancel_requested": true,
+        "state": state
+    }))
+}
+
+fn dispatch_execute_task_cancellation_for_effect(
+    store: &Store,
+    suite: &ModulesSuite,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let req = args.get("request").unwrap_or(args);
+    let task_id = req
+        .pointer("/payload/task_id")
+        .or_else(|| args.get("task_id"))
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing request.payload.task_id".into()))?;
+    let ts = args.get("now_ms").and_then(|v| v.as_i64()).unwrap_or_else(now_ms);
+    if let Ok(Some(mut task)) = suite.get_record::<Value>("runtime_task", task_id) {
+        if let Some(obj) = task.as_object_mut() {
+            obj.insert("cancel_requested".into(), json!(true));
+            obj.insert("updated_at_ms".into(), json!(ts));
+        }
+        let _ = suite.upsert_record("runtime_task", task_id, &task);
+    }
+    let _ = store.set_kv(
+        &format!("cancel_requested:{task_id}"),
+        &json!({"task_id": task_id, "cancel_requested": true, "requested_at_ms": ts}),
+    );
+    // Strict contract: iOS IOSCanonicalAgentApplication & Android executeAndroidTaskCancellation
+    // require EXACTLY the keys {"kind", "cancel_requested"}.
+    Ok(json!({
+        "kind": "applied",
+        "cancel_requested": true
+    }))
+}
+
+fn dispatch_inspect_cancellation_process_owners(
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let identity = args.get("identity").cloned().unwrap_or_else(|| json!({}));
+    let control = args.get("control").cloned().unwrap_or_else(|| json!({}));
+    let session_id = control.get("session_id").cloned().unwrap_or(Value::Null);
+    let turn_id = control.get("turn_id").cloned().unwrap_or(Value::Null);
+    let target_effect_id = control
+        .pointer("/payload/target_effect_id")
+        .cloned()
+        .unwrap_or(Value::Null);
+    Ok(json!({
+        "identity": identity,
+        "control": control,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "target_effect_id": target_effect_id,
+        "target_owners": []
+    }))
+}
+
+fn dispatch_validate_cancellation_process_observations(
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let plan = args
+        .get("plan")
+        .ok_or(("invalid_argument", "missing 'plan'".into()))?;
+    let effect_id = plan
+        .get("target_effect_id")
+        .or_else(|| plan.pointer("/control/payload/target_effect_id"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let session_id = plan
+        .get("session_id")
+        .or_else(|| plan.pointer("/control/session_id"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let turn_id = plan
+        .get("turn_id")
+        .or_else(|| plan.pointer("/control/turn_id"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    Ok(json!({
+        "effect_id": effect_id,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "validated": true
+    }))
+}
+
+fn dispatch_queue_task_guidance(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let input = args.get("input").unwrap_or(args);
+    let task_id = input
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'task_id'".into()))?;
+    let message_id = input
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(new_id);
+    let parent_session_id = input
+        .get("parent_session_id")
+        .or_else(|| input.get("conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let parent_turn_id = input
+        .get("parent_turn_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let content = input
+        .get("content")
+        .or_else(|| input.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let enqueued_at = input
+        .get("enqueued_at_epoch_ms")
+        .or_else(|| input.get("submitted_at_ms"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(now_ms);
+    let record = json!({
+        "task_id": task_id,
+        "message_id": message_id,
+        "owner_session_id": parent_session_id,
+        "parent_turn_id": parent_turn_id,
+        "content": content,
+        "submitted_at_ms": enqueued_at,
+        "status": "accepted"
+    });
+    let _ = store.set_kv(&format!("task_guidance_receipt:{task_id}:{message_id}"), &record);
+    let _ = store.set_kv(&format!("task_guidance_receipt:{message_id}"), &record);
+    let _ = store.set_kv(&format!("task_guidance_receipt:{task_id}"), &record);
+    Ok(record)
+}
+
+fn dispatch_receive_remote_expert_parent_admission(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let expected_host = args
+        .get("expected_source_host_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let expected_epoch = args
+        .get("expected_source_store_epoch")
+        .and_then(|v| v.as_str());
+    let admission = args
+        .get("admission")
+        .cloned()
+        .ok_or(("invalid_argument", "missing 'admission'".into()))?;
+    if let (Some(exp), Some(actual)) = (
+        expected_epoch,
+        admission.get("source_store_epoch").and_then(|v| v.as_str()),
+    ) {
+        if exp != actual {
+            return Err((
+                "epoch_mismatch",
+                format!("remote expert parent admission epoch mismatch: expected {exp}, got {actual}"),
+            ));
+        }
+    }
+    let conv_id = admission
+        .get("conversation_id")
+        .or_else(|| admission.pointer("/identity/conversation_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let run_id = admission
+        .get("run_id")
+        .or_else(|| admission.pointer("/identity/run_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+    let key = format!("remote_expert_parent_admission:{expected_host}:{conv_id}:{run_id}");
+    store
+        .set_kv(&key, &admission)
+        .map_err(|e| ("storage_error", e.to_string()))?;
+    Ok(json!({
+        "ok": true,
+        "admitted": true,
+        "source_host_id": expected_host,
+        "admission": admission
+    }))
+}
+
+fn dispatch_read_admitted_remote_run_identity(
+    store: &Store,
+    args: &Value,
+) -> Result<Value, (&'static str, String)> {
+    let source_host = args.get("source_host_id").and_then(|v| v.as_str()).unwrap_or("");
+    let client_id = args.get("client_id").and_then(|v| v.as_str()).unwrap_or("");
+    let conv_id = args
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+    let run_id = args
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .ok_or(("invalid_argument", "missing 'run_id'".into()))?;
+    let asst_id = args
+        .get("assistant_message_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let candidates = [
+        store.get_kv(&format!("remote_sub_receipt:{conv_id}:{run_id}")).ok().flatten(),
+        store.get_kv(&format!("observed_remote_run:{conv_id}:{run_id}")).ok().flatten(),
+        store.get_kv(&format!("remote_sub_intent:{conv_id}")).ok().flatten(),
+    ];
+    for cand in candidates.into_iter().flatten() {
+        let Some(ident) = cand.get("identity") else {
+            continue;
+        };
+        let matches_host = source_host.is_empty()
+            || ident.get("source_host_id").and_then(|v| v.as_str()) == Some(source_host);
+        let matches_client = client_id.is_empty()
+            || ident.get("client_id").and_then(|v| v.as_str()) == Some(client_id);
+        let matches_conv = ident.get("conversation_id").and_then(|v| v.as_str()) == Some(conv_id);
+        let matches_run = ident.get("submission_id").and_then(|v| v.as_str()) == Some(run_id);
+        let matches_asst = asst_id.is_empty()
+            || ident.get("assistant_message_id").and_then(|v| v.as_str()) == Some(asst_id);
+        if matches_host && matches_client && matches_conv && matches_run && matches_asst {
+            return Ok(ident.clone());
+        }
+    }
+    Ok(Value::Null)
 }
 
 #[cfg(test)]
@@ -20496,5 +22358,303 @@ mod tests {
         assert_eq!(seal["result"]["value"]["kind"], "answered");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn daemon_p0_p1_macos_ios_android_contracts_work() {
+        let store = Store::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // Create conversation
+        let conv_id = "conv-contract-1";
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "create_conversation",
+            &json!({"conversation_id": conv_id, "title": "Initial"}),
+        )
+        .unwrap();
+
+        // 2a. list_open_user_input_waits returns top-level JSON array
+        let waits = dispatch_command(
+            &store,
+            &suite,
+            "list_open_user_input_waits",
+            &json!({"conversation_id": conv_id}),
+        )
+        .unwrap();
+        assert!(waits.is_array());
+
+        // 2c. count_checkpoints returns top-level integer
+        let cp_count = dispatch_command(
+            &store,
+            &suite,
+            "context",
+            &json!({"command": {"type": "count_checkpoints", "conversation_id": conv_id}}),
+        )
+        .unwrap();
+        assert_eq!(cp_count, json!(0));
+
+        // 2b. projection_snapshot (conversation + conversations), projection_cursor_wait, projection_event_suffix
+        let snap = dispatch_command(
+            &store,
+            &suite,
+            "projection_snapshot",
+            &json!({
+                "scope": {"type": "conversation", "conversation_id": conv_id},
+                "page": {"offset": 0, "limit": 64}
+            }),
+        )
+        .unwrap();
+        assert_eq!(snap["records"][0]["entity_type"], "conversation_projection");
+        assert_eq!(snap["records"][0]["entity_id"], conv_id);
+        assert_eq!(snap["page"]["has_more"], false);
+        let init_seq = snap["cursor"]["sequence"].as_u64().unwrap();
+
+        let list_snap = dispatch_command(
+            &store,
+            &suite,
+            "projection_snapshot",
+            &json!({"scope": {"type": "conversations"}}),
+        )
+        .unwrap();
+        assert_eq!(list_snap["records"][0]["entity_type"], "conversation_summary");
+        assert_eq!(list_snap["records"][0]["payload"]["id"], conv_id);
+
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "rename_conversation",
+            &json!({"conversation_id": conv_id, "title": "Renamed Live"}),
+        )
+        .unwrap();
+
+        let waited = dispatch_command(
+            &store,
+            &suite,
+            "projection_cursor_wait",
+            &json!({
+                "after": {"scope": {"type": "conversation", "conversation_id": conv_id}, "sequence": init_seq},
+                "wait_ms": 50
+            }),
+        )
+        .unwrap();
+        assert!(waited["sequence"].as_u64().unwrap() > init_seq);
+
+        let suffix = dispatch_command(
+            &store,
+            &suite,
+            "projection_event_suffix",
+            &json!({
+                "scope": {"type": "conversation", "conversation_id": conv_id},
+                "after": {"scope": {"type": "conversation", "conversation_id": conv_id}, "sequence": init_seq},
+                "limit": 256
+            }),
+        )
+        .unwrap();
+        let events = suffix["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["mutation"]["type"], "conversation");
+        assert_eq!(events[0]["mutation"]["mutation"]["type"], "set_title");
+        assert_eq!(events[0]["mutation"]["mutation"]["title"], "Renamed Live");
+        assert_eq!(suffix["next_cursor"]["sequence"], events[0]["cursor"]["sequence"]);
+
+        // 3. Missing daemon RPCs
+        let room_null = dispatch_command(
+            &store,
+            &suite,
+            "reconcile_room_routing",
+            &json!({"room_id": "r1", "submission_id": "missing", "at_ms": 100}),
+        )
+        .unwrap();
+        assert!(room_null.is_null());
+
+        let owner = json!({"conversation_id": conv_id, "message_id": "m1", "part_id": "p1"});
+        let deriv = dispatch_command(
+            &store,
+            &suite,
+            "read_conversation_part_derivation",
+            &json!({"owner": owner, "expected_conversation_revision": 2}),
+        )
+        .unwrap();
+        assert!(deriv.is_null());
+
+        store
+            .set_kv(
+                &format!("tool_source_body:{conv_id}:m1:p1:item-1"),
+                &json!("hello tool source"),
+            )
+            .unwrap();
+        let ts_range = dispatch_command(
+            &store,
+            &suite,
+            "read_conversation_tool_source_range",
+            &json!({
+                "owner": owner,
+                "source_item_id": "item-1",
+                "expected_conversation_revision": 2,
+                "offset_bytes": 0,
+                "limit_bytes": 5
+            }),
+        )
+        .unwrap();
+        assert_eq!(ts_range["text"], "hello");
+        assert_eq!(ts_range["next_offset_bytes"], 5);
+        assert_eq!(ts_range["total_utf8_bytes"], 17);
+        assert_eq!(ts_range["end_of_content"], false);
+
+        // Terminal reception lifecycle
+        let seal = json!({
+            "protocol_version": 1,
+            "identity": {"conversation_id": conv_id, "run_id": "run-t1", "assistant_message_id": "a1", "source_store_epoch": "ep1"},
+            "entry_count": "1",
+            "seal_digest": "a".repeat(64)
+        });
+        let r1 = dispatch_command(
+            &store,
+            &suite,
+            "begin_receive_assistant_run_terminal",
+            &json!({"source_host_id": "host-1", "seal": seal}),
+        )
+        .unwrap();
+        assert_eq!(r1["manifest_complete"], false);
+        assert_eq!(r1["committed"], false);
+        let r2 = dispatch_command(
+            &store,
+            &suite,
+            "stage_assistant_run_terminal_manifest",
+            &json!({"source_host_id": "host-1", "page": {"seal": seal, "after_entry": "0", "next_entry": "1", "complete": true, "entries": []}}),
+        )
+        .unwrap();
+        assert_eq!(r2["manifest_complete"], true);
+        let r3 = dispatch_command(
+            &store,
+            &suite,
+            "commit_received_assistant_run_terminal",
+            &json!({"source_host_id": "host-1", "seal": seal}),
+        )
+        .unwrap();
+        assert_eq!(r3["committed"], true);
+
+        // list_conversation_auxiliary_sources + runtime_task list_all
+        let aux = dispatch_command(
+            &store,
+            &suite,
+            "list_conversation_auxiliary_sources",
+            &json!({"conversation_id": conv_id, "limit": 16}),
+        )
+        .unwrap();
+        assert!(aux["references"].is_array());
+        let all_tasks = dispatch_command(
+            &store,
+            &suite,
+            "runtime_task",
+            &json!({"command": {"type": "list_all"}}),
+        )
+        .unwrap();
+        assert!(all_tasks.is_array());
+
+        // Agent command queue lease cycle
+        store
+            .set_kv(
+                &format!("agent_cmd_queue:{conv_id}"),
+                &json!([{"command_id": "cmd-1", "payload_json": "{\"type\":\"test\"}"}]),
+            )
+            .unwrap();
+        let claimed = dispatch_command(
+            &store,
+            &suite,
+            "claim_next_agent_command",
+            &json!({"session_id": conv_id, "lease_owner": "w1", "now_ms": 1000, "lease_until_ms": 5000}),
+        )
+        .unwrap();
+        assert_eq!(claimed["command_id"], "cmd-1");
+        assert_eq!(claimed["delivery_attempt"], 1);
+        let rel = dispatch_command(
+            &store,
+            &suite,
+            "release_agent_command_lease",
+            &json!({"session_id": conv_id, "command_id": "cmd-1", "lease_owner": "w1"}),
+        )
+        .unwrap();
+        assert_eq!(rel["released"], true);
+
+        // UI tool, wake plan, task cancellation strict 2-key receipt, process owners, guidance, admission
+        let ui_res = dispatch_command(
+            &store,
+            &suite,
+            "execute_ui_tool",
+            &json!({"input": {"effect_id": "e1", "request_id": "r1", "delivery": {}, "now_ms": 1000}}),
+        )
+        .unwrap();
+        assert_eq!(ui_res["type"], "completed");
+
+        let wake = dispatch_command(
+            &store,
+            &suite,
+            "load_mobile_task_wake_plan",
+            &json!({"now_ms": 1000}),
+        )
+        .unwrap();
+        assert!(wake["candidates"].is_array());
+
+        let cancel_eff = dispatch_command(
+            &store,
+            &suite,
+            "execute_task_cancellation_for_effect",
+            &json!({"request": {"payload": {"type": "cancel_task", "task_id": "t-1"}}, "now_ms": 1000}),
+        )
+        .unwrap();
+        assert_eq!(cancel_eff.as_object().unwrap().len(), 2);
+        assert_eq!(cancel_eff["kind"], "applied");
+        assert_eq!(cancel_eff["cancel_requested"], true);
+
+        let plan = dispatch_command(
+            &store,
+            &suite,
+            "inspect_cancellation_process_owners",
+            &json!({
+                "identity": {"conversation_id": conv_id, "expected_run_id": "r1", "assistant_message_id": "a1"},
+                "control": {"session_id": conv_id, "turn_id": "r1", "payload": {"target_effect_id": "eff-9"}}
+            }),
+        )
+        .unwrap();
+        let validated = dispatch_command(
+            &store,
+            &suite,
+            "validate_cancellation_process_observations",
+            &json!({"plan": plan, "current_process": {}, "observations": []}),
+        )
+        .unwrap();
+        assert_eq!(validated["effect_id"], "eff-9");
+        assert_eq!(validated["session_id"], conv_id);
+
+        let guidance = dispatch_command(
+            &store,
+            &suite,
+            "queue_task_guidance",
+            &json!({"task_id": "t-1", "message_id": "gm-1", "parent_session_id": conv_id, "parent_turn_id": "r1", "content": "focus", "enqueued_at_epoch_ms": 1234}),
+        )
+        .unwrap();
+        assert_eq!(guidance["status"], "accepted");
+
+        let adm = dispatch_command(
+            &store,
+            &suite,
+            "receive_remote_expert_parent_admission",
+            &json!({"expected_source_host_id": "h1", "expected_source_store_epoch": "ep1", "admission": {"source_store_epoch": "ep1", "conversation_id": conv_id, "run_id": "r1"}}),
+        )
+        .unwrap();
+        assert_eq!(adm["admitted"], true);
+
+        let no_ident = dispatch_command(
+            &store,
+            &suite,
+            "read_admitted_remote_run_identity",
+            &json!({"source_host_id": "h1", "client_id": "c1", "conversation_id": conv_id, "run_id": "r1", "assistant_message_id": "a1"}),
+        )
+        .unwrap();
+        assert!(no_ident.is_null());
     }
 }

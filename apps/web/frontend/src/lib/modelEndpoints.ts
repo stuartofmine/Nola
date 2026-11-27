@@ -34,7 +34,7 @@ export function endpointValidationError(snapshot: EndpointSnapshot, draft: Endpo
     if (!['responses', 'siwc_responses', 'chat_completions', 'anthropic', 'gemini'].includes(draft.wireProtocol)) return { code: 'modelValidation.selectProtocol' };
     for (const model of snapshot.profiles) {
         if (!model.reasoning) continue;
-        if (draft.wireProtocol === 'gemini' && model.reasoning.control === 'automatic') continue;
+        if (draft.wireProtocol === 'gemini' && (model.reasoning.control === 'automatic' || (model.reasoning.control as string) === 'unsupported')) continue;
         const error = reasoningValidationError(model.reasoning, draft.wireProtocol, Number(model.parameters.maxOutputTokens ?? 16384));
         if (error) return { code: 'modelValidation.endpointReasoning', params: { model: model.displayName || model.modelName }, cause: error };
     }

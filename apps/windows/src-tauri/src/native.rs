@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde_json::{json, Value};
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     sync::{atomic::Ordering, LazyLock},
 };
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WebviewWindow,
+    AppHandle, Emitter, Manager, WebviewWindow,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_window_state::{StateFlags, WindowExt};
 
 const TRAY_ID: &str = "nola-tray";
+pub const TRAY_ACTION_ERROR_EVENT: &str = "nola://tray-action-error";
+const MAX_DESKTOP_ACTION_LOG_BYTES: usize = 16 * 1024;
 
 static CATALOG: LazyLock<Value> = LazyLock::new(|| {
     serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/locales.json")))
@@ -271,6 +274,217 @@ pub fn resolve_licenses_dir(resource_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayFolderAction {
+    Logs,
+    Licenses,
+    Workspace,
+}
+
+impl TrayFolderAction {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Logs => "logs",
+            Self::Licenses => "licenses",
+            Self::Workspace => "workspace",
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Logs => "openLogFolder",
+            Self::Licenses => "thirdPartyLicenses",
+            Self::Workspace => "openWorkspace",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayActionError {
+    pub action: String,
+    pub message: String,
+    pub detail: String,
+}
+
+impl TrayActionError {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "action": self.action,
+            "message": self.message,
+            "detail": self.detail,
+        })
+    }
+}
+
+pub fn format_tray_open_error(action: TrayFolderAction, locale: Option<&str>) -> String {
+    format!(
+        "{} — {}",
+        label_for(locale, action.label_key()),
+        label_for(locale, "openFolderFailed")
+    )
+}
+
+pub fn format_tray_licenses_missing_error(locale: Option<&str>) -> String {
+    format!(
+        "{} — {}",
+        label_for(locale, TrayFolderAction::Licenses.label_key()),
+        label_for(locale, "licensesUnavailable")
+    )
+}
+
+pub fn open_tray_folder_with<F, O>(
+    action: TrayFolderAction,
+    locale: Option<&str>,
+    resolve_dir: F,
+    create_if_missing: bool,
+    open_path: O,
+) -> Result<PathBuf, TrayActionError>
+where
+    F: FnOnce() -> Result<Option<PathBuf>, String>,
+    O: FnOnce(&Path) -> Result<(), String>,
+{
+    let dir = match resolve_dir() {
+        Ok(Some(dir)) => dir,
+        Ok(None) => {
+            let (message, detail) = match action {
+                TrayFolderAction::Licenses => (
+                    format_tray_licenses_missing_error(locale),
+                    "Bundled third-party licenses directory was not found".into(),
+                ),
+                _ => (
+                    format_tray_open_error(action, locale),
+                    "Target directory is unavailable".into(),
+                ),
+            };
+            return Err(TrayActionError {
+                action: action.id().into(),
+                message,
+                detail,
+            });
+        }
+        Err(err) => {
+            return Err(TrayActionError {
+                action: action.id().into(),
+                message: format_tray_open_error(action, locale),
+                detail: format!("resolve directory failed: {err}"),
+            });
+        }
+    };
+
+    if create_if_missing {
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            return Err(TrayActionError {
+                action: action.id().into(),
+                message: format_tray_open_error(action, locale),
+                detail: format!("create_dir_all failed: {err}"),
+            });
+        }
+    }
+
+    if let Err(err) = open_path(&dir) {
+        return Err(TrayActionError {
+            action: action.id().into(),
+            message: format_tray_open_error(action, locale),
+            detail: format!("open failed: {err}"),
+        });
+    }
+
+    Ok(dir)
+}
+
+pub fn log_tray_action_error(log_dir: Option<&Path>, error: &TrayActionError) {
+    let entry = format!(
+        "[nola-desktop] tray action '{}' failed: {} ({})",
+        error.action, error.message, error.detail
+    );
+    eprintln!("{entry}");
+    let Some(dir) = log_dir else {
+        return;
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let log_path = dir.join("desktop-actions.log");
+    let current_len = std::fs::metadata(&log_path)
+        .map(|meta| meta.len() as usize)
+        .unwrap_or(0);
+    if current_len + entry.len() + 1 > MAX_DESKTOP_ACTION_LOG_BYTES {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(file, "{entry}");
+    }
+}
+
+pub fn tray_error_dispatch_script(error: &TrayActionError) -> String {
+    let payload = serde_json::to_string(&error.to_json())
+        .unwrap_or_else(|_| "{}".into())
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!(
+        "window.dispatchEvent(new CustomEvent('nola:desktop-error', {{ detail: {payload} }}));"
+    )
+}
+
+pub fn clear_tray_action_error(app: &AppHandle) {
+    let state = app.state::<super::Desktop>();
+    *super::lock_unpoisoned(&state.tray_error) = None;
+    if super::lock_unpoisoned(&state.failure).is_none() {
+        set_tray_tooltip(app, label("appName"));
+    }
+}
+
+pub fn report_tray_action_error(app: &AppHandle, error: TrayActionError) {
+    log_tray_action_error(desktop_data_dir(app).ok().as_deref(), &error);
+    {
+        let state = app.state::<super::Desktop>();
+        *super::lock_unpoisoned(&state.tray_error) = Some(error.clone());
+    }
+    let _ = app.emit(TRAY_ACTION_ERROR_EVENT, error.to_json());
+    show(app);
+    set_tray_tooltip(app, &format!("{} — {}", label("appName"), error.message));
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval(&tray_error_dispatch_script(&error));
+    }
+}
+
+fn handle_tray_folder_action(app: &AppHandle, action: TrayFolderAction) {
+    let result = match action {
+        TrayFolderAction::Logs => open_tray_folder_with(
+            action,
+            None,
+            || desktop_data_dir(app).map(Some),
+            true,
+            |path| open::that_detached(path).map_err(|e| e.to_string()),
+        ),
+        TrayFolderAction::Licenses => open_tray_folder_with(
+            action,
+            None,
+            || {
+                let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+                Ok(resolve_licenses_dir(&resource_dir))
+            },
+            false,
+            |path| open::that_detached(path).map_err(|e| e.to_string()),
+        ),
+        TrayFolderAction::Workspace => open_tray_folder_with(
+            action,
+            None,
+            || desktop_workspace_dir(app).map(Some),
+            true,
+            |path| open::that_detached(path).map_err(|e| e.to_string()),
+        ),
+    };
+    match result {
+        Ok(_) => clear_tray_action_error(app),
+        Err(error) => report_tray_action_error(app, error),
+    }
+}
+
 pub fn set_tray_tooltip(app: &AppHandle, tooltip: &str) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(tooltip));
@@ -308,25 +522,9 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
                     }
                 }
             }
-            "logs" => {
-                if let Ok(dir) = desktop_data_dir(app) {
-                    let _ = std::fs::create_dir_all(&dir);
-                    let _ = open::that_detached(dir);
-                }
-            }
-            "licenses" => {
-                if let Ok(dir) = app.path().resource_dir() {
-                    if let Some(licenses_dir) = resolve_licenses_dir(&dir) {
-                        let _ = open::that_detached(licenses_dir);
-                    }
-                }
-            }
-            "workspace" => {
-                if let Ok(dir) = desktop_workspace_dir(app) {
-                    let _ = std::fs::create_dir_all(&dir);
-                    let _ = open::that_detached(dir);
-                }
-            }
+            "logs" => handle_tray_folder_action(app, TrayFolderAction::Logs),
+            "licenses" => handle_tray_folder_action(app, TrayFolderAction::Licenses),
+            "workspace" => handle_tray_folder_action(app, TrayFolderAction::Workspace),
             "restart" => {
                 super::restart_host(app);
             }
@@ -421,6 +619,153 @@ mod tests {
         let bundled = root.join("licenses");
         std::fs::create_dir_all(&bundled).unwrap();
         assert_eq!(resolve_licenses_dir(&root), Some(bundled));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn open_tray_folder_surfaces_open_failures_for_logs_licenses_and_workspace() {
+        let root = std::env::temp_dir().join(format!("nola-tray-open-err-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        for (action, create) in [
+            (TrayFolderAction::Logs, true),
+            (TrayFolderAction::Workspace, true),
+            (TrayFolderAction::Licenses, false),
+        ] {
+            let target = root.join(action.id());
+            if !create {
+                std::fs::create_dir_all(&target).unwrap();
+            }
+            let err = open_tray_folder_with(
+                action,
+                Some("en"),
+                || Ok(Some(target.clone())),
+                create,
+                |_| Err("ShellExecute failed".into()),
+            )
+            .unwrap_err();
+            assert_eq!(err.action, action.id());
+            assert_eq!(err.message, format_tray_open_error(action, Some("en")));
+            assert!(err.detail.contains("ShellExecute failed"));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn open_tray_folder_licenses_surfaces_clear_error_when_missing() {
+        let root = std::env::temp_dir().join(format!("nola-tray-lic-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mut opener_called = false;
+        let err = open_tray_folder_with(
+            TrayFolderAction::Licenses,
+            Some("en"),
+            || Ok(resolve_licenses_dir(&root)),
+            false,
+            |_| {
+                opener_called = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(!opener_called);
+        assert_eq!(err.action, "licenses");
+        assert_eq!(err.message, format_tray_licenses_missing_error(Some("en")));
+        assert!(err.message.contains(label_for(Some("en"), "licensesUnavailable")));
+        assert!(err.detail.contains("not found"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn open_tray_folder_surfaces_resolve_and_create_dir_errors() {
+        let resolve_err = open_tray_folder_with(
+            TrayFolderAction::Logs,
+            Some("en"),
+            || Err("app_local_data_dir unavailable".into()),
+            true,
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(resolve_err.action, "logs");
+        assert_eq!(
+            resolve_err.message,
+            format_tray_open_error(TrayFolderAction::Logs, Some("en"))
+        );
+        assert!(resolve_err.detail.contains("app_local_data_dir unavailable"));
+
+        let root = std::env::temp_dir().join(format!("nola-tray-create-err-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let blocker = root.join("blocker-file");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let blocked_child = blocker.join("workspace");
+
+        let create_err = open_tray_folder_with(
+            TrayFolderAction::Workspace,
+            Some("en"),
+            || Ok(Some(blocked_child)),
+            true,
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(create_err.action, "workspace");
+        assert!(create_err.detail.contains("create_dir_all failed"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn open_tray_folder_succeeds_and_creates_directory_when_requested() {
+        let root = std::env::temp_dir().join(format!("nola-tray-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let target = root.join("Nola Workspace");
+
+        let mut opened = None;
+        let result = open_tray_folder_with(
+            TrayFolderAction::Workspace,
+            Some("en"),
+            || Ok(Some(target.clone())),
+            true,
+            |path| {
+                opened = Some(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result, target);
+        assert_eq!(opened.as_deref(), Some(target.as_path()));
+        assert!(target.is_dir());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn log_tray_action_error_writes_bounded_log_and_dispatch_script_escapes_payload() {
+        let root = std::env::temp_dir().join(format!("nola-tray-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let error = TrayActionError {
+            action: "licenses".into(),
+            message: "Third-party licenses — <script>alert(\"x\")</script>\u{2028}line".into(),
+            detail: "Bundled third-party licenses directory was not found".into(),
+        };
+        log_tray_action_error(Some(&root), &error);
+        let content = std::fs::read_to_string(root.join("desktop-actions.log")).unwrap();
+        assert!(content.contains("tray action 'licenses' failed"));
+        assert!(content.contains("Bundled third-party licenses directory was not found"));
+
+        let script = tray_error_dispatch_script(&error);
+        assert!(script.starts_with("window.dispatchEvent(new CustomEvent('nola:desktop-error'"));
+        assert!(!script.contains('\u{2028}'));
+        assert!(script.contains("\\u2028"));
+        assert!(script.contains("\\\"x\\\""));
 
         let _ = std::fs::remove_dir_all(&root);
     }

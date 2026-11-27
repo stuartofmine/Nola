@@ -126,3 +126,15 @@ test('discovery is unavailable until a changed route is committed', () => {
     assert.deepEqual(discoveredModelsForEndpoint(found, { ...endpoint, baseURL: 'https://different.test/v1' }), []);
     assert.deepEqual(discoveredModelsForEndpoint(found, { ...endpoint, wireProtocol: 'anthropic' }), []);
 });
+
+test('toggling enabled on non-reasoning and Gemini models with backend unsupported reasoning control stays saveable', () => {
+    const nonReasoning: RemoteProfile = {
+        ...model('chat-only', 0),
+        reasoning: { control: 'unsupported' as unknown as 'automatic' },
+        endpoint: { ...endpoint, id: 'ep-gemini', wireProtocol: 'gemini' },
+    };
+    const toggled = stageModel(copyRemoteCatalog([nonReasoning]), 'chat-only', { enabled: false });
+    assert.equal(catalogDraftDirty([nonReasoning], toggled), true);
+    assert.equal(catalogDraftValidationError(toggled), null);
+    assert.equal(catalogReplacement([nonReasoning], toggled).endpoints[0].models[0].enabled, false);
+});

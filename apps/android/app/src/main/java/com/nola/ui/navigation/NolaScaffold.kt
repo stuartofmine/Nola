@@ -36,7 +36,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.filled.Memory
@@ -77,7 +76,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nola.ui.screen.chat.ChatScreen
-import com.nola.ui.screen.home.TodayScreen
 import com.nola.ui.screen.home.DataWorkspaceScreen
 import com.nola.ui.screen.home.InformationOverview
 import com.nola.ui.screen.intelligence.IntelligenceScreen
@@ -95,7 +93,6 @@ import com.nola.R
 
 enum class NolaTab(val route: String, val labelRes: Int) {
     Chat("chat", R.string.tab_chat),
-    Home("home", R.string.today_title),
     Activity("activity", R.string.tab_activity),
     Information("information", R.string.tab_information),
     Intelligence("intelligence", R.string.tab_intelligence),
@@ -442,7 +439,6 @@ private fun NolaTabIcon(
     when (tab) {
         NolaTab.Chat -> Icon(painterResource(R.drawable.nola_chat), contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Activity -> Icon(Icons.Outlined.Notifications, contentDescription, tint = resolvedTint, modifier = modifier)
-        NolaTab.Home -> Icon(painterResource(R.drawable.nola_sun), contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Information -> Icon(painterResource(R.drawable.nola_folder), contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Intelligence -> Icon(Icons.Filled.Memory, contentDescription, tint = resolvedTint, modifier = modifier)
         NolaTab.Models -> Icon(painterResource(R.drawable.nola_models), contentDescription, tint = resolvedTint, modifier = modifier)
@@ -500,15 +496,6 @@ private fun NolaNavigationHost(
                 com.nola.ui.screen.activity.ActivityScreen(onOpenPlans = { workspacePage = 2; navController.navigate(WORKSPACE_ROUTE) { launchSingleTop = true } }, onOpenConversation = { owner ->
                     openChat(owner)
                 })
-            }
-            composable(NolaTab.Home.route) {
-                TodayScreen(onOpenWorkspace = { page ->
-                    workspacePage = page
-                    navController.navigate(WORKSPACE_ROUTE) { launchSingleTop = true }
-                }, onOpenConversations = { openChat() },
-                    onOpenConversation = { owner ->
-                        openChat(owner)
-                    })
             }
             composable(NolaTab.Information.route) {
                 if (compact) InformationOverview(onOpen = { page ->

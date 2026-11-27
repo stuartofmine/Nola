@@ -45,11 +45,23 @@ const SKIP_DIR_NAMES: &[&str] = &[
     "node_modules",
     "build",
     "dist",
+    "DerivedData",
+    ".build",
+    ".swiftpm",
     ".gradle",
     ".next",
     ".svelte-kit",
+    ".cache",
+    ".venv",
+    "venv",
+    "Pods",
+    "vendor",
     "__pycache__",
 ];
+
+const MAX_WALK_DEPTH: usize = 32;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const MAX_AST_NODES_PER_FILE: usize = 250_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeSymbol {
@@ -169,6 +181,8 @@ fn walk_source_files(workspace_root: &Path) -> Vec<(String, PathBuf)> {
     let mut builder = WalkBuilder::new(workspace_root);
     builder
         .hidden(false)
+        .follow_links(false)
+        .max_depth(Some(MAX_WALK_DEPTH))
         .git_ignore(true)
         .git_global(false)
         .git_exclude(true)
@@ -177,6 +191,9 @@ fn walk_source_files(workspace_root: &Path) -> Vec<(String, PathBuf)> {
         .filter_entry(|entry| {
             if entry.depth() == 0 {
                 return true;
+            }
+            if entry.path_is_symlink() {
+                return false;
             }
             if let Some(name) = entry.file_name().to_str() {
                 if SKIP_DIR_NAMES.contains(&name) {
@@ -190,8 +207,14 @@ fn walk_source_files(workspace_root: &Path) -> Vec<(String, PathBuf)> {
         if files.len() >= MAX_INDEXED_FILES {
             break;
         }
+        if entry.path_is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if !path.is_file() || !is_supported_source_file(path) {
+        let Ok(sym_meta) = fs::symlink_metadata(path) else {
+            continue;
+        };
+        if !sym_meta.is_file() || !is_supported_source_file(path) {
             continue;
         }
         let rel = path.strip_prefix(workspace_root).unwrap_or(path);
@@ -276,9 +299,14 @@ mod ts_ast {
         })
     }
 
+    enum VisitAction<'a> {
+        Enter(Node<'a>),
+        ExitScope,
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn visit_node(
-        node: Node<'_>,
+        root: Node<'_>,
         ws_key: &str,
         rel_path: &str,
         language: &str,
@@ -288,128 +316,148 @@ mod ts_ast {
         edges: &mut Vec<CodeEdgeRow>,
         seen_edges: &mut HashSet<(String, String, i64, &'static str)>,
     ) {
-        collect_references(
-            node,
-            ws_key,
-            rel_path,
-            source,
-            scope_stack,
-            edges,
-            seen_edges,
-        );
+        let mut stack: Vec<VisitAction<'_>> = Vec::with_capacity(256);
+        let mut children_buf: Vec<Node<'_>> = Vec::new();
+        stack.push(VisitAction::Enter(root));
+        let mut visited_nodes: usize = 0;
 
-        let mut pushed_scope = false;
-        let in_type = scope_stack.iter().any(|(_, is_t)| *is_t);
-
-        // Rust `impl Foo` / `impl Trait for Foo` pushes `Foo` as type scope
-        if node.kind() == "impl_item" {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                if let Some(type_name) = declared_type_name(type_node, source) {
-                    scope_stack.push((type_name, true));
-                    pushed_scope = true;
+        while let Some(action) = stack.pop() {
+            match action {
+                VisitAction::ExitScope => {
+                    scope_stack.pop();
                 }
-            }
-        }
+                VisitAction::Enter(node) => {
+                    visited_nodes += 1;
+                    if visited_nodes > MAX_AST_NODES_PER_FILE {
+                        break;
+                    }
 
-        // JS/TS named arrow functions: `const foo = (...) => ...`
-        if node.kind() == "variable_declarator" {
-            if let Some(val) = node.child_by_field_name("value") {
-                if val.kind() == "arrow_function" || val.kind() == "function_expression" {
-                    if let Some(name_node) = node.child_by_field_name("name") {
-                        if let Ok(name) = name_node.utf8_text(source) {
-                            let name = name.trim();
-                            if !name.is_empty() {
-                                let kind = if in_type { "method" } else { "function" };
-                                let qualified = build_qualified_name(rel_path, scope_stack, name);
-                                let start_line = (node.start_position().row + 1) as i64;
-                                let end_line = (node.end_position().row + 1) as i64;
-                                let sig = first_line(node, source);
-                                let id = sha256_hex(
-                                    format!("{ws_key}:{rel_path}:{qualified}:{start_line}")
-                                        .as_bytes(),
-                                );
-                                symbols.push(CodeSymbolRow {
-                                    id,
-                                    workspace_root: ws_key.to_string(),
-                                    rel_path: rel_path.to_string(),
-                                    name: name.to_string(),
-                                    qualified_name: qualified,
-                                    kind: kind.to_string(),
-                                    language: language.to_string(),
-                                    start_line,
-                                    end_line,
-                                    signature: sig,
-                                });
-                                scope_stack.push((name.to_string(), false));
+                    collect_references(
+                        node,
+                        ws_key,
+                        rel_path,
+                        source,
+                        scope_stack,
+                        edges,
+                        seen_edges,
+                    );
+
+                    let mut pushed_scope = false;
+                    let in_type = scope_stack.iter().any(|(_, is_t)| *is_t);
+
+                    // Rust `impl Foo` / `impl Trait for Foo` pushes `Foo` as type scope
+                    if node.kind() == "impl_item" {
+                        if let Some(type_node) = node.child_by_field_name("type") {
+                            if let Some(type_name) = declared_type_name(type_node, source) {
+                                scope_stack.push((type_name, true));
                                 pushed_scope = true;
                             }
                         }
                     }
-                }
-            }
-        }
 
-        if let Some(raw_kind) = node_symbol_kind(node, language) {
-            if let Some(name_node) = declaration_name_node(node) {
-                if let Ok(raw_name) = name_node.utf8_text(source) {
-                    let name = raw_name.trim();
-                    if !name.is_empty() {
-                        let refined = refine_swift_kind(node, source, raw_kind);
-                        let effective_kind = if refined == "function" && in_type {
-                            "method"
-                        } else {
-                            refined
-                        };
-                        let qualified = build_qualified_name(rel_path, scope_stack, name);
-                        let start_line = (node.start_position().row + 1) as i64;
-                        let end_line = (node.end_position().row + 1) as i64;
-                        let sig = callable_or_first_line(node, source, effective_kind);
-                        let id = sha256_hex(
-                            format!(
-                                "{ws_key}:{rel_path}:{qualified}:{start_line}:{}",
-                                symbols.len()
-                            )
-                            .as_bytes(),
-                        );
-                        symbols.push(CodeSymbolRow {
-                            id,
-                            workspace_root: ws_key.to_string(),
-                            rel_path: rel_path.to_string(),
-                            name: name.to_string(),
-                            qualified_name: qualified,
-                            kind: effective_kind.to_string(),
-                            language: language.to_string(),
-                            start_line,
-                            end_line,
-                            signature: sig,
-                        });
-                        if is_container_kind(node.kind()) && !pushed_scope {
-                            scope_stack.push((name.to_string(), is_type_container(node.kind())));
-                            pushed_scope = true;
+                    // JS/TS named arrow functions: `const foo = (...) => ...`
+                    if node.kind() == "variable_declarator" {
+                        if let Some(val) = node.child_by_field_name("value") {
+                            if val.kind() == "arrow_function" || val.kind() == "function_expression"
+                            {
+                                if let Some(name_node) = node.child_by_field_name("name") {
+                                    if let Ok(name) = name_node.utf8_text(source) {
+                                        let name = name.trim();
+                                        if !name.is_empty() {
+                                            let kind = if in_type { "method" } else { "function" };
+                                            let qualified =
+                                                build_qualified_name(rel_path, scope_stack, name);
+                                            let start_line = (node.start_position().row + 1) as i64;
+                                            let end_line = (node.end_position().row + 1) as i64;
+                                            let sig = first_line(node, source);
+                                            let id = sha256_hex(
+                                                format!(
+                                                    "{ws_key}:{rel_path}:{qualified}:{start_line}"
+                                                )
+                                                .as_bytes(),
+                                            );
+                                            symbols.push(CodeSymbolRow {
+                                                id,
+                                                workspace_root: ws_key.to_string(),
+                                                rel_path: rel_path.to_string(),
+                                                name: name.to_string(),
+                                                qualified_name: qualified,
+                                                kind: kind.to_string(),
+                                                language: language.to_string(),
+                                                start_line,
+                                                end_line,
+                                                signature: sig,
+                                            });
+                                            scope_stack.push((name.to_string(), false));
+                                            pushed_scope = true;
+                                        }
+                                    }
+                                }
+                            }
                         }
+                    }
+
+                    if let Some(raw_kind) = node_symbol_kind(node, language) {
+                        if let Some(name_node) = declaration_name_node(node) {
+                            if let Ok(raw_name) = name_node.utf8_text(source) {
+                                let name = raw_name.trim();
+                                if !name.is_empty() {
+                                    let refined = refine_swift_kind(node, source, raw_kind);
+                                    let effective_kind = if refined == "function" && in_type {
+                                        "method"
+                                    } else {
+                                        refined
+                                    };
+                                    let qualified =
+                                        build_qualified_name(rel_path, scope_stack, name);
+                                    let start_line = (node.start_position().row + 1) as i64;
+                                    let end_line = (node.end_position().row + 1) as i64;
+                                    let sig = callable_or_first_line(node, source, effective_kind);
+                                    let id = sha256_hex(
+                                        format!(
+                                            "{ws_key}:{rel_path}:{qualified}:{start_line}:{}",
+                                            symbols.len()
+                                        )
+                                        .as_bytes(),
+                                    );
+                                    symbols.push(CodeSymbolRow {
+                                        id,
+                                        workspace_root: ws_key.to_string(),
+                                        rel_path: rel_path.to_string(),
+                                        name: name.to_string(),
+                                        qualified_name: qualified,
+                                        kind: effective_kind.to_string(),
+                                        language: language.to_string(),
+                                        start_line,
+                                        end_line,
+                                        signature: sig,
+                                    });
+                                    if is_container_kind(node.kind()) && !pushed_scope {
+                                        scope_stack.push((
+                                            name.to_string(),
+                                            is_type_container(node.kind()),
+                                        ));
+                                        pushed_scope = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if pushed_scope {
+                        stack.push(VisitAction::ExitScope);
+                    }
+
+                    children_buf.clear();
+                    let mut cursor = node.walk();
+                    children_buf.extend(node.named_children(&mut cursor));
+                    for child in children_buf.drain(..).rev() {
+                        stack.push(VisitAction::Enter(child));
                     }
                 }
             }
         }
-
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            visit_node(
-                child,
-                ws_key,
-                rel_path,
-                language,
-                source,
-                scope_stack,
-                symbols,
-                edges,
-                seen_edges,
-            );
-        }
-
-        if pushed_scope {
-            scope_stack.pop();
-        }
+        scope_stack.clear();
     }
 
     fn build_qualified_name(
@@ -509,40 +557,65 @@ mod ts_ast {
         found.and_then(|n| find_identifier(n).or(Some(n)))
     }
 
-    fn find_identifier(node: Node<'_>) -> Option<Node<'_>> {
-        if matches!(
-            node.kind(),
-            "identifier"
-                | "field_identifier"
-                | "type_identifier"
-                | "simple_identifier"
-                | "property_identifier"
-                | "name"
-                | "constant"
-        ) {
-            return Some(node);
+    fn find_identifier(root: Node<'_>) -> Option<Node<'_>> {
+        let mut stack = vec![root];
+        let mut children_buf = Vec::new();
+        let mut steps = 0usize;
+        while let Some(node) = stack.pop() {
+            steps += 1;
+            if steps > 10_000 {
+                break;
+            }
+            if matches!(
+                node.kind(),
+                "identifier"
+                    | "field_identifier"
+                    | "type_identifier"
+                    | "simple_identifier"
+                    | "property_identifier"
+                    | "name"
+                    | "constant"
+            ) {
+                return Some(node);
+            }
+            children_buf.clear();
+            let mut cursor = node.walk();
+            children_buf.extend(node.named_children(&mut cursor));
+            for child in children_buf.drain(..).rev() {
+                stack.push(child);
+            }
         }
-        let mut cursor = node.walk();
-        let found = node.named_children(&mut cursor).find_map(find_identifier);
-        found
+        None
     }
 
-    fn declared_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
-        if matches!(
-            node.kind(),
-            "type_identifier" | "identifier" | "simple_identifier"
-        ) {
-            return node
-                .utf8_text(source)
-                .ok()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned);
-        }
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            if let Some(name) = declared_type_name(child, source) {
-                return Some(name);
+    fn declared_type_name(root: Node<'_>, source: &[u8]) -> Option<String> {
+        let mut stack = vec![root];
+        let mut children_buf = Vec::new();
+        let mut steps = 0usize;
+        while let Some(node) = stack.pop() {
+            steps += 1;
+            if steps > 10_000 {
+                break;
+            }
+            if matches!(
+                node.kind(),
+                "type_identifier" | "identifier" | "simple_identifier"
+            ) {
+                if let Some(name) = node
+                    .utf8_text(source)
+                    .ok()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToOwned::to_owned)
+                {
+                    return Some(name);
+                }
+            }
+            children_buf.clear();
+            let mut cursor = node.walk();
+            children_buf.extend(node.named_children(&mut cursor));
+            for child in children_buf.drain(..).rev() {
+                stack.push(child);
             }
         }
         None
@@ -2231,5 +2304,54 @@ def normalize_value(v):
         assert_eq!(idx3.payload.to_model_value()["total_files"], 2);
         let pruned_hit = reg.execute("codebase_search", &ctx, json!({"query": "DataPipeline"}));
         assert_eq!(pruned_hit.payload.to_model_value()["count"], 0);
+    }
+
+    #[test]
+    fn code_memory_handles_deeply_nested_ast_skips_symlinks_and_derived_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+
+        // Deeply nested expression tree that would overflow the call stack under recursive visit_node
+        let depth = 1_200usize;
+        let mut deep_rs = String::from("pub fn deep_chain(x: usize) -> usize {\n    ");
+        for _ in 0..depth {
+            deep_rs.push_str("(");
+        }
+        deep_rs.push_str("x");
+        for _ in 0..depth {
+            deep_rs.push_str(" + 1)");
+        }
+        deep_rs.push_str("\n}\n");
+        fs::write(src.join("deep.rs"), &deep_rs).unwrap();
+
+        // DerivedData and .gradle must be skipped
+        let derived = dir.path().join("DerivedData/Build");
+        fs::create_dir_all(&derived).unwrap();
+        fs::write(derived.join("generated.swift"), "func neverIndexDerived() {}\n").unwrap();
+        let gradle = dir.path().join(".gradle/cache");
+        fs::create_dir_all(&gradle).unwrap();
+        fs::write(gradle.join("cached.kt"), "fun neverIndexGradle() {}\n").unwrap();
+
+        // Symlink cycle must be skipped safely without infinite recursion
+        #[cfg(unix)]
+        {
+            let _ = std::os::unix::fs::symlink(dir.path(), src.join("loop_link"));
+        }
+
+        let store = Store::open_in_memory().unwrap();
+        let stats = index_workspace(&store, dir.path(), true).unwrap();
+        assert_eq!(stats.total_files, 1);
+
+        let arch = codebase_architecture(&store, dir.path(), 50).unwrap();
+        assert_eq!(arch["total_files"], 1);
+        let hits = search_symbols(&store, dir.path(), "deep_chain", Some("function"), None, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["file"], "src/deep.rs");
+
+        let derived_hits = search_symbols(&store, dir.path(), "neverIndexDerived", None, None, 10).unwrap();
+        assert!(derived_hits.is_empty());
+        let gradle_hits = search_symbols(&store, dir.path(), "neverIndexGradle", None, None, 10).unwrap();
+        assert!(gradle_hits.is_empty());
     }
 }
