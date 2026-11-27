@@ -635,14 +635,21 @@ final class MacReplyDisclosureMotionTests: XCTestCase {
             let button = try XCTUnwrap(objects(host).first { ($0.accessibilityIdentifier?() ?? nil) == "chat.journal.process.toggle" })
             XCTAssertTrue(button.accessibilityPerformPress?() ?? false)
         }
-        try toggle(); try await settle(host, 45)
-        let active = try energy(host)
+        try toggle()
+        var samples: [Int] = []
+        for _ in 0..<7 {
+            try await settle(host, 20)
+            samples.append(try energy(host))
+        }
         try await settle(host, 260)
         let opened = try energy(host)
         XCTAssertGreaterThan(opened, closed + 1_000_000)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            XCTAssertGreaterThan(active, closed + 1_000)
-            XCTAssertLessThan(active, opened - 1_000, "The actual process body must have an intermediate drawing frame")
+            let intermediate = samples.first { $0 > closed + 1_000 && $0 < opened - 1_000 }
+            XCTAssertNotNil(
+                intermediate,
+                "The actual process body must have an intermediate drawing frame (closed=\(closed), opened=\(opened), samples=\(samples))"
+            )
         }
         try toggle(); try await settle(host, 45); try toggle(); try await settle(host, 45)
         try toggle(); try await settle(host, 260)
@@ -799,9 +806,17 @@ final class MacStreamingAppendRevealTests: XCTestCase {
         try await settle(hosting, milliseconds: 100)
         XCTAssertTrue(accessibleText(hosting).contains("First"))
         state.text = "1. First item has appended words.\n2. Second"
-        try await settle(hosting, milliseconds: 100)
-        XCTAssertTrue(accessibleText(hosting).contains("First item has appended words."))
-        XCTAssertTrue(accessibleText(hosting).contains("Second"))
+        let appendDeadline = ContinuousClock.now + .seconds(1)
+        var appended = ""
+        while ContinuousClock.now < appendDeadline {
+            try await settle(hosting, milliseconds: 25)
+            appended = accessibleText(hosting)
+            if appended.contains("First item has appended words.") && appended.contains("Second") {
+                break
+            }
+        }
+        XCTAssertTrue(appended.contains("First item has appended words."), appended)
+        XCTAssertTrue(appended.contains("Second"), appended)
         state.text += " item has its complete suffix.\n\nNOLA-STREAM-END"
         state.contentIsFinal = true
         try await settle(hosting, milliseconds: 450)
@@ -961,10 +976,13 @@ final class MacStreamingAppendRevealTests: XCTestCase {
         let size = hosting.fittingSize
         state.text += suffix
         if final { state.contentIsFinal = true }
-        try await settle(hosting, milliseconds: 35)
+        let layoutDeadline = ContinuousClock.now + .milliseconds(250)
+        repeat {
+            try await settle(hosting, milliseconds: 10)
+        } while hosting.fittingSize == size && ContinuousClock.now < layoutDeadline
         let active = try bitmap(hosting)
         let activeSize = hosting.fittingSize
-        try await settle(hosting, milliseconds: 400)
+        try await settle(hosting, milliseconds: Int((AppleStreamingRevealTiming.duration + 0.2) * 1000))
         let settled = try bitmap(hosting)
         XCTAssertEqual(activeSize, hosting.fittingSize, "Drawing-only reveal must not change the laid-out size.")
         XCTAssertEqual(size.height, hosting.fittingSize.height, "The one-line fixture must not reflow.")

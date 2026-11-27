@@ -411,6 +411,15 @@ fn redact_string_in_place(
 
     let mut labeled_hits = 0usize;
     if let Cow::Owned(result) = LABELED_SECRET.replace_all(text, |c: &Captures<'_>| {
+        let label = &c[1];
+        let trimmed_label = label.trim_end();
+        // Avoid false positives on natural prose such as "Return only this exact ASCII token: FOO_BAR"
+        // where bare unquoted `token:` is a noun label rather than a credential assignment
+        // (`token=abc`, `"token": "abc"`, `access_token: abc`, `real_token: abc`).
+        let is_bare_unquoted_prose_token = trimmed_label.ends_with(':')
+            && trimmed_label[..trimmed_label.len() - 1]
+                .trim_end()
+                .eq_ignore_ascii_case("token");
         let value = &c[0][c[1].len()..];
         let quote = match value.as_bytes().first() {
             Some(b'"') => "\"",
@@ -422,7 +431,9 @@ fn redact_string_in_place(
         } else {
             value
         };
-        if is_non_secret_labeled_value(inner, !quote.is_empty()) {
+        if (is_bare_unquoted_prose_token && quote.is_empty())
+            || is_non_secret_labeled_value(inner, !quote.is_empty())
+        {
             return c[0].to_string();
         }
         labeled_hits = labeled_hits.saturating_add(1);

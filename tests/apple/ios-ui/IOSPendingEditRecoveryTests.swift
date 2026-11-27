@@ -20,11 +20,14 @@ final class IOSPendingEditRecoveryTests: XCTestCase {
         app.terminate()
 
         // Represent the moment after rewind: the previous user bubble no longer
-        // exists. Seed only the isolated owner; no model, run or credentials.
+        // exists. Seed only the isolated owner in the v2 schema; no model, run or credentials.
         var db: OpaquePointer?
         XCTAssertEqual(sqlite3_open_v2(database.path, &db, SQLITE_OPEN_READWRITE, nil), SQLITE_OK)
         defer { sqlite3_close(db) }
-        let sql = "INSERT INTO conversations(id,title,revision,created_at_ms,updated_at_ms) VALUES ('\(owner.uuidString)','Interrupted edit',2,1,1)"
+        let sql = """
+        INSERT INTO sessions(id,title,workspace_root,created_at_ms,updated_at_ms) VALUES ('\(owner.uuidString)','Interrupted edit','',1,1);
+        INSERT INTO kv(key,value_json,updated_at_ms) VALUES ('conv_meta:\(owner.uuidString)','{"revision":2}',1);
+        """
         XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
         let folder = database.appendingPathExtension("drafts").appendingPathComponent("conversation-" + owner.uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -53,7 +56,7 @@ final class IOSPendingEditRecoveryTests: XCTestCase {
         XCTAssertEqual(check.label, "Check original request")
         XCTAssertEqual(try Data(contentsOf: file), original)
         var statement: OpaquePointer?
-        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM runs", -1, &statement, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM events", -1, &statement, nil), SQLITE_OK)
         defer { sqlite3_finalize(statement) }
         XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
         XCTAssertEqual(sqlite3_column_int(statement, 0), 0)

@@ -318,12 +318,26 @@ impl LlmClient {
         let mut did_repetitive_resample = false;
         let has_tools = !req.prefix_stable_tools.is_empty();
 
+        let body_bytes = serde_json::to_vec(&built.body)?;
+        let mut header_map = reqwest::header::HeaderMap::new();
+        header_map.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        for (k, v) in &built.headers {
+            let name = reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                .map_err(|e| LlmError::Http(format!("invalid header name '{k}': {e}")))?;
+            let value = reqwest::header::HeaderValue::from_str(v)
+                .map_err(|e| LlmError::Http(format!("invalid header value for '{k}': {e}")))?;
+            header_map.insert(name, value);
+        }
+
         for attempt in 0..=self.max_retries {
             check_cancelled(cancel)?;
-            let mut rb = http.post(&built.url).json(&built.body);
-            for (k, v) in &built.headers {
-                rb = rb.header(k.as_str(), v.as_str());
-            }
+            let rb = http
+                .post(&built.url)
+                .headers(header_map.clone())
+                .body(body_bytes.clone());
             match rb.send() {
                 Ok(resp) => {
                     check_cancelled(cancel)?;

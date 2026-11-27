@@ -70,8 +70,12 @@
         }
     }
 
+    function isDetachedWorktree(wt: V2GitWorktree): boolean {
+        return !wt.branch || wt.detached === true || wt.branch === '(detached)' || wt.branch === 'detached';
+    }
+
     async function handleIntegrate(wt: V2GitWorktree) {
-        if (busyId) return;
+        if (busyId || isDetachedWorktree(wt)) return;
         busyId = wt.id;
         error = '';
         notice = '';
@@ -176,7 +180,7 @@
                             <button
                                 type="button"
                                 class="wt-btn"
-                                disabled={busyId !== null}
+                                disabled={busyId !== null || isDetachedWorktree(wt)}
                                 onclick={() => void handleIntegrate(wt)}
                             >
                                 {t($locale, 'chatInspector.worktreeIntegrate')}

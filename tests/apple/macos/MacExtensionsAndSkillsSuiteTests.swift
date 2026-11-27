@@ -749,9 +749,10 @@ final class MacBuiltInSkillRegistryTests: XCTestCase {
         sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         sqlite.arguments = [
             database.path,
-            "SELECT count(*) FROM command_receipts "
-                + "WHERE command_type='skill' "
-                + "AND json_extract(command_json, '$.command.type')='synchronize_built_ins';",
+            "SELECT count(*) FROM kv "
+                + "WHERE key LIKE 'cmd_receipt:%' "
+                + "AND json_type(value_json, '$.receipt.result') = 'array' "
+                + "AND json_extract(value_json, '$.receipt.result[0].record.source') = 'built_in';",
         ]
         sqlite.standardOutput = output
         sqlite.standardError = output

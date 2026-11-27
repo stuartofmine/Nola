@@ -602,8 +602,7 @@ class ModelsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    applicationRuntime.deleteModelProfile(profileId, System.currentTimeMillis())
-                    memoryProfileDataStore.pruneOrphanedModelSecrets()
+                    memoryProfileDataStore.deleteApiModelProfile(profileId)
                 }
                 val configuredModels = modelRepo.listConfiguredModels()
                 val wasSelected = _uiState.value.selectedModelId == model.selectionId &&

@@ -354,12 +354,22 @@ struct MacChatWorkspaceView: View {
     }
 
     private func focusComposer(in conversationID: String?) {
-        Task { @MainActor in
+        composerFocusTask?.cancel()
+        composerFocusTask = Task { @MainActor in
             await Task.yield()
-            guard model.selectedConversationID == conversationID, selectedSection == .chat,
+            guard !Task.isCancelled,
+                  model.selectedConversationID == conversationID,
+                  selectedSection == .chat,
                   !model.isTranscriptSearchVisible else { return }
+            composerFocusRequest &+= 1
             composerFocused = true
         }
+    }
+
+    private func requestComposerFocus() {
+        composerFocusTask?.cancel()
+        composerFocusRequest &+= 1
+        composerFocused = true
     }
     private var sectionSelection: Binding<MacWorkspaceSection> {
         Binding(get: { selectedSection }, set: { section in
@@ -423,6 +433,8 @@ struct MacChatWorkspaceView: View {
     @State private var remoteExecutionBackends: [MacRemoteExecutionBackend] = []
     @State private var remoteHostVerificationRevision = 0
     @FocusState private var composerFocused: Bool
+    @State private var composerFocusRequest = 0
+    @State private var composerFocusTask: Task<Void, Never>?
     @State private var isEditingTitle = false
     @State private var editingTitleConversationID: String?
     @State private var inlineTitleDraft = ""
@@ -570,7 +582,10 @@ struct MacChatWorkspaceView: View {
             model.remoteObservationForegroundChanged(NSApplication.shared.isActive)
             model.presentationDidAttach()
         }
-        .onDisappear { model.presentationDidDetach() }
+        .onDisappear {
+            composerFocusTask?.cancel()
+            model.presentationDidDetach()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.remoteObservationForegroundChanged(true)
         }
@@ -752,7 +767,10 @@ struct MacChatWorkspaceView: View {
             model.switchWorkspace(to: url)
         }
         .onChange(of: selectedSection) { _, section in
-            if section != .chat { activeOverlay = nil }
+            if section != .chat {
+                composerFocusTask?.cancel()
+                activeOverlay = nil
+            }
             if section == .memory { dataNavigation.section = .memory }
         }
         .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(model.selectedMessages.count)") {
@@ -796,7 +814,11 @@ struct MacChatWorkspaceView: View {
             if model.selectedConversation?.isPersisted == false { focusComposer(in: selectedID) }
         }
         .onChange(of: model.isTranscriptSearchVisible) { _, visible in
-            if !visible { focusComposer(in: model.selectedConversationID) }
+            if visible {
+                composerFocusTask?.cancel()
+            } else {
+                focusComposer(in: model.selectedConversationID)
+            }
         }
         .onChange(of: selectedSection) { _, _ in
             if isEditingTitle { cancelInlineTitle() }
@@ -815,7 +837,7 @@ struct MacChatWorkspaceView: View {
             \.nolaMacCommandActions,
             MacCommandActions(
                 newConversation: navigationActions.newConversation,
-                focusComposer: { navigationActions.navigate(to: .chat, then: { composerFocused = true }) },
+                focusComposer: { navigationActions.navigate(to: .chat, then: { requestComposerFocus() }) },
                 openWorkspace: { Task { await model.chooseWorkspace() } },
                 reviewWorkspace: reviewWorkspace,
                 showCommandPalette: { showsCommandPalette = true },
@@ -843,7 +865,7 @@ struct MacChatWorkspaceView: View {
                     appendMention(.init(agentID: member.agentID, agentRevision: member.agentRevision, participantID: member.id,
                         contextConversationID: member.contextConversationID), name: member.displayName, owner: presentation.parentID)
                 }
-                composerFocused = true
+                requestComposerFocus()
             }
         }
         .sheet(isPresented: $showsExpertManagement) {
@@ -898,7 +920,7 @@ struct MacChatWorkspaceView: View {
                 },
                 focusComposer: {
                     performAfterPaletteDismissal {
-                        navigationActions.navigate(to: .chat, then: { composerFocused = true })
+                        navigationActions.navigate(to: .chat, then: { requestComposerFocus() })
                     }
                 },
                 toggleSidebar: toggleSidebar,
@@ -1221,6 +1243,7 @@ struct MacChatWorkspaceView: View {
                 MacConversationCanvas(
                     model: model,
                     composerFocused: $composerFocused,
+                    composerFocusRequest: composerFocusRequest,
                     sendToExperts: {
                         do {
                             guard let owner = model.selectedConversationID else { return }
@@ -1376,8 +1399,14 @@ struct MacChatWorkspaceView: View {
 
     private var searchConversationButton: some View {
         Button {
-            if !model.isTranscriptSearchVisible { composerFocused = false }
-            model.isTranscriptSearchVisible.toggle()
+            if model.isTranscriptSearchVisible {
+                model.isTranscriptSearchVisible = false
+                requestComposerFocus()
+            } else {
+                composerFocusTask?.cancel()
+                composerFocused = false
+                model.isTranscriptSearchVisible = true
+            }
         } label: {
             Image("nola-search").renderingMode(.template).resizable().scaledToFit()
                 .frame(width: 18, height: 18).frame(width: 36, height: 36)

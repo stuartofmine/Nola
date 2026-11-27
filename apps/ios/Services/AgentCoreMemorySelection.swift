@@ -176,12 +176,48 @@ nonisolated public struct CoreMemoryOwner: Codable, Equatable, Sendable {
 
     public static let localProfile = CoreMemoryOwner(kind: "profile", profileID: "local", workspaceID: nil, conversationID: nil, turnID: nil)
 
+    public init(kind: String, profileID: String, workspaceID: String? = nil, conversationID: String? = nil, turnID: String? = nil) {
+        self.kind = kind
+        self.profileID = profileID
+        self.workspaceID = workspaceID
+        self.conversationID = conversationID
+        self.turnID = turnID
+    }
+
     enum CodingKeys: String, CodingKey {
         case kind
         case profileID = "profile_id"
+        case id
         case workspaceID = "workspace_id"
         case conversationID = "conversation_id"
         case turnID = "turn_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.kind = try container.decode(String.self, forKey: .kind)
+        if let profileID = try container.decodeIfPresent(String.self, forKey: .profileID) {
+            self.profileID = profileID
+        } else if let legacyID = try container.decodeIfPresent(String.self, forKey: .id) {
+            self.profileID = legacyID
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.profileID,
+                DecodingError.Context(codingPath: container.codingPath, debugDescription: "Missing 'profile_id' or 'id' in CoreMemoryOwner")
+            )
+        }
+        self.workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID)
+        self.conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID)
+        self.turnID = try container.decodeIfPresent(String.self, forKey: .turnID)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(profileID, forKey: .profileID)
+        try container.encodeIfPresent(workspaceID, forKey: .workspaceID)
+        try container.encodeIfPresent(conversationID, forKey: .conversationID)
+        try container.encodeIfPresent(turnID, forKey: .turnID)
     }
 }
 

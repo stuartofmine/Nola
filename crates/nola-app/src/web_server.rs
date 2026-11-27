@@ -571,6 +571,12 @@ fn generate_hex_token_32() -> String {
 }
 
 fn mobile_access_token_path() -> PathBuf {
+    if let Ok(nola_home) = std::env::var("NOLA_HOME") {
+        let trimmed = nola_home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("web/mobile-access-token");
+        }
+    }
     default_home_dir().join(".nola/web/mobile-access-token")
 }
 
@@ -846,10 +852,11 @@ fn authenticate_request(
     nonces: &Arc<Mutex<BoundedNonceCache>>,
 ) -> (bool, bool) {
     // Always validate mobile HMAC + replay if the header is present!
+    // Fail closed if an explicit X-Nola-Mobile-Auth proof fails verification.
     match validate_mobile_hmac_auth(request, method_str, full_url, raw_body, access_token, nonces) {
         MobileHmacResult::Valid => return (true, false),
         MobileHmacResult::ReplayedNonce => return (false, true),
-        MobileHmacResult::Invalid => {}
+        MobileHmacResult::Invalid => return (false, false),
         MobileHmacResult::NotPresent => {}
     }
     if is_valid_session_cookie(request, sessions) {
@@ -870,6 +877,20 @@ fn authenticate_request(
 
 fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+/// Implicit loopback trust applies ONLY to direct local Web UI requests on loopback
+/// when `NOLA_WEB_ACCESS_TOKEN` is not set. It NEVER applies to `/api/mobile/*`
+/// (paired mobile/remote host contract) or to requests supplying explicit
+/// authentication headers (`Authorization` or `X-Nola-Mobile-Auth`).
+fn compute_local_trust(
+    loopback: bool,
+    env_token_override: bool,
+    raw_path: &str,
+    has_explicit_auth: bool,
+) -> bool {
+    let is_mobile_api = raw_path == "/api/mobile" || raw_path.starts_with("/api/mobile/");
+    loopback && !env_token_override && !is_mobile_api && !has_explicit_auth
 }
 
 fn server_started_handshake_full(
@@ -2263,8 +2284,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
         return;
     }
 
-    // SEC-2: When NOLA_WEB_ACCESS_TOKEN is set (`env_token_override`), disable implicit loopback trust.
-    let local_trust = loopback && !env_token_override;
+    // SEC-2: Implicit loopback trust applies ONLY to direct local Web UI requests on loopback
+    // when NOLA_WEB_ACCESS_TOKEN is not set. Never bypass auth on `/api/mobile/*` or when
+    // explicit auth credentials (`Authorization` / `X-Nola-Mobile-Auth`) were presented.
+    let has_explicit_auth = header_value(&req, "x-nola-mobile-auth").is_some()
+        || header_value(&req, "authorization").is_some();
+    let local_trust = compute_local_trust(loopback, env_token_override, raw_path, has_explicit_auth);
     if !local_trust && path.starts_with("/api/") && !is_public_api && !req_authenticated {
         let _ = respond_json(req, 401, &json!({"error": "unauthorized"}));
         return;
@@ -5925,6 +5950,11 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .or_else(|| f.get("path"))
                             .and_then(|v| v.as_str())
                     })
+                    .or_else(|| {
+                        body.pointer("/plan/variant")
+                            .or_else(|| body.get("variant"))
+                            .and_then(|v| v.as_str())
+                    })
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(ToString::to_string);
@@ -5962,6 +5992,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .get("dest_path")
                     .or_else(|| body.get("destPath"))
                     .and_then(|v| v.as_str());
+                let _ = fs::create_dir_all(managed_local_models_dir());
                 let dest_path = confined_local_model_dest_path(requested_dest, &model_name)
                     .display()
                     .to_string();
@@ -7093,9 +7124,63 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
 
             // --- Agent Settings, Tools, Defaults & Permission Rules ---
             (Method::Get, "/api/agent/settings") => {
+                let expected_host = header_value(&req, "x-nola-expected-host-id")
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        parse_query_str(query, "expected_host_id")
+                            .or_else(|| parse_query_str(query, "expectedHostId"))
+                            .filter(|s| !s.trim().is_empty())
+                    });
+                if let Some(exp) = expected_host {
+                    if exp != host_id.as_str() {
+                        let _ = respond_api_json(
+                            req,
+                            403,
+                            &json!({
+                                "error": "host_identity_mismatch",
+                                "source_host_id": host_id
+                            }),
+                            crypto_tok,
+                        );
+                        return;
+                    }
+                }
                 let _ = respond_api_json(req, 200, &build_agent_settings_snapshot(&store, &suite), crypto_tok);
             }
             (Method::Post, "/api/agent/settings") => {
+                let expected_host = header_value(&req, "x-nola-expected-host-id")
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        parse_query_str(query, "expected_host_id")
+                            .or_else(|| parse_query_str(query, "expectedHostId"))
+                            .filter(|s| !s.trim().is_empty())
+                    })
+                    .or_else(|| {
+                        body.get("expected_host_id")
+                            .or_else(|| body.get("expectedHostId"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(ToString::to_string)
+                    });
+                if let Some(exp) = expected_host {
+                    if exp != host_id.as_str() {
+                        let _ = respond_api_json(
+                            req,
+                            403,
+                            &json!({
+                                "error": "host_identity_mismatch",
+                                "source_host_id": host_id
+                            }),
+                            crypto_tok,
+                        );
+                        return;
+                    }
+                }
                 if let Some(perm) = body.get("permission_profile").and_then(|v| v.as_str()) {
                     if let Err(err) = PermissionProfile::parse_strict(perm) {
                         let _ = respond_api_json(
@@ -9680,6 +9765,24 @@ fn is_sensitive_data_source_record(suite: &ModulesSuite, record: &Value) -> bool
     is_sensitive_local_path(&candidate)
 }
 
+fn managed_local_models_dir() -> PathBuf {
+    for key in ["NOLA_MODELS_ROOT", "NOLA_MODELS_DIR"] {
+        if let Ok(val) = std::env::var(key) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed);
+            }
+        }
+    }
+    if let Ok(nola_home) = std::env::var("NOLA_HOME") {
+        let trimmed = nola_home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("models");
+        }
+    }
+    default_home_dir().join(".nola/models")
+}
+
 fn confined_local_model_dest_path(requested_dest: Option<&str>, fallback_name: &str) -> PathBuf {
     let sanitize_name = |raw: &str| -> String {
         let cleaned: String = raw
@@ -9695,7 +9798,7 @@ fn confined_local_model_dest_path(requested_dest: Option<&str>, fallback_name: &
         cleaned.trim_matches('.').to_string()
     };
     // Always ignore arbitrary directory components / absolute paths supplied by HTTP callers;
-    // extract at most a sanitized basename under `~/.nola/models/`.
+    // extract at most a sanitized basename inside the managed models directory.
     let from_req = requested_dest
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -9708,7 +9811,7 @@ fn confined_local_model_dest_path(requested_dest: Option<&str>, fallback_name: &
             (!s.is_empty() && s != "." && s != "..").then_some(s)
         })
         .unwrap_or_else(|| format!("model-{}.gguf", &new_id()[..8]));
-    default_home_dir().join(".nola/models").join(final_name)
+    managed_local_models_dir().join(final_name)
 }
 
 fn build_local_model_download_url(
@@ -15390,6 +15493,9 @@ fn resolve_static_target<'a>(
     static_dir: &'a Path,
     decoded_path: &str,
 ) -> (&'a Path, String, bool) {
+    if decoded_path == "/favicon.ico" || decoded_path == "/favicon.png" {
+        return (static_dir, "favicon.png".to_string(), false);
+    }
     if let Some(rest) = decoded_path.strip_prefix("/static/") {
         return (static_dir, rest.trim_start_matches('/').to_string(), false);
     }
@@ -16988,7 +17094,7 @@ mod tests {
 
         // 3. Local model dest_path confinement & ModelScope URL & vLLM recommend
         let confined = confined_local_model_dest_path(Some("/etc/cron.d/pwned.gguf"), "fallback");
-        assert!(confined.starts_with(default_home_dir().join(".nola/models")));
+        assert!(confined.starts_with(managed_local_models_dir()));
         assert_eq!(confined.file_name().unwrap(), "pwned.gguf");
         let ms_url = build_local_model_download_url("modelscope", "Qwen/Qwen3-8B-GGUF", Some("q4.gguf")).unwrap();
         assert!(ms_url.contains("modelscope.cn/models/Qwen/Qwen3-8B-GGUF/resolve/master/q4.gguf"));
@@ -17171,5 +17277,24 @@ mod tests {
         let wts = parse_git_worktree_porcelain("worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/.nola/worktrees/feat\nHEAD def\nbranch refs/heads/feat\n");
         assert_eq!(wts[0]["isMain"], true);
         assert_eq!(wts[1]["isMain"], false);
+    }
+
+    #[test]
+    fn mobile_api_and_explicit_auth_never_receive_implicit_loopback_trust() {
+        // Plain local Web UI request on loopback without env token override -> trusted
+        assert!(compute_local_trust(true, false, "/api/agent/settings", false));
+        assert!(compute_local_trust(true, false, "/api/scheduled-actions", false));
+
+        // `/api/mobile` and `/api/mobile/*` MUST NEVER receive implicit loopback trust
+        assert!(!compute_local_trust(true, false, "/api/mobile", false));
+        assert!(!compute_local_trust(true, false, "/api/mobile/agent/settings", false));
+        assert!(!compute_local_trust(true, false, "/api/mobile/agent/settings", true));
+
+        // Explicit Authorization or X-Nola-Mobile-Auth header disables loopback trust
+        assert!(!compute_local_trust(true, false, "/api/agent/settings", true));
+
+        // Non-loopback or env token override disables loopback trust
+        assert!(!compute_local_trust(false, false, "/api/agent/settings", false));
+        assert!(!compute_local_trust(true, true, "/api/agent/settings", false));
     }
 }

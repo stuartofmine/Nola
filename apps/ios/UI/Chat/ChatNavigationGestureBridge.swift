@@ -19,6 +19,7 @@ struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
     final class Controller: UIViewController, UIGestureRecognizerDelegate {
         var gestureEnabled: Bool = true {
             didSet {
+                attachIfNeeded()
                 recognizer?.isEnabled = gestureEnabled
             }
         }
@@ -31,23 +32,32 @@ struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
             view.isUserInteractionEnabled = false
         }
 
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            if parent != nil {
+                attachIfNeeded()
+            }
+        }
+
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
-            guard let gesture = navigationController?.interactivePopGestureRecognizer,
-                  gesture.delegate !== self else {
-                recognizer?.isEnabled = gestureEnabled
-                return
-            }
-            recognizer = gesture
-            originalDelegate = gesture.delegate
-            originallyEnabled = gesture.isEnabled
-            gesture.delegate = self
-            gesture.isEnabled = gestureEnabled
+            attachIfNeeded()
         }
 
         override func viewDidDisappear(_ animated: Bool) {
             super.viewDidDisappear(animated)
             restoreGesture()
+        }
+
+        private func attachIfNeeded() {
+            guard let gesture = navigationController?.interactivePopGestureRecognizer else { return }
+            if gesture.delegate !== self {
+                recognizer = gesture
+                originalDelegate = gesture.delegate
+                originallyEnabled = gesture.isEnabled
+                gesture.delegate = self
+            }
+            gesture.isEnabled = gestureEnabled
         }
 
         private func restoreGesture() {
@@ -62,6 +72,13 @@ struct ChatNavigationGestureBridge: UIViewControllerRepresentable {
             return navigationController.viewControllers.count > 1
                 && navigationController.transitionCoordinator == nil
                 && navigationController.presentedViewController == nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureEnabled && gestureRecognizer === recognizer
         }
     }
 }

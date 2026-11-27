@@ -157,10 +157,35 @@ extension EnvironmentValues {
     }
 }
 
+private final class MacComposerScrollView: NSScrollView {
+    override var acceptsFirstResponder: Bool {
+        guard let textView = documentView as? MacAttachmentPasteTextView else { return false }
+        return window?.firstResponder !== textView
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        if let textView = documentView as? MacAttachmentPasteTextView,
+           let window, window.firstResponder === textView {
+            return false
+        }
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      let textView = self.documentView as? MacAttachmentPasteTextView,
+                      self.window?.firstResponder === self else { return }
+                self.window?.makeFirstResponder(textView)
+            }
+        }
+        return accepted
+    }
+}
+
 struct MacComposerTextEditor: NSViewRepresentable {
     @Binding var text: String
     let conversationID: String
     let focused: FocusState<Bool>.Binding
+    var focusRequest: Int = 0
     let onPasteAttachments: () -> Bool
     let onDropAttachments: (NSPasteboard) -> Bool
     let onSubmit: () -> Void
@@ -186,7 +211,7 @@ struct MacComposerTextEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
+        let scrollView = MacComposerScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasHorizontalScroller = false
@@ -232,6 +257,7 @@ struct MacComposerTextEditor: NSViewRepresentable {
         textView.focusChangeHandler = { [weak coordinator = context.coordinator] in
             coordinator?.publishFocus($0)
         }
+        context.coordinator.textView = textView
         scrollView.documentView = textView
         return scrollView
     }
@@ -296,9 +322,56 @@ struct MacComposerTextEditor: NSViewRepresentable {
                 }
             }
         }
-        if focused.wrappedValue, !context.coordinator.nativeFocusLostAwaitingPublication,
-           textView.window?.firstResponder !== textView {
-            textView.window?.makeFirstResponder(textView)
+        let requestedFocus = context.coordinator.lastFocusRequest != focusRequest
+        if requestedFocus {
+            context.coordinator.lastFocusRequest = focusRequest
+            context.coordinator.nativeFocusLostAwaitingPublication = false
+        }
+        if requestedFocus || (focused.wrappedValue && !context.coordinator.nativeFocusLostAwaitingPublication) {
+            if textView.window?.firstResponder !== textView {
+                textView.window?.makeFirstResponder(textView)
+            }
+            if requestedFocus {
+                Self.scheduleRequestedFocusClaim(
+                    token: focusRequest,
+                    remainingPasses: 4,
+                    textView: textView,
+                    scrollView: scrollView,
+                    coordinator: context.coordinator
+                )
+            }
+        }
+    }
+
+    private static func scheduleRequestedFocusClaim(
+        token: Int,
+        remainingPasses: Int,
+        textView: MacAttachmentPasteTextView,
+        scrollView: NSScrollView,
+        coordinator: Coordinator
+    ) {
+        guard remainingPasses > 0 else { return }
+        let delay: DispatchTimeInterval
+        switch remainingPasses {
+        case 4: delay = .milliseconds(0)
+        case 3: delay = .milliseconds(15)
+        case 2: delay = .milliseconds(30)
+        default: delay = .milliseconds(50)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak textView, weak scrollView, weak coordinator] in
+            guard let textView, let scrollView, let coordinator,
+                  coordinator.lastFocusRequest == token else { return }
+            if let window = textView.window, window.firstResponder !== textView {
+                coordinator.nativeFocusLostAwaitingPublication = false
+                window.makeFirstResponder(textView)
+            }
+            scheduleRequestedFocusClaim(
+                token: token,
+                remainingPasses: remainingPasses - 1,
+                textView: textView,
+                scrollView: scrollView,
+                coordinator: coordinator
+            )
         }
     }
 
@@ -374,20 +447,30 @@ struct MacComposerTextEditor: NSViewRepresentable {
         }
 
         private var focusRevision = 0
+        weak var textView: MacAttachmentPasteTextView?
+        var lastFocusRequest = 0
         var nativeFocusLostAwaitingPublication = false
 
-        func invalidateFocusPublication() { focusRevision &+= 1 }
+        func invalidateFocusPublication() {
+            focusRevision &+= 1
+            nativeFocusLostAwaitingPublication = false
+        }
 
         func publishFocus(_ isFocused: Bool) {
             focusRevision &+= 1
             let revision = focusRevision
-            nativeFocusLostAwaitingPublication = !isFocused
+            nativeFocusLostAwaitingPublication = !isFocused && parent.focused.wrappedValue
             Task { @MainActor [weak self] in
                 await Task.yield()
                 guard let self, self.focusRevision == revision else { return }
+                if !isFocused, let textView = self.textView, textView.window?.firstResponder === textView {
+                    self.nativeFocusLostAwaitingPublication = false
+                    return
+                }
                 self.parent.focused.wrappedValue = isFocused
-                // Keep the native loss authoritative until SwiftUI observes the
-                // false binding; streaming updates must never reclaim focus.
+                if !isFocused {
+                    self.nativeFocusLostAwaitingPublication = false
+                }
             }
         }
 
@@ -445,6 +528,7 @@ struct MacComposerView: View {
     let state: MacComposerDisplayState
     let actions: MacComposerActionSink
     var composerFocused: FocusState<Bool>.Binding
+    var focusRequest: Int = 0
     var isModelConfigured = true
     var leadingControls: AnyView = AnyView(EmptyView())
     var trailingControls: AnyView = AnyView(EmptyView())
@@ -741,6 +825,7 @@ struct MacComposerView: View {
                     text: draftBinding,
                     conversationID: state.conversationID,
                     focused: composerFocused,
+                    focusRequest: focusRequest,
                     onPasteAttachments: {
                         actions.perform(.importPasteboardAttachments(
                             conversationID: state.conversationID,

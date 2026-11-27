@@ -5,6 +5,8 @@ import com.nola.data.local.db.entity.ExecutionResultEntity
 import com.nola.data.local.db.entity.ScheduledActionEntity
 import com.nola.data.repository.DataSourceDocumentInspector
 import com.nola.ui.screen.scheduled.nextScheduledAt
+import java.time.Instant
+import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -178,6 +180,47 @@ class ScheduledActionAgentContractTest {
             ZonedDateTime.parse("2026-06-15T09:00:00+09:00[Asia/Tokyo]").toInstant().toEpochMilli(),
             nextScheduledAt(onceTokyoLocal, beforeTokyo),
         )
+
+        // Local occurrence computation for daily, weekly ISO weekday, and one-time schedules.
+        val utc = ZoneId.of("UTC")
+        // 2026-11-26 is Thursday (ISO weekday 4).
+        val baseNow = Instant.parse("2026-11-26T08:00:00Z")
+        fun localAction(frequency: String, timeIso: String?, weekday: Int? = null) = ScheduledActionEntity(
+            id = "sched-local",
+            localUserId = "local",
+            name = "Local fixture",
+            url = "http://127.0.0.1:8080/status",
+            format = "url",
+            userPrompt = "Read fixture",
+            scheduleFrequency = frequency,
+            scheduledWeekday = weekday,
+            scheduledTimeIso = timeIso,
+            timezone = "UTC",
+            enabled = true,
+            backendSourceId = null,
+            createdAt = 1_000L,
+        )
+        assertEquals(
+            Instant.parse("2026-11-26T09:30:00Z"),
+            computeNextOccurrenceLocally(localAction("daily", "09:30"), utc, baseNow)?.toInstant(),
+        )
+        assertEquals(
+            Instant.parse("2026-11-27T07:15:00Z"),
+            computeNextOccurrenceLocally(localAction("daily", "07:15"), utc, baseNow)?.toInstant(),
+        )
+        assertEquals(
+            Instant.parse("2026-11-27T10:00:00Z"),
+            computeNextOccurrenceLocally(localAction("weekly", "10:00", weekday = 5), utc, baseNow)?.toInstant(),
+        )
+        assertEquals(
+            Instant.parse("2026-12-03T07:00:00Z"),
+            computeNextOccurrenceLocally(localAction("weekly", "07:00", weekday = 4), utc, baseNow)?.toInstant(),
+        )
+        assertEquals(
+            Instant.parse("2026-11-26T09:00:00Z"),
+            computeNextOccurrenceLocally(localAction("once", "2026-11-26T09:00:00"), utc, baseNow)?.toInstant(),
+        )
+        assertNull(computeNextOccurrenceLocally(localAction("once", "2026-11-26T07:00:00"), utc, baseNow))
     }
 
     @Test

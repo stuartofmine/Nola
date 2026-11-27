@@ -10,8 +10,10 @@ struct MacConversationCanvas: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var model: MacWorkspaceModel
     var composerFocused: FocusState<Bool>.Binding
+    var composerFocusRequest: Int
     var showsComposer: Bool
     var expertWorkspace: MacAgentRoomWorkspace?
+    @State private var localComposerFocusRequest = 0
     @State private var selectionRange: NSRange?
     @State private var composing = false
     @State private var caretRequest: AppleMentionEditor.Caret?
@@ -49,6 +51,7 @@ struct MacConversationCanvas: View {
     init(
         model: MacWorkspaceModel,
         composerFocused: FocusState<Bool>.Binding,
+        composerFocusRequest: Int = 0,
         showsComposer: Bool = true,
         sendToExperts: (() -> Void)? = nil,
         expertWorkspace: MacAgentRoomWorkspace? = nil,
@@ -67,6 +70,7 @@ struct MacConversationCanvas: View {
         self.onCommand = onCommand
         self.model = model
         self.composerFocused = composerFocused
+        self.composerFocusRequest = composerFocusRequest
         self.showsComposer = showsComposer
         self.expertWorkspace = expertWorkspace
         _composerActions = State(initialValue: MacComposerActionSink { action in
@@ -141,6 +145,7 @@ struct MacConversationCanvas: View {
                                     caretRequest = .init(location: next.utf16.count, before: next == previous ? nil : snapshot)
                                     selectionRange = NSRange(location: next.utf16.count, length: 0)
                                 }
+                                localComposerFocusRequest &+= 1
                                 composerFocused.wrappedValue = true
                             }
                         }
@@ -464,6 +469,7 @@ struct MacConversationCanvas: View {
                         state: model.selectedComposerState,
                         actions: composerActions,
                         composerFocused: composerFocused,
+                        focusRequest: composerFocusRequest &+ localComposerFocusRequest,
                         isModelConfigured: !modelSetupRequired,
                         leadingControls: leadingComposerControls,
                         trailingControls: trailingComposerControls,
@@ -608,6 +614,7 @@ struct MacConversationCanvas: View {
                 caretRequest = .init(location: inserted.caret, before: previous)
                 selectionRange = NSRange(location: inserted.caret, length: 0)
                 highlightedExpertID = nil
+                localComposerFocusRequest &+= 1
                 composerFocused.wrappedValue = true
             } catch MacExpertMentionPreparationError.reintroductionRequired {
                 guard model.selectedComposerState.conversationID == intent.owner else { return }
@@ -623,6 +630,7 @@ struct MacConversationCanvas: View {
     }
     private func completeCommand(_ id: String) {
         model.setDraft("/" + id + " ", conversationID: model.selectedComposerState.conversationID)
+        localComposerFocusRequest &+= 1
         composerFocused.wrappedValue = true
     }
     private func handleComposerKey(_ key: String) -> Bool {

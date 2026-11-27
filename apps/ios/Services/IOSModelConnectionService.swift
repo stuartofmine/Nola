@@ -15,6 +15,42 @@ nonisolated struct IOSModelConnectionSnapshot: Codable, Identifiable, Sendable {
         let source: String
         let source_id: String?
         var enabled: Bool
+
+        init(
+            id: String,
+            display_name: String,
+            base_url: String,
+            protocols: [String],
+            account_id: String?,
+            source: String,
+            source_id: String?,
+            enabled: Bool
+        ) {
+            self.id = id
+            self.display_name = display_name
+            self.base_url = base_url
+            self.protocols = protocols
+            self.account_id = account_id
+            self.source = source
+            self.source_id = source_id
+            self.enabled = enabled
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, display_name, base_url, protocols, account_id, source, source_id, enabled
+        }
+
+        init(from decoder: Decoder) throws {
+            let v = try decoder.container(keyedBy: CodingKeys.self)
+            id = try v.decode(String.self, forKey: .id)
+            display_name = try v.decodeIfPresent(String.self, forKey: .display_name) ?? id
+            base_url = try v.decode(String.self, forKey: .base_url)
+            protocols = try v.decodeIfPresent([String].self, forKey: .protocols) ?? ["chat_completions"]
+            account_id = try v.decodeIfPresent(String.self, forKey: .account_id)
+            source = try v.decodeIfPresent(String.self, forKey: .source) ?? "manual"
+            source_id = try v.decodeIfPresent(String.self, forKey: .source_id)
+            enabled = try v.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        }
     }
     struct Catalog: Codable, Sendable { let observed_at_ms: Int64; let source: String; let models: [Model] }
     struct Model: Codable, Identifiable, Sendable {
@@ -29,6 +65,40 @@ nonisolated struct IOSModelConnectionSnapshot: Codable, Identifiable, Sendable {
         let execution_capabilities: AgentCoreJSONValue?
         var id: String { `protocol` + ":" + model_id }
     }
+
+    init(revision: Int64, document: Document) {
+        self.revision = revision
+        self.document = document
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case revision, document, connection, catalog
+    }
+
+    init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        if let document = try v.decodeIfPresent(Document.self, forKey: .document) {
+            self.revision = try v.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+            self.document = document
+            return
+        }
+        if let wrapped = try v.decodeIfPresent(Connection.self, forKey: .connection) {
+            self.revision = try v.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+            let catalog = try v.decodeIfPresent(Catalog.self, forKey: .catalog)
+            self.document = Document(format_version: 1, connection: wrapped, catalog: catalog)
+            return
+        }
+        let flat = try Connection(from: decoder)
+        let catalog = try v.decodeIfPresent(Catalog.self, forKey: .catalog)
+        self.revision = try v.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        self.document = Document(format_version: 1, connection: flat, catalog: catalog)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var v = encoder.container(keyedBy: CodingKeys.self)
+        try v.encode(revision, forKey: .revision)
+        try v.encode(document, forKey: .document)
+    }
 }
 nonisolated struct IOSModelAccountSnapshot: Codable, Identifiable, Sendable {
     let revision: Int64
@@ -37,6 +107,33 @@ nonisolated struct IOSModelAccountSnapshot: Codable, Identifiable, Sendable {
     struct Account: Codable, Sendable {
         let id: String; let display_name: String; let source: String
         let credential_ref: String?; let state: String
+    }
+
+    init(revision: Int64, account: Account) {
+        self.revision = revision
+        self.account = account
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case revision, account
+    }
+
+    init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        if let account = try v.decodeIfPresent(Account.self, forKey: .account) {
+            self.revision = try v.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+            self.account = account
+            return
+        }
+        let flat = try Account(from: decoder)
+        self.revision = try v.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        self.account = flat
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var v = encoder.container(keyedBy: CodingKeys.self)
+        try v.encode(revision, forKey: .revision)
+        try v.encode(account, forKey: .account)
     }
 }
 
@@ -60,8 +157,46 @@ nonisolated final class IOSModelConnectionService: Sendable {
         let value = try application.executeAgentCommand(.object(["type": .string("model"), "command": .object(command)]))
         return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
-    func connections() throws -> [IOSModelConnectionSnapshot] { try command(["type": .string("list_connections")]) }
-    func accounts() throws -> [IOSModelAccountSnapshot] { try command(["type": .string("list_accounts")]) }
+    private func decodeCollection<T: Decodable>(_ value: AgentCoreJSONValue, wrapperKeys: [String]) throws -> [T] {
+        let elements: [AgentCoreJSONValue]
+        switch value {
+        case .array(let array):
+            elements = array
+        case .object(let fields):
+            var matched: [AgentCoreJSONValue]? = nil
+            for key in wrapperKeys {
+                if case .array(let array)? = fields[key] {
+                    matched = array
+                    break
+                }
+            }
+            elements = matched ?? []
+        default:
+            throw IOSApplicationRuntimeError.invalidResponse
+        }
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        return elements.compactMap { item in
+            guard let data = try? encoder.encode(item) else { return nil }
+            return try? decoder.decode(T.self, from: data)
+        }
+    }
+
+    func connections() throws -> [IOSModelConnectionSnapshot] {
+        let value = try application.executeAgentCommand(.object([
+            "type": .string("model"),
+            "command": .object(["type": .string("list_connections")])
+        ]))
+        return try decodeCollection(value, wrapperKeys: ["connections", "items"])
+    }
+
+    func accounts() throws -> [IOSModelAccountSnapshot] {
+        let value = try application.executeAgentCommand(.object([
+            "type": .string("model"),
+            "command": .object(["type": .string("list_accounts")])
+        ]))
+        return try decodeCollection(value, wrapperKeys: ["accounts", "items"])
+    }
     func enabledModels(connectionID: String) throws -> Set<String> {
         Set(try application.listModelProfiles().compactMap { profile in
             guard profile.enabled, profile.deletedAtMs == nil,
@@ -135,14 +270,71 @@ nonisolated final class IOSModelConnectionService: Sendable {
         }
         // Core commits the account, manual model catalog, and enabled profile together.
         // A hand-entered model ID never requires a /models request or a probe.
-        return try command(["type": .string("import_connection"), "input": .object([
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let snapshot: IOSModelConnectionSnapshot = try command(["type": .string("import_connection"), "input": .object([
             "id": .string(id), "display_name": .string(displayName), "base_url": .string(endpoint),
             "protocols": .array([.string(wireProtocol)]), "account_id": accountID.map { .string($0) } ?? .null,
             "source": .string("manual"), "source_id": .null, "enabled": .bool(true)]),
             "expected_revision": previous.map { .signedInteger($0.revision) } ?? .null,
             "account": account, "expected_account_revision": .null,
             "models": .array(entries),
-            "enable_models": .bool(true), "updated_at_ms": now])
+            "enable_models": .bool(true), "updated_at_ms": .signedInteger(nowMs)])
+        if case .object = account, let accountID {
+            let existingAccount: IOSModelAccountSnapshot? = try? command(["type": .string("get_account"), "id": .string(accountID)])
+            if existingAccount == nil {
+                let _: AgentCoreJSONValue = try command([
+                    "type": .string("save_account"),
+                    "input": account,
+                    "expected_revision": .null,
+                    "updated_at_ms": .signedInteger(nowMs)
+                ])
+            }
+        }
+        let hasProfile = (try? application.listModelProfiles().contains(where: { profile in
+            guard profile.enabled, profile.deletedAtMs == nil,
+                  let source = try? JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any] else { return false }
+            return source["connectionID"] as? String == snapshot.id
+                && profile.modelName == modelID
+                && source["wireProtocol"] as? String == wireProtocol
+        })) ?? false
+        if !hasProfile {
+            var sourceObject: [String: Any] = [
+                "baseURL": endpoint,
+                "wireProtocol": wireProtocol,
+                "connectionID": snapshot.id,
+                "catalogKey": "\(wireProtocol):\(modelID)",
+                "capabilities": ["chat"]
+            ]
+            if let discovered = discoveredModel, discovered.id == modelID,
+               let catalogBytes = try? discovered.catalogData(wireProtocol: wireProtocol),
+               let catalogObj = try? JSONSerialization.jsonObject(with: catalogBytes) as? [String: Any],
+               let caps = catalogObj["execution_capabilities"], !(caps is NSNull) {
+                sourceObject["executionCapabilities"] = caps
+            }
+            let sourceData = try JSONSerialization.data(withJSONObject: sourceObject, options: [.sortedKeys])
+            let sourceJSON = String(decoding: sourceData, as: UTF8.self)
+            let defaultParams = (try? JSONEncoder().encode(ModelParameters.defaults(isLocal: false)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let providerName = wireProtocol == "anthropic" ? "anthropic" : "openai"
+            let profileDisplayName = (discoveredModel?.id == modelID ? discoveredModel?.displayName : nil) ?? modelID
+            let profileID = "conn:\(snapshot.id):\(wireProtocol):\(modelID)"
+            try application.upsertModelProfile(IOSCanonicalModelProfile(
+                id: profileID,
+                displayName: profileDisplayName,
+                provider: providerName,
+                modelName: modelID,
+                runtime: "remote",
+                sourceJSON: sourceJSON,
+                parametersJSON: defaultParams,
+                selected: false,
+                enabled: true,
+                revision: 1,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                deletedAtMs: nil
+            ))
+        }
+        return snapshot
     }
 
     /// Explicitly configure another API route. Never replace the old route or

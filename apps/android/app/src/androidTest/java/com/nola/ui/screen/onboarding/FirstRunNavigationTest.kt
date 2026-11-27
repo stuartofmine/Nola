@@ -114,6 +114,13 @@ class FirstRunNavigationTest {
                             compose.waitUntil(5_000) { compose.onNodeWithText(context.getString(R.string.models_desktop_bridge)).isDisplayed() }
                             capture("host-connections")
                             compose.onNodeWithText(context.getString(R.string.models_service_tab)).performTouchInput { click() }
+                            compose.waitUntil(15_000) {
+                                compose.onAllNodesWithTag("model.setup.endpoint").fetchSemanticsNodes().isNotEmpty() ||
+                                    compose.onAllNodesWithTag("models.connection.api").fetchSemanticsNodes().isNotEmpty()
+                            }
+                            if (compose.onAllNodesWithTag("model.setup.endpoint").fetchSemanticsNodes().isEmpty()) {
+                                compose.onNodeWithTag("models.connection.api").performTouchInput { click() }
+                            }
                             waitForScreen("model.setup.endpoint")
                             capture("service-address")
                             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)

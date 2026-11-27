@@ -253,6 +253,7 @@ final class MacTranscriptScrollController {
         }
         let shouldAnimate = animatesNextReconcile
             && intent == .latest
+            && scrollView.window != nil
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         animatesNextReconcile = false
         guard abs(clip.bounds.origin.y - targetY) > 0.5 else { return }

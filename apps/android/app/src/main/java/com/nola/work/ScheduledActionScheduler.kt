@@ -88,38 +88,34 @@ class ScheduledActionScheduler @Inject constructor(
     }
 
     private fun nextOccurrence(action: ScheduledActionEntity): ZonedDateTime {
-        val zone=ZoneId.of(action.timezone.ifBlank {"UTC"})
-        val now=Instant.now().toEpochMilli()
-        val result=application.executeQuery(kotlinx.serialization.json.buildJsonObject {
-            put("type","query_automation_occurrences");put("input",kotlinx.serialization.json.buildJsonObject {
-                put("automation_id",action.id);put("timezone",zone.id);put("frequency",action.scheduleFrequency)
-                put("time",action.scheduledTimeIso?.let({ kotlinx.serialization.json.JsonPrimitive(it) }) ?: kotlinx.serialization.json.JsonNull)
-                put("weekday",action.scheduledWeekday?.let({ kotlinx.serialization.json.JsonPrimitive(it) }) ?: kotlinx.serialization.json.JsonNull)
-                put("once_at_ms",parseOnceTarget(action.scheduledTimeIso,zone)?.toInstant()?.toEpochMilli()?.let({ kotlinx.serialization.json.JsonPrimitive(it) }) ?: kotlinx.serialization.json.JsonNull)
-                put("after_ms",if(action.scheduleFrequency=="once") (parseOnceTarget(action.scheduledTimeIso,zone)?.toInstant()?.toEpochMilli() ?: error("Invalid one-time date"))-1 else now)
-                put("through_ms",if(action.scheduleFrequency=="once") maxOf(now,parseOnceTarget(action.scheduledTimeIso,zone)?.toInstant()?.toEpochMilli() ?: now) else now+8*86_400_000L)
-                put("limit",1)
+        val zone = ZoneId.of(action.timezone.ifBlank { "UTC" })
+        val nowInstant = Instant.now()
+        val now = nowInstant.toEpochMilli()
+        val onceTarget = parseOnceTarget(action.scheduledTimeIso, zone)
+        val result = application.executeQuery(kotlinx.serialization.json.buildJsonObject {
+            put("type", "query_automation_occurrences")
+            put("input", kotlinx.serialization.json.buildJsonObject {
+                put("automation_id", action.id)
+                put("timezone", zone.id)
+                put("frequency", action.scheduleFrequency)
+                put("time", action.scheduledTimeIso?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+                put("weekday", action.scheduledWeekday?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+                put("once_at_ms", onceTarget?.toInstant()?.toEpochMilli()?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
+                put("after_ms", if (action.scheduleFrequency == "once") (onceTarget?.toInstant()?.toEpochMilli() ?: error("Invalid one-time date")) - 1 else now)
+                put("through_ms", if (action.scheduleFrequency == "once") maxOf(now, onceTarget?.toInstant()?.toEpochMilli() ?: now) else now + 8 * 86_400_000L)
+                put("limit", 1)
             })
         }).jsonObject
-        val occurrence=result.getValue("occurrences").jsonArray.firstOrNull() ?: error("The schedule has no future occurrence")
-        return Instant.ofEpochMilli(occurrence.jsonObject.getValue("scheduled_for_ms").jsonPrimitive.long).atZone(zone)
-    }
-
-    private fun parseOnceTarget(value: String?, zone: ZoneId): ZonedDateTime? {
-        if (value.isNullOrBlank()) return null
-        return runCatching { ZonedDateTime.parse(value).withZoneSameInstant(zone) }.getOrNull()
-            ?: runCatching { OffsetDateTime.parse(value).atZoneSameInstant(zone) }.getOrNull()
-            ?: runCatching { LocalDateTime.parse(value).atZone(zone) }.getOrNull()
-    }
-
-    private fun parseTime(value: String?): LocalTime? {
-        if (value.isNullOrBlank()) return null
-        return try {
-            LocalTime.parse(value)
-        } catch (_: DateTimeParseException) {
-            null
+        val queried = result["occurrences"]?.jsonArray?.firstOrNull()
+            ?.jsonObject?.get("scheduled_for_ms")?.jsonPrimitive?.longOrNull
+        if (queried != null && queried > now) {
+            return Instant.ofEpochMilli(queried).atZone(zone)
         }
+        return computeNextOccurrenceLocally(action, zone, nowInstant)
+            ?: error("The schedule has no future occurrence")
     }
+
+    private fun parseTime(value: String?): LocalTime? = parseLocalScheduleTime(value)
 
     companion object {
         private const val TAG = "scheduled_actions"
@@ -127,4 +123,59 @@ class ScheduledActionScheduler @Inject constructor(
         fun uniqueWorkName(actionId: String): String = "scheduled_action_$actionId"
         fun actionTag(actionId: String): String = "scheduled_action_id_$actionId"
     }
+}
+
+internal fun computeNextOccurrenceLocally(
+    action: ScheduledActionEntity,
+    zone: ZoneId,
+    nowInstant: Instant = Instant.now(),
+): ZonedDateTime? {
+    val nowZoned = nowInstant.atZone(zone)
+    return when (action.scheduleFrequency) {
+        "once" -> parseOnceTarget(action.scheduledTimeIso, zone)?.takeIf { it.toInstant().isAfter(nowInstant) }
+        "daily" -> {
+            val time = parseScheduleClock(action.scheduledTimeIso) ?: return null
+            var candidate = ZonedDateTime.of(nowZoned.toLocalDate(), time, zone)
+            if (!candidate.toInstant().isAfter(nowInstant)) {
+                candidate = candidate.plusDays(1)
+            }
+            candidate
+        }
+        "weekly" -> {
+            val time = parseScheduleClock(action.scheduledTimeIso) ?: return null
+            val isoWeekday = action.scheduledWeekday?.takeIf { it in 1..7 } ?: return null
+            val targetDay = DayOfWeek.of(isoWeekday)
+            val daysAhead = (targetDay.value - nowZoned.dayOfWeek.value + 7) % 7
+            var candidate = ZonedDateTime.of(nowZoned.toLocalDate().plusDays(daysAhead.toLong()), time, zone)
+            if (!candidate.toInstant().isAfter(nowInstant)) {
+                candidate = candidate.plusWeeks(1)
+            }
+            candidate
+        }
+        else -> null
+    }
+}
+
+private fun parseOnceTarget(value: String?, zone: ZoneId): ZonedDateTime? {
+    if (value.isNullOrBlank()) return null
+    return runCatching { ZonedDateTime.parse(value).withZoneSameInstant(zone) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(value).atZoneSameInstant(zone) }.getOrNull()
+        ?: runCatching { LocalDateTime.parse(value).atZone(zone) }.getOrNull()
+}
+
+private fun parseLocalScheduleTime(value: String?): LocalTime? {
+    if (value.isNullOrBlank()) return null
+    return try {
+        LocalTime.parse(value)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+}
+
+private fun parseScheduleClock(value: String?): LocalTime? {
+    parseLocalScheduleTime(value)?.let { return it }
+    val match = Regex("""(\d{1,2}):(\d{2})""").findAll(value.orEmpty()).lastOrNull() ?: return null
+    val hour = match.groupValues[1].toIntOrNull()?.takeIf { it in 0..23 } ?: return null
+    val minute = match.groupValues[2].toIntOrNull()?.takeIf { it in 0..59 } ?: return null
+    return LocalTime.of(hour, minute)
 }

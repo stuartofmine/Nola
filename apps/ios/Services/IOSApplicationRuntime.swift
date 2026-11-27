@@ -509,6 +509,61 @@ nonisolated struct IOSCanonicalSemanticMemoryRecord: Codable, Equatable {
     let retention: IOSCanonicalMemoryRetention
     let supersedes: [String]
     let provenance: IOSCanonicalMemoryProvenance
+
+    enum CodingKeys: String, CodingKey {
+        case id, owner, namespace, scope, kind, content, summary, tags
+        case confidence, importance, sensitivity, retention, supersedes, provenance
+    }
+
+    init(
+        id: String,
+        owner: CoreMemoryOwner,
+        namespace: IOSCanonicalMemoryNamespace,
+        scope: String,
+        kind: String,
+        content: String,
+        summary: String?,
+        tags: [String],
+        confidence: Double,
+        importance: Double,
+        sensitivity: String?,
+        retention: IOSCanonicalMemoryRetention,
+        supersedes: [String],
+        provenance: IOSCanonicalMemoryProvenance
+    ) {
+        self.id = id
+        self.owner = owner
+        self.namespace = namespace
+        self.scope = scope
+        self.kind = kind
+        self.content = content
+        self.summary = summary
+        self.tags = tags
+        self.confidence = confidence
+        self.importance = importance
+        self.sensitivity = sensitivity
+        self.retention = retention
+        self.supersedes = supersedes
+        self.provenance = provenance
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.owner = try container.decode(CoreMemoryOwner.self, forKey: .owner)
+        self.namespace = try container.decode(IOSCanonicalMemoryNamespace.self, forKey: .namespace)
+        self.scope = try container.decode(String.self, forKey: .scope)
+        self.kind = try container.decode(String.self, forKey: .kind)
+        self.content = try container.decode(String.self, forKey: .content)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.confidence = try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 1.0
+        self.importance = try container.decodeIfPresent(Double.self, forKey: .importance) ?? 0.5
+        self.sensitivity = try container.decodeIfPresent(String.self, forKey: .sensitivity)
+        self.retention = try container.decode(IOSCanonicalMemoryRetention.self, forKey: .retention)
+        self.supersedes = try container.decodeIfPresent([String].self, forKey: .supersedes) ?? []
+        self.provenance = try container.decode(IOSCanonicalMemoryProvenance.self, forKey: .provenance)
+    }
 }
 
 nonisolated struct IOSCanonicalMemoryCandidate: Codable, Equatable {
@@ -977,7 +1032,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
     }
 
     func upsertModelProfile(_ input: IOSCanonicalModelProfile) throws {
-        let _: Bool? = try executeOptional(ModelCommandEnvelope(command: ModelInputCommand(type: "upsert_profile", input: input)))
+        let _: AgentCoreJSONValue? = try executeOptional(ModelCommandEnvelope(command: ModelInputCommand(type: "upsert_profile", input: input)))
     }
 
     /// Publishes a complete profile against its observed revision (zero means absent).
@@ -1010,7 +1065,7 @@ nonisolated final class IOSApplicationRuntime: @unchecked Sendable {
                 case updatedAtMs = "updated_at_ms"
             }
         }
-        let _: Bool? = try executeOptional(ModelCommandEnvelope(command: Reset(
+        let _: AgentCoreJSONValue? = try executeOptional(ModelCommandEnvelope(command: Reset(
             profileIDs: profileIDs, parametersJSON: parametersJSON, updatedAtMs: updatedAtMs
         )))
     }
@@ -2734,8 +2789,10 @@ nonisolated extension ChatMemoryRecord {
 
 nonisolated extension IOSCanonicalMemoryRecord {
     var chatMemoryRecord: ChatMemoryRecord? {
-        guard record.owner == .localProfile, record.scope == "global",
-              record.namespace.kind == "custom",
+        let isLocalOwner = record.owner == .localProfile
+            || (record.owner.kind == "local_profile" && record.owner.profileID == "default")
+        guard isLocalOwner, record.scope == "global",
+              record.namespace.kind == "custom" || record.namespace.kind == "user",
               let namespaceName = record.namespace.name,
               let namespace = ChatMemoryNamespace(rawValue: namespaceName) else { return nil }
         let kind: ChatMemoryRecordKind = record.kind == "reference" ? .semantic : .procedural

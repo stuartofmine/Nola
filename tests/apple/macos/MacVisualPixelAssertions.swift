@@ -345,9 +345,15 @@ enum MacVisualPixelAssertions {
                     rowBlack += 1
                 }
 
-                // The selected-row fill deliberately has a slight blue cast in both themes.
+                // The selected-row fill and canonical Monochrome Obsidian dark surfaces
+                // (#131315, #1A1A1D, #202024, #242428, #26262A) have neutral r == g with
+                // a small blue tint (b - r <= 4) by design; flag only genuine AppKit cool gray.
                 let selectedFill = r == selection.r && g == selection.g && b == selection.b
-                let blueCast = !selectedFill && b >= g && b - r >= 4
+                let obsidianNeutral = isDark && abs(r - g) <= 1 && (b - r) <= 5
+                let isAllowedSurface = allowedBackgrounds.contains(where: {
+                    abs(r - $0.r) <= 4 && abs(g - $0.g) <= 4 && abs(b - $0.b) <= 4
+                })
+                let blueCast = !selectedFill && !obsidianNeutral && !isAllowedSurface && b >= g && b - r >= 4
                 let isLightCoolGray = !isDark && r > 215 && blueCast
                 let isDarkCoolGray = isDark && (20...55).contains(r) && blueCast
                 if isLightCoolGray || isDarkCoolGray {

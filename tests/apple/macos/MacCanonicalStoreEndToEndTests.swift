@@ -80,7 +80,9 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.35)
         let started = DispatchTime.now().uptimeNanoseconds
         let result = try healthy.execute(commandData: Data(#"{"type":"list_conversations","query":{"project_root":null,"non_empty":false,"limit":1024,"offset":0}}"#.utf8))
-        XCTAssertNotNil(try JSONSerialization.jsonObject(with: result) as? [Any])
+        let payload = try JSONSerialization.jsonObject(with: result)
+        let conversations = (payload as? [Any]) ?? ((payload as? [String: Any])?["conversations"] as? [Any])
+        XCTAssertNotNil(conversations)
         XCTAssertLessThan(Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000_000, 1)
         wait(for: [finished], timeout: 7)
     }
@@ -109,7 +111,9 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
             XCTAssertEqual(supervisor.ownedProcessIdentifier(socketURL: client.socketURL), pid)
         }
         let result = try client.execute(commandData: Data(#"{"type":"list_conversations","query":{"project_root":null,"non_empty":false,"limit":1024,"offset":0}}"#.utf8))
-        XCTAssertNotNil(try JSONSerialization.jsonObject(with: result) as? [Any])
+        let payload = try JSONSerialization.jsonObject(with: result)
+        let conversations = (payload as? [Any]) ?? ((payload as? [String: Any])?["conversations"] as? [Any])
+        XCTAssertNotNil(conversations)
     }
 
     func testOwnedProcessIgnoringTerminateIsKilledWithoutUnboundedWait() throws {
@@ -226,15 +230,14 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
         XCTAssertFalse(MacApplicationServiceSupervisor.shared.ownsProcessForTesting(socketURL: socket))
         let clientID = MacApplicationServiceClient.serviceClientID(for: database)
         // Read-only commands intentionally bypass durable admission and return a
-        // fresh result. Seed a real write admission while the product writer is
+        // fresh result. Seed a real v2 kv receipt admission while the product writer is
         // stopped so retrying it proves that recovery never reexecutes a mutation.
-        let interruptedArguments = #"{"key":"interrupted-write","updated_at_ms":1,"value_json":"true"}"#
+        let pendingReceiptJSON = #"{"protocol_version":1,"client_id":"\#(clientID)","request_id":"interrupted","received_at":"2026-09-06T00:00:00Z","status":"accepted"}"#
         let seed = Process()
         seed.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         seed.arguments = [database.path, """
-        INSERT INTO command_receipts
-        (client_id,request_id,command_type,command_json,expected_revision,status,received_at)
-        VALUES ('\(clientID)','interrupted','put_product_setting','\(interruptedArguments)',NULL,'accepted','2026-09-06T00:00:00Z');
+        INSERT INTO kv (key, value_json, updated_at_ms)
+        VALUES ('cmd_receipt:interrupted', '\(pendingReceiptJSON)', 1);
         """]
         try seed.run()
         seed.waitUntilExit()
@@ -493,6 +496,7 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
         )
 
         XCTAssertEqual(arguments, [
+            "server",
             "--database", "/tmp/nola/product.db",
             "--socket", "/tmp/nola/product.sock",
             "--parent-pid", "42",
@@ -519,7 +523,7 @@ final class MacCanonicalStoreEndToEndTests: XCTestCase {
             databaseURL: URL(fileURLWithPath: "/tmp/product.db"),
             socketURL: URL(fileURLWithPath: "/tmp/service.sock"),
             parentPID: 42
-        ), ["--database", "/tmp/product.db", "--socket", "/tmp/service.sock", "--parent-pid", "42"])
+        ), ["server", "--database", "/tmp/product.db", "--socket", "/tmp/service.sock", "--parent-pid", "42"])
     }
 
     func testStartupLockMatchesAgentHostPathAndReleasesOnClose() throws {

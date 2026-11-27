@@ -28,6 +28,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -344,7 +345,7 @@ class BottomSheetPresentationContractUiTest {
             when (sheetCase) {
                 SheetCase.ExpertManagement -> {
                     compose.waitUntil(5_000) {
-                        compose.onAllNodesWithText(compose.activity.getString(R.string.room_create_agent)).fetchSemanticsNodes().isNotEmpty()
+                        compose.onAllNodesWithTag("expert.row.agent-1").fetchSemanticsNodes().isNotEmpty()
                     }
                     compose.onNodeWithTag("expert.row.agent-1")
                         .assertAboveBottomInset(dialogBottom, simulatedBottomInsetPx.toFloat(), "ExpertManagement row")

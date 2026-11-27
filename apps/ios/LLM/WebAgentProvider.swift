@@ -2184,7 +2184,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         guard case .object(var fields) = try JSONDecoder().decode(AgentCoreJSONValue.self,
             from: JSONEncoder().encode(query)) else { throw IOSApplicationRuntimeError.invalidResponse }
         fields["operation"] = .string("task_child_window")
-        return try await pairedReadRequest(AgentCoreJSONValue.object(fields), path: "chat/conversations/\(query.parent_conversation_id)/messages",
+        return try await pairedReadRequest(AgentCoreJSONValue.object(fields), path: "chat/conversations/\(query.destination.parentConversationID)/messages",
             responseByteLimit: 4 * 1024 * 1024)
     }
 

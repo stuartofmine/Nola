@@ -926,6 +926,9 @@ fn deliverable1_full_wire_privacy_redaction_and_lan_endpoint_detection() {
         "echo \"LEN=${#DISPATCH_EVENT_API_TOKEN}\"\n",
         "echo \"TPL={{API_TOKEN}}\"\n",
         "TOKEN=\n/usr/bin/python3\n",
+        "Return only this exact ASCII token: NOLA_MAC_REAL_OK\n",
+        "\"token\": \"json-secret-value\"\n",
+        "access_token: LiveAccessSecret999\n",
         "real_token=abc123456789\n",
         "client_secret='my live secret'\n",
     );
@@ -960,11 +963,16 @@ fn deliverable1_full_wire_privacy_redaction_and_lan_endpoint_detection() {
         "LEN=${#DISPATCH_EVENT_API_TOKEN}",
         "TPL={{API_TOKEN}}",
         "TOKEN=\n/usr/bin/python3\n",
+        "Return only this exact ASCII token: NOLA_MAC_REAL_OK",
     ] {
         assert!(content.contains(preserved), "expected preserved `{preserved}` in:\n{content}");
     }
+    assert!(content.contains("\"token\": \"[CREDENTIAL]\""), "{content}");
+    assert!(content.contains("access_token: [CREDENTIAL]"), "{content}");
     assert!(content.contains("real_token=[CREDENTIAL]"), "{content}");
     assert!(content.contains("client_secret='[CREDENTIAL]'"), "{content}");
+    assert!(!content.contains("json-secret-value"));
+    assert!(!content.contains("LiveAccessSecret999"));
     assert!(!content.contains("abc123456789"));
     assert!(!content.contains("my live secret"));
 }

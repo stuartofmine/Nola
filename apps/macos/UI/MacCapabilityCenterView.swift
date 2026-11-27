@@ -70,7 +70,13 @@ struct MacCapabilityCenterView: View {
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(MacDesignColor.brand.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(
+                        NolaSurfaceBackground(
+                            fill: MacDesignColor.subtleFill,
+                            border: MacDesignColor.borderSubtle,
+                            cornerRadius: 12
+                        )
+                    )
                 }
                 .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
                 .padding(.vertical, MacDesignTokens.Spacing.xl)
@@ -185,16 +191,14 @@ struct MacCapabilityCenterView: View {
                 } label: {
                     Label(macCapabilityText("mac.capabilities.review_access", "Review Access"), systemImage: "lock.open")
                 }
-                .controlSize(.regular)
-                .buttonStyle(.bordered)
+                .buttonStyle(MacActionButtonStyle())
             } else {
                 Button {
                     service.request(capability.kind)
                 } label: {
                     Label(macCapabilityText("mac.capabilities.open_settings", "Open Settings"), systemImage: "gear")
                 }
-                .controlSize(.regular)
-                .buttonStyle(.bordered)
+                .buttonStyle(MacActionButtonStyle())
             }
         }
     }
@@ -209,7 +213,7 @@ struct MacCapabilityCenterView: View {
 
     private func statusColor(_ state: MacCapabilityState) -> Color {
         switch state {
-        case .ready: return .green
+        case .ready: return MacDesignColor.success
         case .permissionRequired: return .secondary
         case .optional: return .secondary
         }

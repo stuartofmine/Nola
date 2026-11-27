@@ -515,7 +515,7 @@ struct DataSourcesView: View {
                 await refreshDataSources(force: true, showErrors: true)
             }
             .accessibilityIdentifier("data.center.screen")
-            .background(DesignTokens.backgroundColor)
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .navigationTitle(L10n.dataSourcesTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

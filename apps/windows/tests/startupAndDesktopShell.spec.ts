@@ -131,7 +131,7 @@ test("startupPageHtml enforces Warm Paper/Ink tokens, WCAG contrast, layout boun
 
             if (item.forcedColors !== "active") {
                 const expectedBodyBg = item.scheme === "dark" ? "rgb(11, 11, 12)" : "rgb(250, 250, 250)";
-                const expectedCardBg = item.scheme === "dark" ? "rgb(20, 20, 23)" : "rgb(255, 255, 255)";
+                const expectedCardBg = item.scheme === "dark" ? "rgb(19, 19, 21)" : "rgb(255, 255, 255)";
                 const styles = await page.evaluate(() => ({
                     bodyBg: getComputedStyle(document.body).backgroundColor,
                     cardBg: getComputedStyle(document.querySelector(".card")!).backgroundColor,
@@ -347,7 +347,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
         await action('01-create-conversation', () => page.getByRole('button', {name:'New conversation', exact:true}).click(),
             async () => {
                 await expect(composer).toBeEnabled();
-                await expect(page.getByRole('tab', {name:'New conversation', exact:true})).toHaveAttribute('aria-selected','true');
+                await expect(page.getByRole('tab', {name:/^New conversation$/i})).toHaveAttribute('aria-selected','true');
             });
         await action('02-enter-draft', () => composer.fill('Windows desktop shell roundtrip'),
             () => expect(composer).toHaveValue('Windows desktop shell roundtrip'));
@@ -382,7 +382,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
             });
             if (id === 'general') {
                 await expect(card.getByRole('alert')).toBeVisible();
-                await action('retry-login-setting', () => card.getByRole('button').click(),
+                await action('retry-login-setting', () => card.getByRole('button', { name: 'Reload' }).click(),
                     () => expect(toggle).not.toBeChecked());
                 await action('enable-login-setting', () => toggle.click(), async () => {
                     await expect(toggle).toBeChecked();
@@ -394,7 +394,7 @@ test("Windows desktop shell integration against isolated real nola web renders S
             () => expect(page.locator('[role="tab"][id$="tab-api"]')).toHaveAttribute('aria-selected','true'));
         await action('show-local-models', () => page.locator('[role="tab"][id$="tab-local"]').click(), async () => {
             await expect(page.locator('[id$="panel-local"]')).toBeVisible();
-            await expect(page.locator('[data-local-runtime-host] .desktop-native-runtime')).toHaveText('VULKAN · X64');
+            await expect(page.locator('[data-local-runtime-host] .desktop-native-runtime')).toHaveText('GPU accelerated (Vulkan)');
         });
 
         await page.setViewportSize({width:390,height:844});

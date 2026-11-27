@@ -1518,6 +1518,7 @@ final class MacWorkspaceModel {
             return .local
         }
         set {
+            guard newValue != executionHost else { return }
             commitModelConfiguration(selectionID: selectedConversation?.modelSelectionID,
                 displayName: String(localized: "Execution Host"), host: newValue, changesSelection: false)
         }
@@ -1681,6 +1682,7 @@ final class MacWorkspaceModel {
     }
 
     func restoreDefaultModelInheritance() {
+        guard selectedConversation?.modelSelectionID != nil else { return }
         commitModelConfiguration(selectionID: nil, displayName: String(localized: "Default model"))
     }
 

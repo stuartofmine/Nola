@@ -273,8 +273,16 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     .get("attachments")
                     .cloned()
                     .unwrap_or_else(|| json!([]));
-                messages.push(json!({
-                    "id": format!("msg-{}", ev.seq),
+                let msg_id = ev
+                    .payload
+                    .get("id")
+                    .or_else(|| ev.payload.get("message_id"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("msg-{}", ev.seq));
+                let mut entry = json!({
+                    "id": msg_id,
                     "seq": ev.seq,
                     "role": "user",
                     "content": text,
@@ -282,7 +290,11 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     "toolCalls": [],
                     "attachments": attachments,
                     "createdAtMs": ev.created_at_ms
-                }));
+                });
+                if let Some(parts) = ev.payload.get("parts").filter(|v| v.is_array()) {
+                    entry["parts"] = parts.clone();
+                }
+                messages.push(entry);
             }
             "assistant_message" | "chat_assistant" | "turn_completed" => {
                 let text = ev
@@ -329,8 +341,16 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     || has_tools
                     || has_expert_replies
                 {
+                    let msg_id = ev
+                        .payload
+                        .get("id")
+                        .or_else(|| ev.payload.get("message_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("msg-{}", ev.seq));
                     let mut entry = json!({
-                        "id": format!("msg-{}", ev.seq),
+                        "id": msg_id,
                         "seq": ev.seq,
                         "role": "assistant",
                         "content": text,
@@ -347,6 +367,9 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                     }
                     if let Some(u) = usage {
                         entry["usage"] = u;
+                    }
+                    if let Some(parts) = ev.payload.get("parts").filter(|v| v.is_array()) {
+                        entry["parts"] = parts.clone();
                     }
                     // WebHost emits `chat_assistant` right after `AgentEngine`'s `turn_completed`
                     // with richer `reasoning`, `toolCalls`, and `uiSurfaces`; upgrade in-place.

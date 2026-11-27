@@ -34,15 +34,26 @@ enum IOSVisualPixelAssertions {
     }
 
     private static let lightSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 250, g: 248, b: 244), // #FAFAFA Warm Paper canvas
-        RGBPixel(r: 255, g: 255, b: 255), // #FFFFFF surface
-        RGBPixel(r: 241, g: 239, b: 232)  // #F2F2F4 raised surface
+        RGBPixel(r: 250, g: 250, b: 250), // #FAFAFA Porcelain canvas
+        RGBPixel(r: 255, g: 255, b: 255), // #FFFFFF surface / elevated surface
+        RGBPixel(r: 242, g: 242, b: 244)  // #F2F2F4 subtle surface
     ]
 
     private static let darkSurfaceTargets: [RGBPixel] = [
-        RGBPixel(r: 27, g: 28, b: 26), // #0b0b0c Warm Ink canvas
-        RGBPixel(r: 34, g: 36, b: 32), // #131315 surface
-        RGBPixel(r: 41, g: 44, b: 39)  // #1a1a1d raised surface
+        RGBPixel(r: 11, g: 11, b: 12), // #0B0B0C Monochrome Obsidian canvas
+        RGBPixel(r: 19, g: 19, b: 21), // #131315 surface
+        RGBPixel(r: 26, g: 26, b: 29), // #1A1A1D subtle surface
+        RGBPixel(r: 36, g: 36, b: 40)  // #242428 elevated surface
+    ]
+
+    private static let lightNeutralAccentTargets: [RGBPixel] = [
+        RGBPixel(r: 235, g: 235, b: 239), // #EBEBEF accentSubtle
+        RGBPixel(r: 228, g: 228, b: 231)  // #E4E4E7 border
+    ]
+
+    private static let darkNeutralAccentTargets: [RGBPixel] = [
+        RGBPixel(r: 32, g: 32, b: 36), // #202024 accentSubtle
+        RGBPixel(r: 38, g: 38, b: 42)  // #26262A border
     ]
 
     static func findRepositoryRoot(from filePath: StaticString = #filePath) throws -> URL {
@@ -408,7 +419,7 @@ enum IOSVisualPixelAssertions {
                 opaqueCount += 1
                 rowOpaqueCount += 1
 
-                let isWarm = isWarmSurfacePixel(r: r, g: g, b: b, targets: surfaceTargets, tolerance: 6)
+                let isWarm = isWarmSurfacePixel(r: r, g: g, b: b, targets: surfaceTargets, tolerance: 2)
                 if isWarm { warmSurfaceCount += 1 }
                 if inTopSafe {
                     topSafeOpaque += 1
@@ -424,16 +435,22 @@ enum IOSVisualPixelAssertions {
                     rowBlackCount += 1
                 }
 
+                let neutralAccentTargets = isDark ? darkNeutralAccentTargets : lightNeutralAccentTargets
+                let isApprovedNeutral = isWarm || isWarmSurfacePixel(r: r, g: g, b: b, targets: neutralAccentTargets, tolerance: 2)
                 let isNeutralCoolGray: Bool
                 if isDark {
+                    // Monochrome Obsidian dark ramp (#0B0B0C..#26262A) naturally sits at b - r == 1..4;
+                    // flag genuine cool-blue leaks (b - r >= 6) matching XCUIElementPixelAssertions.
                     isNeutralCoolGray = abs(r - g) <= 2 && (
-                        ((22...34).contains(r) && (b - r) >= 2) ||
-                        ((35...55).contains(r) && (b - r) >= 3)
+                        ((22...34).contains(r) && (b - r) >= 6) ||
+                        ((35...55).contains(r) && (b - r) >= 6)
                     )
                 } else {
-                    isNeutralCoolGray = r > 220 && (b - r) >= 3 && abs(r - g) <= 4
+                    // Porcelain surfaces (#FAFAFA/#FFFFFF/#F2F2F4), accentSubtle (#EBEBEF), and border (#E4E4E7)
+                    // are approved tokens; flag UIKit grouped gray leaks such as #F2F2F7 (b - r == 5).
+                    isNeutralCoolGray = r > 220 && (b - r) >= 4 && abs(r - g) <= 4
                 }
-                if isNeutralCoolGray {
+                if isNeutralCoolGray && !isApprovedNeutral {
                     coolGrayCount += 1
                 }
 

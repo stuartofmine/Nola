@@ -135,8 +135,12 @@ internal fun PixelMap.assertZeroOledOrCoolGrayLeaks(
             r <= 4 && g <= 4 && b <= 4,
         )
         if (darkTheme) {
-            val hasCoolBlueBias = b > r && b > g
-            val isM3DefaultCoolDark = hasCoolBlueBias && (
+            // Canonical Nola Obsidian dark surfaces (#0B0B0C, #131315, #151517, #1A1A1D) are
+            // neutral slate tones with r == g and a slight blue delta (<= 3). Material 3 default
+            // dark surfaces (#141218, #1C1B1F, #211F26) carry a purple tint (b > r > g).
+            val isNeutralObsidianDark = r == g && (b - r) in 0..3
+            val hasM3PurpleTint = b > r && r > g && (b - g) >= 4
+            val isM3DefaultCoolDark = !isNeutralObsidianDark && hasM3PurpleTint && (
                 colorsMatchWithinTolerance(sample, Color(0xFF1C1B1F), 3) ||
                     colorsMatchWithinTolerance(sample, Color(0xFF141218), 3) ||
                     colorsMatchWithinTolerance(sample, Color(0xFF211F26), 3)

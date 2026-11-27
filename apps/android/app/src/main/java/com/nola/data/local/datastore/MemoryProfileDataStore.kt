@@ -294,6 +294,12 @@ class MemoryProfileDataStore @Inject constructor(
         secureTokenStore.pruneModelAccountSecrets(referenced)
     }
 
+    fun deleteApiModelProfile(profileId: String) {
+        modelConfiguration.delete(profileId)
+        pruneOrphanedModelSecrets()
+        revision.update { it + 1 }
+    }
+
     suspend fun addAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") {
         modelConfiguration.validateInput(endpoint, model)
         val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }

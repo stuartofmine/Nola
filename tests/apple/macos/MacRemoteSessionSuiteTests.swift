@@ -1249,7 +1249,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     let actions = pending; pending.removeAll()
                     actions.forEach { $0() }
                     try json(connection, value: [:] as [String: String])
-                case "/api/agent/settings":
+                case "/api/agent/settings", "/api/mobile/agent/settings":
                     settings += 1
                     let response: () -> Void = { [self] in
                         try? json(connection, value: modelSettings ?? ["host_identity": ["id": "fixture-host"],
@@ -1264,7 +1264,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
             guard headers["x-nola-mobile-auth"] != nil else { send(connection, status: 401, body: Data()); return }
             let envelope = try JSONSerialization.jsonObject(with: body) as! [String: Any]
             let input = try decrypt(envelope)
-            if path.hasSuffix("/submission-frontier") {
+            if path.hasSuffix("/submission-frontier") || (path.hasSuffix("/configuration") && input["action"] == nil) {
                 guard input["expected_host_id"] as? String == "fixture-host",
                       let client = input["client_id"] as? String, !client.isEmpty,
                       let conversation = input["conversation_id"] as? String else { throw MacRemoteHostError.invalidResponse }
@@ -1276,7 +1276,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     "client_id": client, "conversation_id": conversation,
                     "configuration_revision": selectionRevisions[conversation] as Any? ?? (parent == nil ? NSNull() : 1 as Any),
                     "parent_message_id": parent as Any? ?? NSNull()])
-            } else if path.hasSuffix("/execution-selection") {
+            } else if path.hasSuffix("/configuration") {
                 guard input["expected_host_id"] as? String == "fixture-host",
                       let conversation = input["conversation_id"] as? String,
                       let action = input["action"] as? [String: Any], let type = action["type"] as? String else {
@@ -1326,7 +1326,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                 }
                 catalogReads += 1
                 try encrypted(connection, result: plan)
-            } else if path.hasSuffix("/stream") {
+            } else if path.hasSuffix("/stream") || path.hasSuffix("/messages") {
                 streams += 1; requests.append(envelope)
                 decodedStreamRequests.append(input)
                 let run = input["submission_id"] as? String ?? "original"
@@ -1350,6 +1350,31 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     throw MacRemoteHostError.invalidResponse
                 }
                 runPlans[run] = plan
+                if mode == "cancel" {
+                    let identity: [String: Any] = [
+                        "source_host_id": "fixture-host",
+                        "client_id": input["client_id"] as? String ?? "",
+                        "conversation_id": input["conversationId"] as? String ?? "conversation",
+                        "submission_id": run,
+                        "user_message_id": input["user_message_id"] as? String ?? "\(run):user",
+                        "assistant_message_id": input["assistant_message_id"] as? String ?? "\(run):assistant",
+                    ]
+                    let receiptFrame: [String: Any] = [
+                        "type": "submission_receipt",
+                        "receipt": [
+                            "protocol_version": 1,
+                            "identity": identity,
+                            "request_digest": input["request_digest"] as? String ?? "",
+                            "phase": "admitted",
+                            "admission": NSNull(),
+                            "rejection_code": NSNull(),
+                        ],
+                    ]
+                    var bytes = Data("data: ".utf8)
+                    bytes.append(try JSONSerialization.data(withJSONObject: receiptFrame)); bytes.append(Data("\n\n".utf8))
+                    send(connection, body: bytes, content: "text/event-stream")
+                    return
+                }
                 var semantic = input; semantic.removeValue(forKey: "request_digest")
                 let source = try MacAssistantJournalTestFixture(conversationID: "conversation", runID: run,
                     assistantMessageID: input["assistant_message_id"] as? String ?? "\(run):assistant",
@@ -1393,7 +1418,7 @@ nonisolated final class CancellationJournalHTTPServer: @unchecked Sendable {
                     bytes.append(try JSONSerialization.data(withJSONObject: receiptFrame)); bytes.append(Data("\n\n".utf8))
                     send(connection, body: bytes, content: "text/event-stream")
                 }
-            } else if path.hasSuffix("/journal") {
+            } else if path.hasSuffix("/journal") || (path.hasSuffix("/chat/conversations") && input["operation"] != nil) {
                 var command = input
                 let operation = command.removeValue(forKey: "operation") as? String ?? ""
                 let id = (command["through"] as? [String: Any])?["identity"] as? [String: Any]

@@ -39,21 +39,26 @@ class AndroidGoalStartAdmissionTest {
         store.createConversation(owner, "Goal capture", 1, 1, buildJsonObject {
             put("modelSelectionID", "configured:$profile")
         }.toString())
-        val model = deps.modelRepository().listConfiguredModels().single { it.profileId == profile }
-        val parameters = ModelParameters(maxContextTokens = 32768, maxCompletionTokens = 1024)
-        suspend fun capture(start: Boolean) = deps.turnService().goalModelAdmission(owner, model, parameters,
-            false, parameters.responseStyle, start, false, AndroidAgentPermissionMode.Cautious)
-        val start = capture(true)
-        val config = checkNotNull(start.startConfiguration)
-        assertEquals(owner, config.getValue("session_id").jsonPrimitive.content)
-        assertTrue(config.getValue("initial_items").jsonArray.isEmpty())
-        val catalog = config.getValue("host_catalog").jsonObject.getValue("capabilities").jsonObject
-        assertTrue("A prior terminal checkpoint drops even the stop handler", "host.cancel" in catalog)
-        assertTrue(config.getValue("tools").jsonArray.isNotEmpty())
-        val invocation = config.getValue("turn_identity").jsonObject.getValue("host_invocation").jsonObject
-        start.selection.forEach { (field, value) -> assertEquals(value, invocation[field]) }
-        val resume = capture(false)
-        assertEquals(start.selection, resume.selection)
-        assertNull("Resume must keep the original frozen Goal catalog", resume.startConfiguration)
+        try {
+            val model = deps.modelRepository().listConfiguredModels().single { it.profileId == profile }
+            val parameters = ModelParameters(maxContextTokens = 32768, maxCompletionTokens = 1024)
+            suspend fun capture(start: Boolean) = deps.turnService().goalModelAdmission(owner, model, parameters,
+                false, parameters.responseStyle, start, false, AndroidAgentPermissionMode.Cautious)
+            val start = capture(true)
+            val config = checkNotNull(start.startConfiguration)
+            assertEquals(owner, config.getValue("session_id").jsonPrimitive.content)
+            assertTrue(config.getValue("initial_items").jsonArray.isEmpty())
+            val catalog = config.getValue("host_catalog").jsonObject.getValue("capabilities").jsonObject
+            assertTrue("A prior terminal checkpoint drops even the stop handler", "host.cancel" in catalog)
+            assertTrue(config.getValue("tools").jsonArray.isNotEmpty())
+            val invocation = config.getValue("turn_identity").jsonObject.getValue("host_invocation").jsonObject
+            start.selection.forEach { (field, value) -> assertEquals(value, invocation[field]) }
+            val resume = capture(false)
+            assertEquals(start.selection, resume.selection)
+            assertNull("Resume must keep the original frozen Goal catalog", resume.startConfiguration)
+        } finally {
+            runCatching { store.deleteConversation(owner) }
+            runCatching { store.deleteModelProfile(profile, System.currentTimeMillis()) }
+        }
     }
 }

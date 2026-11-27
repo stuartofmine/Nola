@@ -131,6 +131,21 @@ class AndroidModelConfiguration(private val runtime: AndroidApplicationRuntime) 
         runtime.replaceModelProfiles("openai-compatible", "remote", retained + replacement, expectedRevisions, now)
     }
 
+    fun delete(profileId: String) {
+        val catalog = runtime.listModelProfiles().filter {
+            it.provider == "openai-compatible" && it.runtime == "remote" && it.deletedAtMs == null
+        }
+        val remaining = catalog.filterNot { it.id == profileId }
+        val now = System.currentTimeMillis()
+        runtime.replaceModelProfiles(
+            "openai-compatible",
+            "remote",
+            remaining,
+            catalog.associate { it.id to it.revision },
+            now,
+        )
+    }
+
     fun clearAll() {
         val catalog = runtime.listModelProfiles().filter {
             it.provider == "openai-compatible" && it.runtime == "remote" && it.deletedAtMs == null

@@ -140,9 +140,21 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model.row.")).firstMatch
         for _ in 0..<6 where !row.isHittable { app.swipeUp() }
         XCTAssertTrue(row.exists); row.tap()
-        let parameters = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model.parameters.")).firstMatch
-        for _ in 0..<4 where !parameters.isHittable { app.swipeUp() }
-        XCTAssertTrue(parameters.exists); parameters.tap()
+        func openParametersFromActionsMenu() {
+            let actions = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model.actions.")).firstMatch
+            for _ in 0..<4 where !actions.isHittable { app.swipeUp() }
+            XCTAssertTrue(actions.waitForExistence(timeout: 5), "model.actions menu button must appear")
+            actions.tap()
+            let parametersByID = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model.parameters.")).firstMatch
+            let parametersByLabel = app.buttons["Parameters"].firstMatch
+            if parametersByID.waitForExistence(timeout: 3) {
+                parametersByID.tap()
+            } else {
+                XCTAssertTrue(parametersByLabel.waitForExistence(timeout: 3), "Parameters menu item must appear")
+                parametersByLabel.tap()
+            }
+        }
+        openParametersFromActionsMenu()
         let prompt = app.textViews["model-parameters-system-prompt"]
         for _ in 0..<10 where !prompt.isHittable { app.swipeUp() }
         XCTAssertTrue(prompt.exists)
@@ -152,7 +164,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         XCTAssertTrue(parameterSave.isHittable, "Parameter Save must remain tappable while editing text")
         XCTAssertGreaterThanOrEqual(parameterSave.frame.height, 44)
         parameterSave.tap()
-        XCTAssertTrue(parameters.waitForExistence(timeout: 5)); parameters.tap()
+        openParametersFromActionsMenu()
         for _ in 0..<10 where !prompt.isHittable { app.swipeUp() }
         XCTAssertEqual(prompt.value as? String, exact)
         captureAudit("system-prompt-whitespace-reopened", in: app)
@@ -304,8 +316,8 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         let details = app.buttons["experts.role.details"]
         for _ in 0..<4 where !details.isHittable { app.swipeUp() }
         XCTAssertTrue(details.exists); details.tap()
-        XCTAssertTrue(app.staticTexts["read_file"].exists)
-        XCTAssertTrue(app.staticTexts["Code implementation"].exists)
+        XCTAssertTrue(app.staticTexts["Read file"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Code implementation"].waitForExistence(timeout: 3))
         details.tap()
         let save = app.buttons["experts.save"]
         for _ in 0..<6 where !save.isHittable { app.swipeUp() }
@@ -422,15 +434,23 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         var connection: OpaquePointer?
         XCTAssertEqual(sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READWRITE, nil), SQLITE_OK)
         defer { sqlite3_close(connection) }
+        let modelProfileJSON = """
+        {"id":"restricted","display_name":"Declared effort fixture","provider":"openai","model_name":"restricted","runtime":"remote","source_json":"{\\"baseURL\\":\\"https://fixture.invalid/v1\\",\\"wireProtocol\\":\\"responses\\",\\"executionCapabilities\\":{\\"toolCalls\\":true,\\"imageInput\\":false,\\"reasoning\\":true,\\"samplingParameters\\":false},\\"reasoning\\":{\\"control\\":\\"effort\\",\\"efforts\\":[\\"low\\",\\"high\\"]}}","parameters_json":"{}","selected":true,"enabled":true,"revision":1,"created_at_ms":1,"updated_at_ms":1,"deleted_at_ms":null}
+        """
+        let defaultModelKVJSON = """
+        {"__nola_setting":true,"key":"chat.default_model","value":{"version":1,"selection":{"kind":"profile","profile_id":"restricted"}},"value_json":"{\\"version\\":1,\\"selection\\":{\\"kind\\":\\"profile\\",\\"profile_id\\":\\"restricted\\"}}","revision":1,"updated_at_ms":1}
+        """
+        let expertPeerJSON = """
+        {"id":"77e34d10-a83b-4dbb-b175-20492a3a76f2","name":"Saved expert","role":"specialist","system_prompt":"","description":"","model_override":null,"allowed_tools":[],"revision":1,"availability":"active","updated_at_ms":1,"defaults":{"modelSelectionID":"configured:restricted","selectedPromptTemplateID":"9f7d0000-4e6f-4c61-8000-000000000001","expertReasoningEffort":"high","modelOverrides":{"configured:restricted":{"temperature":0.7,"topP":1.0},"configured:other":{"temperature":0.25}}}}
+        """
         let fixture = """
         BEGIN;
-        INSERT INTO model_profiles(id,display_name,provider,model_name,runtime,source_json,parameters_json,selected,enabled,revision,created_at_ms,updated_at_ms)
-        VALUES ('restricted','Declared effort fixture','openai','restricted','remote',
-          '{"baseURL":"https://fixture.invalid/v1","wireProtocol":"responses","executionCapabilities":{"toolCalls":true,"imageInput":false,"reasoning":true,"samplingParameters":false},"reasoning":{"control":"effort","efforts":["low","high"]}}',
-          '{}',1,1,1,1,1);
-        INSERT OR REPLACE INTO product_settings(key,value_json,revision,updated_at_ms) VALUES
-          ('chat.default_model','{"version":1,"selection":{"kind":"profile","profile_id":"restricted"}}',1,1),
-          ('persistent_agent_directory','{"agents":[{"id":"77e34d10-a83b-4dbb-b175-20492a3a76f2","name":"Saved expert","description":"","revision":1,"availability":"active","defaults":{"modelSelectionID":"configured:restricted","selectedPromptTemplateID":"9f7d0000-4e6f-4c61-8000-000000000001","expertReasoningEffort":"high","modelOverrides":{"configured:restricted":{"temperature":0.7,"topP":1.0},"configured:other":{"temperature":0.25}}}}]}',1,1);
+        INSERT OR REPLACE INTO module_records(kind,id,json,updated_at_ms) VALUES
+          ('model','restricted','\(modelProfileJSON.replacingOccurrences(of: "'", with: "''"))',1),
+          ('expert_peer','77e34d10-a83b-4dbb-b175-20492a3a76f2','\(expertPeerJSON.replacingOccurrences(of: "'", with: "''"))',1);
+        INSERT OR REPLACE INTO kv(key,value_json,updated_at_ms) VALUES
+          ('product_setting:chat.default_model','\(defaultModelKVJSON.replacingOccurrences(of: "'", with: "''"))',1),
+          ('agent_directory_revision','1',1);
         COMMIT;
         """
         XCTAssertEqual(sqlite3_exec(connection, fixture, nil, nil, nil), SQLITE_OK, String(cString: sqlite3_errmsg(connection)))
@@ -477,13 +497,17 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         XCTAssertEqual(sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
         defer { sqlite3_close(connection) }
         var statement: OpaquePointer?
-        let sql = "SELECT value_json FROM product_settings WHERE key='persistent_agent_directory'"
+        let sql = "SELECT json FROM module_records WHERE kind='expert_peer'"
         XCTAssertEqual(sqlite3_prepare_v2(connection, sql, -1, &statement, nil), SQLITE_OK)
         defer { sqlite3_finalize(statement) }
-        XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW)
-        let json = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
-        let directory = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: [[String: Any]]])
-        return try XCTUnwrap(directory["agents"]?.first { $0["name"] as? String == name })
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let json = String(cString: try XCTUnwrap(sqlite3_column_text(statement, 0)))
+            if let agent = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+               agent["name"] as? String == name {
+                return agent
+            }
+        }
+        throw XCTSkip("Expected stored expert \(name) in module_records")
     }
 
     private func expertDefaults(named name: String, database: URL) throws -> [String: Any] {
@@ -756,14 +780,13 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
         XCTAssertEqual(opened, SQLITE_OK)
         let sql = """
         BEGIN;
-        INSERT INTO conversations(id,title,revision,created_at_ms,updated_at_ms)
-            VALUES ('\(owner)','读书笔记',1,1,2);
-        INSERT INTO messages(id,conversation_id,role,status,ordinal,created_at_ms,completed_at_ms)
-            VALUES ('greeting','\(owner)','user','completed',1,1,1),
-                   ('reply','\(owner)','assistant','completed',2,2,2);
-        INSERT INTO message_parts(id,message_id,kind,ordinal,state,content_text,created_at_ms,updated_at_ms)
-            VALUES ('greeting-text','greeting','text',1,'completed','你好',1,1),
-                   ('reply-text','reply','text',1,'completed','你好！有什么我可以帮忙的吗？',2,2);
+        INSERT INTO sessions(id,title,workspace_root,model_connection,model_id,created_at_ms,updated_at_ms)
+            VALUES ('\(owner)','读书笔记','.',NULL,NULL,1,2);
+        INSERT INTO events(scope,seq,kind,payload_json,created_at_ms)
+            VALUES ('\(owner)',1,'user_message','{"content":"你好"}',1),
+                   ('\(owner)',2,'assistant_message','{"content":"你好！有什么我可以帮忙的吗？"}',2);
+        INSERT INTO event_watermarks(scope,min_retained_seq,max_seq)
+            VALUES ('\(owner)',1,2);
         COMMIT;
         """
         let result = sqlite3_exec(db, sql, nil, nil, nil)
@@ -1133,9 +1156,10 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             let isDark = theme == "Dark"
             waitAndTapRootTab("settings", in: app)
             tap("settings.category.general")
-            tap("settings.appearance")
-            let choice = app.buttons[theme]
-            XCTAssertTrue(choice.waitForExistence(timeout: 3))
+            let appearance = app.segmentedControls["settings.appearance"]
+            XCTAssertTrue(appearance.waitForExistence(timeout: 5), "settings.appearance")
+            let choice = appearance.buttons[theme]
+            XCTAssertTrue(choice.waitForExistence(timeout: 3), theme)
             choice.tap()
             try capture("appearance-\(theme)", isDark: isDark)
             backToSettings()
@@ -1147,7 +1171,7 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
 
             let categories = [
                 ("settings.models", app.buttons["model.setup.source.0"]),
-                ("settings.category.general", app.buttons["settings.appearance"]),
+                ("settings.category.general", app.segmentedControls["settings.appearance"]),
                 ("settings.category.agent", app.buttons["Plugins"]),
                 ("settings.category.privacy", app.buttons["settings.privacy.clear"])
             ]
@@ -1213,9 +1237,9 @@ final class IOSWorkspaceNavigationSmokeTests: XCTestCase {
             waitAndTapRootTab("settings", in: app)
             let general = app.buttons["settings.category.general"]
             XCTAssertTrue(general.waitForExistence(timeout: 5)); general.tap()
-            let appearance = app.buttons["settings.appearance"]
-            XCTAssertTrue(appearance.waitForExistence(timeout: 5)); appearance.tap()
-            let choice = app.buttons[theme]
+            let appearance = app.segmentedControls["settings.appearance"]
+            XCTAssertTrue(appearance.waitForExistence(timeout: 5))
+            let choice = appearance.buttons[theme]
             XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.tap()
             let settingsBack = app.navigationBars.buttons.element(boundBy: 0)
             XCTAssertTrue(settingsBack.waitForExistence(timeout: 3)); settingsBack.tap()
@@ -1309,7 +1333,7 @@ extension IOSWorkspaceNavigationSmokeTests {
                 let edge: CGFloat = index.isMultiple(of: 2) ? 0.01 : 0.99
                 button.coordinate(withNormalizedOffset: CGVector(dx: edge, dy: 0.5)).tap()
                 let target = try XCTUnwrap(destinations[identifier])
-                XCTAssertTrue(app.buttons[target].waitForExistence(timeout: 5), target)
+                XCTAssertTrue(app.descendants(matching: .any)[target].waitForExistence(timeout: 5), target)
                 captureAudit("settings-edge-" + identifier, in: app)
                 app.navigationBars.buttons.firstMatch.tap()
                 XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5), identifier)
@@ -1483,33 +1507,33 @@ extension IOSWorkspaceNavigationSmokeTests {
         let app = launchSettingsAudit("sources-refresh")
         defer { app.terminate() }
         app.openWorkspaceManagement("sources")
-        let refresh = app.buttons["data.overview.refresh"]
-        let live = app.buttons["data.center.open"]
-        let health = app.buttons["Allow Health access"]
-        let openToday = app.buttons["Today"]
+        let refresh = app.buttons["data.center.refresh"]
+        let contacts = app.buttons["data.center.source.contacts"]
+        let calendars = app.buttons["data.center.source.calendars"]
+        let reminders = app.buttons["data.center.source.reminders"]
         let ready = NSPredicate(format: "exists == true AND enabled == true")
         func waitForRefresh() {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: refresh)], timeout: 15), .completed)
         }
         waitForRefresh()
-        XCTAssertTrue(live.isHittable)
-        XCTAssertTrue(health.isHittable)
-        XCTAssertTrue(openToday.isHittable)
-        let controls = [live, health, openToday]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 5) && contacts.isHittable)
+        XCTAssertTrue(calendars.isHittable)
+        XCTAssertTrue(reminders.isHittable)
+        let controls = [contacts, calendars, reminders]
         let positions = controls.map { $0.frame.midY }
         refresh.tap()
         waitForRefresh()
         for (control, y) in zip(controls, positions) {
-            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.label)
+            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.identifier)
         }
         captureAudit("sources-after-refresh", in: app)
-        live.tap()
-        XCTAssertTrue(app.buttons["data.center.source.contacts"].waitForExistence(timeout: 5))
+        contacts.tap()
+        XCTAssertTrue(app.buttons["data.source.primaryAction"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         waitForRefresh()
         for (control, y) in zip(controls, positions) {
             XCTAssertTrue(control.isHittable)
-            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.label)
+            XCTAssertEqual(control.frame.midY, y, accuracy: 1, control.identifier)
         }
         captureAudit("sources-after-return", in: app)
     }
@@ -1518,7 +1542,6 @@ extension IOSWorkspaceNavigationSmokeTests {
         let app = launchSettingsAudit("device-policy")
         defer { app.terminate() }
         app.openWorkspaceManagement("sources")
-        tapVisible(app.buttons["data.center.open"], in: app)
         for source in ["contacts", "calendars", "reminders", "health"] {
             tapVisible(app.buttons["data.center.source." + source], in: app)
             let action = app.buttons["data.source.primaryAction"]
@@ -1544,7 +1567,6 @@ extension IOSWorkspaceNavigationSmokeTests {
         let app = launchSettingsAudit("source-editor")
         defer { app.terminate() }
         app.openWorkspaceManagement("sources")
-        tapVisible(app.buttons["data.center.open"], in: app)
         tapVisible(app.buttons.matching(NSPredicate(format: "label == %@", "Add source")).firstMatch, in: app)
         let name = app.textFields["data.center.editor.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))

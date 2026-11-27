@@ -11,7 +11,7 @@ struct MacExecutionBackendOption: Identifiable, Hashable {
     static func fallback(id: String) -> Self {
         switch id {
         case "codex": return Self(id: id, displayName: "Codex")
-        case "claude_code": return Self(id: id, displayName: "Claude Code")
+        case "claude_code", "claude": return Self(id: id, displayName: "Claude Code")
         case "antigravity": return Self(id: id, displayName: "Antigravity")
         case "opencode": return Self(id: id, displayName: "OpenCode")
         case "nola": return Self(id: id, displayName: "Nola")

@@ -72,8 +72,62 @@ nonisolated final class MacModelConnectionService: Sendable {
         let value = try application.executeAgentRoomEnvelope(.object(["type": .string("model"), "command": .object(command)]))
         return try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
-    func connections() throws -> [MacModelConnectionSnapshot] { try command(["type": .string("list_connections")]) }
-    func accounts() throws -> [MacModelAccountSnapshot] { try command(["type": .string("list_accounts")]) }
+    func connections() throws -> [MacModelConnectionSnapshot] {
+        let value = try application.executeAgentRoomEnvelope(.object([
+            "type": .string("model"),
+            "command": .object(["type": .string("list_connections")]),
+        ]))
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+        if case .array = value {
+            return try decoder.decode([MacModelConnectionSnapshot].self, from: encoder.encode(value))
+        }
+        if case .object(let envelope) = value,
+           case .array(let items) = envelope["connections"] ?? envelope["items"] ?? .array([]) {
+            return items.compactMap { item -> MacModelConnectionSnapshot? in
+                guard Self.isConnectionRecord(item),
+                      let data = try? encoder.encode(item) else { return nil }
+                return try? decoder.decode(MacModelConnectionSnapshot.self, from: data)
+            }
+        }
+        return try decoder.decode([MacModelConnectionSnapshot].self, from: encoder.encode(value))
+    }
+
+    func accounts() throws -> [MacModelAccountSnapshot] {
+        let value = try application.executeAgentRoomEnvelope(.object([
+            "type": .string("model"),
+            "command": .object(["type": .string("list_accounts")]),
+        ]))
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+        if case .array = value {
+            return try decoder.decode([MacModelAccountSnapshot].self, from: encoder.encode(value))
+        }
+        if case .object(let envelope) = value,
+           case .array(let items) = envelope["accounts"] ?? envelope["items"] ?? .array([]) {
+            return items.compactMap { item -> MacModelAccountSnapshot? in
+                guard Self.isAccountRecord(item),
+                      let data = try? encoder.encode(item) else { return nil }
+                return try? decoder.decode(MacModelAccountSnapshot.self, from: data)
+            }
+        }
+        return try decoder.decode([MacModelAccountSnapshot].self, from: encoder.encode(value))
+    }
+
+    private static func isConnectionRecord(_ value: MacCanonicalJSONValue) -> Bool {
+        guard case .object(let dict) = value else { return false }
+        if dict["document"] != nil || dict["connection"] != nil { return true }
+        return dict["base_url"] != nil || dict["endpoint"] != nil || dict["protocols"] != nil
+    }
+
+    private static func isAccountRecord(_ value: MacCanonicalJSONValue) -> Bool {
+        guard case .object(let dict) = value else { return false }
+        if dict["account"] != nil { return true }
+        if dict["base_url"] != nil || dict["endpoint"] != nil || dict["protocols"] != nil || dict["document"] != nil {
+            return false
+        }
+        return dict["state"] != nil || dict["credential_ref"] != nil || dict["account_id"] != nil
+    }
     func enabledModels(connectionID: String) throws -> Set<String> {
         Set(try application.listModelProfiles().compactMap { profile in
             guard profile.enabled, profile.deletedAtMs == nil,
@@ -233,5 +287,136 @@ nonisolated final class MacModelConnectionService: Sendable {
             }
         }
         NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+    }
+}
+
+nonisolated extension MacModelConnectionSnapshot {
+    private enum EnvelopeKeys: String, CodingKey {
+        case revision
+        case document
+        case connection
+        case catalog
+        case capability_assessments
+        case format_version
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: EnvelopeKeys.self)
+        let revision = try container.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        if let document = try container.decodeIfPresent(Document.self, forKey: .document) {
+            self.revision = revision
+            self.document = document
+            return
+        }
+        if let connection = try container.decodeIfPresent(Connection.self, forKey: .connection) {
+            let formatVersion = try container.decodeIfPresent(Int.self, forKey: .format_version) ?? 1
+            let catalog = try container.decodeIfPresent(Catalog.self, forKey: .catalog)
+            let assessments = try container.decodeIfPresent([CapabilityAssessment].self, forKey: .capability_assessments)
+            self.revision = revision
+            self.document = Document(
+                format_version: formatVersion,
+                connection: connection,
+                catalog: catalog,
+                capability_assessments: assessments
+            )
+            return
+        }
+        let connection = try Connection(from: decoder)
+        self.revision = revision
+        self.document = Document(
+            format_version: 1,
+            connection: connection,
+            catalog: nil,
+            capability_assessments: nil
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: EnvelopeKeys.self)
+        try container.encode(revision, forKey: .revision)
+        try container.encode(document, forKey: .document)
+    }
+}
+
+nonisolated extension MacModelConnectionSnapshot.Connection {
+    private enum Keys: String, CodingKey {
+        case id
+        case display_name
+        case base_url
+        case endpoint
+        case protocols
+        case `protocol`
+        case account_id
+        case source
+        case source_id
+        case enabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Keys.self)
+        let id = try container.decode(String.self, forKey: .id)
+        guard let baseURL = try container.decodeIfPresent(String.self, forKey: .base_url)
+            ?? container.decodeIfPresent(String.self, forKey: .endpoint) else {
+            throw DecodingError.keyNotFound(
+                Keys.base_url,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Missing base_url or endpoint on model connection record."
+                )
+            )
+        }
+        let protocols: [String]
+        if let explicit = try container.decodeIfPresent([String].self, forKey: .protocols) {
+            protocols = explicit
+        } else if let single = try container.decodeIfPresent(String.self, forKey: .protocol), !single.isEmpty {
+            protocols = [single]
+        } else {
+            protocols = ["chat_completions"]
+        }
+        self.id = id
+        self.display_name = try container.decodeIfPresent(String.self, forKey: .display_name) ?? id
+        self.base_url = baseURL
+        self.protocols = protocols
+        self.account_id = try container.decodeIfPresent(String.self, forKey: .account_id)
+        self.source = try container.decodeIfPresent(String.self, forKey: .source) ?? "manual"
+        self.source_id = try container.decodeIfPresent(String.self, forKey: .source_id)
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Keys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(display_name, forKey: .display_name)
+        try container.encode(base_url, forKey: .base_url)
+        try container.encode(protocols, forKey: .protocols)
+        try container.encode(account_id, forKey: .account_id)
+        try container.encode(source, forKey: .source)
+        try container.encode(source_id, forKey: .source_id)
+        try container.encode(enabled, forKey: .enabled)
+    }
+}
+
+nonisolated extension MacModelAccountSnapshot {
+    private enum EnvelopeKeys: String, CodingKey {
+        case revision
+        case account
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: EnvelopeKeys.self)
+        let revision = try container.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        if let account = try container.decodeIfPresent(Account.self, forKey: .account) {
+            self.revision = revision
+            self.account = account
+            return
+        }
+        self.revision = revision
+        self.account = try Account(from: decoder)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: EnvelopeKeys.self)
+        try container.encode(revision, forKey: .revision)
+        try container.encode(account, forKey: .account)
     }
 }

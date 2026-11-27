@@ -85,7 +85,9 @@ class AgentRoomRepository(private val execute: (JsonObject) -> JsonElement) {
     }
     constructor(runtime: AndroidApplicationRuntime) : this({ runtime.execute(it) })
 
-    private inline fun <reified T> command(body: JsonObject, decoder: Json = Json): T = decoder.decodeFromJsonElement(
+    private val lenientJson = Json { ignoreUnknownKeys = true }
+
+    private inline fun <reified T> command(body: JsonObject, decoder: Json = lenientJson): T = decoder.decodeFromJsonElement(
         execute(buildJsonObject { put("type", "agent_room"); put("command", body) })
     )
 

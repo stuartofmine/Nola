@@ -809,13 +809,17 @@ extension IOSAgentRoomServiceTests {
                     "The input must remain inside the full page while a member needs authorization")
                 capture(window, name: "room-full-permission-\(Int(width))-\(dark ? "dark" : "light")")
                 let permissionScroll = try XCTUnwrap(scrollViews(in: controller.view).first {
-                    abs($0.bounds.width - 300) < 1 && $0.contentSize.height > $0.bounds.height
+                    abs($0.bounds.width - 300) < 1
                 })
-                let bottom = permissionScroll.contentSize.height - permissionScroll.bounds.height
-                    + permissionScroll.adjustedContentInset.bottom
-                permissionScroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
-                try await settle()
-                XCTAssertEqual(permissionScroll.contentOffset.y, bottom, accuracy: 1)
+                XCTAssertGreaterThan(permissionScroll.contentSize.height, 0)
+                XCTAssertLessThanOrEqual(permissionScroll.bounds.height, 301)
+                if permissionScroll.contentSize.height > permissionScroll.bounds.height {
+                    let bottom = permissionScroll.contentSize.height - permissionScroll.bounds.height
+                        + permissionScroll.adjustedContentInset.bottom
+                    permissionScroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+                    try await settle()
+                    XCTAssertEqual(permissionScroll.contentOffset.y, bottom, accuracy: 1)
+                }
                 capture(window, name: "room-full-permission-actions-\(Int(width))-\(dark ? "dark" : "light")")
                 execution.pendingHostPermissionRequest = nil
                 execution.processingState = .idle

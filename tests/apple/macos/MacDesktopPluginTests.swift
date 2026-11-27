@@ -43,14 +43,16 @@ final class MacDesktopPluginTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let environment = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root)
+        try environment.prepare()
         let client = MacDesktopPluginClient(environment: environment)
-        let profile = environment.databaseURL.deletingPathExtension().appendingPathExtension("plugins")
-            .appendingPathComponent("harness/dsh/profile/profiles/web")
+        let pluginsRoot = environment.scratchWorkspaceURL.appendingPathComponent(".nola/plugins", isDirectory: true)
         let realInstall = ProcessInfo.processInfo.environment["NOLA_TEST_REAL_DESKTOP_PLUGIN"] == "1"
-        let package = realInstall ? root.appendingPathComponent("board-source") : profile.appendingPathComponent("node_modules/test-board")
+        let package = realInstall
+            ? root.appendingPathComponent("board-source", isDirectory: true)
+            : pluginsRoot.appendingPathComponent("test-board", isDirectory: true)
         try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
-        let manifest = #"{"name":"test-board","version":"1.0.0","nola":{"pages":[{"id":"board","title":"Task board","entry":"board.html"},{"id":"archive","title":"Completed tasks","entry":"board.html"}]}}"#
-        try manifest.write(to: package.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+        let manifest = #"{"id":"test-board","name":"test-board","version":"1.0.0","runtime":"dsh","profile":"web","source":"test-board","pages":[{"id":"board","title":"Task board","file":"board.html"},{"id":"archive","title":"Completed tasks","file":"board.html"}]}"#
+        try manifest.write(to: package.appendingPathComponent("nola-plugin.json"), atomically: true, encoding: .utf8)
         let content = """
         <!doctype html><meta name="color-scheme" content="light dark"><style>body{font:18px system-ui;padding:32px}button{font:inherit}</style>
         <h1>Task board</h1><button id="finish">Complete task</button>
@@ -69,12 +71,9 @@ final class MacDesktopPluginTests: XCTestCase {
         </script>
         """
         try content.write(to: package.appendingPathComponent("board.html"), atomically: true, encoding: .utf8)
-        let inventory = profile.appendingPathComponent("package.json")
         if realInstall {
             let result = try await client.manage(runtime: "dsh", profile: "web", action: "install", source: package.path)
             XCTAssertTrue(result.packages.contains("test-board"))
-        } else {
-            try #"{"dependencies":{"test-board":"1.0.0"}}"#.write(to: inventory, atomically: true, encoding: .utf8)
         }
         let pages = try await client.pages()
         let page = try XCTUnwrap(pages.first { $0.title == "Task board" })
@@ -176,7 +175,7 @@ final class MacDesktopPluginTests: XCTestCase {
             let receipt = XCTAttachment(string: "Installed and removed test-board through the embedded Host and the DSH Web profile.")
             receipt.name = "Real DSH package lifecycle"; receipt.lifetime = .keepAlways; add(receipt)
         } else {
-            try #"{"dependencies":{}}"#.write(to: inventory, atomically: true, encoding: .utf8)
+            try FileManager.default.removeItem(at: package)
         }
         NotificationCenter.default.post(name: .macDesktopPluginsChanged, object: nil)
         try await wait { self.element(host, identifier) == nil && self.webView(in: host) == nil }

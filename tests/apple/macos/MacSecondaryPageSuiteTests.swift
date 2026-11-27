@@ -474,16 +474,11 @@ final class MacSecondaryPageLocalizationTests: XCTestCase {
 
     func testMacRuntimeResolvesBundledAgentHostAndLocalizedBoundaryStrings() throws {
         let executableURL = try XCTUnwrap(MacAgentHostExecutableLocator.resolve())
-        XCTAssertEqual(executableURL.lastPathComponent, "nola-agent-host")
+        XCTAssertEqual(executableURL.lastPathComponent, "nola-runtime")
         XCTAssertNotEqual(executableURL.lastPathComponent, "nola")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: executableURL.path))
 
-        let catalogURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(
-                forResource: "Localizable.xcstrings",
-                withExtension: "txt"
-            )
-        )
+        let catalogURL = try fixtureURL(for: "apps/macos/Localizable.xcstrings")
         let data = try Data(contentsOf: catalogURL)
         let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let strings = try XCTUnwrap(catalog["strings"] as? [String: Any])
@@ -1038,6 +1033,10 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         XCTAssertGreaterThan(idleFrame.width, 24)
         try capture("idle", view: host)
         try await pressIdentifier("webSources.refreshAll", in: host)
+        let requestDeadline = Date().addingTimeInterval(2)
+        while requests < 1, Date() < requestDeadline {
+            try await Task.sleep(for: .milliseconds(15))
+        }
         XCTAssertEqual(requests, 1)
         XCTAssertTrue(store.refreshingIDs.contains(source.id))
         XCTAssertEqual(try frame("webSources.refreshAll"), idleFrame)
@@ -1315,16 +1314,16 @@ final class MacSecondaryPageNavigationTests: XCTestCase {
         let app = MacAppEnvironment(applicationSupportRoot: root, cachesRoot: root.appendingPathComponent("cache"))
         try app.prepare()
         defer { try? FileManager.default.removeItem(at: root) }
-        let server = MacManagedNolaServer(environment: app, bindAddress: "127.0.0.1", port: 0)
-        defer { server.stop() }
-        await server.start()
-        guard case .ready(let info) = server.state else { return XCTFail("Isolated server is unavailable") }
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
         let suite = "sharing-settings-" + UUID().uuidString
         let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { preferences.removePersistentDomain(forName: suite) }
         preferences.set(true, forKey: MacManagedNolaServer.enabledKey)
+        let server = MacManagedNolaServer(environment: app, bindAddress: "127.0.0.1", port: 0, defaults: preferences)
+        defer { server.stop() }
+        await server.start()
+        guard case .ready(let info) = server.state else { return XCTFail("Isolated server is unavailable: \(server.state)") }
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
         let host = NSHostingView(rootView: MacSettingsView(snapshotHostState: .notConfigured, initialCategory: "connections",
             managedServer: server, connectionPasteboard: board).defaultAppStorage(preferences))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 760),

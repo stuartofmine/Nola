@@ -64,4 +64,110 @@ class CanonicalDataSourceClientTest {
         val malformed = CanonicalDataSourceClient { JsonArray(listOf(buildJsonObject { put("id", "broken") })) }
         assertTrue(runCatching { malformed.list() }.isFailure)
     }
+
+    @Test fun v2DaemonEnvelopesCreateRenameReadAndDeleteDataSource() {
+        val records = linkedMapOf<String, JsonObject>()
+        val directory = java.nio.file.Files.createTempDirectory("source-v2-roundtrip").toFile()
+        try {
+            val client = CanonicalDataSourceClient { envelope ->
+                val cmd = envelope.getValue("command").jsonObject
+                when (cmd.getValue("type").jsonPrimitive.content) {
+                    "list" -> buildJsonObject {
+                        put("kind", "data_source")
+                        put("items", JsonArray(records.values.toList()))
+                    }
+                    "get" -> records[cmd.getValue("id").jsonPrimitive.content] ?: JsonNull
+                    "create_draft" -> {
+                        val input = cmd.getValue("input").jsonObject
+                        val id = input.getValue("id").jsonPrimitive.content
+                        records[id] = input
+                        buildJsonObject { put("ok", true); put("id", id); put("record", input) }
+                    }
+                    "update_configuration" -> {
+                        val input = cmd.getValue("input").jsonObject
+                        // Mirrors v2 daemon.rs precedence: input["configuration"] takes priority over input["record"].
+                        val rec = (input["configuration"] ?: input["record"] ?: input).jsonObject
+                        val id = cmd.getValue("id").jsonPrimitive.content
+                        val merged = JsonObject(records.getValue(id) + rec)
+                        records[id] = merged
+                        buildJsonObject { put("ok", true); put("id", id); put("record", merged) }
+                    }
+                    "request_validation" -> buildJsonObject {
+                        put("ok", true)
+                        put("id", cmd.getValue("id").jsonPrimitive.content)
+                        put("status", "pending")
+                    }
+                    "record_validation" -> {
+                        val id = cmd.getValue("id").jsonPrimitive.content
+                        records[id] = JsonObject(records.getValue(id) + ("validation" to cmd))
+                        buildJsonObject { put("ok", true); put("id", id); put("validation", cmd) }
+                    }
+                    "request_refresh" -> buildJsonObject {
+                        put("ok", true)
+                        put("id", cmd.getValue("id").jsonPrimitive.content)
+                        put("status", "refresh_requested")
+                    }
+                    "record_read" -> buildJsonObject {
+                        put("ok", true)
+                        put("id", cmd.getValue("id").jsonPrimitive.content)
+                        put("recorded_at_ms", 1000L)
+                    }
+                    "set_default_enabled" -> {
+                        val id = cmd.getValue("id").jsonPrimitive.content
+                        val enabled = cmd.getValue("enabled").jsonPrimitive.boolean
+                        val updated = JsonObject(records.getValue(id) + ("default_enabled" to JsonPrimitive(enabled)))
+                        records[id] = updated
+                        buildJsonObject { put("ok", true); put("id", id); put("default_enabled", enabled); put("record", updated) }
+                    }
+                    "delete" -> {
+                        val id = cmd.getValue("id").jsonPrimitive.content
+                        val deleted = records.remove(id) != null
+                        buildJsonObject { put("ok", true); put("deleted", deleted); put("id", id) }
+                    }
+                    else -> error("Unexpected command: $cmd")
+                }
+            }
+            val adapter = AndroidCanonicalDataSources(client, directory)
+            val contract = com.nola.domain.model.DataSourceValidationContract(
+                sourceId = "src-1",
+                readerDescription = "HTTP GET -> JSON -> RawEvent",
+                format = "JSON",
+                schemaFields = listOf("reading"),
+                redactedSample = """{"reading": 25}""",
+                recordCount = 1,
+                maximumAgeMinutes = 60,
+                validationState = com.nola.domain.model.DataSourceValidationState.Verified,
+                validatedAt = 1_000L,
+                observedAt = 1_000L,
+                readRecipe = com.nola.domain.model.DataSourceReadRecipe(
+                    method = com.nola.domain.model.DataSourceReadMethod.HttpGet,
+                    operationId = "android.http.get",
+                    configurationKeys = listOf("url", "maximumBytes"),
+                    outputSchemaJson = """{"type":"object"}""",
+                ),
+            )
+            val created = com.nola.domain.model.CustomDataSourceConfig(
+                id = "src-1",
+                name = "Audit source",
+                location = "http://127.0.0.1:9999/fixture",
+                cachedContent = """{"reading": 25}""",
+                validationContract = contract,
+            )
+            adapter.save(created)
+            val listed = adapter.list()
+            assertEquals(1, listed.size)
+            assertEquals("Audit source", listed.single().name)
+            assertEquals("""{"reading": 25}""", listed.single().cachedContent)
+            assertNotNull(listed.single().validationContract)
+
+            adapter.save(listed.single().copy(name = "Audit source renamed"))
+            val renamed = adapter.list().single()
+            assertEquals("Audit source renamed", renamed.name)
+
+            adapter.delete("src-1")
+            assertTrue(adapter.list().isEmpty())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
 }

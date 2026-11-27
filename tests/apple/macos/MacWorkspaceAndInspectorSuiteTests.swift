@@ -1718,7 +1718,7 @@ final class MacInspectorInteractionTests: XCTestCase {
         let colorsetMapping: [(String, String)] = [
             ("NolaCanvas", "canvas"),
             ("NolaSurface", "surface"),
-            ("NolaSurfaceRaised", "surfaceSubtle"),
+            ("NolaSurfaceRaised", "surfaceElevated"),
             ("NolaAccentSubtle", "accentSubtle"),
             ("NolaDivider", "border"),
             ("NolaControlOutline", "outline"),

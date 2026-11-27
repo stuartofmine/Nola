@@ -584,7 +584,7 @@ final class MacCodeSigningIdentityTests: XCTestCase {
         let installer = try repositorySource("scripts/lib/install_mac_executable.sh")
         XCTAssertTrue(embed.contains(". \"${SRCROOT}/scripts/lib/install_mac_executable.sh\""))
         XCTAssertTrue(embed.contains("MACOS=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/MacOS\""))
-        for executable in ["nola-agent-host", "nola-service", "nola-mlx-runtime"] {
+        for executable in ["nola-runtime", "nola-mlx-runtime"] {
             XCTAssertTrue(embed.contains("\"$MACOS/\(executable)\" \"${CODE_SIGNING_ALLOWED:-NO}\""))
         }
         XCTAssertTrue(installer.contains("if [[ \"$sign\" == YES ]]; then"))
@@ -659,6 +659,9 @@ final class MacCodeSigningIdentityTests: XCTestCase {
     }
 
     private func projectSource() throws -> String {
+        if let source = try? repositorySource("apple/Nola.xcodeproj/project.pbxproj") {
+            return source
+        }
         let projectURL = try XCTUnwrap(
             Bundle(for: Self.self).url(
                 forResource: "NolaProject.pbxproj",

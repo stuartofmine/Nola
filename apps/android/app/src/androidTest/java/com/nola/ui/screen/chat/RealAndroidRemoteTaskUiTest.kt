@@ -212,6 +212,12 @@ class RealAndroidRemoteTaskUiTest {
     @Test fun selectDefaultHostThroughUi() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireIsolatedProductTestUser(context)
+        val prefs = PreferenceDataStore(context, SecureTokenStore(context))
+        org.junit.Assume.assumeTrue(
+            "A paired Web Host is required for remote host selection tests",
+            runBlocking { prefs.pairedWebHost() != null }
+        )
+        runBlocking { prefs.setOnboardingCompleted() }
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithContentDescription(context.getString(R.string.tab_settings)).performClick()
             compose.onNodeWithText(context.getString(R.string.models_title)).performClick()
@@ -223,6 +229,12 @@ class RealAndroidRemoteTaskUiTest {
     @Test fun coldNewConversationRestoresSelectedHostWithoutSending() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireIsolatedProductTestUser(context)
+        val prefs = PreferenceDataStore(context, SecureTokenStore(context))
+        org.junit.Assume.assumeTrue(
+            "A paired Web Host is required for remote host restoration tests",
+            runBlocking { prefs.pairedWebHost() != null }
+        )
+        runBlocking { prefs.setOnboardingCompleted() }
         ActivityScenario.launch(MainActivity::class.java).use {
             compose.onNodeWithContentDescription(context.getString(R.string.tab_chat)).performClick()
             compose.onNodeWithTag("chat.conversations.new").performClick()

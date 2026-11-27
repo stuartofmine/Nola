@@ -403,6 +403,9 @@ struct MacMarkdownView: View {
         .background(MacMarkdownInputBridge(
             input: .init(content: markdown, isStreaming: isStreaming), scheduler: presentation)
             .frame(width: 0, height: 0))
+        .onChange(of: AppleMarkdownRenderSnapshot(content: markdown, isStreaming: isStreaming)) { _, next in
+            presentation.submit(next)
+        }
         .onAppear { hasMounted = true }
         .onDisappear { presentation.cancel() }
         .transaction { $0.animation = nil }

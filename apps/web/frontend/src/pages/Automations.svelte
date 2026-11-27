@@ -56,7 +56,7 @@
         if (busy || creating) return;
         editorOpener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
         editing = action ? structuredClone($state.snapshot(action)) : undefined;
-        draft = editing ? automationEditDraft(editing) : newAutomationDraft();
+        draft = editing ? automationEditDraft(editing) : { ...newAutomationDraft(), permissionProfile: 'cautious' };
         draftBaseline = JSON.stringify(draft);
         creating = true; error = ''; workspaceInvalid = false; revisionConflict = false;
         void refreshSkills();
@@ -113,7 +113,8 @@
             return;
         }
         let body;
-        try { body = editing ? automationEditRequest(editing, draft) : automationCreateRequest(draft); } catch { error = 'automation.invalidDraft'; return; }
+        const submissionDraft = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(draft.time) ? { ...draft, time: draft.time.slice(0, 5) } : draft;
+        try { body = editing ? automationEditRequest(editing, submissionDraft) : automationCreateRequest(submissionDraft); } catch { error = 'automation.invalidDraft'; return; }
         busy = true; error = ''; notice = ''; runConversationHref = undefined;
         try {
             const result = await api<{ success: boolean; action: unknown }>(editing ? `/api/scheduled-actions/${encodeURIComponent(editing.id)}` : '/api/scheduled-actions', { method: editing ? 'PATCH' : 'POST', body: JSON.stringify(body) });

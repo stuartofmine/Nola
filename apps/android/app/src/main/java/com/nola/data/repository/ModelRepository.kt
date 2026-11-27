@@ -60,12 +60,16 @@ class ModelRepositoryImpl @Inject constructor(
     }
 
     private fun resolve(profile: CanonicalModelProfile, parameters: ModelParameters? = null): ApiModelConfig {
-        val (resolved,secret)=memoryProfileDataStore.resolveApiProfile(profile, parameters)
-        val runtime=resolved.getValue("runtime").jsonObject
-        val source=Json.parseToJsonElement(profile.sourceJson).jsonObject
-        val protocol=checkNotNull(ModelWireProtocol.fromWireValue(source.getValue("wireProtocol").jsonPrimitive.content)) {"Unsupported device model protocol"}
-        return ApiModelConfig(resolved.getValue("endpoint").jsonPrimitive.content,secret,
-            resolved.getValue("model").jsonPrimitive.content,protocol,runtime)
+        val (resolved, secret) = memoryProfileDataStore.resolveApiProfile(profile, parameters)
+        val runtime = resolved["runtime"] as? kotlinx.serialization.json.JsonObject
+        val source = Json.parseToJsonElement(profile.sourceJson).jsonObject
+        val protocol = checkNotNull(ModelWireProtocol.fromWireValue(source.getValue("wireProtocol").jsonPrimitive.content)) { "Unsupported device model protocol" }
+        val endpoint = resolved["endpoint"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: source["baseURL"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val model = resolved["model"]?.jsonPrimitive?.contentOrNull
+            ?: resolved["model_name"]?.jsonPrimitive?.contentOrNull
+            ?: profile.modelName
+        return ApiModelConfig(endpoint, secret, model, protocol, runtime)
     }
 
     override suspend fun getApiModelConfigFor(model: ModelInfo, parameters: ModelParameters?): ApiModelConfig? {

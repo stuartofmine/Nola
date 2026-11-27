@@ -67,7 +67,7 @@ final class MacDefaultModelSuiteTests: XCTestCase {
         var connection: OpaquePointer?
         XCTAssertEqual(sqlite3_open(database.path, &connection), SQLITE_OK)
         defer { sqlite3_close(connection) }
-        XCTAssertEqual(sqlite3_exec(connection, "UPDATE product_settings SET value_json='{}' WHERE key='chat.default_model'", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(connection, "UPDATE kv SET value_json = json_set(value_json, '$.value_json', '{}', '$.value', json('{}')) WHERE key = 'product_setting:chat.default_model'", nil, nil, nil), SQLITE_OK)
         XCTAssertThrowsError(try store.snapshot())
         XCTAssertEqual(try store.resolve(candidates: []), .invalidConfiguration)
         let repair = try store.rawSnapshot()
@@ -231,7 +231,7 @@ final class MacDefaultModelSuiteTests: XCTestCase {
         _ = try MacDefaultChatModelStore(application: port).set(.automatic, expectedRevision: nil, candidates: [])
         var connection: OpaquePointer?
         XCTAssertEqual(sqlite3_open(port.databaseURL.path, &connection), SQLITE_OK)
-        XCTAssertEqual(sqlite3_exec(connection, "UPDATE product_settings SET value_json='{}' WHERE key='chat.default_model'", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(connection, "UPDATE kv SET value_json = json_set(value_json, '$.value_json', '{}', '$.value', json('{}')) WHERE key = 'product_setting:chat.default_model'", nil, nil, nil), SQLITE_OK)
         sqlite3_close(connection)
         let runtime = DefaultBoundaryCaptureRuntime()
         let model = MacWorkspaceModel(canonicalRepository: MacCanonicalConversationRepository(store: port),

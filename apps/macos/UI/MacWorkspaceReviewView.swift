@@ -38,6 +38,7 @@ struct MacWorkspaceReviewView: View {
     @State private var redoCount = 0
     @State private var selectedChangeID: String?
     @State private var diff = ""
+    @State private var loadedDiffKey: String?
     @State private var isLoadingDiff = false
     @State private var diffRequestID: UUID?
     @State private var isLoading = false
@@ -186,7 +187,7 @@ struct MacWorkspaceReviewView: View {
         }
         .task(id: activePath) { await loadSnapshot() }
         .onChange(of: selectedChangeID) { _, _ in
-            Task { await loadDiff() }
+            Task { await loadDiff(force: false) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaMacTurnCheckpointsDidChange)) { _ in
             Task { await refreshCheckpointCounts() }
@@ -233,27 +234,29 @@ struct MacWorkspaceReviewView: View {
         do {
             let value = try await MacWorkspaceGitService.shared.snapshot(at: targetURL)
             snapshot = value
-            worktrees = (try? await MacWorkspaceGitService.shared.listWorktrees(at: value.repositoryURL)) ?? []
-            let counts = await MacWorkspaceGitService.shared.checkpointCounts(at: value.repositoryURL)
+            if selectedChangeID == nil || !value.changes.contains(where: { $0.id == selectedChangeID }) {
+                self.selectedChangeID = value.changes.first?.id
+            }
+            async let loadedWorktrees = (try? await MacWorkspaceGitService.shared.listWorktrees(at: value.repositoryURL)) ?? []
+            async let loadedCounts = MacWorkspaceGitService.shared.checkpointCounts(at: value.repositoryURL)
+            async let loadedSuggestion = MacWorkspaceGitService.shared.suggestedCommitMessage(for: value)
+            await loadDiff(force: true)
+            worktrees = await loadedWorktrees
+            let counts = await loadedCounts
             undoCount = counts.undo
             redoCount = counts.redo
-            let suggestion = await MacWorkspaceGitService.shared.suggestedCommitMessage(for: value)
+            let suggestion = await loadedSuggestion
             if commitMessage.isEmpty || commitMessage == lastSuggestedCommitMessage {
                 commitMessage = suggestion
             }
             lastSuggestedCommitMessage = suggestion
-            if let selectedChangeID,
-               value.changes.contains(where: { $0.id == selectedChangeID }) {
-                await loadDiff()
-            } else {
-                self.selectedChangeID = value.changes.first?.id
-            }
         } catch {
             snapshot = nil
             worktrees = []
             undoCount = 0
             redoCount = 0
             diff = ""
+            loadedDiffKey = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -688,13 +691,16 @@ struct MacWorkspaceReviewView: View {
         return .secondary
     }
 
-    private func loadDiff() async {
+    private func loadDiff(force: Bool = true) async {
         guard let snapshot, let change = selectedChange else {
             diffRequestID = nil
             diff = ""
+            loadedDiffKey = nil
             isLoadingDiff = false
             return
         }
+        let key = "\(snapshot.repositoryURL.path)::\(change.id)"
+        if !force, loadedDiffKey == key, !isLoadingDiff { return }
         let requestID = UUID()
         diffRequestID = requestID
         isLoadingDiff = true
@@ -702,10 +708,12 @@ struct MacWorkspaceReviewView: View {
             let loadedDiff = try await MacWorkspaceGitService.shared.diff(for: change, in: snapshot)
             guard diffRequestID == requestID, selectedChange?.id == change.id else { return }
             diff = loadedDiff
+            loadedDiffKey = key
             isLoadingDiff = false
         } catch {
             guard diffRequestID == requestID, selectedChange?.id == change.id else { return }
             diff = String(format: macWorkspaceReviewText("mac.workspace.diff.failed", "Unable to load diff: %@"), error.localizedDescription)
+            loadedDiffKey = nil
             isLoadingDiff = false
         }
     }
@@ -799,22 +807,25 @@ private struct MacGitDiffDetail: View {
 
             GeometryReader { viewport in
                 ScrollView([.horizontal, .vertical]) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
-                            let text = String(line)
-                            HStack(spacing: 0) {
-                                Rectangle()
-                                    .fill(lineAccent(text))
-                                    .frame(width: 3)
-                                    .padding(.trailing, 10)
-                                Text(text)
-                                    .foregroundStyle(lineColor(text))
-                                    .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
+                                let text = String(line)
+                                HStack(spacing: 0) {
+                                    Rectangle()
+                                        .fill(lineAccent(text))
+                                        .frame(width: 3)
+                                        .padding(.trailing, 10)
+                                    Text(text)
+                                        .foregroundStyle(lineColor(text))
+                                        .textSelection(.enabled)
+                                }
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .frame(maxWidth: .infinity, minHeight: 19, alignment: .leading)
+                                .background(lineBackground(text))
                             }
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .frame(maxWidth: .infinity, minHeight: 19, alignment: .leading)
-                            .background(lineBackground(text))
                         }
+                        Spacer(minLength: 0)
                     }
                     .padding(.vertical, 10)
                     .frame(

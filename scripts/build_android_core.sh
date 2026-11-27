@@ -24,19 +24,23 @@ resolve_ndk_dir() {
       return 0
     fi
   done
-  local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
-  if [[ -d "$sdk/ndk" ]]; then
-    local latest
-    latest="$(ls -1d "$sdk/ndk"/* 2>/dev/null | sort -V | tail -n 1 || true)"
-    if [[ -n "$latest" && -d "$latest/toolchains/llvm/prebuilt" ]]; then
-      printf '%s' "$latest"
-      return 0
+  for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+    if [[ -n "$sdk" && -d "$sdk/ndk" ]]; then
+      local latest
+      latest="$(ls -1d "$sdk/ndk"/* 2>/dev/null | sort -V | tail -n 1 || true)"
+      if [[ -n "$latest" && -d "$latest/toolchains/llvm/prebuilt" ]]; then
+        printf '%s' "$latest"
+        return 0
+      fi
     fi
-  fi
+  done
   return 1
 }
 
 NDK_DIR="$(resolve_ndk_dir || true)"
+if [[ -n "$NDK_DIR" ]]; then
+  export ANDROID_NDK_HOME="$NDK_DIR"
+fi
 HOST_TAG="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 [[ "$HOST_TAG" == "darwin-arm64" ]] && HOST_TAG="darwin-x86_64"
 TOOLCHAIN_BIN="${NDK_DIR}/toolchains/llvm/prebuilt/${HOST_TAG}/bin"
@@ -76,7 +80,7 @@ for abi in "${ABIS[@]}"; do
   esac
 
   if command -v cargo-ndk >/dev/null 2>&1; then
-    (cd "$ROOT" && nola_cargo ndk -t "$abi" -p "$MIN_API" -- build --locked --profile "$PROFILE" -p nola-app --lib)
+    (cd "$ROOT" && nola_cargo ndk -t "$abi" --platform "$MIN_API" -- build --locked --profile "$PROFILE" -p nola-app --lib)
   else
     [[ -x "$TOOLCHAIN_BIN/${CLANG_PREFIX}-clang" ]] || {
       echo "error: Android NDK clang not found at $TOOLCHAIN_BIN/${CLANG_PREFIX}-clang (set ANDROID_NDK_HOME or ANDROID_HOME)" >&2

@@ -219,6 +219,7 @@ export interface V2GitWorktree {
     branch: string;
     head?: string;
     isMain: boolean;
+    detached?: boolean;
     locked?: boolean;
     prunable?: boolean;
     dirty?: boolean;
@@ -2174,14 +2175,28 @@ function parseWorktreeItem(raw: unknown, idx: number): V2GitWorktree | null {
     if (!raw || typeof raw !== 'object') return null;
     const o = raw as Record<string, unknown>;
     const path = String(o.path ?? o.worktree ?? '').trim();
-    const branch = String(o.branch ?? o.ref ?? o.name ?? 'detached').trim();
-    if (!path && !branch) return null;
+    const rawBranch =
+        typeof o.branch === 'string'
+            ? o.branch.trim()
+            : typeof o.ref === 'string'
+              ? o.ref.trim()
+              : typeof o.name === 'string'
+                ? o.name.trim()
+                : '';
+    const detached =
+        o.detached === true ||
+        !rawBranch ||
+        rawBranch === '(detached)' ||
+        rawBranch === 'detached';
+    const branch = rawBranch || '(detached)';
+    if (!path && !rawBranch) return null;
     return {
         id: String(o.id ?? path ?? `${branch}-${idx}`),
         path: path || branch,
         branch,
         head: typeof o.head === 'string' ? o.head : typeof o.commit === 'string' ? o.commit : undefined,
         isMain: o.is_main === true || o.isMain === true || o.main === true,
+        detached,
         locked: o.locked === true,
         prunable: o.prunable === true,
         dirty: o.dirty === true,

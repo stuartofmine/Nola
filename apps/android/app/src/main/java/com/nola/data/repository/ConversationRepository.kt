@@ -488,6 +488,9 @@ internal fun decodeConversationSettings(settingsJson: String?): AndroidConversat
         wiki = (knowledge?.get("wikiMarkdown") as? JsonPrimitive)?.contentOrNull ?: base.wiki,
         selectedPromptTemplateId = (fields["selectedPromptTemplateID"] as? JsonPrimitive)?.contentOrNull
             ?: base.selectedPromptTemplateId,
+        permissionModeRawValue = (fields["permissionModeRawValue"] as? JsonPrimitive)?.contentOrNull
+            ?: (fields["permissionProfile"] as? JsonPrimitive)?.contentOrNull
+            ?: base.permissionModeRawValue,
     )
 }
 

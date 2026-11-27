@@ -104,7 +104,7 @@ struct ModelsView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(DesignTokens.backgroundColor)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .navigationTitle(L10n.modelsTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)

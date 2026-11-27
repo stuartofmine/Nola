@@ -163,24 +163,13 @@ fun NolaScaffold(
         val usesExpandedSideNavigation = navigationLayout == NolaNavigationLayout.ExpandedSide
 
         val showBottomBar = !usesSideNavigation && !(currentRoute == NolaTab.Chat.route && chatDetailVisible)
-        val reduceMotion = rememberReduceMotionEnabled()
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = MaterialTheme.colorScheme.background,
             contentWindowInsets = if (usesSideNavigation) WindowInsets(0) else androidx.compose.material3.ScaffoldDefaults.contentWindowInsets,
             bottomBar = {
-                AnimatedVisibility(
-                    visible = showBottomBar,
-                    enter = slideInVertically(
-                        animationSpec = nolaTween(NolaMotion.base, reduceMotion),
-                        initialOffsetY = { it },
-                    ) + fadeIn(nolaTween(NolaMotion.fast, reduceMotion)),
-                    exit = slideOutVertically(
-                        animationSpec = nolaTween(NolaMotion.fast, reduceMotion),
-                        targetOffsetY = { it },
-                    ) + fadeOut(nolaTween(NolaMotion.fast, reduceMotion)),
-                ) {
+                if (showBottomBar) {
                     NolaBottomNavigation(
                         selectedTab = selectedTab,
                         onSelect = navigateToTab

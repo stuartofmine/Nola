@@ -240,7 +240,7 @@ fn list_execution_backends_json() -> Value {
     })];
     for (id, display_name, bin) in [
         ("codex", "Codex", "codex"),
-        ("claude", "Claude Code", "claude"),
+        ("claude_code", "Claude Code", "claude"),
         ("opencode", "OpenCode", "opencode"),
     ] {
         let found = find_binary_on_path(bin);
@@ -250,6 +250,27 @@ fn list_execution_backends_json() -> Value {
         } else {
             json!(format!("{bin} binary not found on PATH"))
         };
+        let (models, default_model_id) = if available && id == "codex" {
+            (
+                json!([
+                    {
+                        "id": "gpt-5.4",
+                        "display_name": "GPT-5.4",
+                        "is_default": true,
+                        "supports_reasoning": true
+                    },
+                    {
+                        "id": "gpt-5.3-codex",
+                        "display_name": "GPT-5.3 Codex",
+                        "is_default": false,
+                        "supports_reasoning": true
+                    }
+                ]),
+                json!("gpt-5.4"),
+            )
+        } else {
+            (json!([]), Value::Null)
+        };
         backends.push(json!({
             "id": id,
             "display_name": display_name,
@@ -257,8 +278,8 @@ fn list_execution_backends_json() -> Value {
             "available": available,
             "version": Value::Null,
             "diagnostic": diagnostic,
-            "models": [],
-            "default_model_id": Value::Null,
+            "models": models,
+            "default_model_id": default_model_id,
             "capabilities": {
                 "supports_permission_bridge": false
             }
@@ -319,7 +340,87 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let db_path = opts.db_path.clone().unwrap_or_else(default_db_path);
-    let store = Store::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
+    let is_server_cmd = opts.positional.first().map(String::as_str) == Some("server");
+    let archive_incompatible_dir: Option<PathBuf> = if is_server_cmd {
+        let rest = &opts.positional[1..];
+        let mut found_dir = None;
+        let mut idx = 0;
+        while idx < rest.len() {
+            if rest[idx] == "--archive-incompatible-store" {
+                if let Some(dir) = rest.get(idx + 1) {
+                    found_dir = Some(PathBuf::from(dir));
+                }
+                idx += 2;
+            } else if let Some(val) = rest[idx].strip_prefix("--archive-incompatible-store=") {
+                found_dir = Some(PathBuf::from(val));
+                idx += 1;
+            } else {
+                idx += 1;
+            }
+        }
+        found_dir
+    } else {
+        None
+    };
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(first_err) => {
+            let err_text = first_err.to_string();
+            let is_incompatible = err_text.contains("unsupported database schema")
+                || err_text.contains("user_version")
+                || err_text.contains("incompatible")
+                || err_text.contains("file is not a database");
+            if is_server_cmd && is_incompatible {
+                if let Some(archive_dir) = archive_incompatible_dir {
+                    std::fs::create_dir_all(&archive_dir).map_err(|e| {
+                        format!(
+                            "failed to create archive directory '{}': {e}",
+                            archive_dir.display()
+                        )
+                    })?;
+                    let base_name = db_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("nola.db");
+                    for suffix in ["", "-wal", "-shm"] {
+                        let src = if suffix.is_empty() {
+                            db_path.clone()
+                        } else {
+                            PathBuf::from(format!("{}{}", db_path.display(), suffix))
+                        };
+                        if src.exists() {
+                            let dst = archive_dir.join(format!("{base_name}{suffix}"));
+                            std::fs::rename(&src, &dst)
+                                .or_else(|_| {
+                                    std::fs::copy(&src, &dst)
+                                        .and_then(|_| std::fs::remove_file(&src))
+                                })
+                                .map_err(|e| {
+                                    format!(
+                                        "failed to archive incompatible store '{}' to '{}': {e}",
+                                        src.display(),
+                                        dst.display()
+                                    )
+                                })?;
+                        }
+                    }
+                    Store::open(&db_path)
+                        .map_err(|e| format!("failed to open fresh store after archive: {e}"))?
+                } else {
+                    let failure = json!({
+                        "type": "nola.service.startup_failure",
+                        "protocol_version": 1,
+                        "code": "incompatible_canonical_store",
+                        "detail": err_text
+                    });
+                    eprintln!("{failure}");
+                    return Ok(1);
+                }
+            } else {
+                return Err(format!("failed to open store: {first_err}"));
+            }
+        }
+    };
     bind_store_vault_path(&store, &default_vault_path(&db_path))?;
     let home = Some(default_home_dir());
     let suite = Arc::new(ModulesSuite::new(store.clone(), workspace.clone(), home.clone()));
@@ -342,7 +443,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
                 return handle_sessions_cmd(&store, &opts.positional[1..], opts.json_mode)
             }
             "plugin" | "plugins" => {
-                return handle_plugin_cmd(&store, &suite, &opts.positional[1..])
+                return handle_plugin_cmd(&store, &suite, &db_path, &opts.positional[1..])
             }
             "modules" => return handle_modules_cmd(&suite, &opts.positional[1..]),
             "goal" => return handle_goal_cmd(&store, &suite, &opts, &opts.positional[1..]),
@@ -439,6 +540,8 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
 
 struct HostRunOverrides {
     session_id: Option<String>,
+    submission_id: Option<String>,
+    assistant_message_id: Option<String>,
     resume: Option<bool>,
     model_id: Option<String>,
     endpoint: Option<String>,
@@ -730,8 +833,21 @@ fn handle_run_subcommand(
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
+        let submission_id = req
+            .get("submission_id")
+            .or_else(|| req.get("run_id"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string);
+        let assistant_message_id = req
+            .get("assistant_message_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string);
         let overrides = HostRunOverrides {
             session_id,
+            submission_id,
+            assistant_message_id,
             resume,
             model_id,
             endpoint,
@@ -1245,7 +1361,7 @@ fn execute_agent_turn(
     let json_mode = opts.json_mode || opts.host_request_stdin;
 
     let run_cfg = AgentRunConfig {
-        session_id: effective_session_id,
+        session_id: effective_session_id.clone(),
         resume,
         route,
         frozen_system_blocks: frozen_blocks,
@@ -1260,13 +1376,344 @@ fn execute_agent_turn(
         force_tool_set: opts.force_tool_set,
         stream: true,
         json_schema,
-        cancel,
+        cancel: Arc::clone(&cancel),
         auto_recall_memory: !is_eval,
         inbox: None,
     };
 
     let out_lock_ev = Arc::clone(&stdout_lock);
     let mut live_session_id = a2ui_session.clone();
+    let canonical_mac_host = opts.host_request_stdin
+        && overrides
+            .as_ref()
+            .is_some_and(|o| o.submission_id.is_some() && o.assistant_message_id.is_some());
+
+    if canonical_mac_host {
+        let ov = overrides.as_ref().unwrap();
+        let conv_id = effective_session_id
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let run_id = ov.submission_id.clone().unwrap();
+        let assistant_msg_id = ov.assistant_message_id.clone().unwrap();
+        let source_host_id = crate::web_api::ensure_host_id(store);
+        let exact_key = format!("exact_run_invocation:{conv_id}:{run_id}");
+        let core_session_id = match store.get_kv(&exact_key).ok().flatten() {
+            Some(mut inv) => {
+                let csid = inv
+                    .get("core_session_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| conv_id.clone());
+                if inv.get("checkpoint_sha256").is_none_or(|v| v.is_null()) {
+                    if let Some(obj) = inv.as_object_mut() {
+                        obj.insert("core_session_id".into(), json!(csid));
+                        obj.insert("checkpoint_revision".into(), json!(1i64));
+                        obj.insert("checkpoint_event_cursor".into(), json!(0i64));
+                        obj.insert(
+                            "checkpoint_sha256".into(),
+                            json!(nola_types::sha256_hex(
+                                format!("checkpoint:{conv_id}:{run_id}").as_bytes()
+                            )),
+                        );
+                    }
+                    let _ = store.set_kv(&exact_key, &inv);
+                }
+                csid
+            }
+            None => {
+                let digest = nola_types::sha256_hex(
+                    format!("{conv_id}:{run_id}:{assistant_msg_id}").as_bytes(),
+                );
+                let ckpt_sha = nola_types::sha256_hex(
+                    format!("checkpoint:{conv_id}:{run_id}").as_bytes(),
+                );
+                let inv = json!({
+                    "conversation_id": conv_id,
+                    "run_id": run_id,
+                    "assistant_message_id": assistant_msg_id,
+                    "invocation_config_digest": digest,
+                    "status": "running",
+                    "host_invocation": {},
+                    "core_session_id": conv_id,
+                    "checkpoint_revision": 1i64,
+                    "checkpoint_event_cursor": 0i64,
+                    "checkpoint_sha256": ckpt_sha,
+                    "created_at_ms": now_ms()
+                });
+                let _ = store.set_kv(&exact_key, &inv);
+                conv_id.clone()
+            }
+        };
+        let trace_id = format!("trace-{run_id}");
+        let trace_seq = std::sync::atomic::AtomicU64::new(0);
+        let emit_line = |val: &Value| {
+            if let Ok(line) = serde_json::to_string(val) {
+                let _g = out_lock_ev.lock().unwrap();
+                println!("{line}");
+                let _ = io::stdout().flush();
+            }
+        };
+        let emit_trace = |kind: &str,
+                          status: &str,
+                          span_id: Option<&str>,
+                          payload: Value|
+         -> u64 {
+            let seq = trace_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            let frame = json!({
+                "type": kind,
+                "canonical_run_id": run_id,
+                "trace": {
+                    "schema_version": 1,
+                    "trace_id": trace_id,
+                    "run_id": run_id,
+                    "conversation_id": conv_id,
+                    "message_id": assistant_msg_id,
+                    "turn_id": run_id,
+                    "event_id": format!("{run_id}:ev:{seq}"),
+                    "sequence": seq,
+                    "emitted_at": crate::web_api::ms_to_rfc3339(now_ms()),
+                    "kind": kind,
+                    "span_id": span_id,
+                    "parent_span_id": Value::Null,
+                    "status": status,
+                    "visibility": "public",
+                    "payload": payload
+                }
+            });
+            emit_line(&frame);
+            seq
+        };
+        let mut acc_text = String::new();
+        let mut acc_reasoning = String::new();
+        let mut recorded_tools: Vec<Value> = Vec::new();
+        let mut run_state = json!({
+            "conversation_id": conv_id,
+            "run_id": run_id,
+            "assistant_message_id": assistant_msg_id,
+            "session_id": core_session_id,
+            "created_at_ms": now_ms(),
+            "journal_identity": crate::daemon::journal_identity_value(
+                store,
+                &conv_id,
+                &run_id,
+                &assistant_msg_id,
+            ),
+            "journal_seq": 0u64,
+            "sequence": 1u64,
+            "status": "running"
+        });
+        let run_res = engine.run(&ctx, prompt, run_cfg, |ev| match ev {
+            AgentEvent::SessionStarted { ref session_id, .. } => {
+                if !session_id.trim().is_empty() {
+                    live_session_id = session_id.clone();
+                }
+                emit_trace("run.started", "running", None, json!({}));
+            }
+            AgentEvent::TextDelta { ref delta } => {
+                acc_text.push_str(delta);
+            }
+            AgentEvent::ReasoningDelta { ref delta } => {
+                acc_reasoning.push_str(delta);
+            }
+            AgentEvent::ToolStarted {
+                ref call_id,
+                ref name,
+                ref arguments,
+                ..
+            } => {
+                recorded_tools.push(json!({
+                    "id": call_id,
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                    "is_error": false,
+                    "summary": "",
+                    "started_at_ms": now_ms()
+                }));
+                emit_trace(
+                    "tool.started",
+                    "running",
+                    Some(call_id),
+                    json!({
+                        "call_id": call_id,
+                        "tool_name": name
+                    }),
+                );
+            }
+            AgentEvent::ToolFinished {
+                ref call_id,
+                ref name,
+                is_error,
+                ref summary,
+                ..
+            } => {
+                if let Some(entry) = recorded_tools
+                    .iter_mut()
+                    .rev()
+                    .find(|t| t.get("call_id").and_then(|v| v.as_str()) == Some(call_id.as_str()))
+                {
+                    entry["is_error"] = json!(is_error);
+                    entry["summary"] = json!(summary);
+                    entry["finished_at_ms"] = json!(now_ms());
+                } else {
+                    recorded_tools.push(json!({
+                        "id": call_id,
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": {},
+                        "is_error": is_error,
+                        "summary": summary,
+                        "finished_at_ms": now_ms()
+                    }));
+                }
+                emit_trace(
+                    "tool.completed",
+                    if is_error { "failed" } else { "completed" },
+                    Some(call_id),
+                    json!({
+                        "call_id": call_id,
+                        "tool_name": name,
+                        "summary": summary
+                    }),
+                );
+            }
+            AgentEvent::Compacted {
+                tokens_before,
+                tokens_after,
+                ..
+            } => {
+                emit_trace(
+                    "context.compacted",
+                    "completed",
+                    None,
+                    json!({
+                        "summary": format!("Context compacted ({tokens_before} -> {tokens_after} tokens)")
+                    }),
+                );
+            }
+            _ => {}
+        });
+        ctx.pty.close_all();
+        match run_res {
+            Ok(res) => {
+                let final_text = if !res.final_text.is_empty() {
+                    res.final_text.clone()
+                } else {
+                    acc_text
+                };
+                if !acc_reasoning.is_empty() {
+                    let r_part_id = format!("{assistant_msg_id}:reasoning");
+                    let _ = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &r_part_id,
+                        0,
+                        "reasoning",
+                        json!({
+                            "state": "completed",
+                            "title": {"kind": "inline", "value": "Thinking"}
+                        }),
+                        &[("reasoning_summary", acc_reasoning.clone())],
+                    );
+                }
+                let text_part_id = format!("{assistant_msg_id}:text");
+                let cursor = crate::daemon::publish_journal_part(
+                    store,
+                    &mut run_state,
+                    &text_part_id,
+                    2,
+                    "text",
+                    json!({
+                        "visibility": "public",
+                        "is_final": true
+                    }),
+                    &[("markdown", final_text.clone())],
+                );
+                let _ = store.append_event(
+                    &conv_id,
+                    "chat_assistant",
+                    json!({
+                        "id": assistant_msg_id,
+                        "message_id": assistant_msg_id,
+                        "content": final_text,
+                        "reasoning": acc_reasoning,
+                        "toolCalls": recorded_tools
+                    }),
+                    now_ms(),
+                );
+                emit_line(&json!({
+                    "type": "assistant_journal_committed_v1",
+                    "session_id": conv_id,
+                    "source_host_id": source_host_id,
+                    "through": cursor
+                }));
+                let seq = emit_trace("run.completed", "completed", None, json!({}));
+                run_state["status"] = json!("completed");
+                run_state["sequence"] = json!(seq);
+                let seal =
+                    crate::daemon::build_and_store_terminal_seal(store, &run_state, &text_part_id);
+                emit_line(&json!({
+                    "type": "assistant_run_terminal_committed_v1",
+                    "session_id": conv_id,
+                    "source_host_id": source_host_id,
+                    "run_id": run_id,
+                    "seal_digest": seal["seal_digest"]
+                }));
+                emit_line(&json!({
+                    "type": "turn_completed",
+                    "protocol_version": 1,
+                    "session_id": core_session_id,
+                    "turn_id": run_id,
+                    "canonical_run_id": run_id,
+                    "cursor": seq,
+                    "revision": seq
+                }));
+                if let Some(ref out_path) = opts.output_file {
+                    reject_if_symlink(out_path)?;
+                    if let Some(parent) = out_path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    fs::write(out_path, &final_text)
+                        .map_err(|e| format!("failed to write --output '{}': {e}", out_path.display()))?;
+                }
+                return Ok(0);
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let was_cancelled = cancel.load(Ordering::Relaxed);
+                let status = if was_cancelled { "cancelled" } else { "failed" };
+                let seq = trace_seq.fetch_add(1, Ordering::SeqCst) + 1;
+                run_state["status"] = json!(status);
+                run_state["sequence"] = json!(seq);
+                run_state["error"] = json!({"code": "run_failed", "message": err_msg});
+                let text_part_id = format!("{assistant_msg_id}:text");
+                let seal =
+                    crate::daemon::build_and_store_terminal_seal(store, &run_state, &text_part_id);
+                emit_line(&json!({
+                    "type": "assistant_run_terminal_committed_v1",
+                    "session_id": conv_id,
+                    "source_host_id": source_host_id,
+                    "run_id": run_id,
+                    "seal_digest": seal["seal_digest"]
+                }));
+                emit_line(&json!({
+                    "type": if was_cancelled { "turn_cancelled" } else { "turn_failed" },
+                    "protocol_version": 1,
+                    "session_id": core_session_id,
+                    "turn_id": run_id,
+                    "canonical_run_id": run_id,
+                    "cursor": seq,
+                    "revision": seq,
+                    "reason": err_msg
+                }));
+                return Err(err_msg);
+            }
+        }
+    }
+
     let res = engine
         .run(&ctx, prompt, run_cfg, |ev| {
             if let AgentEvent::SessionStarted { ref session_id, .. } = ev {
@@ -1557,6 +2004,7 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     | "--sha256"
                     | "--socket"
                     | "--parent-pid"
+                    | "--archive-incompatible-store"
                     | "--host"
                     | "--port"
                     | "--web-root"
@@ -1582,6 +2030,14 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
                     | "--op"
                     | "--plan-id"
                     | "--timeout"
+                    | "--title"
+                    | "--content"
+                    | "--summary"
+                    | "--kind"
+                    | "--category"
+                    | "--scope"
+                    | "--tags"
+                    | "--tag"
             )
         });
         if prev_takes_subcmd_value {
@@ -2775,16 +3231,48 @@ fn normalize_acquisition_candidate(
     }))
 }
 
+fn default_local_acquire_engine() -> &'static str {
+    if std::env::consts::OS == "macos" && std::env::consts::ARCH == "aarch64" {
+        "mlx"
+    } else {
+        "llama.cpp"
+    }
+}
+
 fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
     match args.first().map(String::as_str) {
         Some("engine-status") => {
-            let engine = args
+            if let Some(engine) = args
                 .get(1)
                 .map(String::as_str)
-                .ok_or("usage: nola model acquire engine-status <engine>")?;
-            let raw = probe_engine_status(engine);
-            let status = normalize_engine_status_event(engine, &raw);
-            emit_compact_json_line(&json!({ "engineStatus": status }));
+                .filter(|s| !s.trim().is_empty())
+            {
+                let raw = probe_engine_status(engine);
+                let status = normalize_engine_status_event(engine, &raw);
+                emit_compact_json_line(&json!({ "engineStatus": status }));
+                return Ok(0);
+            }
+            let default_engine = default_local_acquire_engine();
+            let engines: &[&str] = if default_engine == "mlx" {
+                &["mlx", "llama.cpp", "ollama"]
+            } else {
+                &["llama.cpp", "ollama", "vllm"]
+            };
+            let statuses: Vec<Value> = engines
+                .iter()
+                .map(|eng| {
+                    let raw = probe_engine_status(eng);
+                    normalize_engine_status_event(eng, &raw)
+                })
+                .collect();
+            let primary = statuses.first().cloned().unwrap_or_else(|| {
+                let raw = probe_engine_status(default_engine);
+                normalize_engine_status_event(default_engine, &raw)
+            });
+            emit_compact_json_line(&json!({
+                "engineStatus": primary,
+                "engines": statuses
+            }));
             Ok(0)
         }
         Some("setup-engine") => {
@@ -2810,11 +3298,13 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
             let engine = args
                 .get(1)
                 .map(String::as_str)
-                .ok_or("usage: nola model acquire recommend <engine> <source> [query]")?;
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(default_local_acquire_engine());
             let source = args
                 .get(2)
                 .map(String::as_str)
-                .ok_or("usage: nola model acquire recommend <engine> <source> [query]")?;
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("huggingface");
             let query = if args.len() > 3 {
                 args[3..].join(" ")
             } else {
@@ -5085,6 +5575,105 @@ fn handle_skills_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
     }
 }
 
+fn parse_memory_cli_flags(
+    is_revise: bool,
+    tail: &[String],
+) -> Result<(Option<String>, Option<Value>), String> {
+    let mut explicit_id: Option<String> = None;
+    let mut map = serde_json::Map::new();
+    let mut tags: Vec<String> = Vec::new();
+    let mut has_flags = false;
+    let mut has_tags = false;
+
+    let mut i = 0;
+    while i < tail.len() {
+        let arg = tail[i].as_str();
+        let (flag, inline_val) = if let Some((f, v)) = arg.split_once('=') {
+            (f, Some(v.to_string()))
+        } else {
+            (arg, None)
+        };
+        let take_value = |idx: &mut usize, name: &str| -> Result<String, String> {
+            if let Some(v) = inline_val.clone() {
+                return Ok(v);
+            }
+            *idx += 1;
+            tail.get(*idx)
+                .cloned()
+                .ok_or_else(|| format!("{name} requires a value"))
+        };
+        match flag {
+            "--id" => {
+                let v = take_value(&mut i, "--id")?;
+                explicit_id = Some(v.clone());
+                map.insert("id".into(), json!(v));
+                has_flags = true;
+            }
+            "--title" => {
+                let v = take_value(&mut i, "--title")?;
+                map.insert("title".into(), json!(v));
+                has_flags = true;
+            }
+            "--summary" => {
+                let v = take_value(&mut i, "--summary")?;
+                map.insert("summary".into(), json!(v));
+                has_flags = true;
+            }
+            "--content" => {
+                let v = take_value(&mut i, "--content")?;
+                map.insert("content".into(), json!(v));
+                has_flags = true;
+            }
+            "--kind" | "--category" => {
+                let v = take_value(&mut i, flag)?;
+                map.insert("kind".into(), json!(v));
+                has_flags = true;
+            }
+            "--scope" => {
+                let v = take_value(&mut i, "--scope")?;
+                map.insert("scope".into(), json!(v));
+                has_flags = true;
+            }
+            "--tags" => {
+                let v = take_value(&mut i, "--tags")?;
+                for part in v.split(',') {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() {
+                        tags.push(trimmed.to_string());
+                    }
+                }
+                has_tags = true;
+                has_flags = true;
+            }
+            "--tag" => {
+                let v = take_value(&mut i, "--tag")?;
+                let trimmed = v.trim();
+                if !trimmed.is_empty() {
+                    tags.push(trimmed.to_string());
+                }
+                has_tags = true;
+                has_flags = true;
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown memory flag '{other}'"));
+            }
+            positional => {
+                if is_revise && explicit_id.is_none() {
+                    explicit_id = Some(positional.to_string());
+                } else {
+                    return Err(format!("unexpected memory argument '{positional}'"));
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if has_tags {
+        map.insert("tags".into(), json!(tags));
+    }
+    Ok((explicit_id, has_flags.then_some(Value::Object(map))))
+}
+
 fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
     match args.first().map(String::as_str) {
         Some("list") | None => {
@@ -5101,17 +5690,28 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
         }
         Some("create") | Some("revise") => {
             let is_revise = args.first().map(String::as_str) == Some("revise");
-            let explicit_id = if is_revise {
-                args.get(1).cloned()
+            let usage = if is_revise {
+                "usage: nola memory revise <id> [--title <title>] [--content <content>] [--summary <summary>] [--kind <kind>] [--scope <scope>] [--tags <a,b>] (or pipe JSON on stdin)"
             } else {
-                None
+                "usage: nola memory create --title <title> --content <content> [--summary <summary>] [--kind <kind>] [--scope <scope>] [--tags <a,b>] [--id <id>] (or pipe JSON on stdin)"
             };
-            let mut raw = String::new();
-            io::stdin()
-                .read_to_string(&mut raw)
-                .map_err(|e| format!("failed to read memory JSON from stdin: {e}"))?;
-            let draft: Value =
-                serde_json::from_str(raw.trim()).map_err(|e| format!("invalid memory JSON: {e}"))?;
+            let (explicit_id, flag_draft) = parse_memory_cli_flags(is_revise, &args[1..])?;
+            let draft: Value = if let Some(d) = flag_draft {
+                d
+            } else {
+                if io::stdin().is_terminal() {
+                    return Err(usage.to_string());
+                }
+                let mut raw = String::new();
+                io::stdin()
+                    .read_to_string(&mut raw)
+                    .map_err(|e| format!("failed to read memory JSON from stdin: {e}"))?;
+                if raw.trim().is_empty() {
+                    return Err(usage.to_string());
+                }
+                serde_json::from_str(raw.trim())
+                    .map_err(|e| format!("invalid memory JSON: {e}"))?
+            };
             let ts = nola_types::now_ms();
             let id = explicit_id
                 .or_else(|| draft.get("id").and_then(|v| v.as_str()).map(ToString::to_string))
@@ -5194,7 +5794,213 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
     }
 }
 
-fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Result<u8, String> {
+const MAX_HARNESS_PLUGIN_HTML_BYTES: usize = 2 * 1024 * 1024;
+
+struct ScannedHarnessProfile {
+    runtime: String,
+    profile: String,
+    packages: Vec<Value>,
+}
+
+fn scan_harness_desktop_plugins(db_path: &Path) -> (Vec<Value>, Vec<ScannedHarnessProfile>) {
+    let mut pages = Vec::new();
+    let mut profiles = Vec::new();
+    let harness_root = db_path.with_extension("plugins").join("harness");
+    let Ok(runtime_entries) = fs::read_dir(&harness_root) else {
+        return (pages, profiles);
+    };
+
+    for rt_entry in runtime_entries.flatten() {
+        let rt_dir = rt_entry.path();
+        if !rt_dir.is_dir() {
+            continue;
+        }
+        let runtime = rt_entry.file_name().to_string_lossy().to_string();
+        let profiles_dir = rt_dir.join("profile").join("profiles");
+        let Ok(prof_entries) = fs::read_dir(&profiles_dir) else {
+            continue;
+        };
+        for prof_entry in prof_entries.flatten() {
+            let prof_dir = prof_entry.path();
+            if !prof_dir.is_dir() {
+                continue;
+            }
+            let profile = prof_entry.file_name().to_string_lossy().to_string();
+            let inventory_path = prof_dir.join("package.json");
+            let Ok(inv_raw) = fs::read_to_string(&inventory_path) else {
+                continue;
+            };
+            let Ok(inv_json) = serde_json::from_str::<Value>(&inv_raw) else {
+                continue;
+            };
+            let mut dep_names: Vec<String> = Vec::new();
+            for field in ["dependencies", "optionalDependencies"] {
+                if let Some(map) = inv_json.get(field).and_then(|v| v.as_object()) {
+                    for name in map.keys() {
+                        if !dep_names.iter().any(|existing| existing == name) {
+                            dep_names.push(name.clone());
+                        }
+                    }
+                }
+            }
+            dep_names.sort();
+
+            let mut prof_packages = Vec::new();
+            for dep in dep_names {
+                if dep.is_empty()
+                    || dep.contains("..")
+                    || dep.starts_with('/')
+                    || dep.starts_with('\\')
+                {
+                    continue;
+                }
+                let pkg_dir = prof_dir.join("node_modules").join(&dep);
+                let pkg_manifest_path = pkg_dir.join("package.json");
+                let Ok(pkg_raw) = fs::read_to_string(&pkg_manifest_path) else {
+                    continue;
+                };
+                let Ok(pkg_json) = serde_json::from_str::<Value>(&pkg_raw) else {
+                    continue;
+                };
+                let pkg_name = pkg_json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&dep)
+                    .to_string();
+                let raw_pages = pkg_json
+                    .pointer("/nola/pages")
+                    .or_else(|| pkg_json.get("pages"))
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut pkg_page_refs = Vec::new();
+                for item in raw_pages {
+                    let Some(raw_id) = item
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    let title = item
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(raw_id);
+                    let html = if let Some(inline) = item.get("html").and_then(|v| v.as_str()) {
+                        inline.to_string()
+                    } else if let Some(rel_file) = item
+                        .get("entry")
+                        .or_else(|| item.get("html_path"))
+                        .or_else(|| item.get("file"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let candidate = pkg_dir.join(rel_file);
+                        if nola_tools::file_pipeline::path_within_workspace(&pkg_dir, &candidate) {
+                            fs::read_to_string(&candidate)
+                                .ok()
+                                .filter(|s| s.len() <= MAX_HARNESS_PLUGIN_HTML_BYTES)
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    };
+                    let page_id = format!("{runtime}:{profile}:{pkg_name}:{raw_id}");
+                    pages.push(json!({
+                        "id": page_id,
+                        "title": title,
+                        "package": pkg_name,
+                        "html": html
+                    }));
+                    pkg_page_refs.push(json!({
+                        "id": page_id,
+                        "title": title
+                    }));
+                }
+                let links = pkg_json
+                    .pointer("/nola/links")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                prof_packages.push(json!({
+                    "source": pkg_name,
+                    "pages": pkg_page_refs,
+                    "links": links
+                }));
+            }
+            profiles.push(ScannedHarnessProfile {
+                runtime: runtime.clone(),
+                profile,
+                packages: prof_packages,
+            });
+        }
+    }
+
+    pages.sort_by(|a, b| {
+        a.get("id")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("id").and_then(|v| v.as_str()))
+    });
+    (pages, profiles)
+}
+
+fn collect_desktop_plugin_pages(workspace_root: &Path, db_path: &Path) -> (Vec<Value>, Vec<ScannedHarnessProfile>) {
+    let mut pages = list_desktop_plugin_pages(workspace_root);
+    let (harness_pages, harness_profiles) = scan_harness_desktop_plugins(db_path);
+    for page in harness_pages {
+        let id = page.get("id").and_then(|v| v.as_str());
+        if !pages.iter().any(|p| p.get("id").and_then(|v| v.as_str()) == id) {
+            pages.push(page);
+        }
+    }
+    pages.sort_by(|a, b| {
+        a.get("id")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("id").and_then(|v| v.as_str()))
+    });
+    (pages, harness_profiles)
+}
+
+fn merge_harness_profiles(catalog_profiles: Value, scanned: Vec<ScannedHarnessProfile>) -> Value {
+    let mut profiles = catalog_profiles.as_array().cloned().unwrap_or_default();
+    for sp in scanned {
+        if let Some(existing) = profiles.iter_mut().find(|p| {
+            p.get("runtime").and_then(|v| v.as_str()) == Some(sp.runtime.as_str())
+                && p.get("profile").and_then(|v| v.as_str()) == Some(sp.profile.as_str())
+        }) {
+            if let Some(pkgs) = existing.get_mut("packages").and_then(|v| v.as_array_mut()) {
+                for pkg in sp.packages {
+                    let src = pkg.get("source").and_then(|v| v.as_str());
+                    if !pkgs.iter().any(|e| e.get("source").and_then(|v| v.as_str()) == src) {
+                        pkgs.push(pkg);
+                    }
+                }
+            }
+        } else {
+            profiles.push(json!({
+                "runtime": sp.runtime,
+                "profile": sp.profile,
+                "available": true,
+                "packages": sp.packages
+            }));
+        }
+    }
+    Value::Array(profiles)
+}
+
+fn handle_plugin_cmd(
+    store: &Store,
+    suite: &ModulesSuite,
+    db_path: &Path,
+    args: &[String],
+) -> Result<u8, String> {
     match args.first().map(String::as_str) {
         Some("list") | None => {
             let catalog = list_harness_plugins(Some(store), &suite.workspace_root);
@@ -5202,7 +6008,7 @@ fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
             Ok(0)
         }
         Some("desktop-pages") => {
-            let pages = list_desktop_plugin_pages(&suite.workspace_root);
+            let (pages, _) = collect_desktop_plugin_pages(&suite.workspace_root, db_path);
             if let Some(page_id) = args.get(1) {
                 let page = pages
                     .into_iter()
@@ -5224,12 +6030,17 @@ fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
         }
         Some("desktop-library") => {
             let catalog = list_harness_plugins(Some(store), &suite.workspace_root);
-            let pages = list_desktop_plugin_pages(&suite.workspace_root);
+            let (pages, scanned_profiles) =
+                collect_desktop_plugin_pages(&suite.workspace_root, db_path);
+            let profiles = merge_harness_profiles(
+                catalog.get("profiles").cloned().unwrap_or_else(|| json!([])),
+                scanned_profiles,
+            );
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
                     "plugins": catalog.get("plugins").cloned().unwrap_or_else(|| json!([])),
-                    "profiles": catalog.get("profiles").cloned().unwrap_or_else(|| json!([])),
+                    "profiles": profiles,
                     "pages": pages
                 }))
                 .unwrap()
@@ -5291,7 +6102,7 @@ fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
                         "usage: nola plugin desktop-manage [<runtime> <profile>] install <source>",
                     )?;
                     if !is_runtime_form && sub_args.len() > 2 {
-                        return handle_plugin_cmd(store, suite, sub_args);
+                        return handle_plugin_cmd(store, suite, db_path, sub_args);
                     }
                     let _rec = install_plugin_package(
                         store,
@@ -5336,7 +6147,7 @@ fn handle_plugin_cmd(store: &Store, suite: &ModulesSuite, args: &[String]) -> Re
 
             let reconciled = reconcile_enabled_plugins(store, &suite.workspace_root);
             let catalog = list_harness_plugins(Some(store), &suite.workspace_root);
-            let pages = list_desktop_plugin_pages(&suite.workspace_root);
+            let (pages, _) = collect_desktop_plugin_pages(&suite.workspace_root, db_path);
             let installed: Vec<PluginRecord> = suite.list_records(KIND_PLUGIN).unwrap_or_default();
 
             let matched_profile = catalog
@@ -6099,7 +6910,7 @@ fn print_help() {
            nola model [list | connections | discover [conn] [--save] | configure ... | import <path> | probe [conn] | apply-config [path] | acquire <engine-status|setup-engine|hardware|recommend|confirm|remove>]\n  \
            nola mcp [list | add <id> --transport <stdio|http|sse> ... | remove <id> | auth <id> [--status]]\n  \
            nola skills [list | find <query> | install <owner/repo|url> | enable <name> | disable <name>]\n  \
-           nola memory [list | create | revise <id> | delete <id>]\n  \
+           nola memory [list | create [--title <t>] [--content <c>] [--summary <s>] [--kind <k>] [--scope <s>] [--tags <a,b>] [--id <id>] | revise <id> [flags] | delete <id>]\n  \
            nola plugin [list | install <spec> | enable <id> | disable <id> | remove <id> | desktop-pages [id] | desktop-library | desktop-manage [<rt> <prof>] <action> [src] | pi | dsh]\n  \
            nola sessions [list | show <id> | part <id> <seq> | sources <id> | delete <id> | backup <dest>]\n  \
            nola goal [list | create <title> | status <id> | run <id> | pause <id> | cancel <id>]\n  \
@@ -6147,6 +6958,8 @@ mod tests {
         let opts = CliOptions::default();
         let overrides = HostRunOverrides {
             session_id: None,
+            submission_id: None,
+            assistant_message_id: None,
             resume: None,
             model_id: Some("local-qwen".into()),
             endpoint: Some("http://127.0.0.1:8080/v1".into()),
@@ -6170,6 +6983,8 @@ mod tests {
         // Partial override still applies on top of default model
         let partial = HostRunOverrides {
             session_id: None,
+            submission_id: None,
+            assistant_message_id: None,
             resume: None,
             model_id: Some("gpt-5".into()),
             endpoint: None,
@@ -6204,7 +7019,7 @@ mod tests {
         assert_eq!(arr[0]["capabilities"]["supports_permission_bridge"], true);
         let ids: Vec<&str> = arr.iter().filter_map(|b| b["id"].as_str()).collect();
         assert!(ids.contains(&"codex"));
-        assert!(ids.contains(&"claude"));
+        assert!(ids.contains(&"claude_code"));
         assert!(ids.contains(&"opencode"));
     }
 
@@ -6285,10 +7100,13 @@ mod tests {
         )
         .unwrap();
 
+        let db_path = dir.path().join("nola.db");
+
         // macOS 4-arg order: desktop-manage <runtime> <profile> <action> <source>
         let rc = handle_plugin_cmd(
             &store,
             &suite,
+            &db_path,
             &[
                 "desktop-manage".into(),
                 "dsh".into(),
@@ -6309,6 +7127,7 @@ mod tests {
         let rc = handle_plugin_cmd(
             &store,
             &suite,
+            &db_path,
             &[
                 "desktop-manage".into(),
                 "dsh".into(),
@@ -6329,6 +7148,7 @@ mod tests {
         let rc = handle_plugin_cmd(
             &store,
             &suite,
+            &db_path,
             &[
                 "desktop-manage".into(),
                 "enable".into(),
@@ -6344,6 +7164,42 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+
+        // Harness desktop-pages scanning under <db>.plugins/harness/dsh/profile/profiles/web
+        let web_profile = db_path
+            .with_extension("plugins")
+            .join("harness/dsh/profile/profiles/web");
+        let pkg_dir = web_profile.join("node_modules/test-board");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"test-board","version":"1.0.0","nola":{"pages":[{"id":"board","title":"Task board","entry":"board.html"},{"id":"archive","title":"Completed tasks","entry":"board.html"}]}}"#,
+        )
+        .unwrap();
+        fs::write(pkg_dir.join("board.html"), "<h1>Task board</h1>").unwrap();
+        fs::write(
+            web_profile.join("package.json"),
+            r#"{"dependencies":{"test-board":"1.0.0"}}"#,
+        )
+        .unwrap();
+
+        let (pages, profiles) = collect_desktop_plugin_pages(dir.path(), &db_path);
+        let board = pages
+            .iter()
+            .find(|p| p.get("title").and_then(|v| v.as_str()) == Some("Task board"))
+            .expect("Task board page should be discovered");
+        assert_eq!(board["package"], "test-board");
+        assert_eq!(board["html"], "<h1>Task board</h1>");
+        assert!(profiles
+            .iter()
+            .any(|p| p.runtime == "dsh" && p.profile == "web" && !p.packages.is_empty()));
+
+        // Removing dependency from profile package.json removes the pages immediately
+        fs::write(web_profile.join("package.json"), r#"{"dependencies":{}}"#).unwrap();
+        let (pages_after, _) = collect_desktop_plugin_pages(dir.path(), &db_path);
+        assert!(pages_after
+            .iter()
+            .all(|p| p.get("title").and_then(|v| v.as_str()) != Some("Task board")));
     }
 
     #[test]
@@ -6424,14 +7280,65 @@ mod tests {
         let wiki_text = fs::read_to_string(&out_md).unwrap();
         assert!(wiki_text.contains("Codebase Architecture Wiki"));
 
-        // Model acquire hardware / engine-status / recommend
+        // Model acquire hardware / engine-status / recommend (explicit & default args)
         handle_model_acquire_cmd(&store, &["hardware".into()]).unwrap();
+        handle_model_acquire_cmd(&store, &["engine-status".into()]).unwrap();
         handle_model_acquire_cmd(&store, &["engine-status".into(), "llama.cpp".into()]).unwrap();
+        handle_model_acquire_cmd(&store, &["recommend".into()]).unwrap();
         handle_model_acquire_cmd(
             &store,
             &["recommend".into(), "llama.cpp".into(), "huggingface".into()],
         )
         .unwrap();
+
+        // Memory create / revise via CLI flags (must never block on stdin)
+        handle_memory_cmd(
+            &store,
+            &[
+                "create".into(),
+                "--id".into(),
+                "mem-cli-1".into(),
+                "--title".into(),
+                "CLI Fact".into(),
+                "--content".into(),
+                "Remember 42".into(),
+                "--kind".into(),
+                "fact".into(),
+                "--scope".into(),
+                "project".into(),
+                "--tags".into(),
+                "cli,audit".into(),
+            ],
+        )
+        .unwrap();
+        let created_mem = store
+            .search_memory("Remember 42", None, 10)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == "mem-cli-1")
+            .expect("flag-created memory must persist");
+        assert_eq!(created_mem.title, "CLI Fact");
+        assert_eq!(created_mem.namespace, "project:fact");
+        assert_eq!(created_mem.tags, vec!["cli".to_string(), "audit".to_string()]);
+
+        handle_memory_cmd(
+            &store,
+            &[
+                "revise".into(),
+                "mem-cli-1".into(),
+                "--content=Remember 43".into(),
+            ],
+        )
+        .unwrap();
+        let revised_mem = store
+            .search_memory("Remember 43", None, 10)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.id == "mem-cli-1")
+            .expect("revised memory must persist");
+        assert_eq!(revised_mem.title, "CLI Fact");
+        assert_eq!(revised_mem.content, "Remember 43");
+        assert_eq!(revised_mem.namespace, "project:fact");
     }
 
     #[test]

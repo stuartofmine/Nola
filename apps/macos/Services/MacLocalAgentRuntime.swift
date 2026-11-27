@@ -941,6 +941,11 @@ nonisolated enum MacAgentHostExecutableLocator {
            fileManager.isExecutableFile(atPath: bundled.path) {
             return bundled
         }
+        let adjacent = bundle.bundleURL
+            .appendingPathComponent("Contents/MacOS/nola-runtime", isDirectory: false)
+        if fileManager.isExecutableFile(atPath: adjacent.path) {
+            return adjacent
+        }
         return nil
     }
 }

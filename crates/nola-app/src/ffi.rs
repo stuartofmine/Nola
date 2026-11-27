@@ -328,6 +328,20 @@ pub unsafe extern "C" fn nola_core_application_submit(
         );
     };
     let receipt = handle_envelope(&app_ref.inner.store, &app_ref.inner.suite, &req);
+    if receipt.get("status").and_then(|v| v.as_str()) == Some("rejected") {
+        if let Some(err) = receipt.get("error") {
+            if err.get("code").and_then(|v| v.as_str()) == Some("invalid_command") {
+                return to_owned_c_string(
+                    json!({
+                        "ok": false,
+                        "error": err,
+                        "result": receipt
+                    })
+                    .to_string(),
+                );
+            }
+        }
+    }
     to_owned_c_string(json!({"ok": true, "result": receipt}).to_string())
 }
 
@@ -461,11 +475,13 @@ pub unsafe extern "C" fn nola_core_application_expert_host_operation(
         if let Some(obj) = err.as_object_mut() {
             obj.entry("outcome_pending".to_string())
                 .or_insert_with(|| json!(false));
+            obj.insert("request_id".into(), json!(req_id));
         } else {
             err = json!({
                 "code": "rejected",
                 "message": err.to_string(),
-                "outcome_pending": false
+                "outcome_pending": false,
+                "request_id": req_id
             });
         }
         to_owned_c_string(
@@ -1508,9 +1524,10 @@ pub unsafe extern "C" fn nola_core_context_prepare(
         }
     }
 
-    // Compute real component metrics (both explicit request components and role/tool buckets),
+    // Compute real component metrics AND inject context components as bounded system messages,
     // emitting all 7 canonical MacCoreComponentMetric keys alongside legacy fields.
     let mut component_metrics: Vec<Value> = Vec::new();
+    let mut injected_system_messages: Vec<Value> = Vec::new();
     if let Some(components) = req.get("components").and_then(|v| v.as_array()) {
         for comp in components {
             let id = comp
@@ -1522,104 +1539,90 @@ pub unsafe extern "C" fn nola_core_context_prepare(
                 .get("kind")
                 .and_then(|v| v.as_str())
                 .unwrap_or("context");
-            let text = comp
+            let raw_text = comp
                 .get("content")
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string)
                 .unwrap_or_else(|| comp.to_string());
-            let tok = estimate_text_tokens(&text);
+            let raw_chars = raw_text.chars().count();
+            let raw_tokens = estimate_text_tokens(&raw_text);
+            let max_comp_chars = if kind == "platform_data" { 3_500 } else { 16_000 };
+            let (bounded_text, was_truncated) = if raw_chars > max_comp_chars {
+                let prefix: String = raw_text.chars().take(max_comp_chars).collect();
+                (format!("{prefix}\n...[truncated]"), true)
+            } else {
+                (raw_text, false)
+            };
+            let used_tok = estimate_text_tokens(&bounded_text);
+            let truncated_tok = if was_truncated {
+                raw_tokens.saturating_sub(used_tok)
+            } else {
+                0
+            };
+            if !bounded_text.trim().is_empty() {
+                injected_system_messages.push(json!({
+                    "id": id,
+                    "role": "system",
+                    "content": bounded_text
+                }));
+            }
             component_metrics.push(json!({
                 "id": id,
                 "component": id,
                 "kind": kind,
-                "tokens": tok,
-                "used_tokens": tok,
+                "tokens": used_tok,
+                "used_tokens": used_tok,
                 "dropped_tokens": 0,
-                "truncated_tokens": 0,
-                "used_ids": [id],
+                "truncated_tokens": truncated_tok,
+                "used_ids": if was_truncated { json!([]) } else { json!([id]) },
                 "dropped_ids": [],
-                "truncated_ids": [],
-                "chars": text.chars().count(),
+                "truncated_ids": if was_truncated { json!([id]) } else { json!([]) },
+                "chars": bounded_text.chars().count(),
                 "included": true
             }));
         }
     }
-    let mut role_stats: BTreeMap<String, (usize, usize, usize, Vec<String>)> = BTreeMap::new();
-    for (msg_idx, m) in messages.iter().enumerate() {
-        let role = m
-            .get("role")
-            .and_then(|r| r.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let mid = m
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("{role}:{msg_idx}"));
-        let serialized = m.to_string();
-        let entry = role_stats
-            .entry(role)
-            .or_insert_with(|| (0, 0, 0, Vec::new()));
-        entry.0 += 1;
-        entry.1 += estimate_text_tokens(&serialized);
-        entry.2 += serialized.chars().count();
-        entry.3.push(mid);
+    let mut injected_comp_tokens = 0usize;
+    if !injected_system_messages.is_empty() {
+        for msg in &injected_system_messages {
+            injected_comp_tokens += estimate_text_tokens(&msg.to_string());
+        }
+        let insert_pos = messages
+            .iter()
+            .position(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"))
+            .unwrap_or(messages.len());
+        for (offset, msg) in injected_system_messages.into_iter().enumerate() {
+            messages.insert(insert_pos + offset, msg);
+        }
     }
-    let mut all_roles: BTreeSet<String> = role_stats.keys().cloned().collect();
-    all_roles.extend(dropped_by_role.keys().cloned());
-    for role in all_roles {
-        let (count, tokens, chars, used_ids) = role_stats
-            .remove(&role)
-            .unwrap_or_else(|| (0, 0, 0, Vec::new()));
-        let (dropped_tokens, dropped_ids) = dropped_by_role
-            .remove(&role)
-            .unwrap_or_else(|| (0, Vec::new()));
-        component_metrics.push(json!({
-            "id": format!("messages:{role}"),
-            "component": role,
-            "kind": "messages",
-            "message_count": count,
-            "tokens": tokens,
-            "used_tokens": tokens,
-            "dropped_tokens": dropped_tokens,
-            "truncated_tokens": 0,
-            "used_ids": used_ids,
-            "dropped_ids": dropped_ids,
-            "truncated_ids": [],
-            "chars": chars,
-            "included": count > 0
-        }));
-    }
-    if !tools.is_empty() {
-        let tools_chars: usize = tools.iter().map(|t| t.to_string().chars().count()).sum();
-        let tool_ids: Vec<String> = tools
+    if req.get("components").is_none() && !messages.is_empty() {
+        let used_ids: Vec<String> = messages
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                t.get("name")
-                    .or_else(|| t.pointer("/function/name"))
+            .map(|(i, m)| {
+                m.get("id")
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
-                    .unwrap_or_else(|| format!("tool:{i}"))
+                    .unwrap_or_else(|| format!("msg:{i}"))
             })
             .collect();
         component_metrics.push(json!({
-            "id": "tools:schema",
-            "component": "tools",
-            "kind": "tool_schema",
-            "tool_count": tools.len(),
-            "tokens": tool_tokens,
-            "used_tokens": tool_tokens,
-            "dropped_tokens": 0,
+            "id": "system:messages",
+            "component": "system",
+            "kind": "system",
+            "tokens": current_msg_tokens,
+            "used_tokens": current_msg_tokens,
+            "dropped_tokens": dropped_by_role.values().map(|(t, _)| *t).sum::<usize>(),
             "truncated_tokens": 0,
-            "used_ids": tool_ids,
-            "dropped_ids": [],
+            "used_ids": used_ids,
+            "dropped_ids": dropped_by_role.values().flat_map(|(_, ids)| ids.clone()).collect::<Vec<_>>(),
             "truncated_ids": [],
-            "chars": tools_chars,
+            "chars": messages.iter().map(|m| m.to_string().chars().count()).sum::<usize>(),
             "included": true
         }));
     }
 
+    current_msg_tokens += injected_comp_tokens;
     let after_tokens = current_msg_tokens + tool_tokens;
     let changed = archived > 0;
     let action = if changed { "compacted" } else { "ready" };
@@ -1772,12 +1775,14 @@ pub unsafe extern "C" fn nola_core_memory_select_json(
                 }
             }
         }
-        if !allowed_sensitivities.is_empty() {
-            if let Some(sens) = rec.get("sensitivity").and_then(|v| v.as_str()) {
-                if !allowed_sensitivities.iter().any(|a| a == sens) {
-                    rejected.push(json!({"memory_id": id, "reason": "sensitivity_not_allowed"}));
-                    continue;
-                }
+        if let Some(sens) = rec
+            .get("sensitivity")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            if !allowed_sensitivities.iter().any(|a| a == sens) {
+                rejected.push(json!({"memory_id": id, "reason": "sensitivity_not_allowed"}));
+                continue;
             }
         }
         if !include_session
@@ -2223,7 +2228,53 @@ fn risk_rank(risk: &str) -> u8 {
     }
 }
 
+fn canonical_registered_tool_metadata(tool: &Value) -> Option<(&'static str, &'static str, &'static str)> {
+    let handler_id = tool.get("handler_id").and_then(|v| v.as_str()).unwrap_or("");
+    let tool_id = tool.get("tool_id").and_then(|v| v.as_str()).unwrap_or("");
+    match (handler_id, tool_id) {
+        ("android.files.read" | "device_read_file", _) | (_, "device_read_file") => {
+            Some(("files_read", "scoped_resource", "read_only"))
+        }
+        ("android.files.write" | "device_write_file", _) | (_, "device_write_file") => {
+            Some(("files_write", "scoped_resource", "local_write"))
+        }
+        ("android.clipboard.read" | "device_clipboard_read", _) | (_, "device_clipboard_read") => {
+            Some(("clipboard", "agent_approval", "read_only"))
+        }
+        ("android.clipboard.write" | "device_clipboard_write", _) | (_, "device_clipboard_write") => {
+            Some(("clipboard", "agent_approval", "local_write"))
+        }
+        ("android.location.current" | "device_get_location", _) | (_, "device_get_location") => {
+            Some(("location", "runtime_permission", "read_only"))
+        }
+        ("android.calendar.search" | "device_search_calendar_events", _)
+        | (_, "device_search_calendar_events") => Some(("calendar", "runtime_permission", "read_only")),
+        ("android.calendar.create" | "device_create_calendar_event", _)
+        | (_, "device_create_calendar_event") => {
+            Some(("calendar", "runtime_permission", "local_write"))
+        }
+        ("android.memory.search" | "memory_search", _) | (_, "memory_search") => {
+            Some(("none", "none", "read_only"))
+        }
+        ("android.skills.invoke" | "android.skills.read_resource", _)
+        | (_, "skill_invoke" | "device_skill_read_resource") => {
+            Some(("skill_context", "none", "read_only"))
+        }
+        ("android.skills.find", _) | (_, "device_github_skill_find") => {
+            Some(("network", "none", "read_only"))
+        }
+        ("android.skills.install", _) | (_, "device_github_skill_install") => {
+            Some(("network", "agent_approval", "external_write"))
+        }
+        ("android.core.ui.publish" | "render_ui", _) | (_, "render_ui") => {
+            Some(("none", "none", "read_only"))
+        }
+        _ => None,
+    }
+}
+
 fn declared_tool_metadata(tool: &Value) -> (String, String, String) {
+    let reg = canonical_registered_tool_metadata(tool);
     let effect = tool
         .get("effect")
         .and_then(|v| v.as_str())
@@ -2234,12 +2285,13 @@ fn declared_tool_metadata(tool: &Value) -> (String, String, String) {
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .or_else(|| reg.map(|(c, _, _)| c))
         .unwrap_or("general")
         .to_string();
     let default_perm = match effect {
         Some("read_only") => "none",
         Some("local_write" | "write") => "scoped_resource",
-        _ => "agent_approval",
+        _ => reg.map(|(_, p, _)| p).unwrap_or("agent_approval"),
     };
     let permission = tool
         .get("permission")
@@ -2254,6 +2306,7 @@ fn declared_tool_metadata(tool: &Value) -> (String, String, String) {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .or(effect)
+        .or_else(|| reg.map(|(_, _, r)| r))
         .unwrap_or("medium")
         .to_string();
     (capability, permission, risk)
@@ -2325,24 +2378,42 @@ pub unsafe extern "C" fn nola_core_tool_policy_resolve(
     let mut enabled_tools = Vec::new();
     let mut disabled_tools = Vec::new();
 
+    let default_runtime_route = runtime
+        .get("routes")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or("device");
+
     for tool in &tools_raw {
-        let tool_id = tool
+        let raw_tool_id = tool
             .get("tool_id")
             .or_else(|| tool.get("name"))
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let name = tool
+            .unwrap_or("");
+        if raw_tool_id == "skill_context" {
+            continue;
+        }
+        let tool_id = if raw_tool_id == "Skill" {
+            "skill".to_string()
+        } else {
+            raw_tool_id.to_string()
+        };
+        let raw_name = tool
             .pointer("/schema/function/name")
             .or_else(|| tool.get("name"))
             .or_else(|| tool.get("tool_id"))
             .and_then(|v| v.as_str())
-            .unwrap_or(&tool_id)
-            .to_string();
+            .unwrap_or(&tool_id);
+        let name = if raw_name == "Skill" {
+            "skill".to_string()
+        } else {
+            raw_name.to_string()
+        };
         let route = tool
             .get("route")
             .and_then(|v| v.as_str())
-            .unwrap_or("device")
+            .unwrap_or(default_runtime_route)
             .to_string();
         let available = tool.get("available").and_then(|v| v.as_bool()).unwrap_or(true);
         let schema = tool.get("schema").cloned().unwrap_or_else(|| json!({}));
@@ -2364,7 +2435,7 @@ pub unsafe extern "C" fn nola_core_tool_policy_resolve(
             Some("denied_by_policy")
         } else if user_deny_caps.iter().any(|c| c == &capability) {
             Some("capability_denied")
-        } else if authorization != "granted" && authorization != "not_required" {
+        } else if !matches!(authorization.as_str(), "granted" | "not_required" | "ask") {
             Some("authorization_not_granted")
         } else if risk_rank(&risk) > risk_rank(max_risk) {
             Some("risk_exceeds_user_policy")
@@ -4676,6 +4747,13 @@ pub unsafe extern "C" fn nola_core_software_update_json(
         .get("operation")
         .and_then(|v| v.as_str())
         .unwrap_or("status");
+
+    if !matches!(operation, "check" | "download" | "status") {
+        return err_json(
+            "request_invalid",
+            format!("unsupported software update operation '{operation}'"),
+        );
+    }
 
     if operation == "download" {
         let Some(url) = req

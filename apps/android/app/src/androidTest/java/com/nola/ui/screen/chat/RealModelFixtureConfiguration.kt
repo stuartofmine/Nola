@@ -44,8 +44,19 @@ internal fun ComposeTestRule.confirmFixtureCapabilities(modelId: String) {
     val previous = mainClock.autoAdvance
     mainClock.autoAdvance = true
     try {
-        onNode(hasContentDescription(context.getString(R.string.models_execution_capabilities)) and
-            hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + modelId))).performScrollTo().performClick()
+        val rowMatcher = hasAnyAncestor(hasTestTag(MODEL_ROW_TEST_TAG_PREFIX + modelId))
+        val capDesc = context.getString(R.string.models_execution_capabilities)
+        val directCapMatcher = hasContentDescription(capDesc) and rowMatcher
+        if (onAllNodes(directCapMatcher).fetchSemanticsNodes().isNotEmpty()) {
+            onNode(directCapMatcher).performScrollTo().performClick()
+        } else {
+            val moreDesc = context.getString(R.string.intelligence_more)
+            onNode(hasContentDescription(moreDesc) and rowMatcher).performScrollTo().performClick()
+            waitUntil(5_000) {
+                onAllNodesWithText(capDesc).fetchSemanticsNodes().isNotEmpty()
+            }
+            onNodeWithText(capDesc).performClick()
+        }
         val save = onNodeWithText(context.getString(R.string.common_save))
         waitUntil(15_000) {
             onAllNodesWithText(context.getString(R.string.models_execution_capabilities_hint)).fetchSemanticsNodes().isNotEmpty()

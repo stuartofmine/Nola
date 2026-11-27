@@ -122,7 +122,13 @@ class WebHostConnectionInteractionTest {
         val pin = compose.onNodeWithTag("models.host.certificateSha256")
         pin.performScrollTo().performClick().performTextClearance()
         pin.assertDoesNotExist()
-        compose.onNodeWithText(compose.activity.getString(R.string.models_save_and_verify)).performClick()
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(250, 3_000)
+        compose.waitForIdle()
+        compose.onNodeWithText(compose.activity.getString(R.string.models_save_and_verify))
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
         compose.runOnIdle { assertEquals("", sentPin) }
     }
 

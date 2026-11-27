@@ -624,23 +624,40 @@ struct PersonalCapabilitiesLibraryView: View {
     var onUseSkill: ((String) -> Void)? = nil
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject private var container: ServiceContainer
+    private enum ActiveSheet: Identifiable {
+        case pairPluginHost
+        case pluginManagement(PluginManagementPage)
+        case editor(PersonalCapabilityEditorItem)
+
+        var id: String {
+            switch self {
+            case .pairPluginHost: return "pair-plugin-host"
+            case .pluginManagement(let page): return "plugin-management-\(page.id)"
+            case .editor(let item): return "editor-\(item.id)"
+            }
+        }
+    }
+
     @State private var profile: ChatCapabilityLibrarySnapshot = .empty
     @State private var libraryLoaded = false
     @State private var libraryReadFailed = false
     @State private var selectedKind: PersonalCapabilityKind = .skills
-    @State private var pluginManagementPage: PluginManagementPage?
+    @State private var activeSheet: ActiveSheet?
     @State private var pluginHosts: [ModelInfo] = []
-    @State private var pairPluginHost = false
     @State private var newlyPairedPluginHost: (model: ModelInfo, identity: String)?
     @State private var openingPluginHost = false
     @State private var query = ""
-    @State private var editor: PersonalCapabilityEditorItem?
     @State private var skillEditorSnapshot: IOSCanonicalSkillEditor?
     @State private var mcpEditorSnapshot: IOSCanonicalMCPServer?
     @State private var showSkillImporter = false
     @State private var deleteTarget: PersonalCapabilityDeleteTarget?
     @State private var notice: String?
     @State private var errorMessage: String?
+
+    private var isShowingEditor: Bool {
+        if case .editor = activeSheet { return true }
+        return false
+    }
 
     private let columns = [GridItem(.adaptive(minimum: 250), spacing: 12)]
 
@@ -674,6 +691,18 @@ struct PersonalCapabilitiesLibraryView: View {
                     }
                     .accessibilityIdentifier("intelligence.capabilities.importSkill")
                     .disabled(!libraryLoaded || libraryReadFailed)
+                    .fileImporter(isPresented: $showSkillImporter, allowedContentTypes: [.data]) { result in
+                        do {
+                            let url = try result.get()
+                            let text = try IOSContextFileImportPolicy.readText(from: url, maximumCharacters: 48_000)
+                            errorMessage = nil
+                            skillEditorSnapshot = nil
+                            mcpEditorSnapshot = nil
+                            activeSheet = .editor(.skill(nil, UserUploadedContextItem(name: url.lastPathComponent, content: text)))
+                        } catch {
+                            if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
+                        }
+                    }
 
                     if let onUseSkill {
                         ForEach(profile.uploadedSkills.filter(\.enabled)) { skill in
@@ -718,45 +747,42 @@ struct PersonalCapabilitiesLibraryView: View {
         .accessibilityIdentifier("intelligence.capabilities.screen")
         .navigationTitle(piText("personal.capabilities.title", "Capability library"))
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if !libraryLoaded { reload() }
+        }
         .task { reload() }
         .refreshable { if selectedKind == .plugins { refreshPluginHosts() } else { reload() } }
         .onChange(of: selectedKind) { _, kind in
             query = ""
             if kind == .plugins { refreshPluginHosts() }
         }
-        .sheet(isPresented: $pairPluginHost, onDismiss: {
-            refreshPluginHosts()
-            if let paired = newlyPairedPluginHost {
-                newlyPairedPluginHost = nil
-                Task { await openPluginManager(paired.model, justPairedIdentity: paired.identity) }
-            }
-        }) {
-            NavigationStack {
-                WebHostConfigurationView(existingModel: nil) { model, verifiedIdentity in
-                    ModelSelectionManager.addModel(model)
-                    newlyPairedPluginHost = (model, verifiedIdentity)
+        .sheet(item: $activeSheet, onDismiss: {
+            errorMessage = nil
+            skillEditorSnapshot = nil
+            mcpEditorSnapshot = nil
+            if selectedKind == .plugins || newlyPairedPluginHost != nil {
+                refreshPluginHosts()
+                if let paired = newlyPairedPluginHost {
+                    newlyPairedPluginHost = nil
+                    Task { await openPluginManager(paired.model, justPairedIdentity: paired.identity) }
                 }
             }
-        }
-        .sheet(item: $pluginManagementPage) { page in
-            PluginManagementBrowser(url: page.url) { pluginManagementPage = nil }
-                .ignoresSafeArea()
-        }
-        .fileImporter(isPresented: $showSkillImporter, allowedContentTypes: [.data]) { result in
-            do {
-                let url = try result.get()
-                let text = try IOSContextFileImportPolicy.readText(from: url, maximumCharacters: 48_000)
-                errorMessage = nil
-                skillEditorSnapshot = nil
-                mcpEditorSnapshot = nil
-                editor = .skill(nil, UserUploadedContextItem(name: url.lastPathComponent, content: text))
-            } catch {
-                if !IOSContextFileImportPolicy.isCancellation(error) { errorMessage = error.localizedDescription }
-            }
-        }
-        .sheet(item: $editor, onDismiss: { errorMessage = nil; skillEditorSnapshot = nil; mcpEditorSnapshot = nil }) { item in
-            PersonalCapabilityEditorView(item: item, errorMessage: errorMessage) { name, detail, primary in
-                saveEditor(item, name: name, detail: detail, primary: primary)
+        }) { sheet in
+            switch sheet {
+            case .pairPluginHost:
+                NavigationStack {
+                    WebHostConfigurationView(existingModel: nil) { model, verifiedIdentity in
+                        ModelSelectionManager.addModel(model)
+                        newlyPairedPluginHost = (model, verifiedIdentity)
+                    }
+                }
+            case .pluginManagement(let page):
+                PluginManagementBrowser(url: page.url) { activeSheet = nil }
+                    .ignoresSafeArea()
+            case .editor(let item):
+                PersonalCapabilityEditorView(item: item, errorMessage: errorMessage) { name, detail, primary in
+                    saveEditor(item, name: name, detail: detail, primary: primary)
+                }
             }
         }
         .confirmationDialog(
@@ -776,7 +802,7 @@ struct PersonalCapabilitiesLibraryView: View {
         .alert(
             selectedKind == .plugins ? piText("harness.plugins", "Plugins") : piText("personal.capabilities.error", "Could not save changes"),
             isPresented: Binding(
-                get: { errorMessage != nil && editor == nil },
+                get: { errorMessage != nil && !isShowingEditor },
                 set: { if !$0 { errorMessage = nil } }
             )
         ) {
@@ -805,7 +831,7 @@ struct PersonalCapabilitiesLibraryView: View {
                 guard settings.host_identity?.id == identity else { throw URLError(.userAuthenticationRequired) }
             }
             let target = try await WebAgentProvider.requestWebManagementURL(baseURL: url, token: token, target: "/capabilities?tab=plugins", pinnedCertificateSHA256: model.tlsCertificateSHA256)
-            pluginManagementPage = PluginManagementPage(url: target)
+            activeSheet = .pluginManagement(PluginManagementPage(url: target))
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -829,7 +855,7 @@ struct PersonalCapabilitiesLibraryView: View {
             }
         }
         Button {
-            pairPluginHost = true
+            activeSheet = .pairPluginHost
         } label: {
             Label(pluginHosts.isEmpty ? piText("harness.connect", "Connect desktop Host") : piText("harness.pair", "Connect desktop Host"), systemImage: "plus")
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1030,9 +1056,9 @@ struct PersonalCapabilitiesLibraryView: View {
         switch selectedKind {
         case .plugins: return
         case .skills:
-            editor = .skill(nil, UserUploadedContextItem(name: "", content: "# Skill\n\n## Workflow\n\n1. ", enabled: true))
+            activeSheet = .editor(.skill(nil, UserUploadedContextItem(name: "", content: "# Skill\n\n## Workflow\n\n1. ", enabled: true)))
         case .mcp:
-            editor = .mcp(nil, UserMCPServer(name: "", endpoint: "", enabled: true))
+            activeSheet = .editor(.mcp(nil, UserMCPServer(name: "", endpoint: "", enabled: true)))
         }
     }
 
@@ -1046,7 +1072,7 @@ struct PersonalCapabilitiesLibraryView: View {
                 _ = try skillStore().saveSkill(value, expected: skillEditorSnapshot)
                 reload()
                 notice = piText("personal.capabilities.saved", "Changes saved")
-                editor = nil
+                activeSheet = nil
             } catch { errorMessage = error.localizedDescription }
             return
         }
@@ -1059,7 +1085,7 @@ struct PersonalCapabilitiesLibraryView: View {
                 _ = try mcpStore().saveMCP(value, expected: mcpEditorSnapshot)
                 reload()
                 notice = piText("personal.capabilities.saved", "Changes saved")
-                editor = nil
+                activeSheet = nil
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -1080,7 +1106,7 @@ struct PersonalCapabilitiesLibraryView: View {
             }
             errorMessage = nil
             skillEditorSnapshot = snapshot
-            editor = .skill(index, current)
+            activeSheet = .editor(.skill(index, current))
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -1115,7 +1141,7 @@ struct PersonalCapabilitiesLibraryView: View {
             guard let current = snapshot.userMCPServer else { throw IOSApplicationRuntimeError.invalidResponse }
             errorMessage = nil
             mcpEditorSnapshot = snapshot
-            editor = .mcp(index, current)
+            activeSheet = .editor(.mcp(index, current))
         } catch { errorMessage = error.localizedDescription }
     }
 

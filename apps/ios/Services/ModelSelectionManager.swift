@@ -129,11 +129,44 @@ public final class ModelSelectionManager {
         NSLocalizedString("chat.model.web_backend", value: "Web backend", comment: "Web host model source")
     }
 
+    nonisolated struct WebHostKeychainBacking: Sendable {
+        let save: @Sendable (String, String, Data) -> Bool
+        let read: @Sendable (String, String) -> Data?
+        let delete: @Sendable (String, String) -> Bool
+
+        static let live = WebHostKeychainBacking(
+            save: { KeychainService.save(service: $0, account: $1, value: $2) },
+            read: { KeychainService.read(service: $0, account: $1) },
+            delete: { KeychainService.delete(service: $0, account: $1) }
+        )
+    }
+
     nonisolated private static let pairedWebHostIdentityService = "com.nola.web-host.identity"
     nonisolated private static let webHostTokenService = "nola.web-host.token"
     nonisolated private static let sessionCredentialLock = NSLock()
     nonisolated(unsafe) private static var sessionWebHostTokens: [String: String] = [:]
     nonisolated(unsafe) private static var sessionWebHostIdentities: [String: String] = [:]
+    nonisolated(unsafe) private static var keychainBacking: WebHostKeychainBacking = .live
+
+    nonisolated private static var activeKeychain: WebHostKeychainBacking {
+        sessionCredentialLock.lock()
+        defer { sessionCredentialLock.unlock() }
+        return keychainBacking
+    }
+
+    #if DEBUG
+    nonisolated static func installKeychainBackingForTesting(_ backing: WebHostKeychainBacking) {
+        sessionCredentialLock.lock()
+        keychainBacking = backing
+        sessionCredentialLock.unlock()
+    }
+
+    nonisolated static func resetKeychainBackingForTesting() {
+        sessionCredentialLock.lock()
+        keychainBacking = .live
+        sessionCredentialLock.unlock()
+    }
+    #endif
 
     public static func webBackendModel(
         baseURL: String? = nil,
@@ -487,9 +520,9 @@ public final class ModelSelectionManager {
         let sessionIdentity = sessionWebHostIdentities[account]
         sessionCredentialLock.unlock()
         if let sessionIdentity { return sessionIdentity }
-        guard let data = KeychainService.read(
-            service: pairedWebHostIdentityService,
-            account: account
+        guard let data = activeKeychain.read(
+            pairedWebHostIdentityService,
+            account
         ) else { return nil }
         let identity = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -522,10 +555,10 @@ public final class ModelSelectionManager {
         if let existing = pairedWebHostIdentity(for: baseURL), !existing.isEmpty {
             return existing == normalized
         }
-        let saved = KeychainService.save(
-            service: pairedWebHostIdentityService,
-            account: key,
-            value: Data(normalized.utf8)
+        let saved = activeKeychain.save(
+            pairedWebHostIdentityService,
+            key,
+            Data(normalized.utf8)
         )
         if saved {
             sessionCredentialLock.lock()
@@ -554,12 +587,16 @@ public final class ModelSelectionManager {
 
     public static func forgetWebHostIdentity(for baseURL: URL) {
         deleteWebHostToken(for: baseURL.absoluteString)
-        _ = removeWebHostIdentity(for: baseURL)
+        let key = webHostIdentityKey(baseURL)
+        sessionCredentialLock.lock()
+        sessionWebHostIdentities.removeValue(forKey: key)
+        sessionCredentialLock.unlock()
+        _ = activeKeychain.delete(pairedWebHostIdentityService, key)
     }
 
     private static func removeWebHostIdentity(for baseURL: URL) -> Bool {
         let key = webHostIdentityKey(baseURL)
-        guard KeychainService.delete(service: pairedWebHostIdentityService, account: key) else { return false }
+        guard activeKeychain.delete(pairedWebHostIdentityService, key) else { return false }
         sessionCredentialLock.lock()
         sessionWebHostIdentities.removeValue(forKey: key)
         sessionCredentialLock.unlock()
@@ -608,7 +645,7 @@ public final class ModelSelectionManager {
         let sessionToken = sessionWebHostTokens[account]
         sessionCredentialLock.unlock()
         if let sessionToken { return sessionToken }
-        if let data = KeychainService.read(service: webHostTokenService, account: account),
+        if let data = activeKeychain.read(webHostTokenService, account),
            let token = String(data: data, encoding: .utf8),
            !token.isEmpty {
             sessionCredentialLock.lock()
@@ -624,10 +661,10 @@ public final class ModelSelectionManager {
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return false }
         let account = normalizedWebHostURL(baseURL)
-        let saved = KeychainService.save(
-            service: webHostTokenService,
-            account: account,
-            value: Data(token.utf8)
+        let saved = activeKeychain.save(
+            webHostTokenService,
+            account,
+            Data(token.utf8)
         )
         if saved {
             sessionCredentialLock.lock()
@@ -643,7 +680,7 @@ public final class ModelSelectionManager {
         sessionCredentialLock.lock()
         sessionWebHostTokens.removeValue(forKey: account)
         sessionCredentialLock.unlock()
-        _ = KeychainService.delete(service: webHostTokenService, account: account)
+        _ = activeKeychain.delete(webHostTokenService, account)
     }
 
     nonisolated static func normalizedWebHostURL(_ raw: String) -> String {

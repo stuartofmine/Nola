@@ -239,7 +239,7 @@ struct NotificationCenterView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DesignTokens.backgroundColor)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .toolbarBackground(DesignTokens.backgroundColor, for: .navigationBar)
         .navigationTitle(L10n.notificationsTitle)
         .toolbar {

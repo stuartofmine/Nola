@@ -67,6 +67,7 @@ internal fun OnboardingContent(uiState: OnboardingUiState, onComplete: (openMode
         Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
+        tonalElevation = 0.dp,
     ) {
         Box(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
@@ -75,63 +76,77 @@ internal fun OnboardingContent(uiState: OnboardingUiState, onComplete: (openMode
             Column(
                 modifier = Modifier
                     .widthIn(max = 460.dp)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
-                        .clip(NolaContinuousShape(NolaRadius.xl))
-                        .background(MaterialTheme.colorScheme.primary),
+                        .weight(1f)
+                        .fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = "n",
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                        ),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                }
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        stringResource(R.string.onboarding_welcome_title),
-                        modifier = Modifier.semantics { heading() },
-                        style = MaterialTheme.typography.headlineMedium,
-                        textAlign = TextAlign.Center,
-                    )
-                    Text(
-                        stringResource(R.string.onboarding_chat_model_hint),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                NolaCard {
-                    OnboardingCapabilityRow(
-                        icon = Icons.Filled.Memory,
-                        title = stringResource(R.string.onboarding_cap_local_title),
-                        description = stringResource(R.string.onboarding_cap_local_desc),
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
-                    OnboardingCapabilityRow(
-                        icon = Icons.Filled.Cloud,
-                        title = stringResource(R.string.onboarding_cap_cloud_title),
-                        description = stringResource(R.string.onboarding_cap_cloud_desc),
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
-                    OnboardingCapabilityRow(
-                        icon = Icons.Filled.Computer,
-                        title = stringResource(R.string.onboarding_cap_host_title),
-                        description = stringResource(R.string.onboarding_cap_host_desc),
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(NolaContinuousShape(NolaRadius.xl))
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "n",
+                                style = MaterialTheme.typography.headlineLarge.copy(
+                                    fontSize = 36.sp,
+                                    fontWeight = FontWeight.Bold,
+                                ),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.onboarding_welcome_title),
+                                modifier = Modifier.semantics { heading() },
+                                style = MaterialTheme.typography.headlineMedium,
+                                textAlign = TextAlign.Center,
+                            )
+                            Text(
+                                stringResource(R.string.onboarding_chat_model_hint),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                        NolaCard {
+                            OnboardingCapabilityRow(
+                                icon = Icons.Filled.Memory,
+                                title = stringResource(R.string.onboarding_cap_local_title),
+                                description = stringResource(R.string.onboarding_cap_local_desc),
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                            OnboardingCapabilityRow(
+                                icon = Icons.Filled.Cloud,
+                                title = stringResource(R.string.onboarding_cap_cloud_title),
+                                description = stringResource(R.string.onboarding_cap_cloud_desc),
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                            OnboardingCapabilityRow(
+                                icon = Icons.Filled.Computer,
+                                title = stringResource(R.string.onboarding_cap_host_title),
+                                description = stringResource(R.string.onboarding_cap_host_desc),
+                            )
+                        }
+                    }
                 }
                 if (uiState.completionFailed) {
                     Text(
@@ -142,7 +157,7 @@ internal fun OnboardingContent(uiState: OnboardingUiState, onComplete: (openMode
                     )
                 }
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     NolaPrimaryButton(

@@ -8,6 +8,7 @@ extension IOSApplicationRuntime {
     func editReceipt(_ request: AppleMessageEditSubmission) throws -> IOSEditReceipt {
         let input = request.inPlacePreparation()
         let prepared = try executeAgentCommand(.object(["type": .string("load_prepared_in_place_resend"),
+                                                        "conversation_id": .string(input.conversation_id),
                                                         "operation_id": .string(input.operation_id)]))
         if prepared == .null { return .absent }
         let saved = try JSONDecoder().decode(ApplePreparedInPlaceResend.self, from: JSONEncoder().encode(prepared))

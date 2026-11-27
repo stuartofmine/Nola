@@ -1825,7 +1825,7 @@ private fun JsonObject.toCanonicalConversation(): CanonicalConversation {
             ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
         updatedAtMs = (root["updated_at_ms"] ?: root["updatedAtMs"])
             ?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
-        settingsJson = (root["settings_json"] ?: root["settingsJson"])?.let { value ->
+        settingsJson = (root["settings_json"] ?: root["settingsJson"] ?: get("settings_json") ?: get("settingsJson"))?.let { value ->
             if (value == JsonNull || value.toString() == "null") null else value.jsonPrimitive.content
         },
         messages = rawMessages.map { messageValue ->

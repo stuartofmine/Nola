@@ -45,7 +45,26 @@ nonisolated struct IOSConversationProjectionV1: Decodable, Equatable, Sendable {
     }
 
     enum Role: String, Decodable, Equatable, Sendable { case user, assistant, system }
-    enum MessageState: String, Decodable, Equatable, Sendable { case pending, running, completed, cancelled, failed }
+    enum MessageState: String, Decodable, Equatable, Sendable {
+        case pending, running, completed, cancelled, failed
+
+        init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            switch raw {
+            case "final": self = .completed
+            default:
+                guard let value = Self(rawValue: raw) else {
+                    throw DecodingError.dataCorrupted(
+                        DecodingError.Context(
+                            codingPath: decoder.codingPath,
+                            debugDescription: "Cannot initialize MessageState from invalid String value \(raw)"
+                        )
+                    )
+                }
+                self = value
+            }
+        }
+    }
     enum ActivityState: String, Decodable, Equatable, Sendable {
         case pending, running
         case waitingForPermission = "waiting_for_permission"
@@ -428,6 +447,20 @@ nonisolated struct IOSConversationProjectionWindowV1: Decodable, Equatable, Send
         self.projection = projection; self.eventSequence = eventSequence
         self.totalMessageCount = totalMessageCount; self.beforeOrdinal = beforeOrdinal
         self.hasMore = hasMore; self.assistantJournalHeads = assistantJournalHeads
+    }
+
+    init(from decoder: Decoder) throws {
+        let v = try decoder.container(keyedBy: CodingKeys.self)
+        projection = try v.decode(IOSConversationProjectionV1.self, forKey: .projection)
+        eventSequence = try v.decode(UInt64.self, forKey: .eventSequence)
+        totalMessageCount = try v.decode(UInt64.self, forKey: .totalMessageCount)
+        beforeOrdinal = try v.decodeIfPresent(Int64.self, forKey: .beforeOrdinal)
+        hasMore = try v.decode(Bool.self, forKey: .hasMore)
+        if let heads = try? v.decode([IOSAssistantJournalCursor].self, forKey: .assistantJournalHeads) {
+            assistantJournalHeads = heads
+        } else {
+            assistantJournalHeads = []
+        }
     }
 
     private enum CodingKeys: String, CodingKey {

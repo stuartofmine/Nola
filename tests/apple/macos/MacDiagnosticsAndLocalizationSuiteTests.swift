@@ -260,12 +260,27 @@ final class MacChatLocalizationContractTests: XCTestCase {
 
 final class MacStringCatalogStructureTests: XCTestCase {
     func testLocalizableCatalogHasOnlyCanonicalTopLevelFields() throws {
-        let catalogURL = try XCTUnwrap(
-            Bundle(for: Self.self).url(
-                forResource: "Localizable.xcstrings",
-                withExtension: "txt"
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let liveCatalog = repositoryRoot.appendingPathComponent("apps/macos/Localizable.xcstrings")
+        let catalogURL: URL
+        if FileManager.default.fileExists(atPath: liveCatalog.path) {
+            catalogURL = liveCatalog
+        } else if let fixture = Bundle(for: Self.self).resourceURL?
+            .appendingPathComponent("RepositoryFixtures/apps/macos/Localizable.xcstrings"),
+            FileManager.default.fileExists(atPath: fixture.path) {
+            catalogURL = fixture
+        } else {
+            catalogURL = try XCTUnwrap(
+                Bundle(for: Self.self).url(
+                    forResource: "Localizable.xcstrings",
+                    withExtension: "txt"
+                )
             )
-        )
+        }
         let root = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: catalogURL)) as? [String: Any]
         )

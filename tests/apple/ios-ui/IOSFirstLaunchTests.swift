@@ -25,7 +25,13 @@ final class IOSFirstLaunchTests: XCTestCase {
         let diagnostic = app.staticTexts["startup.diagnostic"]
         XCTAssertFalse(diagnostic.exists)
         app.buttons["Technical details"].tap()
-        XCTAssertTrue(diagnostic.label.contains("Unsupported database format"))
+        XCTAssertTrue(diagnostic.waitForExistence(timeout: 5))
+        let diagnosticLabel = diagnostic.label
+        XCTAssertTrue(
+            (diagnosticLabel.contains("incompatible schema") && diagnosticLabel.contains("user_version 200"))
+                || diagnosticLabel.contains("Unsupported database format"),
+            "Unexpected startup diagnostic: \(diagnosticLabel)"
+        )
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "unsupported-format-recovery"; shot.lifetime = .keepAlways; add(shot)
         retry.tap()

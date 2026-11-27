@@ -36,6 +36,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.nola.R
 import com.nola.ui.components.NolaMotion
@@ -55,6 +57,9 @@ internal fun MessageCopyAction(text: String, modifier: Modifier = Modifier, comp
     LaunchedEffect(copied, copyAttempt) {
         if (copied) { kotlinx.coroutines.delay(1800); copied = false }
     }
+    val compactDescription = if (compact) {
+        stringResource(if (copied) R.string.chat_message_copied else R.string.chat_message_action_copy)
+    } else null
     TextButton(onClick = {
         copyAttempt += 1
         val captured = text
@@ -65,7 +70,9 @@ internal fun MessageCopyAction(text: String, modifier: Modifier = Modifier, comp
         }
         copied = result.isSuccess
         if (result.isSuccess) haptics.success() else manualText = captured
-    }, enabled = text.isNotBlank(), modifier = modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+    }, enabled = text.isNotBlank(), modifier = modifier
+        .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+        .then(if (compactDescription != null) Modifier.semantics { contentDescription = compactDescription } else Modifier),
         colors = ButtonDefaults.textButtonColors(containerColor = Color.Transparent, disabledContainerColor = Color.Transparent)) {
         AnimatedContent(
             targetState = copied,
@@ -77,7 +84,7 @@ internal fun MessageCopyAction(text: String, modifier: Modifier = Modifier, comp
         ) { isCopied ->
             Icon(
                 if (isCopied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-                contentDescription = if (compact) stringResource(if (isCopied) R.string.chat_message_copied else R.string.chat_message_action_copy) else null,
+                contentDescription = null,
                 modifier = Modifier.size(16.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )

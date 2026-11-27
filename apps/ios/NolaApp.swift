@@ -354,7 +354,7 @@ struct NolaApp: App {
                     .frame(maxWidth: 560, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
-                .background(DesignTokens.backgroundColor)
+                .background(DesignTokens.backgroundColor.ignoresSafeArea())
             }
             }
             .background { IOSKeyboardDismissal().frame(width: 0, height: 0).accessibilityHidden(true) }

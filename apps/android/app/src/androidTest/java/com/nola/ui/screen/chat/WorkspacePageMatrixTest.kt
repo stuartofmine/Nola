@@ -533,7 +533,9 @@ class WorkspacePageMatrixTest {
         ActivityScenario.launch(MainActivity::class.java).use { activity ->
             enterWorkspace()
             tab(R.string.tab_activity)
-            fun chip(label: Int) = compose.onNode(hasText(context.getString(label)) and hasClickAction() and !hasAnyAncestor(primaryNavigation))
+            fun chip(label: Int) = compose.onNode(
+                hasText(context.getString(label)) and isSelectable() and hasClickAction() and !hasAnyAncestor(primaryNavigation)
+            )
             chip(R.string.tab_chat).performClick().assertIsSelected()
             chip(R.string.activity_agent).performClick().assertIsSelected()
             chip(R.string.activity_plan).performClick().assertIsSelected()
@@ -590,9 +592,12 @@ class WorkspacePageMatrixTest {
                     editField("mcp.editor.endpoint", "http://127.0.0.1:18080/mcp")
                 }
                 click(R.string.common_save)
-                fun tile(label: String): SemanticsMatcher = hasText(label) and hasClickAction()
+                fun tile(label: String): SemanticsMatcher = hasText(label) and hasClickAction() and !hasSetTextAction()
                 fun waitForTile(label: String) {
-                    compose.waitUntil(15_000) { compose.onAllNodes(tile(label)).fetchSemanticsNodes().isNotEmpty() }
+                    compose.waitUntil(15_000) {
+                        compose.onAllNodesWithTag(nameTag).fetchSemanticsNodes().isEmpty() &&
+                            compose.onAllNodes(tile(label)).fetchSemanticsNodes().isNotEmpty()
+                    }
                 }
                 waitForTile(name)
                 compose.onNode(tile(name)).performScrollTo().performClick()
@@ -736,17 +741,34 @@ class WorkspacePageMatrixTest {
             enterWorkspace()
             tab(R.string.tab_settings)
             compose.onNodeWithText(context.getString(R.string.models_title)).performScrollTo().performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("models.refresh").fetchSemanticsNodes().isNotEmpty() }
+            if (compose.onAllNodesWithTag("model.setup.endpoint").fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithTag("models.connection.api").fetchSemanticsNodes().isNotEmpty()
+            ) {
+                compose.onNodeWithTag("models.connection.api").performScrollTo().performClick()
+            }
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("model.setup.endpoint").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("model.setup.endpoint").performScrollTo().performTextReplacement("http://127.0.0.1:8080/v1")
             compose.onNodeWithTag("model.setup.modelID").performScrollTo().performTextReplacement(model)
-            compose.onNodeWithText(context.getString(R.string.models_protocol_responses)).performScrollTo().performClick()
+            val responsesOption = hasText(context.getString(R.string.models_protocol_responses)) and isSelectable()
+            if (compose.onAllNodes(responsesOption).fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithTag("model.setup.advanced").fetchSemanticsNodes().isNotEmpty()
+            ) {
+                compose.onNodeWithTag("model.setup.advanced").performScrollTo().performClick()
+            }
+            compose.onNode(responsesOption).performScrollTo().performClick()
             compose.onNodeWithTag("model.setup.save").performScrollTo().assertIsEnabled().performClick()
             val row = hasTestTag("models.row.$model")
             compose.waitUntil(15_000) { compose.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
             compose.onNode(row).performScrollTo().assertIsDisplayed()
             capture("model-api-activated")
             val prompt = "Selected model parameters $model"
-            val parameters = hasContentDescription(context.getString(R.string.common_parameters)) and hasAnyAncestor(row)
-            compose.onNode(parameters).performScrollTo().performClick()
+            val more = hasContentDescription(context.getString(R.string.intelligence_more)) and hasAnyAncestor(row)
+            fun openModelOverflowItem(labelRes: Int) {
+                compose.onNode(more).performScrollTo().performClick()
+                compose.onNode(hasText(context.getString(labelRes)) and hasClickAction()).performClick()
+            }
+            openModelOverflowItem(R.string.common_parameters)
             val promptField = hasSetTextAction() and hasText(context.getString(R.string.models_custom_system_prompt))
             compose.onNodeWithTag("model-parameters-list").performScrollToNode(promptField)
             compose.onNode(promptField).performTextReplacement(prompt)
@@ -759,14 +781,17 @@ class WorkspacePageMatrixTest {
                 val stored = Json.decodeFromString<com.nola.domain.model.ModelParameters>(profile.parametersJson)
                 org.junit.Assert.assertEquals(prompt, stored.customSystemPrompt)
             }
-            compose.onNode(parameters).performScrollTo().performClick()
+            openModelOverflowItem(R.string.common_parameters)
             compose.onNodeWithTag("model-parameters-list").performScrollToNode(promptField)
             compose.onNode(promptField).assertTextContains(prompt)
             capture("selected-model-parameters-restored")
             androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithTag("model-parameters-save").fetchSemanticsNodes().isEmpty()
+            }
             val delete = context.getString(R.string.common_delete)
-            compose.onNode(hasContentDescription(delete) and hasAnyAncestor(row)).performClick()
-            compose.onNode(hasText(delete) and hasClickAction()).performClick()
+            openModelOverflowItem(R.string.common_delete)
+            compose.onNode(hasText(delete) and hasClickAction() and hasAnyAncestor(isDialog())).performClick()
             compose.waitUntil(10_000) { compose.onAllNodes(row).fetchSemanticsNodes().isEmpty() }
         }
     }

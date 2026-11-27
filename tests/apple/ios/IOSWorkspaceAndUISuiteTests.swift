@@ -26,8 +26,9 @@ final class IOSCompactTabContainerTests: XCTestCase {
         window.layoutIfNeeded()
         let host = try XCTUnwrap(controller.children.first)
         XCTAssertGreaterThan(controller.view.safeAreaInsets.top, 20)
-        XCTAssertGreaterThanOrEqual(host.view.frame.minY, controller.view.safeAreaInsets.top - 0.5)
-        XCTAssertLessThanOrEqual(host.view.frame.maxY, controller.view.bounds.maxY - controller.view.safeAreaInsets.bottom + 0.5)
+        XCTAssertEqual(host.view.frame, controller.view.bounds)
+        XCTAssertEqual(host.view.safeAreaInsets, controller.view.safeAreaInsets)
+        XCTAssertEqual(host.view.safeAreaLayoutGuide.layoutFrame, controller.view.safeAreaLayoutGuide.layoutFrame)
         func label(_ view: UIView) -> UILabel? {
             if let label = view as? UILabel { return label }
             return view.subviews.lazy.compactMap(label).first
@@ -54,9 +55,12 @@ final class IOSCompactTabContainerTests: XCTestCase {
             controller.select(tab, content: AnyView(Text("Page")), revision: 0)
             let host = try XCTUnwrap(controller.children.first)
             let firstFrame = host.view.frame
-            XCTAssertEqual(firstFrame, controller.view.safeAreaLayoutGuide.layoutFrame)
+            let firstSafeFrame = host.view.safeAreaLayoutGuide.layoutFrame
+            XCTAssertEqual(firstFrame, controller.view.bounds)
+            XCTAssertEqual(firstSafeFrame, controller.view.safeAreaLayoutGuide.layoutFrame)
             window.layoutIfNeeded()
             XCTAssertEqual(host.view.frame, firstFrame)
+            XCTAssertEqual(host.view.safeAreaLayoutGuide.layoutFrame, firstSafeFrame)
             controller.additionalSafeAreaInsets.bottom += 20
             window.layoutIfNeeded()
         }
@@ -598,7 +602,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             ("NolaOnAccent", "onAccent"),
             ("NolaSuccess", "success"),
             ("NolaSurface", "surface"),
-            ("NolaSurfaceRaised", "surfaceSubtle"),
+            ("NolaSurfaceRaised", "surfaceElevated"),
             ("NolaTextPrimary", "ink"),
             ("NolaTextSecondary", "inkSecondary"),
             ("NolaWarning", "warning")
@@ -609,7 +613,7 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
             ("chatBackgroundColor", DesignTokens.chatBackgroundColor, "canvas"),
             ("surfaceColor", DesignTokens.surfaceColor, "surface"),
             ("cardBackgroundColor", DesignTokens.cardBackgroundColor, "surface"),
-            ("elevatedColor", DesignTokens.elevatedColor, "surfaceSubtle"),
+            ("elevatedColor", DesignTokens.elevatedColor, "surfaceElevated"),
             ("secondaryBackgroundColor", DesignTokens.secondaryBackgroundColor, "surfaceSubtle"),
             ("rowFillColor", DesignTokens.rowFillColor, "surfaceSubtle"),
             ("mutedFillColor", DesignTokens.mutedFillColor, "surfaceSubtle"),
@@ -1344,6 +1348,31 @@ final class IOSUIInteractionPolicyTests: XCTestCase {
     }
 }
 
+private nonisolated final class TestWebHostKeychainBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+
+    func save(_ service: String, _ account: String, _ value: Data) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        items["\(service)\u{0}\(account)"] = value
+        return true
+    }
+
+    func read(_ service: String, _ account: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return items["\(service)\u{0}\(account)"]
+    }
+
+    func delete(_ service: String, _ account: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        items.removeValue(forKey: "\(service)\u{0}\(account)")
+        return true
+    }
+}
+
 @MainActor
 final class WebHostConnectionUIVisualTests: XCTestCase {
     func testConnectionSheetRendersSetupAndInputsAtPhoneSize() async throws {
@@ -1399,6 +1428,23 @@ final class WebHostConnectionUIVisualTests: XCTestCase {
         )
     }
     func testPairingFailureRestoresPreviousKeychainState() throws {
+        let probeAccount = "probe-\(UUID().uuidString)"
+        let liveKeychainAvailable = KeychainService.save(service: "com.nola.test.probe", account: probeAccount, value: Data("1".utf8))
+        if liveKeychainAvailable {
+            _ = KeychainService.delete(service: "com.nola.test.probe", account: probeAccount)
+        } else {
+            let box = TestWebHostKeychainBox()
+            ModelSelectionManager.installKeychainBackingForTesting(.init(
+                save: { box.save($0, $1, $2) },
+                read: { box.read($0, $1) },
+                delete: { box.delete($0, $1) }
+            ))
+        }
+        defer {
+            if !liveKeychainAvailable {
+                ModelSelectionManager.resetKeychainBackingForTesting()
+            }
+        }
         let url = try XCTUnwrap(URL(string: "http://127.0.0.1:1/" + UUID().uuidString))
         defer { ModelSelectionManager.forgetWebHostIdentity(for: url) }
         let id = UUID().uuidString

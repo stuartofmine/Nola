@@ -148,7 +148,7 @@ struct IOSPersonalWorkspaceView: View {
             .listStyle(.plain)
             .modifier(IOSWorkspaceTopEdge())
             .scrollContentBackground(.hidden)
-            .background(DesignTokens.backgroundColor)
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -430,7 +430,7 @@ struct IOSInformationView: View {
             .contentMargins(.horizontal, pageInset, for: .scrollContent)
             .listSectionSpacing(12)
             .scrollContentBackground(.hidden)
-            .background(DesignTokens.backgroundColor)
+            .background(DesignTokens.backgroundColor.ignoresSafeArea())
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -594,7 +594,7 @@ private struct IOSKnowledgePointsView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(DesignTokens.backgroundColor)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .searchable(
             text: $searchText,
             prompt: Text(NSLocalizedString("information.knowledge.search", value: "Search knowledge points", comment: "Search knowledge points"))
@@ -741,7 +741,7 @@ struct IOSConversationActivityView: View {
             }
         }, canOpenSource: { UUID(uuidString: $0) != nil })
         }
-        .background(DesignTokens.backgroundColor)
+        .background(DesignTokens.backgroundColor.ignoresSafeArea())
         .navigationTitle(isRootTab ? "" : String(localized: "information.activity"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

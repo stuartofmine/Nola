@@ -177,7 +177,7 @@ class IntelligenceViewModel @Inject constructor(
         val normalizedDescription = description.trim()
         val normalizedContent = content.trim()
         if (normalizedName.isEmpty() || normalizedContent.isEmpty()) return
-        mutateMcp { principalId ->
+        mutateMcp(onCommitted = onCommitted) { principalId ->
             if (snapshot != null) requireAccess(original, principalId, AgentCoreResourcePermission.EditContent)
             val skill = original.copy(
                 name = normalizedName,
@@ -185,7 +185,6 @@ class IntelligenceViewModel @Inject constructor(
                 content = normalizedContent,
             )
             memoryProfileDataStore.saveSkill(snapshot, skill)
-            onCommitted()
         }
     }
 
@@ -210,7 +209,7 @@ class IntelligenceViewModel @Inject constructor(
         val normalizedName = name.trim()
         val normalizedUrl = url.trim()
         if (normalizedName.isEmpty() || normalizedUrl.isEmpty()) return
-        mutateMcp { principalId ->
+        mutateMcp(onCommitted = onCommitted) { principalId ->
             if (original != null) requireAccess(original, principalId, AgentCoreResourcePermission.EditContent)
             val edited = (original ?: McpServerConfig(name = normalizedName, url = normalizedUrl)).copy(
                 name = normalizedName,
@@ -220,7 +219,6 @@ class IntelligenceViewModel @Inject constructor(
                 accessRevision = AndroidManagedResourceAccess.nextRevision(original?.accessRevision ?: 0),
             )
             memoryProfileDataStore.saveMcpServer(original, edited)
-            onCommitted()
         }
     }
 
@@ -242,21 +240,28 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    private fun mutateMcp(recordSave: Boolean = true, operation: suspend (String) -> Unit) {
+    private fun mutateMcp(
+        recordSave: Boolean = true,
+        onCommitted: () -> Unit = {},
+        operation: suspend (String) -> Unit,
+    ) {
         if (_uiState.value.isSaving || _uiState.value.isLoadingProfile || _uiState.value.profileLoadError != null) return
         _uiState.update { it.copy(isSaving = true, errorMessage = null) }
         viewModelScope.launch {
             saveMutex.withLock {
                 _uiState.update { it.copy(isSaving = true, errorMessage = null) }
+                var committed = false
                 try {
                     operation(memoryProfileDataStore.getOrCreateResourcePrincipalId())
                     if (recordSave) _uiState.update { it.copy(saveRevision = it.saveRevision + 1) }
+                    committed = true
                 } catch (error: Exception) {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     _uiState.update { it.copy(errorMessage = error.localizedMessage ?: error.javaClass.simpleName) }
                 } finally {
                     _uiState.update { it.copy(isSaving = false) }
                 }
+                if (committed) onCommitted()
             }
         }
     }

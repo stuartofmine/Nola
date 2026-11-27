@@ -1480,6 +1480,7 @@ private fun EndpointConfigFields(
             expanded = showAdvanced,
             onToggle = { showAdvanced = !showAdvanced },
             enabled = !saving,
+            modifier = Modifier.testTag("model.setup.advanced"),
         )
         AnimatedVisibility(
             visible = showAdvanced,
@@ -1563,6 +1564,7 @@ fun WebHostConfigSheet(
     ModalBottomSheet(
         modifier = Modifier.dismissImeOnBlankTap(),
         onDismissRequest = { if (!isConnecting) requestDismiss() },
+        contentWindowInsets = { androidx.compose.foundation.layout.WindowInsets(0) },
         sheetState = sheetState
     ) {
         val focus = LocalFocusManager.current
@@ -1691,7 +1693,14 @@ fun WebHostConfigSheet(
                         OutlinedTextField(
                             value = certificateSha256,
                             enabled = !isConnecting,
-                            onValueChange = { certificateSha256 = it; inlineError = null },
+                            onValueChange = {
+                                certificateSha256 = it
+                                inlineError = null
+                                if (it.isBlank() && !Uri.parse(url.trim()).scheme.equals("https", ignoreCase = true)) {
+                                    focus.clearFocus()
+                                    keyboard?.hide()
+                                }
+                            },
                             label = { Text(stringResource(R.string.models_certificate_sha256_optional)) },
                             supportingText = { Text(stringResource(R.string.models_certificate_sha256_help)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrect = false, imeAction = ImeAction.Done),

@@ -52,6 +52,12 @@ extension IOSApplicationRuntime {
             guard let command = arguments["command"] as? [String: Any], let kind = command["type"] as? String else { return false }
             return ["get_profile", "list_profiles", "get_runtime", "get_connection", "list_connections",
                     "get_account", "list_accounts"].contains(kind)
+        case "skill":
+            guard let command = arguments["command"] as? [String: Any], let kind = command["type"] as? String else { return false }
+            return ["list", "list_editors", "get", "get_editor"].contains(kind)
+        case "mcp":
+            guard let command = arguments["command"] as? [String: Any], let kind = command["type"] as? String else { return false }
+            return ["list", "get"].contains(kind)
         default: return false
         }
     }

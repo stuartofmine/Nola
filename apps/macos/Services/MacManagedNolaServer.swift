@@ -310,14 +310,17 @@ final class MacManagedNolaServer {
     private let bindAddress: String
     private let port: Int
     private let startupTimeout: Duration
+    private let defaults: UserDefaults
 
     init(environment: MacAppEnvironment = .shared, executable: URL? = nil,
-         bindAddress: String = "0.0.0.0", port: Int = 5001, startupTimeout: Duration = .seconds(12)) {
+         bindAddress: String = "0.0.0.0", port: Int = 5001, startupTimeout: Duration = .seconds(12),
+         defaults: UserDefaults = .standard) {
         self.environment = environment
         self.executableOverride = executable
         self.bindAddress = bindAddress
         self.port = port
         self.startupTimeout = startupTimeout
+        self.defaults = defaults
     }
 
     func start() async {
@@ -330,10 +333,11 @@ final class MacManagedNolaServer {
         pendingStop = nil
 
         do {
+            try environment.prepare()
             guard let executableURL = executableOverride ?? MacAgentHostExecutableLocator.resolve() else {
                 throw MacManagedNolaServerError.executableUnavailable
             }
-            let tailcatConfig = MacManagedTailcatConfiguration.load()
+            let tailcatConfig = MacManagedTailcatConfiguration.load(from: defaults)
             let bindAddress = self.bindAddress
             let port = self.port
             let arguments = try await Task.detached(priority: .userInitiated) {
@@ -358,7 +362,7 @@ final class MacManagedNolaServer {
                 projectURL: self.environment.scratchWorkspaceURL
             )
             environment["NOLA_CLIENT_SURFACE"] = "mac_server"
-            let storedProfile = UserDefaults.standard.object(forKey: Self.permissionProfileKey)
+            let storedProfile = defaults.object(forKey: Self.permissionProfileKey)
             guard storedProfile == nil || storedProfile is String else {
                 throw MacManagedNolaServerError.launchFailed("Invalid stored permission profile.")
             }
@@ -377,6 +381,11 @@ final class MacManagedNolaServer {
             }
 
             try process.run()
+            // Close child-side pipe ends in the parent so EOF is observed immediately
+            // if the child exits before completing its startup handshake.
+            try? output.fileHandleForWriting.close()
+            try? errors.fileHandleForWriting.close()
+            try? input.fileHandleForReading.close()
             MacOwnedChildProcessRegistry.shared.register(process)
             self.process = process
             self.stdinPipe = input
@@ -506,9 +515,37 @@ final class MacManagedNolaServer {
     }
 
     nonisolated private static func readStartupLine(from handle: FileHandle) async throws -> String {
-        for try await line in handle.bytes.lines where !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return line
-        }
-        throw MacManagedNolaServerError.invalidHandshake
+        let fd = handle.fileDescriptor
+        return try await Task.detached(priority: .userInitiated) {
+            var lineBytes: [UInt8] = []
+            var byte: UInt8 = 0
+            while !Task.isCancelled {
+                let n = Darwin.read(fd, &byte, 1)
+                if n == 0 {
+                    if !lineBytes.isEmpty,
+                       let text = String(bytes: lineBytes, encoding: .utf8)?
+                           .trimmingCharacters(in: .whitespacesAndNewlines),
+                       text.hasPrefix("{") {
+                        return text
+                    }
+                    throw MacManagedNolaServerError.invalidHandshake
+                }
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    throw MacManagedNolaServerError.invalidHandshake
+                }
+                if byte == 0x0A {
+                    if let text = String(bytes: lineBytes, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                       text.hasPrefix("{") {
+                        return text
+                    }
+                    lineBytes.removeAll(keepingCapacity: true)
+                } else {
+                    lineBytes.append(byte)
+                }
+            }
+            throw CancellationError()
+        }.value
     }
 }

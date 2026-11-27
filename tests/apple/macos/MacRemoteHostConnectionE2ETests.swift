@@ -159,7 +159,7 @@ final class MacRemoteHostConnectionE2ETests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         let request = try JSONSerialization.jsonObject(with: Data(contentsOf: reportURL)) as? [String: String]
-        XCTAssertEqual(request?["path"], "/api/agent/settings")
+        XCTAssertEqual(request?["path"], "/api/mobile/agent/settings")
         XCTAssertEqual(
             request?["body_sha256"],
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -229,7 +229,7 @@ final class MacRemoteHostConnectionE2ETests: XCTestCase {
             with: Data(contentsOf: reportURL)
         ) as? [String: String]
         XCTAssertEqual(request?["method"], "POST")
-        XCTAssertEqual(request?["path"], "/api/chat/conversations/c1/cancel")
+        XCTAssertEqual(request?["path"], "/api/mobile/chat/conversations/remote-conversation/cancel")
         XCTAssertFalse(request?["body_sha256"]?.isEmpty ?? true)
         XCTAssertFalse(request?["proof"]?.isEmpty ?? true)
     }
@@ -311,7 +311,7 @@ final class MacRemoteHostConnectionE2ETests: XCTestCase {
                     if not timestamp or not nonce or not hmac.compare_digest(proof, expected):
                         body = json.dumps({"error": "unauthorized"}).encode()
                         self.send_response(401)
-                    elif self.path != "/api/agent/settings":
+                    elif self.path != "/api/mobile/agent/settings":
                         body = json.dumps({"error": "wrong path"}).encode()
                         self.send_response(404)
                     else:

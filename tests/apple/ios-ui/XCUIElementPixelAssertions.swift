@@ -153,9 +153,11 @@ enum XCUIElementPixelAssertions {
                 }
                 let isNeutralCoolGray: Bool
                 if isDark {
+                    // Monochrome Obsidian dark ramp (#0B0B0C..#242428 and segmented control pills)
+                    // naturally sits at b - r == 1..4; flag genuine cool-blue leaks (b - r >= 6).
                     isNeutralCoolGray = abs(r - g) <= 2 && (
-                        ((22...34).contains(r) && (b - r) >= 2) ||
-                        ((35...55).contains(r) && (b - r) >= 3)
+                        ((22...34).contains(r) && (b - r) >= 6) ||
+                        ((35...55).contains(r) && (b - r) >= 6)
                     )
                 } else {
                     isNeutralCoolGray = r > 220 && (b - r) >= 3 && abs(r - g) <= 4

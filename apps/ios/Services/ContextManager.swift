@@ -1003,7 +1003,7 @@ public final class DefaultContextManager {
                     id: "fetched:\(source.id.uuidString):\(idx):\(event.id)",
                     title: event.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? source.name : event.title,
                     summary: dateText,
-                    content: event.notes,
+                    content: normalizedDataSourceText(event.notes, maxLength: 3_500),
                     sourceURL: source.url,
                     metadata: [
                         "sourceId": source.id.uuidString,

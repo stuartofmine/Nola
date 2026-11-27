@@ -149,26 +149,38 @@ internal class AndroidCanonicalDataSources(
                 else -> UnifiedDataSourceKind.Custom
             },
             enabled = source.defaultEnabled,
-            accessPolicy = DataSourceAccessPolicy.valueOf(source.accessPolicy.replaceFirstChar { it.uppercase() }),
+            accessPolicy = parseAccessPolicy(source.accessPolicy),
             allowCloudContext = source.privacy == "allow-cloud-context",
             maximumAgeMinutes = source.freshnessPolicy.maximumAgeMinutes.toInt(),
             validationContract = contract, cachedContent = content,
             lastSuccessfulReadAt = source.lastSuccessfulReadAtMs,
             canonicalAuthorization = source.authorization.state,
-            canonicalObservedAt = source.readState["observed_at_ms"].present()?.jsonPrimitive?.long,
-            lastError = if (source.readState.string("status") in setOf("failed", "denied", "unavailable"))
-                source.readState["diagnostic"].present()?.jsonPrimitive?.content else source.validation.diagnostic,
+            canonicalObservedAt = source.readState["observed_at_ms"].present()?.jsonPrimitive?.longOrNull,
+            lastError = if (source.readState["status"].present()?.jsonPrimitive?.contentOrNull in setOf("failed", "denied", "unavailable"))
+                source.readState["diagnostic"].present()?.jsonPrimitive?.contentOrNull else source.validation.diagnostic,
             createdAt = source.createdAtMs, updatedAt = source.updatedAtMs, canonicalRevision = source.revision,
         )
     }
 
+    private fun parseAccessPolicy(raw: String): DataSourceAccessPolicy {
+        val camel = raw.split('_').joinToString("") { part ->
+            part.replaceFirstChar { it.uppercase() }
+        }
+        return DataSourceAccessPolicy.entries.firstOrNull { it.name.equals(camel, ignoreCase = true) }
+            ?: DataSourceAccessPolicy.ConversationOptIn
+    }
+
     private fun decodeContract(value: JsonObject): DataSourceValidationContract {
         val recipe = value.getValue("readRecipe").jsonObject
+        val rawSchema = recipe.getValue("outputSchema")
+        val cleanedSchema = if (rawSchema is JsonObject && SOURCE_FORMAT_ANNOTATION in rawSchema) {
+            JsonObject(rawSchema - SOURCE_FORMAT_ANNOTATION)
+        } else rawSchema
         return DataSourceValidationContract(
             sourceId = value.string("sourceId"), connectorId = value.string("connectorId"),
             connectorVersion = value.getValue("connectorVersion").jsonPrimitive.int,
             readerDescription = value.string("readerDescription"),
-            format = readSourceFormat(recipe.getValue("outputSchema")),
+            format = readSourceFormat(rawSchema),
             schemaFields = value.getValue("schemaFields").jsonArray.map { it.jsonPrimitive.content },
             redactedSample = value.string("redactedSample"), recordCount = value.getValue("recordCount").jsonPrimitive.int,
             maximumAgeMinutes = value.getValue("maximumAgeMinutes").jsonPrimitive.int,
@@ -179,7 +191,7 @@ internal class AndroidCanonicalDataSources(
                 method = DataSourceReadMethod.valueOf(recipe.string("method").replaceFirstChar { it.uppercase() }),
                 operationId = recipe.string("operationId"),
                 configurationKeys = recipe["configurationKeys"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
-                outputSchemaJson = recipe.getValue("outputSchema").toString(),
+                outputSchemaJson = cleanedSchema.toString(),
             ),
         )
     }
