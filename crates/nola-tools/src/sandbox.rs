@@ -296,7 +296,7 @@ pub fn build_shell_command(
         let mut cmd = Command::new("/usr/bin/sandbox-exec");
         cmd.args(["-p", &sbpl, "/bin/bash", "-lc", shell_cmd])
             .current_dir(cwd);
-        return Ok(cmd);
+        Ok(cmd)
     }
 
     #[cfg(target_os = "linux")]
@@ -347,7 +347,7 @@ pub fn build_shell_command(
             cmd.arg("--unshare-net");
         }
         cmd.args(["--chdir", &cwd_str, "--", "/bin/bash", "-lc", shell_cmd]);
-        return Ok(cmd);
+        Ok(cmd)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]

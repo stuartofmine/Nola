@@ -18,22 +18,6 @@ case "$DESTINATION" in
     ;;
 esac
 
-# These suites launch production helper processes and deliberately exercise
-# termination, SIGSTOP/SIGKILL, reconnect, and crash-recovery paths. Keep them
-# out of the default architecture/contract loop so a normal refactor test run
-# cannot terminate a bundled Nola executable or trigger macOS CrashReporter.
-host_e2e_suites=(
-  MacCancellationCLIEndToEndTests
-  MacAgentCapabilityEndToEndTests
-  MacBuiltInSkillEndToEndTests
-  MacCanonicalStoreEndToEndTests
-  MacExternalExecutionRealEndToEndTests
-  MacRealProductUIEndToEndTests
-  MacRemoteHostConnectionE2ETests
-  MacWebSourceE2ETests
-)
-real_local_model_suite="MacLocalModelRealInferenceEndToEndTests"
-
 args=(
   test
   -project "$ROOT/apple/Nola.xcodeproj"
@@ -55,32 +39,15 @@ fi
 
 case "$LAYER" in
   contracts)
-    for suite in \
-      "${host_e2e_suites[@]}" \
-      "$real_local_model_suite"; do
-      args+=("-skip-testing:NolaMacTests/$suite")
-    done
+    args+=("-only-testing:NolaMacTests/MacCoreContractsTests")
     ;;
-  host-e2e)
-    for suite in "${host_e2e_suites[@]}"; do
-      args+=("-only-testing:NolaMacTests/$suite")
-    done
-    ;;
-  cancel-e2e)
-    args+=("-only-testing:NolaMacTests/MacCancellationCLIEndToEndTests")
-    ;;
-  task-projection)
-    args+=("-only-testing:NolaMacTests/MacRemoteTaskObservationCoordinatorTests")
-    ;;
-  a2ui)
-    args+=("-only-testing:NolaMacTests/MacPublicPartSemanticParityTests")
-    args+=("-only-testing:NolaMacTests/MacCanonicalConversationRepositoryEndToEndTests/testCanonicalCorePartsRestoreStructuredPresentationWithoutPollutingAnswerText")
-    args+=("-only-testing:NolaMacTests/MacCanonicalExportTests/testPagedExportReadsDeclaredDerivationSeparatelyAndFailsIfMissing")
+  host-e2e|real-e2e)
+    args+=("-only-testing:NolaMacTests/MacRealModelE2ETests")
     ;;
   full)
     ;;
   *)
-    printf 'Usage: %s [contracts|host-e2e|cancel-e2e|task-projection|a2ui|full]\n' "$0" >&2
+    printf 'Usage: %s [contracts|host-e2e|real-e2e|full]\n' "$0" >&2
     exit 64
     ;;
 esac

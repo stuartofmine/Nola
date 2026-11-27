@@ -241,6 +241,7 @@ impl Drop for FileLockGuard {
 fn acquire_blocking_flock(lock_path: &Path) -> Result<FileLockGuard, StoreError> {
     let f = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(lock_path)?;

@@ -2,9 +2,9 @@
 //! Three-Tier Context Compaction Engine:
 //! - Tier 1 (Zero-Cost Micro-Compaction):
 //!   1A) Prunes stale `Assistant.reasoning` beyond the last 2 assistant turns + deduplicates
-//!       superseded `read_file` observations (files re-read or mutated later).
+//!   superseded `read_file` observations (files re-read or mutated later).
 //!   1B) Shrinks older oversized tool payloads while preserving `output_id` & key scalars
-//!       (`exit_code`, `path`, `error`) so spilled files stay inspectable via `tool_output`.
+//!   (`exit_code`, `path`, `error`) so spilled files stay inspectable via `tool_output`.
 //! - Tier 2 (Structured Working-State Summary Compaction):
 //!   Preserves Initial User Goal, deduplicated Files Read/Modified, Commands & Exit Codes,
 //!   Active Errors, and Prior Summary Highlights.
@@ -104,12 +104,14 @@ pub fn estimate_history_tokens(history: &[HistoryMessage]) -> usize {
     history.iter().map(estimate_history_message_tokens).sum()
 }
 
+pub type HistorySummarizer<'a> = &'a dyn Fn(&[HistoryMessage]) -> Option<String>;
+
 /// Run Tier-1 -> Tier-2 -> Tier-3 compaction when estimated tokens exceed auto-compact trigger.
 pub fn compact_history(
     history: &mut Vec<HistoryMessage>,
     budget: ContextBudget,
     fixed_overhead_tokens: usize,
-    summarizer: Option<&dyn Fn(&[HistoryMessage]) -> Option<String>>,
+    summarizer: Option<HistorySummarizer<'_>>,
 ) -> CompactionReport {
     compact_history_inner(history, budget, fixed_overhead_tokens, summarizer, false)
 }
@@ -120,7 +122,7 @@ pub fn compact_history_force(
     history: &mut Vec<HistoryMessage>,
     budget: ContextBudget,
     fixed_overhead_tokens: usize,
-    summarizer: Option<&dyn Fn(&[HistoryMessage]) -> Option<String>>,
+    summarizer: Option<HistorySummarizer<'_>>,
 ) -> CompactionReport {
     compact_history_inner(history, budget, fixed_overhead_tokens, summarizer, true)
 }
@@ -129,7 +131,7 @@ fn compact_history_inner(
     history: &mut Vec<HistoryMessage>,
     budget: ContextBudget,
     fixed_overhead_tokens: usize,
-    summarizer: Option<&dyn Fn(&[HistoryMessage]) -> Option<String>>,
+    summarizer: Option<HistorySummarizer<'_>>,
     force: bool,
 ) -> CompactionReport {
     let tokens_before = estimate_history_tokens(history);

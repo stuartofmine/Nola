@@ -465,6 +465,7 @@ fn verify_signed_feed_bytes_at(
 }
 
 /// Evaluate a verified signed feed against local version/build/store compatibility and target.
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_signed_feed(
     feed_bytes: &[u8],
     public_key_b64: &str,

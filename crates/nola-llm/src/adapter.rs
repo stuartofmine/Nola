@@ -283,6 +283,7 @@ pub fn parse_tool_arguments(raw: &str) -> Result<Value, LlmError> {
 /// Whenever `stop_reason == OutputLimit` or `ContentFilter`, any partially generated
 /// `tool_calls` are ATOMICALLY DISCARDED so truncated JSON arguments can never
 /// corrupt files or clobber a safety refusal.
+#[allow(clippy::too_many_arguments)]
 pub fn finalize_response(
     response_id: Option<String>,
     response_model: Option<String>,

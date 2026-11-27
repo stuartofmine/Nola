@@ -703,8 +703,7 @@ mod ts_ast {
     fn terminal_identifier(value: &str) -> Option<String> {
         value
             .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .filter(|p| !p.is_empty())
-            .next_back()
+            .rfind(|p| !p.is_empty())
             .filter(|s| s.len() > 1 && !s.chars().all(|c| c.is_ascii_digit()))
             .map(ToOwned::to_owned)
     }

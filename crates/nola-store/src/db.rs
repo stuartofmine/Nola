@@ -704,7 +704,7 @@ impl Store {
                 }
             }
 
-            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+            if out.is_empty() && !trimmed.is_ascii() {
                 let like_pat = escape_like_pattern(trimmed);
                 let mut stmt = conn.prepare(
                     "SELECT e.scope, e.seq, e.kind, e.payload_json, e.created_at_ms
@@ -929,7 +929,7 @@ impl Store {
                 });
             }
             // CJK / non-space-delimited substring fallback when unicode61 FTS5 finds 0 hits
-            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+            if out.is_empty() && !trimmed.is_ascii() {
                 let like_pat = format!(
                     "%{}%",
                     trimmed
@@ -1381,7 +1381,7 @@ impl Store {
                 }
             }
 
-            if out.is_empty() && trimmed.chars().any(|c| !c.is_ascii()) {
+            if out.is_empty() && !trimmed.is_ascii() {
                 let like_pat = escape_like_pattern(trimmed);
                 let (sql, bind_values) = match source_ids {
                     Some(ids) => {

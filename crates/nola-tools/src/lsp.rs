@@ -286,11 +286,13 @@ pub(crate) fn build_reverse_request_reply(req_id: Value, method: &str) -> Value 
     }
 }
 
+type PendingLspResponses = Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+
 struct LspSession {
     child: Mutex<Child>,
     writer_tx: Mutex<Option<mpsc::Sender<Value>>>,
     next_id: AtomicU64,
-    pending: Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, String>>>>>,
+    pending: PendingLspResponses,
     published_diagnostics: Arc<Mutex<BTreeMap<String, Vec<Value>>>>,
     opened_docs: Mutex<BTreeMap<PathBuf, i32>>,
     supports_pull_diagnostics: AtomicBool,
@@ -325,8 +327,7 @@ impl LspSession {
         let stdout_raw = child.stdout.take().ok_or("missing lsp stdout")?;
 
         let (writer_tx, writer_rx) = mpsc::channel::<Value>();
-        let pending: Arc<Mutex<BTreeMap<u64, mpsc::Sender<Result<Value, String>>>>> =
-            Arc::new(Mutex::new(BTreeMap::new()));
+        let pending: PendingLspResponses = Arc::new(Mutex::new(BTreeMap::new()));
         let published_diagnostics: Arc<Mutex<BTreeMap<String, Vec<Value>>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let closed = Arc::new(AtomicBool::new(false));

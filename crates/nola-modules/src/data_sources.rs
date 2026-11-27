@@ -501,7 +501,7 @@ pub fn list_data_source_usage(store: &Store) -> Vec<Value> {
     let mut items: Vec<DataSourceUsageRecord> = store
         .list_module_records(KIND_DATA_SOURCE_USAGE)
         .unwrap_or_default();
-    items.sort_by(|a, b| b.used_at_ms.cmp(&a.used_at_ms));
+    items.sort_by_key(|item| std::cmp::Reverse(item.used_at_ms));
     items
         .into_iter()
         .filter_map(|item| serde_json::to_value(item).ok())

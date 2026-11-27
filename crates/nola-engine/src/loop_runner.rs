@@ -1214,7 +1214,7 @@ impl AgentEngine {
             };
 
             let mut guard_batch = Vec::with_capacity(resp.tool_calls.len());
-            for (tc, out) in resp.tool_calls.iter().zip(outcomes.into_iter()) {
+            for (tc, out) in resp.tool_calls.iter().zip(outcomes) {
                 // Auto-activate ONLY explicitly requested deferred tools returned by `tool_search`
                 // strictly at tail (never blindly activating all 40 tools on an empty browse query!).
                 if tc.name == "tool_search" && !out.result.is_error {

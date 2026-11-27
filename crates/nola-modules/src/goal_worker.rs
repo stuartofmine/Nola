@@ -74,7 +74,7 @@ impl GoalWorker {
         let runnable = match goal.status {
             GoalStatus::Pending => {
                 goal.needs_user_question.is_none()
-                    && goal.next_retry_at_ms.map_or(true, |retry_at| now >= retry_at)
+                    && goal.next_retry_at_ms.is_none_or(|retry_at| now >= retry_at)
             }
             GoalStatus::Running => !lease_valid,
             GoalStatus::Paused | GoalStatus::Completed | GoalStatus::Failed => false,
@@ -211,9 +211,9 @@ impl GoalWorker {
             .filter(|g: &GoalRecord| match g.status {
                 GoalStatus::Pending => {
                     g.needs_user_question.is_none()
-                        && g.next_retry_at_ms.map_or(true, |retry_at| now >= retry_at)
+                        && g.next_retry_at_ms.is_none_or(|retry_at| now >= retry_at)
                 }
-                GoalStatus::Running => g.lease_until_ms.map_or(true, |until| until <= now),
+                GoalStatus::Running => g.lease_until_ms.is_none_or(|until| until <= now),
                 GoalStatus::Paused | GoalStatus::Completed | GoalStatus::Failed => false,
             })
             .collect();

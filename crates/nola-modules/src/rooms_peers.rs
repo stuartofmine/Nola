@@ -355,23 +355,27 @@ pub fn select_room_experts(
     Ok(selected)
 }
 
+struct ExpertTurnContext<'a> {
+    suite: &'a Arc<ModulesSuite>,
+    caller: &'a Arc<dyn ModelCaller>,
+    base_route: &'a ModelRouteConfig,
+    policy: &'a EffectivePolicy,
+    hooks: &'a HookRunner,
+    room: &'a AgentRoom,
+    room_ws: &'a Path,
+}
+
 fn execute_single_expert_turn(
-    suite: &Arc<ModulesSuite>,
-    caller: &Arc<dyn ModelCaller>,
-    base_route: &ModelRouteConfig,
-    policy: &EffectivePolicy,
-    hooks: &HookRunner,
-    room: &AgentRoom,
-    room_ws: &Path,
+    turn_ctx: &ExpertTurnContext<'_>,
     expert: &ExpertPeer,
     user_message: &str,
 ) -> Value {
-    let mut route = base_route.clone();
+    let mut route = turn_ctx.base_route.clone();
     if let Some(m) = expert.model_override.clone().filter(|s| !s.trim().is_empty()) {
         route.model = m;
     }
     let mut registry = ToolRegistry::with_builtin_tools();
-    suite.register_tools(&mut registry);
+    turn_ctx.suite.register_tools(&mut registry);
     if !expert.allowed_tools.is_empty() {
         let mut filtered = ToolRegistry::default();
         for spec in registry.all_specs() {
@@ -387,29 +391,33 @@ fn execute_single_expert_turn(
         }
         registry = filtered;
     }
-    let engine = AgentEngine::new(suite.store.clone(), Arc::new(registry), Arc::clone(caller));
-    let mut ctx = ToolContext::new(room_ws);
-    ctx.permission_profile = policy.profile;
-    ctx.network_allowed = policy.network_allowed;
+    let engine = AgentEngine::new(
+        turn_ctx.suite.store.clone(),
+        Arc::new(registry),
+        Arc::clone(turn_ctx.caller),
+    );
+    let mut ctx = ToolContext::new(turn_ctx.room_ws);
+    ctx.permission_profile = turn_ctx.policy.profile;
+    ctx.network_allowed = turn_ctx.policy.network_allowed;
     ctx.sandbox_mode = SandboxMode::from_env();
 
     let cfg = AgentRunConfig {
-        session_id: Some(format!("{}:{}", room.session_id, expert.id)),
+        session_id: Some(format!("{}:{}", turn_ctx.room.session_id, expert.id)),
         resume: true,
         route,
         frozen_system_blocks: vec![FrozenSystemBlock {
             id: format!("expert_{}", expert.id),
             text: format!(
                 "You are Expert '{}' (Role: {}) participating in AgentRoom '{}'.\n{}",
-                expert.name, expert.role, room.name, expert.system_prompt
+                expert.name, expert.role, turn_ctx.room.name, expert.system_prompt
             ),
         }],
         host_capabilities: HostCapabilities {
             interactive_user_input: false,
-            network_allowed: policy.network_allowed,
+            network_allowed: turn_ctx.policy.network_allowed,
         },
-        policy: policy.clone(),
-        hooks: hooks.clone(),
+        policy: turn_ctx.policy.clone(),
+        hooks: turn_ctx.hooks.clone(),
         approval: None,
         max_steps: 16,
         force_tool_set: ForceToolSet::Auto,
@@ -424,7 +432,7 @@ fn execute_single_expert_turn(
         .map(|r| r.final_text)
         .unwrap_or_else(|e| format!("(expert error: {e})"));
     json!({
-        "room_id": room.id,
+        "room_id": turn_ctx.room.id,
         "expert_id": expert.id,
         "expert_name": expert.name,
         "role": expert.role,
@@ -517,28 +525,24 @@ impl RoomRuntime {
             policy.workspace_trusted,
         );
 
+        let turn_ctx = ExpertTurnContext {
+            suite,
+            caller: &caller,
+            base_route: &base_route,
+            policy: &policy,
+            hooks: &hooks,
+            room: &room,
+            room_ws,
+        };
+
         let replies: Vec<Value> = if parallel && selected.len() > 1 {
             std::thread::scope(|s| {
+                let turn_ctx_ref = &turn_ctx;
                 let handles: Vec<_> = selected
                     .iter()
                     .map(|expert| {
-                        let room_ref = &room;
-                        let base_route_ref = &base_route;
-                        let policy_ref = &policy;
-                        let hooks_ref = &hooks;
-                        let caller_ref = &caller;
                         s.spawn(move || {
-                            execute_single_expert_turn(
-                                suite,
-                                caller_ref,
-                                base_route_ref,
-                                policy_ref,
-                                hooks_ref,
-                                room_ref,
-                                room_ws,
-                                expert,
-                                user_message,
-                            )
+                            execute_single_expert_turn(turn_ctx_ref, expert, user_message)
                         })
                     })
                     .collect();
@@ -557,19 +561,7 @@ impl RoomRuntime {
         } else {
             selected
                 .iter()
-                .map(|expert| {
-                    execute_single_expert_turn(
-                        suite,
-                        &caller,
-                        &base_route,
-                        &policy,
-                        &hooks,
-                        &room,
-                        room_ws,
-                        expert,
-                        user_message,
-                    )
-                })
+                .map(|expert| execute_single_expert_turn(&turn_ctx, expert, user_message))
                 .collect()
         };
 

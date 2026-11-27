@@ -72,7 +72,7 @@ fn field_matches(spec: &str, value: u32, min: u32, max: u32, is_dow: bool) -> bo
         };
         if base == "*" {
             let s = step.unwrap_or(1);
-            if (value.saturating_sub(min)) % s == 0 {
+            if value.saturating_sub(min).is_multiple_of(s) {
                 return true;
             }
             continue;

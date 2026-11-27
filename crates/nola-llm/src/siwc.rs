@@ -81,38 +81,36 @@ fn apply_siwc_payload_contract(body: &mut Value) {
     obj.remove("seed");
     obj.remove("stop");
 
-    if let Some(tools_val) = obj.remove("tools") {
-        if let Value::Array(raw_tools) = tools_val {
-            let mut fn_tools = Vec::new();
-            let mut other_tools = Vec::new();
-            for mut tool in raw_tools {
-                strip_nola_extensions(&mut tool);
-                let is_function = tool
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .map(|t| t == "function")
-                    .unwrap_or(false);
-                if is_function {
-                    if let Some(tobj) = tool.as_object_mut() {
-                        tobj.entry("strict").or_insert(Value::Bool(false));
-                    }
-                    fn_tools.push(tool);
-                } else {
-                    other_tools.push(tool);
+    if let Some(Value::Array(raw_tools)) = obj.remove("tools") {
+        let mut fn_tools = Vec::new();
+        let mut other_tools = Vec::new();
+        for mut tool in raw_tools {
+            strip_nola_extensions(&mut tool);
+            let is_function = tool
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(|t| t == "function")
+                .unwrap_or(false);
+            if is_function {
+                if let Some(tobj) = tool.as_object_mut() {
+                    tobj.entry("strict").or_insert(Value::Bool(false));
                 }
+                fn_tools.push(tool);
+            } else {
+                other_tools.push(tool);
             }
-            let mut wrapped = other_tools;
-            if !fn_tools.is_empty() {
-                wrapped.push(json!({
-                    "type": "namespace",
-                    "name": "nola",
-                    "description": "Nola workspace tools",
-                    "tools": fn_tools
-                }));
-            }
-            if !wrapped.is_empty() {
-                obj.insert("tools".into(), Value::Array(wrapped));
-            }
+        }
+        let mut wrapped = other_tools;
+        if !fn_tools.is_empty() {
+            wrapped.push(json!({
+                "type": "namespace",
+                "name": "nola",
+                "description": "Nola workspace tools",
+                "tools": fn_tools
+            }));
+        }
+        if !wrapped.is_empty() {
+            obj.insert("tools".into(), Value::Array(wrapped));
         }
     }
 }
