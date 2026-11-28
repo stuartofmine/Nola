@@ -1200,19 +1200,31 @@ struct ChatView: View {
             )) {
                 if let url = inspectorPreviewURL {
                     NavigationStack {
-                        ChatAttachmentQuickLook(url: url)
-                            .id(url)
-                            .ignoresSafeArea(.container, edges: .bottom)
-                            .navigationTitle(url.lastPathComponent)
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar {
-                                ToolbarItem(placement: .confirmationAction) {
-                                    Button(L10n.close) {
-                                        inspectorPreviewURL = nil
-                                    }
-                                    .accessibilityIdentifier("chat.inspector.preview.close")
+                        VStack(spacing: 0) {
+                            Divider()
+                            ChatAttachmentQuickLook(url: url)
+                                .id(url)
+                                .background(DesignTokens.backgroundColor)
+                                .ignoresSafeArea(.container, edges: .bottom)
+                        }
+                        .background(DesignTokens.backgroundColor)
+                        .navigationTitle(url.lastPathComponent)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button {
+                                    inspectorPreviewURL = nil
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.body.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
+                                .accessibilityLabel(L10n.close)
+                                .accessibilityIdentifier("chat.inspector.preview.close")
                             }
+                        }
                     }
                     .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
                 }

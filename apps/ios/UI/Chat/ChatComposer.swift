@@ -637,6 +637,7 @@ struct ChatComposer<ModelControl: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.iosOpenAttachmentPreview) private var openAttachmentInInspector
     @ScaledMetric(relativeTo: .body) private var editorMinimumHeight: CGFloat = 44
     @Binding var inputText: String
     let attachments: [ChatAttachmentDraft]
@@ -826,13 +827,13 @@ struct ChatComposer<ModelControl: View>: View {
         } label: {
             Image(isGenerating ? "nola-stop" : "nola-arrow")
                 .renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 17, height: 17)
+                .frame(width: isGenerating ? 14 : 17, height: isGenerating ? 14 : 17)
                 .contentTransition(reduceMotion ? .identity : .opacity)
-                .foregroundColor(canSend ? DesignTokens.onActionColor : disabledSendForeground)
+                .foregroundColor(isGenerating ? Color.white : (canSend ? DesignTokens.onActionColor : disabledSendForeground))
                 .frame(width: 36, height: 36)
                 .background(
                     Circle()
-                        .fill(canSend ? DesignTokens.actionColor : disabledSendFill)
+                        .fill(isGenerating ? DesignTokens.dangerColor : (canSend ? DesignTokens.actionColor : disabledSendFill))
                 )
                 .frame(width: composerButtonSize, height: composerButtonSize)
         }
@@ -861,10 +862,10 @@ struct ChatComposer<ModelControl: View>: View {
     }
 
     private var composerBorderColor: Color {
-        if colorScheme == .dark {
-            return focus.wrappedValue ? Color.white.opacity(0.22) : Color.white.opacity(0.10)
+        if focus.wrappedValue {
+            return DesignTokens.infoColor.opacity(colorScheme == .dark ? 0.60 : 0.55)
         }
-        return focus.wrappedValue ? DesignTokens.actionColor.opacity(0.45) : DesignTokens.borderColor
+        return DesignTokens.hairlineBorderColor(for: colorScheme)
     }
 
     private var disabledSendFill: Color {
@@ -954,36 +955,67 @@ struct ChatComposer<ModelControl: View>: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
-                    HStack(spacing: 7) {
-                        Image(systemName: attachment.iconName)
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(DesignTokens.primaryColor)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(attachment.name)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                            if let warning = attachment.importWarning?.trimmingCharacters(in: .whitespacesAndNewlines),
-                               !warning.isEmpty {
-                                Label(warning, systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundColor(DesignTokens.warningColor)
-                                    .lineLimit(2)
-                                    .frame(maxWidth: 230, alignment: .leading)
-                            } else {
-                                Text("\(attachment.extractionLabel) · \(attachment.sizeLabel)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Button {
+                            if let url = attachment.localURL {
+                                openAttachmentInInspector?(url)
                             }
+                        } label: {
+                            HStack(spacing: 7) {
+                                if attachment.isImage,
+                                   let base64 = attachment.imageBase64Data,
+                                   let data = Data(base64Encoded: base64),
+                                   let thumb = UIImage(data: data) {
+                                    Image(uiImage: thumb)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 26, height: 26)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                                        }
+                                } else {
+                                    Image(systemName: attachment.iconName)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundColor(DesignTokens.primaryColor)
+                                        .frame(width: 24, height: 24)
+                                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(attachment.name)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    if let warning = attachment.importWarning?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                       !warning.isEmpty {
+                                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption2)
+                                            .foregroundColor(DesignTokens.warningColor)
+                                            .lineLimit(2)
+                                            .frame(maxWidth: 220, alignment: .leading)
+                                    } else {
+                                        Text("\(attachment.extractionLabel) · \(attachment.sizeLabel)")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .disabled(attachment.localURL == nil)
                         Button {
                             onRemoveAttachment(attachment.id)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Circle())
+                                .frame(width: 36, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(NolaPressableButtonStyle())
                         .accessibilityLabel(
@@ -995,9 +1027,9 @@ struct ChatComposer<ModelControl: View>: View {
                         )
                     }
                     .padding(.leading, 10)
-                    .padding(.trailing, 2)
-                    .background(DesignTokens.elevatedColor, in: Capsule())
-                    .overlay(Capsule().stroke(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75))
+                    .padding(.trailing, 4)
+                    .background(DesignTokens.elevatedColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75))
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("chat.composer.attachment.\(attachment.id.uuidString)")
                 }

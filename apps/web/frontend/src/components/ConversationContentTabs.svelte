@@ -76,7 +76,7 @@
                     onkeydown={event => { if (event.key === 'Escape') { event.preventDefault(); renameTarget = null; } }} />
             </form>
         {:else}
-            <div class="tab" class:conversation-tab={entry.key === conversationTabKey} class:selected={tabsState.selected === entry.key}>
+            <div class="tab" class:conversation-tab={entry.key === conversationTabKey} class:solo={entries.length === 1} class:selected={tabsState.selected === entry.key}>
                 <button type="button" role="tab" id={contentTabDomId('tab', ownerKey, entry.key)} aria-controls={contentTabDomId('panel', ownerKey, entry.key)} aria-selected={tabsState.selected === entry.key} tabindex={tabsState.selected === entry.key ? 0 : -1}
                     title={entry.title} onclick={() => onselect(entry.key)} ondblclick={() => { if (entry.key === conversationTabKey && tabsState.selected === conversationTabKey && canRename) void beginRename(); }} onkeydown={event => void move(event, entry.key)}>{entry.title}</button>
                 {#if entry.key === conversationTabKey && tabsState.selected === conversationTabKey && canRename}
@@ -92,15 +92,19 @@
 </div>
 <style>
     .content-tabs { display: flex; align-self: stretch; align-items: center; justify-content: safe center; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; gap: 6px; padding-inline: 8px; }
-    .tab { display: inline-flex; align-items: center; flex: 0 0 auto; min-width: 96px; max-width: 240px; height: 32px; border: 1px solid transparent; border-radius: 7px; padding-inline: 2px; transition: background-color var(--motion-selection) var(--motion-disclosure), border-color var(--motion-selection) var(--motion-disclosure); }
+    .tab { display: inline-flex; align-items: center; flex: 0 0 auto; min-width: 72px; max-width: 260px; height: 32px; border: 1px solid transparent; border-radius: 8px; padding-inline: 2px; transition: background-color var(--motion-selection) var(--motion-disclosure), border-color var(--motion-selection) var(--motion-disclosure); }
     .tab.selected { background: var(--glass-pill-bg); border-color: var(--glass-pill-border); box-shadow: var(--glass-pill-shadow); color: var(--content); }
-    .tab > button[role="tab"] { min-width: 0; flex: 1; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 6px; background: transparent; min-height: 28px; padding: 4px 10px; font-size: 12.5px; font-weight: 550; }
-    .tab > .edit-hint { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); opacity: 0; transition: opacity 120ms ease; }
+    .tab.conversation-tab.solo.selected { background: transparent; border-color: transparent; box-shadow: none; }
+    .tab.conversation-tab.solo.selected:hover { background: var(--composer-pill-hover-bg); }
+    .tab > button[role="tab"] { min-width: 0; flex: 1; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 7px; background: transparent; min-height: 28px; padding: 4px 10px; font-size: 13px; font-weight: 600; color: var(--content); }
+    .tab > button[role="tab"]:hover { background: transparent; border-color: transparent; }
+    .tab > .edit-hint { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; min-height: 24px; min-width: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
+    .tab > .edit-hint:hover { color: var(--content); background: transparent; border-color: transparent; }
     .tab > .edit-hint svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
     .tab:hover > .edit-hint, .tab:focus-within > .edit-hint { opacity: 1; }
     .tab > .close { flex: none; min-width: 26px; min-height: 28px; padding: 2px 4px; font-size: 16px; border: 0; background: transparent; }
     .tab-rename { display: flex; align-items: center; }
-    .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--input-focus-border); border-radius: 7px; background: var(--input-bg); font-size: 12.5px; }
+    .tab-rename input { min-height: 30px; height: 30px; width: min(260px, 42vw); padding: 2px 10px; border: 1px solid var(--input-focus-border); border-radius: 7px; background: var(--input-bg); font-size: 13px; }
     @media (pointer: coarse) { .tab > .edit-hint { opacity: .85; width: 30px; height: 30px; min-height: 30px; } }
     @media (max-width: 760px) { .content-tabs { justify-content: flex-start; padding-inline: 2px; } .tab { height: 40px; max-width: 200px; min-width: 72px; } .tab > .close { min-width: 44px; min-height: 44px; } }
 </style>

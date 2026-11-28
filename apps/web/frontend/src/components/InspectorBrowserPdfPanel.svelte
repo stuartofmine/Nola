@@ -98,7 +98,19 @@
         try {
             const [browserRes, pdfRes] = await Promise.allSettled([
                 getV2BrowserState(signal),
-                api(conversationResourcesUrl(id), { signal }).then(raw => parseConversationPdfResources(raw, id)),
+                api(conversationResourcesUrl(id), { signal }).then(raw => {
+                    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+                    const payload = raw as Record<string, unknown>;
+                    const list = Array.isArray(payload.resources) ? payload.resources : [];
+                    const pdfOnly = list.filter(
+                        item =>
+                            item &&
+                            typeof item === 'object' &&
+                            !Array.isArray(item) &&
+                            (item as Record<string, unknown>).mimeType === 'application/pdf',
+                    );
+                    return parseConversationPdfResources({ ...payload, resources: pdfOnly }, id);
+                }),
             ]);
             if (disposed || signal.aborted || conversationId !== id) return;
             if (browserRes.status === 'fulfilled') browserState = browserRes.value;
@@ -378,15 +390,23 @@
     .bp-link-btn {
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         min-height: 28px;
-        padding: 3px 9px;
+        padding: 3px 10px;
         font-size: 11.5px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        background: var(--panel);
+        font-weight: 500;
+        border-radius: 7px;
+        border: 1px solid var(--control-border);
+        background: var(--surface);
         color: var(--content);
         text-decoration: none;
         cursor: pointer;
+        transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
+    }
+    .bp-btn:hover:not(:disabled),
+    .bp-link-btn:hover {
+        background: var(--control-hover-bg);
+        border-color: var(--control-hover-border);
     }
     .bp-badge {
         padding: 1px 6px;

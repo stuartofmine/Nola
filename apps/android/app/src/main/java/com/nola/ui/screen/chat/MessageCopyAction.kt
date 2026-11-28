@@ -71,8 +71,9 @@ internal fun MessageCopyAction(text: String, modifier: Modifier = Modifier, comp
         copied = result.isSuccess
         if (result.isSuccess) haptics.success() else manualText = captured
     }, enabled = text.isNotBlank(), modifier = modifier
-        .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+        .sizeIn(minWidth = 48.dp, minHeight = 40.dp)
         .then(if (compactDescription != null) Modifier.semantics { contentDescription = compactDescription } else Modifier),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         colors = ButtonDefaults.textButtonColors(containerColor = Color.Transparent, disabledContainerColor = Color.Transparent)) {
         AnimatedContent(
             targetState = copied,
@@ -85,13 +86,17 @@ internal fun MessageCopyAction(text: String, modifier: Modifier = Modifier, comp
             Icon(
                 if (isCopied) Icons.Filled.Check else Icons.Filled.ContentCopy,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (!compact) {
-            Spacer(Modifier.width(6.dp))
-            Text(stringResource(if (copied) R.string.chat_message_copied else R.string.chat_message_action_copy), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(5.dp))
+            Text(
+                stringResource(if (copied) R.string.chat_message_copied else R.string.chat_message_action_copy),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
     manualText?.let { captured ->

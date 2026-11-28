@@ -260,23 +260,33 @@
     }
     .art-thumb {
         width: 100%;
+        min-height: 72px;
         max-height: 150px;
+        padding: 8px;
         object-fit: contain;
-        border-radius: 6px;
+        border-radius: 8px;
         border: 1px solid var(--border);
-        background: var(--panel);
+        background-color: var(--surface-subtle);
+        background-image:
+            linear-gradient(45deg, color-mix(in srgb, var(--content) 5%, transparent) 25%, transparent 25%),
+            linear-gradient(-45deg, color-mix(in srgb, var(--content) 5%, transparent) 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--content) 5%, transparent) 75%),
+            linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--content) 5%, transparent) 75%);
+        background-size: 14px 14px;
+        background-position: 0 0, 0 7px, 7px -7px, -7px 0;
     }
     .art-preview {
         margin: 0;
-        padding: 6px 8px;
-        border-radius: 6px;
+        padding: 8px 10px;
+        border-radius: 7px;
         background: var(--panel);
         border: 1px solid var(--border);
+        font-family: var(--font-code);
         font-size: 11px;
+        line-height: 1.48;
         max-height: 96px;
         overflow: hidden;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
+        white-space: pre;
         color: var(--muted);
     }
     .art-actions {

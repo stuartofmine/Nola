@@ -95,6 +95,7 @@ extension EnvironmentValues {
 
 struct ChatBubble: View {
     @EnvironmentObject private var container: ServiceContainer
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.iosExpertReplyAvailableWidth) private var expertReplyAvailableWidth
     @Environment(\.iosCompactExpertReply) private var compactExpertReply
@@ -152,13 +153,20 @@ struct ChatBubble: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     if assistantBubbleFill == nil {
-                        HStack(spacing: 6) {
-                            Text(verbatim: "n").font(.system(size: monogramFontSize, design: .serif)).italic()
-                                .frame(width: monogramSize, height: monogramSize)
-                                .overlay(Circle().stroke(DesignTokens.borderColor, lineWidth: 0.5))
-                            Text(verbatim: "Nola").font(.caption)
+                        HStack(spacing: 8) {
+                            Text(verbatim: "n")
+                                .font(.system(size: max(12.5, monogramFontSize), weight: .semibold, design: .rounded))
+                                .foregroundStyle(DesignTokens.contentColor)
+                                .frame(width: max(22, monogramSize), height: max(22, monogramSize))
+                                .background(DesignTokens.accentSubtleColor, in: Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.primary.opacity(colorScheme == .dark ? 0.24 : 0.18), lineWidth: 0.75)
+                                )
+                            Text(verbatim: "Nola")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DesignTokens.contentColor)
                         }
-                        .foregroundStyle(DesignTokens.secondaryContentColor)
                         .accessibilityHidden(true)
                     }
                     assistantMessage
@@ -174,6 +182,8 @@ struct ChatBubble: View {
             }
 
         }
+        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
         // Modal residency belongs to the message, outside every process/Part
         // identity. Regrouping a segment must not dismiss an open reader.
         .fullScreenCover(item: toolReaderPresentation) { selection in
@@ -335,6 +345,13 @@ struct ChatBubble: View {
                         .foregroundColor(DesignTokens.warningColor)
                 }
                 if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let bubbleShape = UnevenRoundedRectangle(
+                        topLeadingRadius: 18,
+                        bottomLeadingRadius: 18,
+                        bottomTrailingRadius: 6,
+                        topTrailingRadius: 18,
+                        style: .continuous
+                    )
                     ExpertMentionText(text: message.content, mentions: message.expertMentions)
                         .font(.body)
                         .lineSpacing(IOSChatProseMetrics.lineSpacing)
@@ -344,16 +361,30 @@ struct ChatBubble: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            bubbleShape
                                 .fill(DesignTokens.accentSubtleColor)
+                                .overlay {
+                                    bubbleShape.strokeBorder(
+                                        DesignTokens.hairlineBorderColor(for: colorScheme),
+                                        lineWidth: 0.75
+                                    )
+                                }
                         )
                         .opacity(message.includeInContext ? 1 : 0.82)
-                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(bubbleShape)
+                        .contentShape(.contextMenuPreview, bubbleShape)
                         .contextMenu {
                             copyButton
+                            if readOnlyHistoryOwner == nil && sourceAllowsEditing && !ownerIsRunning {
+                                Button {
+                                    let revision = conversationID.flatMap { try? container.applicationRuntime.loadConversation(id: $0.uuidString)?.revision }
+                                    messageEditorSource = IOSMessageEditorSource(conversationID: conversationID, message: message, sourceRevision: revision)
+                                } label: {
+                                    Label(String(localized: "chat.message.edit"), systemImage: "square.and.pencil")
+                                }
+                            }
                         }
-                        .frame(maxWidth: 640, alignment: .trailing)
+                        .frame(maxWidth: 580, alignment: .trailing)
                 }
 
                 if !userAttachments.isEmpty {
@@ -363,36 +394,39 @@ struct ChatBubble: View {
                                 guard let url = attachment.url else { return }
                                 openAttachmentPreview(url)
                             } label: {
-                                HStack(spacing: 9) {
+                                HStack(spacing: 10) {
                                     Image(systemName: attachment.iconName)
                                         .font(.system(size: 15, weight: .medium))
                                         .foregroundStyle(DesignTokens.primaryColor)
-                                        .frame(width: 24, height: 24)
+                                        .frame(width: 28, height: 28)
+                                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(attachment.name)
-                                            .font(.caption.weight(.semibold))
+                                            .font(.subheadline.weight(.medium))
                                             .foregroundStyle(.primary)
                                             .lineLimit(1)
+                                            .truncationMode(.middle)
                                         if let detailLabel = attachment.detailLabel {
                                             Text(detailLabel)
-                                                .font(.caption2)
+                                                .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
-                                    Image(systemName: attachment.url == nil ? "exclamationmark.circle" : "arrow.up.right.square")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: attachment.url == nil ? "exclamationmark.circle" : "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
                                 }
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
                                 .frame(maxWidth: 360, alignment: .leading)
-                                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .background(DesignTokens.rowFillColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
+                                        .strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
                                 }
                             }
-                            .buttonStyle(NolaActionButtonStyle())
+                            .buttonStyle(.plain)
                             .disabled(attachment.url == nil)
                             .accessibilityLabel(String(
                                 format: NSLocalizedString("chat.attachment.open_format", value: "Open attachment %@", comment: "Open a chat attachment"),
@@ -449,6 +483,37 @@ struct ChatBubble: View {
         }
         .disabled(ownerIsRunning)
         .accessibilityIdentifier("chat.message.edit.\(message.id.uuidString.lowercased())")
+    }
+
+    private static func localizedAttachmentSubtitle(operation: String?, mimeType: String?, filename: String) -> String {
+        var parts: [String] = []
+        if let op = operation?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !op.isEmpty {
+            switch op {
+            case "created", "create", "write", "written", "generated":
+                parts.append(NSLocalizedString("chat.attachment.operation.created", value: "Created", comment: "Attachment created"))
+            case "updated", "update", "edited", "modified":
+                parts.append(NSLocalizedString("chat.attachment.operation.updated", value: "Updated", comment: "Attachment updated"))
+            case "read", "opened":
+                parts.append(NSLocalizedString("chat.attachment.operation.read", value: "Read", comment: "Attachment read"))
+            default:
+                parts.append(op)
+            }
+        }
+        if let mime = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !mime.isEmpty {
+            if mime.hasPrefix("image/") {
+                let ext = URL(fileURLWithPath: filename).pathExtension.uppercased()
+                let base = NSLocalizedString("chat.attachment.type.image", value: "Image", comment: "Image type")
+                parts.append(ext.isEmpty ? base : "\(base) (\(ext))")
+            } else if mime == "application/pdf" {
+                parts.append(NSLocalizedString("chat.attachment.type.pdf", value: "PDF Document", comment: "PDF type"))
+            } else if mime.hasPrefix("text/") {
+                parts.append(NSLocalizedString("chat.attachment.type.text", value: "Text File", comment: "Text type"))
+            } else {
+                let ext = URL(fileURLWithPath: filename).pathExtension.uppercased()
+                parts.append(ext.isEmpty ? NSLocalizedString("chat.attachment.type.document", value: "Document", comment: "Document type") : ext)
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var userAttachments: [ChatMessageAttachment] {
@@ -734,50 +799,59 @@ struct ChatBubble: View {
             Label(action.summary, systemImage: "hand.tap").font(.caption).foregroundStyle(.secondary)
         case .attachment(let attachment):
             let previewURL = previewableCanonicalAttachmentURL(for: attachment.uri)
-            let facts = [attachment.operation, attachment.mimeType].compactMap { $0 }.filter { !$0.isEmpty }
+            let subtitle = Self.localizedAttachmentSubtitle(
+                operation: attachment.operation,
+                mimeType: attachment.mimeType,
+                filename: attachment.name
+            )
             let iconName: String = {
                 if let mime = attachment.mimeType?.lowercased() {
                     if mime.hasPrefix("image/") { return "photo" }
                     if mime == "application/pdf" { return "doc.richtext" }
                 }
-                return "doc"
+                return "doc.text"
             }()
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ChatArtifactImagePreview(uri: attachment.uri, mimeType: attachment.mimeType)
                 if let previewURL {
                     Button {
                         openAttachmentPreview(previewURL)
                     } label: {
-                        HStack(spacing: 9) {
+                        HStack(spacing: 10) {
                             Image(systemName: iconName)
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(DesignTokens.primaryColor)
-                                .frame(width: 24, height: 24)
+                                .frame(width: 30, height: 30)
+                                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(attachment.name)
-                                    .font(.caption.weight(.semibold))
+                                    .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
-                                if !facts.isEmpty {
-                                    Text(facts.joined(separator: " · "))
-                                        .font(.caption2)
+                                    .truncationMode(.middle)
+                                if !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .font(.caption)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
                             }
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
                         }
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: 360, alignment: .leading)
-                        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: 380, alignment: .leading)
+                        .background(DesignTokens.rowFillColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
+                                .strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
                         }
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .buttonStyle(NolaActionButtonStyle())
+                    .buttonStyle(.plain)
                     .accessibilityLabel(String(
                         format: NSLocalizedString("chat.attachment.open_format", value: "Open attachment %@", comment: "Open a chat attachment"),
                         attachment.name
@@ -785,7 +859,7 @@ struct ChatBubble: View {
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
                         Label(attachment.name, systemImage: iconName)
-                        if !facts.isEmpty { Text(facts.joined(separator: " · ")).foregroundStyle(.secondary) }
+                        if !subtitle.isEmpty { Text(subtitle).foregroundStyle(.secondary) }
                         Text(attachment.uri).font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                     }.font(.caption)
                 }
@@ -1807,6 +1881,7 @@ private struct ChatInlineFlowLayout: Layout {
 }
 
 private struct ChatMarkdownCodeBlock: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let language: String?
     let text: String
@@ -1816,9 +1891,13 @@ private struct ChatMarkdownCodeBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(codeLabel)
-                    .font(.caption2.weight(.semibold))
+                Text(codeLabel.uppercased())
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .tracking(0.5)
                     .foregroundColor(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
                 Spacer(minLength: 8)
                 Button {
                     copyCode()
@@ -1830,33 +1909,55 @@ private struct ChatMarkdownCodeBlock: View {
                         systemImage: showCopiedHint ? "checkmark" : "doc.on.doc"
                     )
                     .font(.caption2.weight(.semibold))
-                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(showCopiedHint ? DesignTokens.successColor : DesignTokens.primaryColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        (showCopiedHint ? DesignTokens.successColor.opacity(0.14) : Color.primary.opacity(0.07)),
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(
+                                showCopiedHint
+                                    ? DesignTokens.successColor.opacity(0.32)
+                                    : DesignTokens.hairlineBorderColor(for: colorScheme),
+                                lineWidth: 0.5
+                            )
+                    }
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(NolaActionButtonStyle())
-                .foregroundColor(showCopiedHint ? DesignTokens.successColor : DesignTokens.primaryColor)
+                .buttonStyle(.plain)
                 .disabled(text.isEmpty)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(Color.primary.opacity(0.035))
 
+            Rectangle()
+                .fill(DesignTokens.hairlineBorderColor(for: colorScheme))
+                .frame(height: 0.5)
+
             ScrollView(.horizontal, showsIndicators: true) {
                 AppleStreamingAttributedText(value: AttributedString(text))
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.system(size: 13.5, design: .monospaced))
+                    .lineSpacing(3.5)
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .fill(Color.primary.opacity(0.055))
+                .fill(DesignTokens.rowFillColor.opacity(colorScheme == .dark ? 0.72 : 0.85))
         )
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .stroke(DesignTokens.borderColor, lineWidth: 1)
+                .strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
         )
         .onDisappear {
             copyFeedbackTask?.cancel()
@@ -1977,27 +2078,37 @@ private struct ChatMarkdownTableBlock: View {
 }
 
 private struct ChatMarkdownMathBlock: View {
+    @Environment(\.colorScheme) private var colorScheme
     let text: String
 
+    private var mathContent: some View {
+        ChatMathLabel(
+            equation: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            mode: .display,
+            fontSize: 21,
+            alignment: .center
+        )
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            ChatMathLabel(
-                equation: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                mode: .display,
-                fontSize: 22,
-                alignment: .center
-            )
-            .frame(minWidth: 260, minHeight: 52)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+        ViewThatFits(in: .horizontal) {
+            mathContent
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .center)
+            ScrollView(.horizontal, showsIndicators: true) {
+                mathContent
+                    .frame(minHeight: 52, alignment: .center)
+            }
         }
+        .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .fill(DesignTokens.primaryColor.opacity(0.06))
+                .fill(DesignTokens.rowFillColor.opacity(colorScheme == .dark ? 0.65 : 0.72))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
-                .stroke(DesignTokens.primaryColor.opacity(0.18), lineWidth: 1)
+                .strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
         )
     }
 }
@@ -2346,6 +2457,12 @@ private struct ChatSwiftMathUILabel: UIViewRepresentable {
         label.fontSize = fontSize
         label.textColor = UIColor.label
         label.backgroundColor = .clear
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MTMathUILabel, context: Context) -> CGSize? {
+        let measured = uiView.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        guard measured.width > 0, measured.height > 0 else { return nil }
+        return CGSize(width: ceil(measured.width) + 4, height: max(28, ceil(measured.height) + 4))
     }
 }
 
@@ -3113,7 +3230,9 @@ enum ChatExecutionProcessPolicy {
 
 }
 
-private struct ChatCanonicalExecutionProcess: View {
+struct ChatCanonicalExecutionProcess: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let parts: [IOSConversationProjectionV1.Part]
     let events: [HostAgentToolEvent]
     let activities: [AgentTraceActivity]
@@ -3140,7 +3259,7 @@ private struct ChatCanonicalExecutionProcess: View {
         case .tool(let tool) where [.running, .pending].contains(tool.state):
             return AppleToolDisplayName.localized(tool.capabilityID, title: tool.title) ?? (tool.title.isEmpty ? nil : tool.title)
         case .reasoning(let reasoning) where reasoning.state == .running:
-            return L10n.chatThinkingShort
+            return NSLocalizedString("chat.thinking.active", value: "Thinking", comment: "Active live thinking title")
         default: return nil
         }
     }
@@ -3159,7 +3278,7 @@ private struct ChatCanonicalExecutionProcess: View {
         return reasoning.count == 1 ? reasoning.first?.partID : nil
     }
 
-    private static func liveReasoningTail(_ raw: String, maxChars: Int = 1800, maxLines: Int = 14) -> String {
+    static func liveReasoningTail(_ raw: String, maxChars: Int = 1800, maxLines: Int = 14) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let suffixStr = trimmed.count > maxChars ? String(trimmed.suffix(maxChars)) : trimmed
@@ -3185,13 +3304,37 @@ private struct ChatCanonicalExecutionProcess: View {
                                         VStack(alignment: .leading, spacing: 0) {
                                             Text(verbatim: Self.liveReasoningTail(summary))
                                                 .font(.callout)
+                                                .lineSpacing(3)
                                                 .foregroundStyle(.secondary)
                                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.top, 10)
+                                                .padding(.bottom, 6)
                                                 .accessibilityIdentifier("chat.assistant.thinking")
                                             Color.clear.frame(height: 1).id("ios-live-thinking-bottom")
                                         }
                                     }
-                                    .frame(maxHeight: 180)
+                                    .frame(maxHeight: 168)
+                                    .mask {
+                                        LinearGradient(
+                                            stops: [
+                                                .init(color: .clear, location: 0.0),
+                                                .init(color: .black, location: 0.16),
+                                                .init(color: .black, location: 1.0),
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                                            .fill(DesignTokens.rowFillColor.opacity(colorScheme == .dark ? 0.55 : 0.72))
+                                    )
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                                            .strokeBorder(DesignTokens.hairlineBorderColor(for: colorScheme), lineWidth: 0.75)
+                                    }
                                     .onAppear { proxy.scrollTo("ios-live-thinking-bottom", anchor: .bottom) }
                                     .onChange(of: summary.count) { _, _ in
                                         proxy.scrollTo("ios-live-thinking-bottom", anchor: .bottom)
@@ -3238,12 +3381,33 @@ private struct ChatCanonicalExecutionProcess: View {
                 }
             }.padding(.top, 8)
         } label: {
-            Label(ChatExecutionProcessPolicy.heading(live: isLive, currentTitle: currentTitle, containsTools: containsTools),
-                systemImage: containsTools ? "list.bullet" : "sparkles")
-                .lineLimit(1)
-                .font(.callout.weight(.medium)).foregroundStyle(.secondary)
-                .frame(minHeight: 44, alignment: .leading)
-                .accessibilityIdentifier("chat.execution.process.toggle")
+            HStack(spacing: 8) {
+                if isLive {
+                    if reduceMotion {
+                        Circle()
+                            .fill(DesignTokens.infoColor)
+                            .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
+                    } else {
+                        ProgressView()
+                            .scaleEffect(0.72)
+                            .tint(DesignTokens.infoColor)
+                            .frame(width: 16, height: 16)
+                            .accessibilityHidden(true)
+                    }
+                } else {
+                    Image(systemName: containsTools ? "list.bullet" : "sparkles")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                Text(ChatExecutionProcessPolicy.heading(live: isLive, currentTitle: currentTitle, containsTools: containsTools))
+                    .lineLimit(1)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(isLive ? DesignTokens.contentColor : .secondary)
+            }
+            .frame(minHeight: 44, alignment: .leading)
+            .accessibilityIdentifier("chat.execution.process.toggle")
         }
         .disclosureGroupStyle(NolaRowDisclosureStyle())
         .accessibilityElement(children: .contain)
@@ -3485,11 +3649,31 @@ private struct HostToolEventCard: View {
         return "wrench.and.screwdriver"
     }
 
+    private var semanticStatusIconName: String {
+        if canonicalTool?.state == .waitingForInput || event.status == .permissionRequired {
+            return "hand.raised.fill"
+        }
+        switch event.status {
+        case .succeeded: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        case .cancelled: return "minus.circle.fill"
+        case .running: return iconName
+        case .permissionRequired: return "hand.raised.fill"
+        }
+    }
+
+    private var shortStatusBadgeText: String {
+        if event.status == .failed {
+            return NSLocalizedString("chat.step.failed", value: "Failed", comment: "Failed tool badge")
+        }
+        return statusText
+    }
+
     private var tint: Color {
         if canonicalTool?.state == .sealed || canonicalTool?.state == .pending { return .secondary }
         if canonicalTool?.state == .waitingForInput { return DesignTokens.warningColor }
         switch event.status {
-        case .running: return DesignTokens.primaryColor
+        case .running: return DesignTokens.infoColor
         case .succeeded: return DesignTokens.successColor
         case .failed: return DesignTokens.dangerColor
         case .cancelled: return .secondary
@@ -3753,29 +3937,44 @@ private struct HostToolEventCard: View {
             }
             .padding(.top, 8)
         } label: {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: 9) {
                 if event.status == .running && (canonicalTool == nil || canonicalTool?.state == .running) && !reduceMotion {
                     ProgressView()
-                        .scaleEffect(0.58)
+                        .scaleEffect(0.62)
+                        .tint(DesignTokens.infoColor)
+                        .frame(width: 18, height: 18)
                 } else {
-                    Image(systemName: event.status == .permissionRequired ? "exclamationmark.shield" : iconName)
-                        .font(.caption.weight(.semibold))
+                    Image(systemName: semanticStatusIconName)
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(tint)
+                        .frame(width: 18, height: 18)
                 }
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(displayName)
-                            .font(.caption.weight(.semibold))
-                        Text(statusText)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                        Spacer(minLength: 6)
+                        Text(shortStatusBadgeText)
                             .font(.caption2.weight(.semibold))
                             .foregroundColor(tint)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(tint.opacity(0.13), in: Capsule())
                     }
-                    Text(summary)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit((readingExpansion?.wrappedValue ?? expanded) ? 4 : 2)
+                    if event.status == .failed && !failureReason.isEmpty {
+                        Text(failureReason)
+                            .font(.caption)
+                            .foregroundColor(DesignTokens.dangerColor)
+                            .lineLimit((readingExpansion?.wrappedValue ?? expanded) ? 4 : 2)
+                    } else if !summary.isEmpty && summary != displayName {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit((readingExpansion?.wrappedValue ?? expanded) ? 4 : 2)
+                    }
                 }
-                Spacer(minLength: 0)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("chat.assistant.tool.\(event.id)")
@@ -3851,7 +4050,7 @@ private struct IOSMessageToolReaderSelection: Identifiable {
     var id: UUID { snapshot.id }
 }
 
-private struct HostToolTextSnapshot: Identifiable {
+struct HostToolTextSnapshot: Identifiable {
     let id = UUID()
     let title: String
     let text: String
@@ -4525,6 +4724,7 @@ enum ChatToolTimestampFormatter {
 }
 
 private struct ChatArtifactImagePreview: View {
+    @Environment(\.colorScheme) private var colorScheme
     let uri: String
     let mimeType: String?
 
@@ -4558,16 +4758,30 @@ private struct ChatArtifactImagePreview: View {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: 260, maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous))
+                    .frame(maxWidth: 280, maxHeight: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                            .strokeBorder(
+                                Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.10),
+                                lineWidth: 0.75
+                            )
+                    }
             } else if let remoteURL = remoteImageURL {
                 AsyncImage(url: remoteURL) { phase in
                     if case .success(let image) = phase {
                         image
                             .resizable()
                             .scaledToFit()
-                            .frame(maxWidth: 260, maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_sm, style: .continuous))
+                            .frame(maxWidth: 280, maxHeight: 190)
+                            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous)
+                                    .strokeBorder(
+                                        Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.10),
+                                        lineWidth: 0.75
+                                    )
+                            }
                     }
                 }
             }

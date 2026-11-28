@@ -11,6 +11,13 @@ export interface ConversationOperationOwner { conversationId: string | null; gen
 export function sameConversationOperation(a: ConversationOperationOwner, b: ConversationOperationOwner): boolean {
     return a.conversationId === b.conversationId && a.generation === b.generation;
 }
+export function isDefaultConversationTitle(title: string | null | undefined): boolean {
+    const normalized = (title ?? '').trim().toLowerCase();
+    return !normalized || normalized === 'new conversation' || normalized === 'untitled conversation';
+}
+export function displayConversationTitle(title: string | null | undefined, localizedDefault: string): string {
+    return isDefaultConversationTitle(title) ? localizedDefault : title!.trim();
+}
 export function parseChatConversation(value: unknown): ChatConversation {
     if (!value || typeof value !== 'object') throw new Error('chatConversations.invalidResponse');
     const object = value as Record<string, unknown>;

@@ -14,7 +14,10 @@ export const toasts = { subscribe };
 
 export function pushToast(message: string, tone: ToastItem['tone'] = 'info', durationMs = 2600): void {
     const id = nextId++;
-    update(items => [...items.slice(-2), { id, message, tone }]);
+    update(items => [
+        ...items.filter(item => !(item.message === message && item.tone === tone)).slice(-2),
+        { id, message, tone },
+    ]);
     if (durationMs > 0) {
         setTimeout(() => dismissToast(id), durationMs);
     }

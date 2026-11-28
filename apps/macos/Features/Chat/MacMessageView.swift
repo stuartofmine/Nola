@@ -97,6 +97,7 @@ struct MacMessageView: View {
     @Environment(\.macTranscriptReadOnly) private var transcriptReadOnly
     @Environment(\.openURL) private var openURL
     @Environment(\.uiSurfaceContext) private var messageSourceContext
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var showsInlinePendingIndicator: Bool {
@@ -408,9 +409,21 @@ struct MacMessageView: View {
                             .padding(.vertical, message.role == .user ? 12 : 0)
                             .background {
                                 if message.role == .user {
-                                    UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
+                                    let shape = UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 16,
                                         bottomTrailingRadius: 16, topTrailingRadius: 5)
+                                    shape
                                         .fill(MacDesignColor.surfaceRaised)
+                                        .overlay {
+                                            shape.strokeBorder(
+                                                Color.primary.opacity(colorScheme == .dark ? 0.11 : 0.08),
+                                                lineWidth: 0.75
+                                            )
+                                        }
+                                        .shadow(
+                                            color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0.04),
+                                            radius: 4,
+                                            y: 1
+                                        )
                                 }
                             }
                             .frame(
@@ -486,16 +499,17 @@ struct MacMessageView: View {
                 if message.role == .assistant || showsMessageMetadata {
                     HStack(spacing: 8) {
                         Text(message.createdAt, style: .time)
-                            .font(.system(size: 12))
+                            .font(.system(size: 11.5))
                             .foregroundStyle(Color("NolaTextSecondary"))
+                            .opacity(isHovering || copied ? 0.90 : 0.55)
 
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             Button {
                                 copyMessage()
                             } label: {
                                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                     .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: 28, height: 28)
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(MacMessageActionButtonStyle())
@@ -504,7 +518,7 @@ struct MacMessageView: View {
                             .accessibilityLabel(copied ? String(localized: "Copied") : String(localized: "Copy"))
                             if message.role == .user && !transcriptReadOnly && editMessage.sourceAllowsEditing {
                                 Button { editMessage.open(conversationID, message) } label: {
-                                    Image(systemName: "square.and.pencil").frame(width: 32, height: 32).contentShape(Rectangle())
+                                    Image(systemName: "square.and.pencil").frame(width: 28, height: 28).contentShape(Rectangle())
                                 }.buttonStyle(MacMessageActionButtonStyle()).disabled(!editMessage.enabled)
                                     .help(editMessage.enabled ? String(localized: "Edit and resend") : String(localized: "Wait for the current response or stop it before editing."))
                                     .accessibilityLabel(String(localized: "Edit and resend"))
@@ -514,10 +528,9 @@ struct MacMessageView: View {
                         }
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        // Keep the completed-message action reachable while
-                        // the pointer crosses the gap below the bubble. Hover
-                        // raises emphasis; it never disables hit testing.
-                        .opacity(isHovering || copied ? 1.0 : 0.72)
+                        // Reveal action controls cleanly on hover while keeping
+                        // hit targets active for keyboard/pointer accessibility.
+                        .opacity(isHovering || copied ? 1.0 : 0.0)
                     }
                     .frame(minHeight: 32)
                     .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
@@ -852,22 +865,57 @@ private struct MacMessageImageThumbnail<Fallback: View>: View {
     @ViewBuilder let fallback: () -> Fallback
     @State private var image: NSImage?
     @State private var loadFailed = false
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if let image {
                 Button(action: onOpen) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 220, maxHeight: 160)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    ZStack(alignment: .topTrailing) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 220, maxHeight: 160)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(
+                                        Color.primary.opacity(isHovered ? 0.24 : (colorScheme == .dark ? 0.14 : 0.10)),
+                                        lineWidth: isHovered ? 1.0 : 0.75
+                                    )
+                            }
+                            .shadow(
+                                color: Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06),
+                                radius: isHovered ? 5 : 2,
+                                y: 1
+                            )
+
+                        if isHovered {
+                            Image(systemName: "eye")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .padding(6)
+                                .background(.ultraThinMaterial, in: Circle())
+                                .overlay {
+                                    Circle().strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+                                }
+                                .padding(6)
+                                .transition(.opacity)
                         }
+                    }
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    if reduceMotion {
+                        isHovered = hovering
+                    } else {
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            isHovered = hovering
+                        }
+                    }
+                }
                 .help(String(
                     format: NSLocalizedString(
                         "Open attachment %@",
@@ -983,6 +1031,7 @@ private struct MacAssistantTaskCard: View {
     @State private var isExpanded = false
     @State private var guidanceDraft = ""
     @State private var showsCancelConfirmation = false
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var model: MacCoreTaskUIModel { .init(task: task) }

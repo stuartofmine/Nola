@@ -73,6 +73,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -1123,24 +1124,14 @@ internal fun ChatScreen(
                     .padding(horizontal = NolaSpacing.sm),
                 verticalArrangement = Arrangement.Center
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        conversationTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Text(
-                        "›",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    conversationTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     when {
                         !presentationReady && state.processingState == ProcessingState.BuildingContext -> stringResource(R.string.chat_loading_conversation)
@@ -1157,23 +1148,33 @@ internal fun ChatScreen(
             }
 
             Row(
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 NolaIconButton(
                     label = stringResource(R.string.chat_search_loaded_title),
                     onClick = { showIMSearch = true },
-                    modifier = Modifier.testTag("chat.topbar.search")
+                    modifier = Modifier.size(48.dp).testTag("chat.topbar.search")
                 ) {
-                    Icon(painterResource(R.drawable.nola_search), contentDescription = stringResource(R.string.chat_search_loaded_title))
+                    Icon(
+                        painterResource(R.drawable.nola_search),
+                        contentDescription = stringResource(R.string.chat_search_loaded_title),
+                        modifier = Modifier.size(21.dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
                 Box {
                     NolaIconButton(
                         label = stringResource(R.string.common_more),
                         onClick = { showActions = true },
-                        modifier = Modifier.testTag("chat.topbar.more")
+                        modifier = Modifier.size(48.dp).testTag("chat.topbar.more")
                     ) {
-                        Icon(painterResource(R.drawable.nola_more), contentDescription = stringResource(R.string.common_more))
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.common_more),
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                     DropdownMenu(
                         expanded = showActions,
@@ -1511,16 +1512,18 @@ internal fun ChatScreen(
                         Box(Modifier.weight(1f)) {
                             TextButton(
                                 onClick = { showModelMenu = true },
+                                shape = RoundedCornerShape(999.dp),
                                 colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
                                 ),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("chat.modelPicker"),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.heightIn(min = 36.dp).testTag("chat.modelPicker"),
                             ) {
                                 Text(state.currentModel?.name ?: stringResource(R.string.chat_no_model_configured), maxLines = 1,
                                     modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.labelMedium, overflow = TextOverflow.Ellipsis)
                                 Spacer(Modifier.width(4.dp))
-                                Icon(Icons.Filled.ExpandMore, null, Modifier.size(14.dp))
+                                Icon(Icons.Filled.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         DropdownMenu(
                             expanded = showModelMenu,
@@ -2770,9 +2773,9 @@ internal fun ChatComposerBar(
             ),
             label = "chat-composer-border",
         )
-        Column(Modifier.fillMaxWidth().nolaSurface(radius = 25.dp, raised = false,
-            fill = MaterialTheme.colorScheme.surface,
-            border = composerBorder).padding(4.dp)) {
+        Column(Modifier.fillMaxWidth().nolaSurface(radius = 24.dp, raised = true,
+            fill = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = composerBorder).padding(horizontal = 6.dp, vertical = 5.dp)) {
             BasicTextField(
                 value = currentEditor,
                 onValueChange = { value -> if (draftWritable) {
@@ -2818,7 +2821,7 @@ internal fun ChatComposerBar(
                             Text(
                                 stringResource(R.string.chat_ask_placeholder),
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -2832,12 +2835,13 @@ internal fun ChatComposerBar(
                 modifier = Modifier
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                val attachEnabled = enabled && !isImportingAttachments
                 ComposerCircleButton(
-                    enabled = enabled && !isImportingAttachments,
-                    background = Color.Transparent,
-                    contentColor = if (enabled && !isImportingAttachments) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    enabled = attachEnabled,
+                    background = if (attachEnabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f) else Color.Transparent,
+                    contentColor = if (attachEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                     onClick = onAttach
                 ) {
                     if (isImportingAttachments) {
@@ -2851,8 +2855,16 @@ internal fun ChatComposerBar(
 
                 val canSend = inputText.trim().isNotEmpty() || attachments.isNotEmpty()
                 val sendEnabled = showGoalProgress || isGenerating || (draftWritable && (inputText.startsWith("/") || (enabled && !isImportingAttachments && canSend)))
-                val sendBackground = if (sendEnabled) MaterialTheme.colorScheme.primary else NolaColors.composerDisabledFill
-                val sendContent = if (sendEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                val sendBackground = when {
+                    isGenerating -> MaterialTheme.colorScheme.error
+                    sendEnabled -> MaterialTheme.colorScheme.primary
+                    else -> NolaColors.composerDisabledFill
+                }
+                val sendContent = when {
+                    isGenerating -> MaterialTheme.colorScheme.onError
+                    sendEnabled -> MaterialTheme.colorScheme.onPrimary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f)
+                }
                 ComposerCircleButton(
                     enabled = sendEnabled,
                     background = sendBackground,
@@ -3707,14 +3719,31 @@ fun MessageBubble(
             Text(historyAuthor, Modifier.testTag("chat.history.author.${message.id}").padding(bottom = 4.dp),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else if (!isUser && assistantContainerColor == null) {
-            Row(Modifier.padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val markSize = with(LocalDensity.current) { 12.sp.toDp() } + 6.dp
-                Box(Modifier.size(markSize).border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-                    contentAlignment = Alignment.Center) {
-                    Text("n", fontSize = 12.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val markSize = with(LocalDensity.current) { 12.sp.toDp() } + 10.dp
+                Box(
+                    modifier = Modifier
+                        .size(markSize)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        .border(0.75.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "n",
+                        fontSize = 12.sp,
+                        lineHeight = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
-                Text("Nola", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Nola",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
         if (isUser) {
@@ -3728,28 +3757,40 @@ fun MessageBubble(
         }
         if (isUser) {
             if (visibleText.isNotBlank()) {
-                val userBubbleShape = com.nola.ui.theme.NolaContinuousShape(NolaRadius.message)
-                Card(
-                    modifier = Modifier.widthIn(max = 560.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    shape = userBubbleShape
+                val userBubbleShape = RoundedCornerShape(18.dp)
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.CenterEnd,
                 ) {
-                    Text(
-                        text = buildAnnotatedString {
-                            append(visibleText)
-                            val refs = remember(message) { runCatching { historyMentions(message.text, message.expertMentionHistory()) }.getOrDefault(emptyList()) }
-                            for (ref in refs) {
-                                if (!visibleText.startsWith(ref.label, ref.start)) continue
-                                addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
-                                if (onExpertMention != null) addLink(androidx.compose.ui.text.LinkAnnotation.Clickable(
-                                    ref.agentId, linkInteractionListener = { onExpertMention(ref) }), ref.start, ref.end)
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-                        style = MaterialTheme.typography.bodyLarge
-                    )
+                    val bubbleMaxWidth = minOf(maxWidth * 0.86f, 520.dp)
+                    Card(
+                        modifier = Modifier.widthIn(max = bubbleMaxWidth),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(0.75.dp, NolaColors.hairlineBorder),
+                        shape = userBubbleShape,
+                    ) {
+                        Text(
+                            text = buildAnnotatedString {
+                                append(visibleText)
+                                val refs = remember(message) { runCatching { historyMentions(message.text, message.expertMentionHistory()) }.getOrDefault(emptyList()) }
+                                for (ref in refs) {
+                                    if (!visibleText.startsWith(ref.label, ref.start)) continue
+                                    addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold), ref.start, ref.end)
+                                    if (onExpertMention != null) addLink(androidx.compose.ui.text.LinkAnnotation.Clickable(
+                                        ref.agentId, linkInteractionListener = { onExpertMention(ref) }), ref.start, ref.end)
+                                }
+                            },
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
             attachments.forEach { attachment ->
@@ -3917,8 +3958,9 @@ fun MessageBubble(
         }
         val copyText = if (isUser) visibleText else executionAnswer(message.canonicalParts, message.text)
         if (copyText.isNotBlank()) androidx.compose.foundation.layout.FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            modifier = Modifier.padding(top = if (isUser) 2.dp else 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             MessageCopyAction(copyText, compact = isUser)
             if (isUser && !readOnlyHistory && onResendEditedMessage != null) {

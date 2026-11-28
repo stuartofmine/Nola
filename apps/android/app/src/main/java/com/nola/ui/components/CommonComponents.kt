@@ -37,8 +37,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Terminal
@@ -248,15 +251,29 @@ private fun hostToolStatusText(status: String, error: Boolean): String {
     return if (fallback.isBlank()) stringResource(R.string.chat_host_tool_status_succeeded) else fallback
 }
 
-@Composable
-private fun hostToolTint(status: String, error: Boolean): Color {
+internal enum class HostToolVisualKind {
+    Running,
+    Completed,
+    Failed,
+    PermissionRequired,
+}
+
+internal fun resolveHostToolVisualKind(status: String, error: Boolean): HostToolVisualKind {
     val normalized = status.trim().lowercase()
     return when {
-        normalized == "running" -> MaterialTheme.colorScheme.primary
-        normalized == "permission_required" || normalized == "permissionrequired" -> NolaColors.warning
-        error || normalized == "error" || normalized == "failed" -> MaterialTheme.colorScheme.error
-        else -> NolaColors.success
+        normalized == "running" -> HostToolVisualKind.Running
+        normalized == "permission_required" || normalized == "permissionrequired" -> HostToolVisualKind.PermissionRequired
+        error || normalized == "error" || normalized == "failed" -> HostToolVisualKind.Failed
+        else -> HostToolVisualKind.Completed
     }
+}
+
+@Composable
+private fun hostToolTint(status: String, error: Boolean): Color = when (resolveHostToolVisualKind(status, error)) {
+    HostToolVisualKind.Running -> MaterialTheme.colorScheme.primary
+    HostToolVisualKind.PermissionRequired -> NolaColors.warning
+    HostToolVisualKind.Failed -> MaterialTheme.colorScheme.error
+    HostToolVisualKind.Completed -> NolaColors.success
 }
 
 internal fun thinkingExpandedAfterStatusChange(current: Boolean, finished: Boolean, userChangedExpansion: Boolean): Boolean =
@@ -304,12 +321,16 @@ fun ThinkingBlock(
         label = "thinking-disclosure-rotation"
     )
     val cardBackground by animateColorAsState(
-        targetValue = if (expanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        targetValue = when {
+            !finished -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+            expanded -> MaterialTheme.colorScheme.surfaceContainerHigh
+            else -> MaterialTheme.colorScheme.surfaceContainer
+        },
         animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
         label = "thinking-card-background"
     )
     val cardBorder by animateColorAsState(
-        targetValue = if (expanded) MaterialTheme.colorScheme.outlineVariant else Color.Transparent,
+        targetValue = if (!finished) MaterialTheme.colorScheme.primary.copy(alpha = 0.38f) else NolaColors.hairlineBorder,
         animationSpec = nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing),
         label = "thinking-card-border"
     )
@@ -327,10 +348,10 @@ fun ThinkingBlock(
                 .clip(RoundedCornerShape(NolaRadius.lg))
                 .background(cardBackground)
                 .border(
-                    BorderStroke(0.5.dp, cardBorder),
+                    BorderStroke(0.75.dp, cardBorder),
                     RoundedCornerShape(NolaRadius.lg)
                 )
-                .padding(horizontal = 10.dp, vertical = 5.dp)
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -349,33 +370,19 @@ fun ThinkingBlock(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (finished) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.46f))
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                    )
                 } else {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                    }
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(15.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha),
+                    )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
@@ -385,8 +392,9 @@ fun ThinkingBlock(
                         else -> stringResource(R.string.chat_thinking)
                     },
                     style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = if (finished) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f)
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
@@ -411,7 +419,7 @@ fun ThinkingBlock(
                 ThinkingBody(
                     thinking = thinking,
                     finished = finished,
-                    modifier = Modifier.padding(start = 20.dp, end = 6.dp, bottom = 10.dp)
+                    modifier = Modifier.padding(start = 24.dp, end = 6.dp, bottom = 8.dp)
                 )
             }
         }
@@ -558,22 +566,36 @@ fun HostToolCard(
     val visibleSummary = if (isFilePayloadTool) fileSummary else redactedSummary.take(1200)
     val visibleArgs = if (isFilePayloadTool) "" else redactedArgs.take(1200)
     val redactedScreenshotWarning = redactHostToolText(screenshotWarning).takeIf { it.isNotBlank() }
+    val visualKind = resolveHostToolVisualKind(status, error)
     val tint = hostToolTint(status, error)
     val displayStatus = hostToolStatusText(status, error)
     val displayName = hostToolDisplayName(toolName)
-    val icon = when {
-        error || hostToolNeedsPermission(status) -> Icons.Filled.Warning
-        else -> hostToolIcon(toolName)
+    val icon = when (visualKind) {
+        HostToolVisualKind.Failed -> Icons.Filled.Error
+        HostToolVisualKind.PermissionRequired -> Icons.Filled.Warning
+        HostToolVisualKind.Completed -> Icons.Filled.CheckCircle
+        HostToolVisualKind.Running -> hostToolIcon(toolName)
     }
     Card(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 2.dp, vertical = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f),
+            containerColor = if (visualKind == HostToolVisualKind.Failed) {
+                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.24f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)
+            },
             contentColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        border = BorderStroke(
+            0.75.dp,
+            if (visualKind == HostToolVisualKind.Failed) {
+                MaterialTheme.colorScheme.error.copy(alpha = 0.35f)
+            } else {
+                NolaColors.hairlineBorder
+            }
+        ),
         shape = RoundedCornerShape(NolaRadius.lg)
     ) {
         Row(
@@ -587,34 +609,59 @@ fun HostToolCard(
             HostToolStatusGlyph(
                 icon = icon,
                 tint = tint,
-                running = hostToolIsRunning(status),
+                running = visualKind == HostToolVisualKind.Running,
                 reduceMotion = reduceMotion
             )
             Spacer(modifier = Modifier.width(9.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = displayStatus,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tint,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = displayName,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = displayStatus,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tint,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(tint.copy(alpha = 0.14f))
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
                 if (!containsSensitiveData && visibleSummary.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = visibleSummary,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        maxLines = if (expanded) 6 else 1,
+                        color = if (visualKind == HostToolVisualKind.Failed) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
+                        },
+                        maxLines = if (expanded) 6 else 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.animateContentSize(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing))
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (visualKind == HostToolVisualKind.Failed) {
+                                    Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+                                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                                } else Modifier
+                            )
+                            .animateContentSize(nolaTween(NolaMotion.disclosure, reduceMotion, NolaMotion.disclosureEasing))
                     )
                 }
                 AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
@@ -773,17 +820,26 @@ private fun HostToolStatusGlyph(
                 .graphicsLayer {
                     scaleX = if (running) pulse else 1f
                     scaleY = if (running) pulse else 1f
-                    alpha = if (running) 0.13f else 0.09f
+                    alpha = if (running) 0.15f else 0.12f
                 }
                 .clip(CircleShape)
                 .background(tint)
         )
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = tint
-        )
+        if (running) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = tint,
+                trackColor = tint.copy(alpha = 0.24f),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = tint
+            )
+        }
     }
 }
 

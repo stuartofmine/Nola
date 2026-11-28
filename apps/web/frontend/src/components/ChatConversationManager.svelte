@@ -10,7 +10,7 @@
     import ConversationRowDetails from './ConversationRowDetails.svelte';
     import PrototypeIcon from './PrototypeIcon.svelte';
     import type { ConfirmationHandle } from '../lib/confirmation';
-    import { parseChatConversation, parseChatConversations, conversationUrl, conversationTitleRequest, conversationBranchRequest, conversationTruncateRequest, parseConversationExport, sameConversationOperation } from '../lib/chatConversations';
+    import { parseChatConversation, parseChatConversations, conversationUrl, conversationTitleRequest, conversationBranchRequest, conversationTruncateRequest, parseConversationExport, sameConversationOperation, displayConversationTitle } from '../lib/chatConversations';
     import type { ChatConversation, ConversationOperationOwner } from '../lib/chatConversations';
     import { conversationPinRequest, conversationPinConfirmed } from '../lib/chatConversations';
     import { committedConversationConfiguration } from '../lib/conversationConfigurationCommit';
@@ -73,7 +73,10 @@
     }
     const renameDirty = $derived(editingTarget !== null && title !== editingTarget.baseline);
     const active = $derived(conversations.find(item => item.conversationId === activeId));
-    const visible = $derived(conversations.filter(item => !query.trim() || item.title.toLocaleLowerCase($locale).includes(query.trim().toLocaleLowerCase($locale))).sort((a, b) => Number(b.isPinned) - Number(a.isPinned)));
+    function labelFor(conversation: ChatConversation): string {
+        return displayConversationTitle(conversation.title, t($locale, 'shell.conversations.new'));
+    }
+    const visible = $derived(conversations.filter(item => !query.trim() || labelFor(item).toLocaleLowerCase($locale).includes(query.trim().toLocaleLowerCase($locale)) || item.title.toLocaleLowerCase($locale).includes(query.trim().toLocaleLowerCase($locale))).sort((a, b) => Number(b.isPinned) - Number(a.isPinned)));
     const owner = (): ConversationOperationOwner => ({ conversationId: activeId, generation });
     const current = (captured: ConversationOperationOwner) => !disposed && sameConversationOperation(captured, owner());
     function conversationTime(value: string): string {
@@ -244,11 +247,11 @@
         <div class="conversation-row" data-conversation-id={conversation.conversationId}>
             <button type="button" class="conversation" aria-current={highlightSelection && activeId === conversation.conversationId ? 'true' : undefined} disabled={navigationDisabled || writing} onclick={() => selectConversation(conversation)}>
                 <span class="sr-only">{t($locale, 'chatConversations.open')} </span>
-                <span class="conversation-heading"><span>{conversation.title || t($locale, 'chatConversations.untitled')}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>
+                <span class="conversation-heading"><span>{labelFor(conversation)}</span>{#if layout === 'page'}<small title={new Date(conversation.updatedAt).toLocaleString($locale)}>{conversationTime(conversation.updatedAt)}</small>{/if}</span>
                 {#if layout === 'page'}<ConversationRowDetails conversationId={conversation.conversationId} version={JSON.stringify([generation, loadVersion, conversation.updatedAt, conversation.revision])} />{/if}
             </button>
             <details class="row-actions" use:dismissibleDisclosure>
-                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} title={t($locale, 'chatConversations.actionsFor', {name: conversation.title || t($locale, 'chatConversations.untitled')})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
+                <summary aria-label={t($locale, 'chatConversations.actionsFor', {name: labelFor(conversation)})} title={t($locale, 'chatConversations.actionsFor', {name: labelFor(conversation)})} aria-disabled={menuLocked(conversation)} onclick={event => { if (menuLocked(conversation)) event.preventDefault(); }}><PrototypeIcon name="more" size={16} /></summary>
                 <div class="row-action-buttons">
                     <button type="button" disabled={rowLocked(conversation)} onclick={event => pin(conversation, event.currentTarget)}>{t($locale, conversation.isPinned ? 'chatConversations.unpin' : 'chatConversations.pin')}</button>
                     <button type="button" disabled={rowLocked(conversation)} onclick={event => rename(conversation, event.currentTarget)}>{t($locale, 'chatConversations.rename')}</button>

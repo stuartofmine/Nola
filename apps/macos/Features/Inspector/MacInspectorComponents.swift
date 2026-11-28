@@ -244,6 +244,34 @@ struct MacInspectorToggleRow: View {
         }
     }
 
+struct MacInspectorEmptyState: View {
+    let symbol: String
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text(message)
+                .font(.system(size: MacDesignTokens.Typography.inspectorBody))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.028), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.5)
+        }
+    }
+}
+
 struct MacInspectorRow: View {
         let symbol: String
         let title: String

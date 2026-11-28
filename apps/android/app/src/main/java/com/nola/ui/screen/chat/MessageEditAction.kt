@@ -27,9 +27,19 @@ data class AndroidMessageEditDraft(val input: AndroidPrepareEditedResend, val or
 @Composable
 internal fun MessageEditAction(message: ConversationMessage, generating: Boolean,
     onResend: ((ConversationMessage) -> Unit)? = null) {
-    TextButton(enabled = !generating && onResend != null,
-        onClick = { onResend?.invoke(message) }, modifier = Modifier.heightIn(min = 48.dp).testTag("chat.message.edit." + (message.meta?.get("nola.canonicalMessageID") ?: message.id))) {
-        Text(stringResource(R.string.chat_edit_resend), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    TextButton(
+        enabled = !generating && onResend != null,
+        onClick = { onResend?.invoke(message) },
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .testTag("chat.message.edit." + (message.meta?.get("nola.canonicalMessageID") ?: message.id))
+    ) {
+        Text(
+            stringResource(R.string.chat_edit_resend),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

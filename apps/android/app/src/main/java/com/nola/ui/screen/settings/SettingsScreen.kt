@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -383,9 +384,11 @@ internal fun SettingsContent(
                 IMSettingsRow(R.drawable.nola_execution, R.string.settings_capabilities, onOpenIntelligence)
             }
             MobileSettingsGroup(R.string.settings_group_security) {
-                IMSettingsRow(R.drawable.nola_review, R.string.settings_privacy) { detailSection = "privacy" }
+                IMSettingsRow(Icons.Outlined.Shield, R.string.settings_privacy) { detailSection = "privacy" }
             }
-            SettingsAutomationCard(onScheduledActions)
+            MobileSettingsGroup(R.string.settings_automation) {
+                IMSettingsRow(R.drawable.nola_calendar, R.string.scheduled_title, onScheduledActions)
+            }
             return@SettingsPage
         }
 
@@ -628,17 +631,31 @@ private fun MobileSettingsGroup(label: Int, content: @Composable () -> Unit) {
 
 @Composable
 private fun IMSettingsRow(icon: Int, label: Int, onClick: () -> Unit) {
+    IMSettingsRowContainer(label = label, onClick = onClick) {
+        Icon(painterResource(icon), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+private fun IMSettingsRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: Int, onClick: () -> Unit) {
+    IMSettingsRowContainer(label = label, onClick = onClick) {
+        Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+private fun IMSettingsRowContainer(label: Int, onClick: () -> Unit, iconContent: @Composable () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .heightIn(min = 62.dp)
+            .heightIn(min = 56.dp)
             .padding(horizontal = 4.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(painterResource(icon), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+        iconContent()
         Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Icon(
             painterResource(R.drawable.nola_chevron),

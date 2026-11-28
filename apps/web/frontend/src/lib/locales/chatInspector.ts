@@ -101,6 +101,8 @@ const entries: Record<string, readonly string[]> = {
     tabBrowser: ['浏览器与 PDF', 'Browser & PDF', 'Browser & PDF', 'Navegador y PDF', 'Navigateur & PDF', 'ブラウザと PDF', 'Браузер и PDF'],
     planMode: ['计划模式', 'Plan Mode', 'Planungsmodus', 'Modo plan', 'Mode plan', 'プランモード', 'Режим плана'],
     planActive: ['计划模式已开启', 'Plan Mode active', 'Planungsmodus aktiv', 'Modo plan activo', 'Mode plan actif', 'プランモード有効', 'Режим плана активен'],
+    planStatusOn: ['已开启', 'On', 'Ein', 'Activado', 'Activé', 'オン', 'Вкл'],
+    planStatusOff: ['已关闭', 'Off', 'Aus', 'Desactivado', 'Désactivé', 'オフ', 'Выкл'],
     planPendingApproval: ['计划等待审批', 'Plan awaiting approval', 'Plan wartet auf Freigabe', 'Plan pendiente de aprobación', 'Plan en attente d’approbation', '計画の承認待ち', 'План ожидает одобрения'],
     planApprove: ['批准并执行', 'Approve plan', 'Plan genehmigen', 'Aprobar plan', 'Approuver le plan', '計画を承認', 'Одобрить план'],
     planReject: ['拒绝计划', 'Reject plan', 'Plan ablehnen', 'Rechazar plan', 'Rejeter le plan', '計画を却下', 'Отклонить план'],

@@ -10,6 +10,10 @@ enum MacConversationTitlePolicy {
         return normalized.isEmpty
             || normalized == "New conversation"
             || normalized == "New Conversation"
+            || normalized == "Untitled"
+            || normalized == "Untitled conversation"
+            || normalized == "Untitled Conversation"
+            || normalized == "未命名对话"
             || normalized == "新对话"
             || normalized == String(localized: "New Conversation")
             || isLegacySessionPlaceholder(normalized)

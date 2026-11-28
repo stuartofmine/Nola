@@ -161,6 +161,10 @@ enum MockSseTurn {
         name: String,
         arguments: Value,
     },
+    HttpError {
+        status: u16,
+        body: String,
+    },
 }
 
 struct MockLlmServer {
@@ -263,17 +267,30 @@ impl MockLlmServer {
                                 text: "Default mock reply.".into(),
                             },
                         );
-                        let sse = render_openai_sse_turn(&next_turn);
-                        let resp = tiny_http::Response::from_string(sse)
-                            .with_status_code(200)
-                            .with_header(
-                                tiny_http::Header::from_bytes(
-                                    &b"Content-Type"[..],
-                                    &b"text/event-stream"[..],
-                                )
-                                .unwrap(),
-                            );
-                        let _ = req.respond(resp);
+                        if let MockSseTurn::HttpError { status, body } = next_turn {
+                            let resp = tiny_http::Response::from_string(body)
+                                .with_status_code(status)
+                                .with_header(
+                                    tiny_http::Header::from_bytes(
+                                        &b"Content-Type"[..],
+                                        &b"application/json"[..],
+                                    )
+                                    .unwrap(),
+                                );
+                            let _ = req.respond(resp);
+                        } else {
+                            let sse = render_openai_sse_turn(&next_turn);
+                            let resp = tiny_http::Response::from_string(sse)
+                                .with_status_code(200)
+                                .with_header(
+                                    tiny_http::Header::from_bytes(
+                                        &b"Content-Type"[..],
+                                        &b"text/event-stream"[..],
+                                    )
+                                    .unwrap(),
+                                );
+                            let _ = req.respond(resp);
+                        }
                     }
                     _ => {
                         let resp = tiny_http::Response::from_string(
@@ -412,6 +429,7 @@ fn render_openai_sse_turn(turn: &MockSseTurn) -> String {
             });
             out.push_str(&format!("data: {end_chunk}\n\n"));
         }
+        MockSseTurn::HttpError { .. } => {}
     }
     out.push_str("data: [DONE]\n\n");
     out
@@ -1191,23 +1209,478 @@ fn strip_ansi(input: &str) -> String {
 }
 
 #[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TermColor {
+    Default,
+    Ansi16(u8),
+    Palette256(u8),
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+struct TermCell {
+    ch: char,
+    fg: TermColor,
+    bg: TermColor,
+    bold: bool,
+    dim: bool,
+    continuation: bool,
+}
+
+#[cfg(unix)]
+impl Default for TermCell {
+    fn default() -> Self {
+        Self {
+            ch: ' ',
+            fg: TermColor::Default,
+            bg: TermColor::Default,
+            bold: false,
+            dim: false,
+            continuation: false,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn vt_char_width(c: char) -> usize {
+    if c.is_control() {
+        return 0;
+    }
+    let cp = c as u32;
+    if (0x0300..=0x036F).contains(&cp)
+        || (0x1AB0..=0x1AFF).contains(&cp)
+        || (0x1DC0..=0x1DFF).contains(&cp)
+        || (0x200B..=0x200F).contains(&cp)
+        || cp == 0x2060
+        || (0x20D0..=0x20FF).contains(&cp)
+        || (0xFE00..=0xFE0F).contains(&cp)
+        || (0xFE20..=0xFE2F).contains(&cp)
+        || cp == 0xFEFF
+        || (0xE0100..=0xE01EF).contains(&cp)
+    {
+        return 0;
+    }
+    if (0x1100..=0x115F).contains(&cp)
+        || (0x231A..=0x231B).contains(&cp)
+        || (0x23E9..=0x23F3).contains(&cp)
+        || (0x23F8..=0x23FA).contains(&cp)
+        || (0x2600..=0x26FF).contains(&cp)
+        || (0x2700..=0x27BF).contains(&cp)
+        || (0x2E80..=0xA4CF).contains(&cp)
+        || (0xAC00..=0xD7A3).contains(&cp)
+        || (0xF900..=0xFAFF).contains(&cp)
+        || (0xFE10..=0xFE6F).contains(&cp)
+        || (0xFF00..=0xFF60).contains(&cp)
+        || (0xFFE0..=0xFFE6).contains(&cp)
+        || (0x1F300..=0x1FAFF).contains(&cp)
+        || (0x20000..=0x2FFFD).contains(&cp)
+    {
+        2
+    } else {
+        1
+    }
+}
+
+/// Stateful 2D VT100/ANSI terminal emulator that verifies actual rendered cell geometry,
+/// box-border closure & right-edge alignment, background tints, and colors — not just flat text.
+#[cfg(unix)]
+struct VirtualTerminal {
+    cols: usize,
+    rows: usize,
+    grid: Vec<Vec<TermCell>>,
+    cx: usize,
+    cy: usize,
+    fg: TermColor,
+    bg: TermColor,
+    bold: bool,
+    dim: bool,
+    pending_utf8: Vec<u8>,
+    pending_esc: String,
+}
+
+#[cfg(unix)]
+impl VirtualTerminal {
+    fn new(cols: usize, rows: usize) -> Self {
+        Self {
+            cols,
+            rows,
+            grid: vec![vec![TermCell::default(); cols]; rows],
+            cx: 0,
+            cy: 0,
+            fg: TermColor::Default,
+            bg: TermColor::Default,
+            bold: false,
+            dim: false,
+            pending_utf8: Vec::new(),
+            pending_esc: String::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.grid = vec![vec![TermCell::default(); self.cols]; self.rows];
+        self.cx = 0;
+        self.cy = 0;
+        self.fg = TermColor::Default;
+        self.bg = TermColor::Default;
+        self.bold = false;
+        self.dim = false;
+    }
+
+    fn feed_bytes(&mut self, bytes: &[u8]) {
+        self.pending_utf8.extend_from_slice(bytes);
+        let mut valid_len = self.pending_utf8.len();
+        while valid_len > 0 {
+            match std::str::from_utf8(&self.pending_utf8[..valid_len]) {
+                Ok(s) => {
+                    let owned = s.to_string();
+                    self.pending_utf8.drain(..valid_len);
+                    self.feed_str(&owned);
+                    return;
+                }
+                Err(e) => {
+                    let up_to = e.valid_up_to();
+                    if up_to > 0 {
+                        let owned =
+                            std::str::from_utf8(&self.pending_utf8[..up_to]).unwrap().to_string();
+                        self.pending_utf8.drain(..up_to);
+                        self.feed_str(&owned);
+                        return;
+                    }
+                    if e.error_len().is_none() {
+                        // Incomplete trailing UTF-8 sequence — wait for next read.
+                        return;
+                    }
+                    // Skip invalid byte
+                    self.pending_utf8.remove(0);
+                    valid_len = self.pending_utf8.len();
+                }
+            }
+        }
+    }
+
+    fn feed_str(&mut self, input: &str) {
+        let data = if self.pending_esc.is_empty() {
+            input.to_string()
+        } else {
+            let mut s = std::mem::take(&mut self.pending_esc);
+            s.push_str(input);
+            s
+        };
+        let chars: Vec<char> = data.chars().collect();
+        let mut i = 0usize;
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch == '\x1b' {
+                if i + 1 >= chars.len() {
+                    self.pending_esc = chars[i..].iter().collect();
+                    return;
+                }
+                if chars[i + 1] == '[' {
+                    let mut j = i + 2;
+                    while j < chars.len() && !('@'..='~').contains(&chars[j]) {
+                        j += 1;
+                    }
+                    if j >= chars.len() {
+                        self.pending_esc = chars[i..].iter().collect();
+                        return;
+                    }
+                    let seq: String = chars[i + 2..j].iter().collect();
+                    let final_ch = chars[j];
+                    self.handle_csi(&seq, final_ch);
+                    i = j + 1;
+                    continue;
+                }
+                i += 2;
+                continue;
+            }
+            match ch {
+                '\r' => self.cx = 0,
+                '\n' => self.cy = (self.cy + 1).min(self.rows.saturating_sub(1)),
+                c if !c.is_control() => {
+                    let w = vt_char_width(c);
+                    if w > 0 && self.cy < self.rows && self.cx < self.cols {
+                        self.grid[self.cy][self.cx] = TermCell {
+                            ch: c,
+                            fg: self.fg,
+                            bg: self.bg,
+                            bold: self.bold,
+                            dim: self.dim,
+                            continuation: false,
+                        };
+                        if w == 2 && self.cx + 1 < self.cols {
+                            self.grid[self.cy][self.cx + 1] = TermCell {
+                                ch: '\0',
+                                fg: self.fg,
+                                bg: self.bg,
+                                bold: self.bold,
+                                dim: self.dim,
+                                continuation: true,
+                            };
+                        }
+                        self.cx = (self.cx + w).min(self.cols);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    fn handle_csi(&mut self, seq: &str, final_ch: char) {
+        if seq.starts_with('?') {
+            return;
+        }
+        let parts: Vec<usize> = if seq.is_empty() {
+            Vec::new()
+        } else {
+            seq.split(';')
+                .map(|p| p.parse::<usize>().unwrap_or(0))
+                .collect()
+        };
+        match final_ch {
+            'H' | 'f' => {
+                let row = parts.first().copied().unwrap_or(1).saturating_sub(1);
+                let col = parts.get(1).copied().unwrap_or(1).saturating_sub(1);
+                self.cy = row.min(self.rows.saturating_sub(1));
+                self.cx = col.min(self.cols.saturating_sub(1));
+            }
+            'K' => {
+                let mode = parts.first().copied().unwrap_or(0);
+                let range = match mode {
+                    0 => self.cx..self.cols,
+                    1 => 0..(self.cx.saturating_add(1).min(self.cols)),
+                    _ => 0..self.cols,
+                };
+                for x in range {
+                    if x < self.cols {
+                        self.grid[self.cy][x] = TermCell::default();
+                    }
+                }
+            }
+            'J' => self.reset(),
+            'm' => {
+                let codes = if parts.is_empty() { vec![0] } else { parts };
+                let mut k = 0;
+                while k < codes.len() {
+                    match codes[k] {
+                        0 => {
+                            self.fg = TermColor::Default;
+                            self.bg = TermColor::Default;
+                            self.bold = false;
+                            self.dim = false;
+                        }
+                        1 => self.bold = true,
+                        2 => self.dim = true,
+                        22 => {
+                            self.bold = false;
+                            self.dim = false;
+                        }
+                        p @ 30..=37 => self.fg = TermColor::Ansi16((p - 30) as u8),
+                        39 => self.fg = TermColor::Default,
+                        p @ 40..=47 => self.bg = TermColor::Ansi16((p - 40) as u8),
+                        49 => self.bg = TermColor::Default,
+                        p @ 90..=97 => self.fg = TermColor::Ansi16((p - 90 + 8) as u8),
+                        38 if k + 2 < codes.len() && codes[k + 1] == 5 => {
+                            self.fg = TermColor::Palette256(codes[k + 2] as u8);
+                            k += 2;
+                        }
+                        48 if k + 2 < codes.len() && codes[k + 1] == 5 => {
+                            self.bg = TermColor::Palette256(codes[k + 2] as u8);
+                            k += 2;
+                        }
+                        _ => {}
+                    }
+                    k += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn row_text(&self, row: usize) -> String {
+        let mut s = String::new();
+        for cell in &self.grid[row] {
+            if !cell.continuation {
+                s.push(cell.ch);
+            }
+        }
+        s.trim_end().to_string()
+    }
+
+    fn screen_text(&self) -> String {
+        (0..self.rows)
+            .map(|r| self.row_text(r))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Enforces that EVERY rounded box on the 2D screen is completely enclosed on all 4 sides
+    /// with exact left/right column alignment and zero legacy half-open `┌`/`└` borders.
+    fn assert_all_boxes_closed_and_aligned(&self) {
+        let dump = self.screen_text();
+        let mut active_box: Option<(usize, usize, usize)> = None; // (start_row, left_col, right_col)
+        let mut boxes_found = 0usize;
+
+        for r in 0..self.rows {
+            let row = &self.grid[r];
+            for c in 0..self.cols {
+                assert!(
+                    row[c].ch != '┌' && row[c].ch != '└',
+                    "Found legacy half-open border '{}' at ({r},{c})!\nScreen:\n{dump}",
+                    row[c].ch
+                );
+            }
+            let top_left = row.iter().position(|cell| cell.ch == '╭');
+            let top_right = row.iter().rposition(|cell| cell.ch == '╮');
+            let bot_left = row.iter().position(|cell| cell.ch == '╰');
+            let bot_right = row.iter().rposition(|cell| cell.ch == '╯');
+
+            if let Some(lc) = top_left {
+                let rc = top_right.unwrap_or_else(|| {
+                    panic!("Unclosed top border `╭` without `╮` at row {r}!\nScreen:\n{dump}")
+                });
+                assert!(
+                    rc > lc + 4,
+                    "Degenerate box width at row {r}: lc={lc}, rc={rc}\nScreen:\n{dump}"
+                );
+                assert!(
+                    active_box.is_none(),
+                    "Nested or unclosed previous box before row {r}\nScreen:\n{dump}"
+                );
+                active_box = Some((r, lc, rc));
+                boxes_found += 1;
+            } else if let Some(lc) = bot_left {
+                let rc = bot_right.unwrap_or_else(|| {
+                    panic!("Unclosed bottom border `╰` without `╯` at row {r}!\nScreen:\n{dump}")
+                });
+                let (sr, exp_lc, exp_rc) = active_box.take().unwrap_or_else(|| {
+                    panic!("Orphan bottom border `╰...╯` at row {r}\nScreen:\n{dump}")
+                });
+                assert_eq!(
+                    (lc, rc),
+                    (exp_lc, exp_rc),
+                    "Box bottom corners ({lc},{rc}) at row {r} misaligned with top ({exp_lc},{exp_rc}) from row {sr}!\nScreen:\n{dump}"
+                );
+            } else if let Some((sr, exp_lc, exp_rc)) = active_box {
+                assert_eq!(
+                    row[exp_lc].ch, '│',
+                    "Box left border missing/misaligned at row {r} col {exp_lc} (box started at row {sr})\nScreen:\n{dump}"
+                );
+                assert_eq!(
+                    row[exp_rc].ch, '│',
+                    "Box right border missing/misaligned at row {r} col {exp_rc} (box started at row {sr}, got '{}')\nScreen:\n{dump}",
+                    row[exp_rc].ch
+                );
+            }
+        }
+        assert!(
+            active_box.is_none(),
+            "Box opened at {:?} was never closed with `╰...╯`!\nScreen:\n{dump}",
+            active_box
+        );
+        assert!(
+            boxes_found > 0,
+            "Expected at least one full-enclosed rounded box on screen!\nScreen:\n{dump}"
+        );
+    }
+
+    /// Verifies minimalist top chrome (no harsh DarkBlue banner) and clean bottom status bar.
+    fn assert_minimalist_chrome(&self) {
+        let dump = self.screen_text();
+        for c in 0..self.cols {
+            assert_ne!(
+                self.grid[0][c].bg,
+                TermColor::Ansi16(4),
+                "Row 0 must not use harsh solid DarkBlue banner!\nScreen:\n{dump}"
+            );
+        }
+        let row0 = self.row_text(0);
+        assert!(
+            row0.contains("Nola"),
+            "Top bar should display `Nola`, got: `{row0}`\nScreen:\n{dump}"
+        );
+        let last_row = self.row_text(self.rows - 1);
+        assert!(
+            last_row.contains("Context") || last_row.contains("上下文"),
+            "Bottom status bar should display Context %, got: `{last_row}`\nScreen:\n{dump}"
+        );
+    }
+
+    /// Verifies user message has NO `You` label and uses full-width subtle background tint + `▎`.
+    fn assert_user_message_tinted_without_you(&self, snippet: &str) {
+        let dump = self.screen_text();
+        assert!(
+            !dump.contains("▸ You") && !dump.contains("You\n"),
+            "User message must NOT render redundant `You` header!\nScreen:\n{dump}"
+        );
+        let row_idx = (0..self.rows)
+            .find(|&r| self.row_text(r).contains(snippet))
+            .unwrap_or_else(|| {
+                panic!("Could not find user message `{snippet}` on 2D screen!\nScreen:\n{dump}")
+            });
+        let row = &self.grid[row_idx];
+        assert!(
+            row.iter().any(|c| c.ch == '▎'),
+            "User message row {row_idx} should have left accent `▎`\nScreen:\n{dump}"
+        );
+        let tinted_cells = row
+            .iter()
+            .filter(|c| c.bg != TermColor::Default)
+            .count();
+        assert!(
+            tinted_cells >= self.cols.saturating_sub(6),
+            "User message row {row_idx} should be full-width background tinted (got {tinted_cells}/{} tinted cells)\nScreen:\n{dump}",
+            self.cols
+        );
+    }
+
+    fn assert_row_has_red_fg(&self, snippet: &str) {
+        let dump = self.screen_text();
+        let row_idx = (0..self.rows)
+            .find(|&r| self.row_text(r).contains(snippet))
+            .unwrap_or_else(|| {
+                panic!("Could not find error row `{snippet}` on 2D screen!\nScreen:\n{dump}")
+            });
+        let has_red = self.grid[row_idx]
+            .iter()
+            .any(|c| matches!(c.fg, TermColor::Ansi16(1) | TermColor::Ansi16(9)));
+        assert!(
+            has_red,
+            "Expected red foreground on error row {row_idx} (`{snippet}`)\nScreen:\n{dump}"
+        );
+    }
+}
+
+#[cfg(unix)]
 struct PtySession {
     master_fd: libc::c_int,
     child: std::process::Child,
     raw_log: String,
     clean_log: String,
+    vt: VirtualTerminal,
 }
 
 #[cfg(unix)]
 impl PtySession {
     fn spawn(env: &IsolatedEnv) -> Self {
+        Self::spawn_with_opts(env, &env.workspace, "en_US.UTF-8", 132, 36)
+    }
+
+    fn spawn_with_opts(
+        env: &IsolatedEnv,
+        project_dir: &std::path::Path,
+        lang: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Self {
         use std::os::unix::process::CommandExt;
 
         let mut master: libc::c_int = -1;
         let mut slave: libc::c_int = -1;
         let mut ws = libc::winsize {
-            ws_row: 44,
-            ws_col: 132,
+            ws_row: rows,
+            ws_col: cols,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -1231,11 +1704,12 @@ impl PtySession {
 
         let mut cmd = env.cmd();
         cmd.env("TERM", "xterm-256color")
+            .env("NOLA_LANG", lang)
             .arg("tui")
             .arg("--db")
             .arg(&env.db_path)
             .arg("--project")
-            .arg(&env.workspace);
+            .arg(project_dir);
 
         unsafe {
             cmd.pre_exec(move || {
@@ -1274,6 +1748,7 @@ impl PtySession {
             child,
             raw_log: String::new(),
             clean_log: String::new(),
+            vt: VirtualTerminal::new(cols as usize, rows as usize),
         }
     }
 
@@ -1283,7 +1758,9 @@ impl PtySession {
         loop {
             let n = unsafe { libc::read(self.master_fd, buf.as_mut_ptr().cast(), buf.len()) };
             if n > 0 {
-                let chunk = String::from_utf8_lossy(&buf[..n as usize]);
+                let slice = &buf[..n as usize];
+                self.vt.feed_bytes(slice);
+                let chunk = String::from_utf8_lossy(slice);
                 self.raw_log.push_str(&chunk);
                 self.clean_log = strip_ansi(&self.raw_log);
                 total += n as usize;
@@ -1292,6 +1769,47 @@ impl PtySession {
             }
         }
         total
+    }
+
+    fn wait_screen_contains(&mut self, needle: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.drain_once();
+            if self.vt.screen_text().contains(needle) {
+                return;
+            }
+            if let Ok(Some(status)) = self.child.try_wait() {
+                self.drain_once();
+                panic!(
+                    "nola tui exited early ({status:?}) while waiting for `{needle}` on 2D screen.\n2D Screen:\n{}",
+                    self.vt.screen_text()
+                );
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "timed out waiting for `{needle}` on live 2D screen.\n2D Screen:\n{}",
+                    self.vt.screen_text()
+                );
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait_screen_missing(&mut self, needle: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            self.drain_once();
+            if !self.vt.screen_text().contains(needle) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "timed out waiting for `{needle}` to disappear from live 2D screen.\n2D Screen:\n{}",
+                    self.vt.screen_text()
+                );
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
     }
 
     fn wait_for(&mut self, needle: &str, since_offset: usize, timeout: Duration) {
@@ -1319,18 +1837,16 @@ impl PtySession {
         }
     }
 
-    fn send_command(&mut self, line: &str) -> usize {
+    fn send_raw(&mut self, payload: &[u8]) -> usize {
         self.drain_once();
         let mark = self.clean_log.len();
-        let payload = format!("{line}\r");
-        let bytes = payload.as_bytes();
         let mut written = 0;
-        while written < bytes.len() {
+        while written < payload.len() {
             let n = unsafe {
                 libc::write(
                     self.master_fd,
-                    bytes[written..].as_ptr().cast(),
-                    bytes.len() - written,
+                    payload[written..].as_ptr().cast(),
+                    payload.len() - written,
                 )
             };
             if n > 0 {
@@ -1340,6 +1856,11 @@ impl PtySession {
             }
         }
         mark
+    }
+
+    fn send_command(&mut self, line: &str) -> usize {
+        let payload = format!("{line}\r");
+        self.send_raw(payload.as_bytes())
     }
 
     fn wait_exit(mut self, timeout: Duration) -> (std::process::ExitStatus, String) {
@@ -1403,9 +1924,22 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
     let mut pty = PtySession::spawn(&env);
     let t = Duration::from_secs(8);
 
-    // 1. TUI boots cleanly into interactive screen
-    pty.wait_for("Nola v2", 0, t);
-    pty.wait_for("nola>", 0, t);
+    // 1. TUI boots cleanly into minimalist welcome screen with `›` prompt
+    pty.wait_for("Nola", 0, t);
+    pty.wait_for("›", 0, t);
+
+    // 1b. Typing `/co` opens live floating full-enclosed slash command menu;
+    // first Esc dismisses menu, second Esc clears composer back to placeholder.
+    let m = pty.send_raw(b"/co");
+    pty.wait_for("╭─", m, t);
+    pty.wait_for("╮", m, t);
+    pty.wait_for("/compact", m, t);
+    pty.wait_for("╰─", m, t);
+    pty.wait_for("╯", m, t);
+    let _ = pty.send_raw(b"\x1b");
+    thread::sleep(Duration::from_millis(300));
+    let m = pty.send_raw(b"\x03");
+    pty.wait_for("Type a message...", m, t);
 
     // 2. `/help`
     let m = pty.send_command("/help");
@@ -1438,6 +1972,21 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
 
     let m = pty.send_command("/thinking none");
     pty.wait_for("Switched reasoning effort to 'none'", m, t);
+
+    // 5b. Interactive `/model` picker modal: full-enclosed box -> Enter confirms active model
+    let m = pty.send_command("/model");
+    pty.wait_for("╭─", m, t);
+    pty.wait_for("Select Model", m, t);
+    pty.wait_for("╮", m, t);
+    pty.wait_for("filter›", m, t);
+    let m = pty.send_raw(b"\r");
+    pty.wait_for("Switched active model to", m, t);
+
+    // 5c. Interactive `/thinking` picker modal: open -> Esc cancels back to composer
+    let m = pty.send_command("/thinking");
+    pty.wait_for("Select Reasoning Effort", m, t);
+    let m = pty.send_raw(b"\x1b");
+    pty.wait_for("›", m, t);
 
     // 6. `/plan on` & `/plan off`
     let m = pty.send_command("/plan on");
@@ -1489,4 +2038,322 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
         "detected panic in TUI output:\n{full_screen}"
     );
     assert!(!full_screen.contains("git diff --no-index"));
+}
+
+// ============================================================================
+// 6. 2D Terminal UI Geometry, CJK Alignment, Git Subdir & Picker Persistence E2E
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn tui_pty_2d_cjk_git_subdir_slash_menu_and_model_picker_persistence_e2e() {
+    let env = IsolatedEnv::new();
+    let mock = MockLlmServer::start();
+
+    // Multi-model config so /model picker has multiple entries to filter & switch
+    let cfg_path = env.workspace.join("nola.json");
+    fs::write(
+        &cfg_path,
+        serde_json::to_string_pretty(&json!({
+            "llm": {
+                "default_model": { "connection": "primary", "model": "mock-reasoner-7b" },
+                "connections": [
+                    {
+                        "id": "primary",
+                        "endpoint": mock.v1_endpoint(),
+                        "protocol": "chat_completions",
+                        "api_key": "sk-mock-primary",
+                        "models": [
+                            { "id": "mock-reasoner-7b", "context_window": 131072 },
+                            { "id": "mock-coder-14b", "context_window": 262144 }
+                        ]
+                    },
+                    {
+                        "id": "backup",
+                        "endpoint": mock.v1_endpoint(),
+                        "protocol": "chat_completions",
+                        "api_key": "sk-mock-backup",
+                        "models": [
+                            { "id": "openrouter/free", "context_window": 128000 }
+                        ]
+                    }
+                ]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    env.run_json(&["config", "apply", cfg_path.to_str().unwrap()]);
+
+    // Create a Git repo at workspace root and launch TUI inside `scripts/` subdirectory!
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&env.workspace)
+        .status()
+        .unwrap()
+        .success());
+    let subdir = env.workspace.join("scripts");
+    fs::create_dir_all(&subdir).unwrap();
+
+    let t = Duration::from_secs(8);
+    let mut pty = PtySession::spawn_with_opts(&env, &subdir, "zh-Hans", 104, 30);
+
+    // 1. Verify minimalist zh-Hans welcome chrome & Git subdirectory root warning on 2D screen
+    pty.wait_screen_contains("本地优先个人助手", t);
+    pty.wait_screen_contains("Git 仓库根", t);
+    pty.vt.assert_minimalist_chrome();
+
+    // 2. Typing `/co` opens floating live slash menu -> verify ALL 4 box borders & CJK column alignment!
+    let _ = pty.send_raw(b"/co");
+    pty.wait_screen_contains("/compact", t);
+    pty.wait_screen_contains("压缩模型上下文", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+
+    // Esc dismisses slash menu cleanly, Ctrl+C clears `/co` back to placeholder
+    let _ = pty.send_raw(b"\x1b");
+    pty.wait_screen_missing("压缩模型上下文", t);
+    let _ = pty.send_raw(b"\x03");
+    pty.wait_screen_contains("输入消息...", t);
+
+    // 3. `/model` opens interactive picker -> verify 4-sided full box -> filter `coder` -> Enter switches!
+    let _ = pty.send_command("/model");
+    pty.wait_screen_contains("选择模型", t);
+    pty.wait_screen_contains("filter›", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+
+    let _ = pty.send_raw(b"coder");
+    pty.wait_screen_contains("(1/1)", t);
+    pty.wait_screen_contains("mock-coder-14b", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+
+    let _ = pty.send_raw(b"\r");
+    pty.wait_screen_contains("Switched active model to primary:mock-coder-14b", t);
+    pty.wait_screen_contains("mock-coder-14b · 谨慎", t);
+
+    // 4. `/allow` opens interactive 2-mode permission picker -> verify full box -> Down + Enter -> 全部允许
+    let _ = pty.send_command("/allow");
+    pty.wait_screen_contains("选择权限模式", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+    let _ = pty.send_raw(b"\x1b[B");
+    thread::sleep(Duration::from_millis(60));
+    let _ = pty.send_raw(b"\r");
+    pty.wait_screen_contains("allow_all", t);
+    pty.wait_screen_contains("全部允许", t);
+
+    // 5. Exit and RELAUNCH TUI -> verify `/model` switch PERSISTED across restart!
+    let _ = pty.send_command("/quit");
+    let (status, _) = pty.wait_exit(t);
+    assert!(status.success());
+
+    let mut pty2 = PtySession::spawn_with_opts(&env, &subdir, "zh-Hans", 104, 30);
+    pty2.wait_screen_contains("mock-coder-14b", t);
+    pty2.vt.assert_minimalist_chrome();
+    let _ = pty2.send_command("/quit");
+    let (status2, _) = pty2.wait_exit(t);
+    assert!(status2.success());
+}
+
+// ============================================================================
+// 7. Real Multi-Turn Chat in PTY: User Tint (No You), Full-Box Code, Tools,
+//    Cautious Read-Only Bypass, Prefix Approval Grant, Pause Feedback, HTTP 500
+// ============================================================================
+
+#[cfg(unix)]
+#[test]
+fn tui_pty_real_multiturn_chat_user_tint_codeblock_tools_approvals_and_errors_e2e() {
+    let env = IsolatedEnv::new();
+    let mock = MockLlmServer::start();
+    env.write_and_apply_mock_config(&mock.v1_endpoint());
+
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&env.workspace)
+        .status()
+        .unwrap()
+        .success());
+    fs::write(env.workspace.join("demo.rs"), "fn main() {}\n").unwrap();
+
+    // Queue Turn 1: read-only `bash("pwd")` (must NOT prompt!) -> Markdown reply with reasoning + Rust code block
+    mock.push_turn(MockSseTurn::ToolCall {
+        call_id: "call_ro_pwd".into(),
+        name: "bash".into(),
+        arguments: json!({ "command": "pwd" }),
+    });
+    mock.push_turn(MockSseTurn::Text {
+        reasoning: Some("先确认当前目录，再给用户一个带中文注释的代码示例。".into()),
+        text: "已完成目录检查，示例代码如下：\n\n```rust\nfn greet() {\n    println!(\"你好 Nola\");\n}\n```\n\n- 四边完整闭合".into(),
+    });
+
+    // Queue Turn 2: failing write bash (exit 128 + Operation not permitted -> prompts -> press `2` -> prefix grant!)
+    // followed by second command with SAME `sh` prefix (must NOT re-prompt!) -> summary reply.
+    mock.push_turn(MockSseTurn::ToolCall {
+        call_id: "call_fail_128".into(),
+        name: "bash".into(),
+        arguments: json!({ "command": "sh -c 'echo \"fatal: Operation not permitted\" >&2; exit 128'" }),
+    });
+    mock.push_turn(MockSseTurn::ToolCall {
+        call_id: "call_prefix_reuse".into(),
+        name: "bash".into(),
+        arguments: json!({ "command": "sh -c 'echo prefix_reuse_ok'" }),
+    });
+    mock.push_turn(MockSseTurn::Text {
+        reasoning: None,
+        text: "已确认沙箱报错并验证同类前缀免重复审批。".into(),
+    });
+
+    // Queue Turn 3: new write tool command -> user presses `3` (ReturnToInput) -> must show pause feedback, not blank!
+    mock.push_turn(MockSseTurn::ToolCall {
+        call_id: "call_pause_me".into(),
+        name: "bash".into(),
+        arguments: json!({ "command": "touch should_not_be_created.txt" }),
+    });
+
+    // Queue Turn 4: non-retryable HTTP 400 error -> must display red error & persist `turn_failed` event in SQLite!
+    mock.push_turn(MockSseTurn::HttpError {
+        status: 400,
+        body: json!({"error": {"message": "mock upstream rejection"}}).to_string(),
+    });
+
+    let t = Duration::from_secs(12);
+    let mut pty = PtySession::spawn_with_opts(&env, &env.workspace, "zh-Hans", 108, 34);
+    pty.wait_screen_contains("输入消息...", t);
+
+    // --- Turn 1 ---
+    let _ = pty.send_command("帮我检查目录并展示代码");
+    pty.wait_screen_contains("四边完整闭合", t);
+    pty.vt.assert_minimalist_chrome();
+    pty.vt.assert_user_message_tinted_without_you("帮我检查目录并展示代码");
+    // Markdown fenced code block on 2D screen must be 4-side enclosed & aligned!
+    pty.vt.assert_all_boxes_closed_and_aligned();
+    // Collapsed thinking summary & informative read-only tool card (without approval modal!)
+    let s1 = pty.vt.screen_text();
+    assert!(s1.contains("思考完成"), "expected collapsed thinking summary:\n{s1}");
+    assert!(s1.contains("✓ bash") && s1.contains("pwd"), "expected readable tool card with command preview:\n{s1}");
+    assert!(!s1.contains("权限审批"), "read-only `pwd` must NOT pop up approval modal:\n{s1}");
+
+    // --- Turn 2 ---
+    let _ = pty.send_command("测试失败命令和前缀授权");
+    pty.wait_screen_contains("权限审批", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+    assert!(
+        !pty.vt.screen_text().contains("[sha256:"),
+        "approval modal must not show ugly [sha256:...] noise:\n{}",
+        pty.vt.screen_text()
+    );
+    // Press `2` (Allow in session) -> failing exit 128 runs, then second `sh -c` runs WITHOUT re-prompting!
+    let _ = pty.send_raw(b"2");
+    pty.wait_screen_contains("已确认沙箱报错并验证同类前缀免重复审批", t);
+    let s2 = pty.vt.screen_text();
+    assert!(
+        s2.contains("✗ bash") && s2.contains("128") && s2.contains("Operation not permitted"),
+        "failed bash exit 128 must render as red `✗ bash` with stderr, not `OK bash`:\n{s2}"
+    );
+    pty.vt.assert_row_has_red_fg("✗ bash");
+
+    // Verify the model ACTUALLY received `sandbox_hint` in the subsequent chat request!
+    let reqs = mock.chat_requests();
+    let saw_sandbox_hint = reqs.iter().any(|r| {
+        r.body
+            .as_ref()
+            .map(|b| b.to_string().contains("sandbox_hint"))
+            .unwrap_or(false)
+    });
+    assert!(saw_sandbox_hint, "model must receive `sandbox_hint` on Operation not permitted!");
+
+    // --- Turn 3: press `3` (ReturnToInput) on Approval modal ---
+    let _ = pty.send_command("执行待拦截命令");
+    pty.wait_screen_contains("权限审批", t);
+    pty.vt.assert_all_boxes_closed_and_aligned();
+    let _ = pty.send_raw(b"3");
+    pty.wait_screen_contains("Paused before `bash`", t);
+    assert!(
+        !env.workspace.join("should_not_be_created.txt").exists(),
+        "paused command must not have executed"
+    );
+
+    // --- Turn 4: HTTP 400 -> red error rendered + `turn_failed` persisted in SQLite ---
+    let _ = pty.send_command("触发上游报错测试");
+    pty.wait_screen_contains("mock upstream rejection", t);
+    pty.vt.assert_row_has_red_fg("mock upstream rejection");
+
+    let _ = pty.send_command("/quit");
+    let (status, _) = pty.wait_exit(t);
+    assert!(status.success());
+
+    // Inspect SQLite directly to verify `turn_failed` event was persisted!
+    let store = nola_store::Store::open(&env.db_path).expect("open test db");
+    let sessions = store.list_sessions(5).expect("list sessions");
+    assert!(!sessions.is_empty());
+    let events = store
+        .read_event_range(&sessions[0].id, 0, 500)
+        .expect("list events");
+    assert!(
+        events.iter().any(|e| e.kind == "turn_failed"),
+        "HTTP 500 turn failure must persist a `turn_failed` event; got kinds: {:?}",
+        events.iter().map(|e| &e.kind).collect::<Vec<_>>()
+    );
+}
+
+// ============================================================================
+// 8. `ask --help` / `chat --help` Zero-Session Invariant & Native `git add` E2E
+// ============================================================================
+
+#[test]
+fn cli_help_never_creates_sessions_and_git_add_stage_e2e() {
+    let env = IsolatedEnv::new();
+
+    // 1. All help invocations must exit 0 without creating any DB sessions!
+    for args in [
+        &["--help"][..],
+        &["ask", "--help"][..],
+        &["chat", "--help"][..],
+        &["tui", "--help"][..],
+    ] {
+        let out = env
+            .cmd()
+            .arg("--db")
+            .arg(&env.db_path)
+            .args(args)
+            .output()
+            .expect("run help");
+        assert!(
+            out.status.success(),
+            "nola {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    if env.db_path.exists() {
+        let store = nola_store::Store::open(&env.db_path).expect("open db");
+        assert!(
+            store.list_sessions(20).unwrap().is_empty(),
+            "help commands must NEVER create session records!"
+        );
+    }
+
+    // 2. Native `git` tool `add`/`stage` works cleanly in a real repo
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&env.workspace)
+        .status()
+        .unwrap()
+        .success());
+    fs::write(env.workspace.join("staged_via_tool.txt"), "hello stage\n").unwrap();
+
+    let reg = nola_tools::ToolRegistry::with_builtin_tools();
+    let ctx = nola_tools::ToolContext::new(&env.workspace);
+    let add_res = reg.execute(
+        "git",
+        &ctx,
+        json!({ "action": "add", "paths": ["staged_via_tool.txt"] }),
+    );
+    assert!(!add_res.is_error, "git add failed: {:?}", add_res.payload);
+    let status_res = reg.execute("git", &ctx, json!({ "action": "status" }));
+    assert!(
+        status_res.payload.to_model_value()["output"]
+            .as_str()
+            .unwrap_or("")
+            .contains("A  staged_via_tool.txt"),
+        "expected file to be staged: {:?}",
+        status_res.payload
+    );
 }

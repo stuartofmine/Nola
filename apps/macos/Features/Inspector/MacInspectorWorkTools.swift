@@ -194,12 +194,10 @@ struct MacInspectorArtifactsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if artifacts.isEmpty {
-                Label("No artifacts in the loaded conversation history", systemImage: "doc.on.doc")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                MacInspectorEmptyState(
+                    symbol: "doc.on.doc",
+                    message: String(localized: "No artifacts in the loaded conversation history")
+                )
             }
             ForEach(artifacts) { artifact in
                 MacInspectorArtifactRow(name: artifact.name, url: artifact.url, source: artifact.source,
@@ -358,12 +356,10 @@ struct MacInspectorReviewView: View {
                             .disabled(model.isSelectedConversationVisiblyRunning)
                     }
                     if workspaceFiles.isEmpty && !loading {
-                        Label(String(localized: "No files in this workspace yet."), systemImage: "doc")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        MacInspectorEmptyState(
+                            symbol: "folder",
+                            message: String(localized: "No files in this workspace yet.")
+                        )
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(workspaceFiles) { entry in

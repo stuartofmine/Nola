@@ -4,15 +4,29 @@ package com.nola
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.SystemClock
 import android.view.WindowManager
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
@@ -25,12 +39,16 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nola.core.AgentCoreNative
@@ -40,14 +58,23 @@ import com.nola.data.local.datastore.MemoryProfileDataStore
 import com.nola.data.local.datastore.PreferenceDataStore
 import com.nola.data.local.security.SecureTokenStore
 import com.nola.data.repository.toConfiguredModelInfo
+import com.nola.domain.model.ChatRole
+import com.nola.domain.model.ConversationMessage
 import com.nola.domain.model.StructuredMemoryRecord
 import com.nola.ui.components.StreamingMarkdownPresentedTextKey
+import com.nola.ui.components.ThinkingBlock
+import com.nola.ui.screen.chat.AndroidChatAttachment
+import com.nola.ui.screen.chat.AndroidInlinePreviewRequest
 import com.nola.ui.screen.chat.CHAT_STREAMING_MARKDOWN_TEST_TAG
 import com.nola.ui.screen.chat.ChatComposerGenerationActiveKey
 import com.nola.ui.screen.chat.ChatStreamingMarkdownSourceKey
+import com.nola.ui.screen.chat.ChatUiState
+import com.nola.ui.screen.chat.ConversationResourcesPanel
 import com.nola.ui.screen.chat.HistoricalPartRuntimeEntryPoint
+import com.nola.ui.screen.chat.attachmentMessageMeta
 import com.nola.ui.screen.chat.requireIsolatedProductTestUser
 import com.nola.ui.screen.models.MODEL_ROW_TEST_TAG_PREFIX
+import com.nola.ui.theme.NolaTheme
 import dagger.hilt.android.EntryPointAccessors
 import java.io.File
 import java.util.UUID
@@ -162,6 +189,7 @@ class RealModelE2EAndroidTest {
         composeRule.onNode(sendMatcher).performProductClick()
 
         awaitRealReply(expectedMarker)
+        assertChatMessageAndComposerGeometry()
         assertTrue(
             "Unexpected error recovery banner after real-model reply",
             composeRule.onAllNodesWithText(context.getString(R.string.chat_unknown_check), useUnmergedTree = true)
@@ -196,6 +224,7 @@ class RealModelE2EAndroidTest {
         composeRule.onNode(editor).performTextReplacement(editedPrompt)
         composeRule.onNodeWithTag("chat.message.editor.submit").performProductClick()
         awaitRealReply(editedMarker)
+        assertChatMessageAndComposerGeometry()
         val revised = requireNotNull(runtime.loadConversation(owner)).messages
         assertEquals(listOf("user", "assistant"), revised.map { it.role })
         assertEquals(editedPrompt, revised.first().text)
@@ -245,6 +274,205 @@ class RealModelE2EAndroidTest {
         }
         composeRule.onNodeWithTag("intelligence.capabilities.skills").assertIsDisplayed().assertIsSelected()
         captureScreenshot("android-06-capabilities.png")
+    }
+
+    @Test
+    fun testBoundedThinkingViewportAndInlineResourcesInspectorPreview() {
+        val sandbox = File(context.cacheDir, "nola-compose-geometry-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            // 1. Bounded Thinking Viewport Geometry (180+ lines of live CJK + English reasoning)
+            val longLiveReasoning = (1..180).joinToString("\n") { idx ->
+                "第 $idx 步 / Step $idx: 验证移动端思考块高度上限与横向不溢出约束。"
+            }
+            val previousAutoAdvance = composeRule.mainClock.autoAdvance
+            composeRule.mainClock.autoAdvance = false
+            try {
+                composeRule.activityRule.scenario.onActivity { activity ->
+                    activity.setContent {
+                        NolaTheme {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp)
+                                    .testTag("geometry.thinking.root"),
+                            ) {
+                                ThinkingBlock(
+                                    thinking = longLiveReasoning,
+                                    finished = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+                composeRule.mainClock.advanceTimeBy(250)
+
+                val rootBounds = composeRule.onNodeWithTag("geometry.thinking.root").getUnclippedBoundsInRoot()
+                val thinkingNode = composeRule.onNodeWithTag("assistant.reasoning.block")
+                thinkingNode.assertIsDisplayed()
+                val thinkingBounds = thinkingNode.getUnclippedBoundsInRoot()
+
+                assertTrue(
+                    "Root container must have positive width, got ${rootBounds.width}",
+                    rootBounds.width > 200.dp,
+                )
+                assertTrue(
+                    "Live streaming thinking card must have non-zero height, got ${thinkingBounds.height}",
+                    thinkingBounds.height > 40.dp,
+                )
+                assertTrue(
+                    "Live streaming thinking card with 180 lines must remain strictly bounded <= 260.dp, got ${thinkingBounds.height}",
+                    thinkingBounds.height <= 260.dp,
+                )
+                assertTrue(
+                    "Thinking card must not overflow left boundary (${thinkingBounds.left} vs ${rootBounds.left})",
+                    thinkingBounds.left >= rootBounds.left - 1.dp,
+                )
+                assertTrue(
+                    "Thinking card must not overflow right boundary (${thinkingBounds.right} vs ${rootBounds.right})",
+                    thinkingBounds.right <= rootBounds.right + 1.dp,
+                )
+                assertTrue(
+                    "Live thinking card must display trailing line 180",
+                    composeRule.onAllNodesWithText("第 180 步", substring = true, useUnmergedTree = true)
+                        .fetchSemanticsNodes().isNotEmpty(),
+                )
+            } finally {
+                composeRule.mainClock.autoAdvance = previousAutoAdvance
+            }
+
+            // 2. Inline Resources Inspector Preview (`inspector.inline.preview`) with real local PNG + UTF-8 CJK code file
+            val imageFile = File(sandbox, "diagram_架构.png")
+            val bmp = Bitmap.createBitmap(160, 100, Bitmap.Config.ARGB_8888).apply {
+                eraseColor(AndroidColor.rgb(42, 118, 210))
+            }
+            try {
+                imageFile.outputStream().use { out ->
+                    assertTrue(bmp.compress(Bitmap.CompressFormat.PNG, 100, out))
+                }
+            } finally {
+                bmp.recycle()
+            }
+
+            val codeFile = File(sandbox, "analysis_残差.kt")
+            val codeText = "// 残差分解模块：S_A = λ · S_B + (一小坨残差)\nfun verifyResidual(): String = \"中文代码预览通过\"\n"
+            codeFile.writeText(codeText, Charsets.UTF_8)
+
+            val convId = "conv-inline-inspector-geometry"
+            val imageUri = imageFile.toURI().toString()
+            val codeUri = codeFile.toURI().toString()
+            val attachments = listOf(
+                AndroidChatAttachment(
+                    name = imageFile.name,
+                    typeLabel = "Image",
+                    sizeBytes = imageFile.length().toInt(),
+                    content = "",
+                    extractionLabel = "PNG",
+                    contentDigest = "sha256-img",
+                    uri = imageUri,
+                    mimeType = "image/png",
+                ),
+                AndroidChatAttachment(
+                    name = codeFile.name,
+                    typeLabel = "Code",
+                    sizeBytes = codeFile.length().toInt(),
+                    content = codeText,
+                    extractionLabel = "UTF-8",
+                    contentDigest = "sha256-kt",
+                    uri = codeUri,
+                    mimeType = "text/x-kotlin",
+                ),
+            )
+            val uiState = ChatUiState(
+                conversationId = convId,
+                messages = listOf(
+                    ConversationMessage(
+                        id = "msg-attachments-1",
+                        conversationId = convId,
+                        role = ChatRole.user,
+                        text = "请在内嵌预览面板查看附件",
+                        meta = attachmentMessageMeta("请在内嵌预览面板查看附件", attachments),
+                    ),
+                ),
+            )
+            val initialImagePreview = AndroidInlinePreviewRequest(
+                uri = imageUri,
+                mimeType = "image/png",
+                title = imageFile.name,
+            )
+
+            composeRule.activityRule.scenario.onActivity { activity ->
+                activity.setContent {
+                    NolaTheme {
+                        var activePreview by remember { mutableStateOf<AndroidInlinePreviewRequest?>(initialImagePreview) }
+                        Box(Modifier.fillMaxSize().testTag("geometry.inspector.root")) {
+                            ConversationResourcesPanel(
+                                state = uiState,
+                                onClose = {},
+                                selectedPreview = activePreview,
+                                onSelectPreview = { activePreview = it },
+                            )
+                        }
+                    }
+                }
+            }
+            composeRule.waitForIdle()
+
+            // Verify PNG inline preview renders with valid bounded geometry and zero horizontal clipping
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("inspector.inline.preview").fetchSemanticsNodes().isNotEmpty()
+            }
+            val inspectorRootBounds = composeRule.onNodeWithTag("geometry.inspector.root").getUnclippedBoundsInRoot()
+            val pngPreviewNode = composeRule.onNodeWithTag("inspector.inline.preview")
+            pngPreviewNode.assertIsDisplayed()
+            val pngPreviewBounds = pngPreviewNode.getUnclippedBoundsInRoot()
+            assertTrue(
+                "Inline preview width must be > 200.dp, got ${pngPreviewBounds.width}",
+                pngPreviewBounds.width > 200.dp,
+            )
+            assertTrue(
+                "Inline preview height must be > 120.dp, got ${pngPreviewBounds.height}",
+                pngPreviewBounds.height > 120.dp,
+            )
+            assertTrue(
+                "Inline preview must fit container width without horizontal clipping (${pngPreviewBounds.right} vs ${inspectorRootBounds.right})",
+                pngPreviewBounds.left >= inspectorRootBounds.left - 1.dp &&
+                    pngPreviewBounds.right <= inspectorRootBounds.right + 1.dp,
+            )
+
+            // Dismissing inline preview via back button returns cleanly to resources list without external chooser
+            val backDesc = context.getString(R.string.common_back)
+            composeRule.onNodeWithContentDescription(backDesc).performProductClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("inspector.inline.preview").fetchSemanticsNodes().isEmpty() &&
+                    composeRule.onAllNodesWithTag("inspector.resources.list").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("inspector.resources.list").assertIsDisplayed()
+
+            // Tapping the UTF-8 CJK code file opens inline preview directly inside Resources inspector
+            composeRule.onNodeWithText(codeFile.name).assertIsDisplayed().performProductClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("inspector.inline.preview").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithText("残差分解模块", substring = true, useUnmergedTree = true)
+                        .fetchSemanticsNodes().isNotEmpty()
+            }
+            val codePreviewBounds = composeRule.onNodeWithTag("inspector.inline.preview").getUnclippedBoundsInRoot()
+            assertTrue("Code inline preview width must be > 200.dp", codePreviewBounds.width > 200.dp)
+            assertTrue("Code inline preview height must be > 120.dp", codePreviewBounds.height > 120.dp)
+            assertTrue(
+                "Code inline preview must not clip horizontally (${codePreviewBounds.right} vs ${inspectorRootBounds.right})",
+                codePreviewBounds.right <= inspectorRootBounds.right + 1.dp,
+            )
+
+            // Back button dismisses code preview back to resources list again
+            composeRule.onNodeWithContentDescription(backDesc).performProductClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("inspector.inline.preview").fetchSemanticsNodes().isEmpty() &&
+                    composeRule.onAllNodesWithTag("inspector.resources.list").fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            sandbox.deleteRecursively()
+        }
     }
 
     @Test
@@ -510,6 +738,30 @@ class RealModelE2EAndroidTest {
             composeRule.mainClock.autoAdvance = previous
         }
         return this
+    }
+
+    private fun assertChatMessageAndComposerGeometry() {
+        val rootBounds = composeRule.onRoot().getUnclippedBoundsInRoot()
+        assertTrue("Root width must be positive, got ${rootBounds.width}", rootBounds.width > 200.dp)
+
+        val messageNodes = composeRule.onAllNodesWithTag(CHAT_STREAMING_MARKDOWN_TEST_TAG, useUnmergedTree = true)
+        val count = messageNodes.fetchSemanticsNodes().size
+        assertTrue("Expected at least one rendered markdown message node", count > 0)
+        val lastMessageBounds = messageNodes[count - 1].getUnclippedBoundsInRoot()
+        assertTrue(
+            "Rendered message must have non-zero bounds, got ${lastMessageBounds.width}x${lastMessageBounds.height}",
+            lastMessageBounds.width > 0.dp && lastMessageBounds.height > 0.dp,
+        )
+        assertTrue(
+            "Rendered message must not clip horizontally (${lastMessageBounds.left}..${lastMessageBounds.right} vs ${rootBounds.left}..${rootBounds.right})",
+            lastMessageBounds.left >= rootBounds.left - 1.dp && lastMessageBounds.right <= rootBounds.right + 1.dp,
+        )
+
+        val composerBounds = composeRule.onNodeWithTag("chat.composer", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(
+            "Composer must have non-zero bounds and zero horizontal clipping (${composerBounds.width}x${composerBounds.height}, right=${composerBounds.right} vs ${rootBounds.right})",
+            composerBounds.width > 100.dp && composerBounds.height > 32.dp && composerBounds.right <= rootBounds.right + 1.dp,
+        )
     }
 
     private fun awaitRealReply(expectedMarker: String) {

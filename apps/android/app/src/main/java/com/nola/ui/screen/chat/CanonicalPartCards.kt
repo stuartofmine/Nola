@@ -10,18 +10,27 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Warning
+import com.nola.ui.components.NolaColors
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
@@ -117,14 +126,49 @@ internal fun CanonicalActivityCards(
             stringResource(R.string.chat_thinking) else null
         else -> null
     }
+    val cardShape = RoundedCornerShape(12.dp)
+    val containerColor = if (isLive) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    val borderColor = if (isLive) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+    } else {
+        NolaColors.hairlineBorder
+    }
     Column(Modifier.fillMaxWidth()
-        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f), RoundedCornerShape(12.dp))
+        .clip(cardShape)
+        .background(containerColor, cardShape)
+        .border(0.75.dp, borderColor, cardShape)
         .padding(horizontal = 12.dp)) {
         TextButton(onClick = { onChoicesChanged(choices.expanded(activity, !expanded)) },
-            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Text(executionProcessHeading(isLive, currentTitle, stringResource(R.string.chat_processing), stringResource(heading)), modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (isLive) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                executionProcessHeading(isLive, currentTitle, stringResource(R.string.chat_processing), stringResource(heading)),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isLive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             NolaDisclosureChevron(expanded, reduceMotion)
         }
         AnimatedVisibility(visible = expanded, enter = nolaDisclosureEnter(reduceMotion), exit = nolaDisclosureExit(reduceMotion)) {
@@ -132,10 +176,13 @@ internal fun CanonicalActivityCards(
                 visible.forEachIndexed { index, part -> key(part.partId) {
                     if (visible.size > 1) Text("${index + 1}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     when (part) {
-                        is ConversationProjectionV1.Part.Reasoning -> ThinkingBody(part.summary.orEmpty(),
-                            Modifier.testTag("assistant.reasoning.block").semantics {
+                        is ConversationProjectionV1.Part.Reasoning -> ThinkingBody(
+                            thinking = part.summary.orEmpty(),
+                            modifier = Modifier.testTag("assistant.reasoning.block").semantics {
                                 this[ThinkingBodyVisibleCharactersKey] = part.summary.orEmpty().length
-                            })
+                            },
+                            finished = reasoningIsFinished(part.state, isLive),
+                        )
                         is ConversationProjectionV1.Part.Tool -> CanonicalActivityRow(part, details = part.partId in choices.detailsPartIds,
                             onDetailsChanged = { onChoicesChanged(choices.details(activity, part.partId, it)) }, onReadText = onReadText)
                         else -> Unit
@@ -202,13 +249,62 @@ internal fun CanonicalErrorPart(part: ConversationProjectionV1.Part.Error, onRea
 private fun CanonicalActivityRow(part: ConversationProjectionV1.Part.Tool, details: Boolean, onDetailsChanged: (Boolean) -> Unit, onReadText: (CanonicalPartTextSnapshot) -> Unit) {
     val reduceMotion = rememberReduceMotionEnabled()
     val facts = part.cardFacts()
+    val visualKind = resolveToolStatusVisualKind(facts.state)
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            when (visualKind) {
+                ToolStatusVisualKind.Running -> CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                )
+                ToolStatusVisualKind.Completed -> Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = NolaColors.success,
+                )
+                ToolStatusVisualKind.Failed -> Icon(
+                    Icons.Filled.Error,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                ToolStatusVisualKind.Waiting -> Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = NolaColors.warning,
+                )
+                ToolStatusVisualKind.Neutral -> Icon(
+                    Icons.Filled.Info,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(hostToolDisplayName(facts.capabilityId, facts.title), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             ActivityStateBadge(facts.state)
         }
-        facts.summary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        facts.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+            if (visualKind == ToolStatusVisualKind.Failed) {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+                        .border(0.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            } else {
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         facts.artifacts.forEach { ArtifactCard(it) }
         NolaDisclosureBar(
             title = stringResource(if (details) R.string.canonical_hide_details else R.string.canonical_details),
@@ -303,6 +399,25 @@ internal fun CanonicalSourceCards(parts: List<ConversationProjectionV1.Part>, on
     }
 }
 
+internal enum class ToolStatusVisualKind {
+    Running,
+    Completed,
+    Failed,
+    Waiting,
+    Neutral,
+}
+
+internal fun resolveToolStatusVisualKind(state: ConversationProjectionV1.ActivityState): ToolStatusVisualKind = when (state) {
+    ConversationProjectionV1.ActivityState.Running,
+    ConversationProjectionV1.ActivityState.Pending -> ToolStatusVisualKind.Running
+    ConversationProjectionV1.ActivityState.Completed -> ToolStatusVisualKind.Completed
+    ConversationProjectionV1.ActivityState.Failed -> ToolStatusVisualKind.Failed
+    ConversationProjectionV1.ActivityState.WaitingForPermission,
+    ConversationProjectionV1.ActivityState.WaitingForInput -> ToolStatusVisualKind.Waiting
+    ConversationProjectionV1.ActivityState.Sealed,
+    ConversationProjectionV1.ActivityState.Cancelled -> ToolStatusVisualKind.Neutral
+}
+
 @Composable
 internal fun ActivityStateBadge(state: ConversationProjectionV1.ActivityState) {
     val label = stringResource(when (state) {
@@ -315,17 +430,59 @@ internal fun ActivityStateBadge(state: ConversationProjectionV1.ActivityState) {
         ConversationProjectionV1.ActivityState.Cancelled -> R.string.canonical_cancelled
         ConversationProjectionV1.ActivityState.Failed -> R.string.canonical_failed
     })
-    val color = when (state) {
-        ConversationProjectionV1.ActivityState.Failed -> MaterialTheme.colorScheme.error
-        ConversationProjectionV1.ActivityState.WaitingForPermission,
-        ConversationProjectionV1.ActivityState.WaitingForInput -> MaterialTheme.colorScheme.tertiary
-        ConversationProjectionV1.ActivityState.Running,
-        ConversationProjectionV1.ActivityState.Completed -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    val visualKind = resolveToolStatusVisualKind(state)
+    val color = when (visualKind) {
+        ToolStatusVisualKind.Completed -> NolaColors.success
+        ToolStatusVisualKind.Failed -> MaterialTheme.colorScheme.error
+        ToolStatusVisualKind.Waiting -> NolaColors.warning
+        ToolStatusVisualKind.Running -> MaterialTheme.colorScheme.primary
+        ToolStatusVisualKind.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(label, Modifier.widthIn(max = 160.dp).background(color.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
-        .padding(horizontal = 6.dp, vertical = 3.dp),
-        style = MaterialTheme.typography.labelSmall, color = color)
+    Row(
+        modifier = Modifier
+            .widthIn(max = 180.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (visualKind) {
+            ToolStatusVisualKind.Running -> CircularProgressIndicator(
+                modifier = Modifier.size(11.dp),
+                strokeWidth = 2.dp,
+                color = color,
+                trackColor = color.copy(alpha = 0.25f),
+            )
+            ToolStatusVisualKind.Completed -> Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = color,
+            )
+            ToolStatusVisualKind.Failed -> Icon(
+                Icons.Filled.Error,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = color,
+            )
+            ToolStatusVisualKind.Waiting -> Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = color,
+            )
+            ToolStatusVisualKind.Neutral -> Unit
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 internal data class AndroidInlinePreviewRequest(
@@ -341,8 +498,8 @@ internal fun canPreviewAttachmentUri(uriString: String): Boolean {
     val trimmed = uriString.trim()
     if (trimmed.isEmpty()) return false
     return isExternalAnswerSource(trimmed) ||
-        trimmed.startsWith("content://") ||
-        trimmed.startsWith("file://") ||
+        trimmed.startsWith("content://", ignoreCase = true) ||
+        trimmed.startsWith("file:", ignoreCase = true) ||
         trimmed.startsWith("/")
 }
 
@@ -360,13 +517,10 @@ internal fun openAttachmentPreview(
     }
     runCatching {
         val targetUri: Uri = when {
-            trimmed.startsWith("content://") -> Uri.parse(trimmed)
-            trimmed.startsWith("file://") -> {
-                val path = Uri.parse(trimmed).path ?: return@runCatching
+            trimmed.startsWith("content://", ignoreCase = true) -> Uri.parse(trimmed)
+            trimmed.startsWith("file:", ignoreCase = true) || trimmed.startsWith("/") -> {
+                val path = localFilePathFromUri(trimmed) ?: return@runCatching
                 FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
-            }
-            trimmed.startsWith("/") -> {
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(trimmed))
             }
             else -> return@runCatching
         }
@@ -378,19 +532,49 @@ internal fun openAttachmentPreview(
     }
 }
 
+internal enum class AttachmentPreviewTarget {
+    InlineInspector,
+    ExternalBrowser,
+    Unsupported,
+}
+
+internal fun resolveAttachmentPreviewTarget(
+    uriString: String,
+    hasInlineInspector: Boolean = true,
+): AttachmentPreviewTarget {
+    val trimmed = uriString.trim()
+    if (!canPreviewAttachmentUri(trimmed)) return AttachmentPreviewTarget.Unsupported
+    if (isExternalAnswerSource(trimmed)) return AttachmentPreviewTarget.ExternalBrowser
+    return if (hasInlineInspector) AttachmentPreviewTarget.InlineInspector else AttachmentPreviewTarget.ExternalBrowser
+}
+
 private const val ARTIFACT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
-private const val ARTIFACT_TEXT_PREVIEW_MAX_BYTES = 128 * 1024
+internal const val ARTIFACT_TEXT_PREVIEW_MAX_BYTES = 128 * 1024
+internal const val ARTIFACT_TEXT_TRUNCATION_NOTICE = "\n\n… [truncated at 128 KB]"
 
 internal fun isImagePreviewUri(uriString: String, mimeType: String?): Boolean {
-    val mime = mimeType?.trim()?.lowercase().orEmpty()
+    val mime = mimeType?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
     if (mime.startsWith("image/")) return true
-    val lowerUri = uriString.trim().lowercase().substringBefore('?')
+    val lowerUri = uriString.trim().lowercase(java.util.Locale.ROOT)
+        .substringBefore('?')
+        .substringBefore('#')
     return lowerUri.endsWith(".png") || lowerUri.endsWith(".jpg") || lowerUri.endsWith(".jpeg") ||
-        lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif") || lowerUri.endsWith(".bmp")
+        lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif") || lowerUri.endsWith(".bmp") ||
+        lowerUri.endsWith(".heic") || lowerUri.endsWith(".heif")
 }
 
 internal fun isImageArtifact(artifact: PartArtifact): Boolean =
     isImagePreviewUri(artifact.uri, artifact.mimeType)
+
+private fun localFilePathFromUri(uriString: String): String? {
+    val trimmed = uriString.trim()
+    if (trimmed.startsWith("/")) return trimmed
+    if (!trimmed.startsWith("file:", ignoreCase = true)) return null
+    return runCatching { java.net.URI(trimmed).path }.getOrNull()
+        ?.takeIf { it.isNotBlank() }
+        ?: runCatching { Uri.parse(trimmed).path }.getOrNull()?.takeIf { it.isNotBlank() }
+        ?: trimmed.removePrefix("file://").removePrefix("file:").substringBefore('?').substringBefore('#').takeIf { it.isNotBlank() }
+}
 
 internal suspend fun loadArtifactImageBitmap(context: Context, uriString: String): Bitmap? = withContext(Dispatchers.IO) {
     val trimmed = uriString.trim()
@@ -405,20 +589,20 @@ internal suspend fun loadArtifactImageBitmap(context: Context, uriString: String
                 connection.instanceFollowRedirects = false
                 try {
                     if (connection.responseCode !in 200..299) return@runCatching null
-                    val contentType = connection.contentType?.lowercase().orEmpty()
+                    val contentType = connection.contentType?.lowercase(java.util.Locale.ROOT).orEmpty()
                     if (contentType.isNotBlank() && !contentType.startsWith("image/")) return@runCatching null
                     readArtifactBoundedBytes(connection.inputStream, ARTIFACT_IMAGE_MAX_BYTES)
                 } finally {
                     connection.disconnect()
                 }
             }
-            trimmed.startsWith("content://") -> {
+            trimmed.startsWith("content://", ignoreCase = true) -> {
                 context.contentResolver.openInputStream(Uri.parse(trimmed))?.use {
                     readArtifactBoundedBytes(it, ARTIFACT_IMAGE_MAX_BYTES)
                 }
             }
-            trimmed.startsWith("file://") || trimmed.startsWith("/") -> {
-                val path = if (trimmed.startsWith("file://")) Uri.parse(trimmed).path ?: return@runCatching null else trimmed
+            trimmed.startsWith("file:", ignoreCase = true) || trimmed.startsWith("/") -> {
+                val path = localFilePathFromUri(trimmed) ?: return@runCatching null
                 val file = File(path)
                 if (!file.isFile || file.length() > ARTIFACT_IMAGE_MAX_BYTES) return@runCatching null
                 file.inputStream().use { readArtifactBoundedBytes(it, ARTIFACT_IMAGE_MAX_BYTES) }
@@ -443,15 +627,79 @@ private fun readArtifactBoundedBytes(stream: java.io.InputStream, maxBytes: Int)
     return output.toByteArray()
 }
 
+private fun readPreviewTextBoundedBytes(stream: java.io.InputStream, maxBytes: Int): Pair<ByteArray, Boolean> {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(8 * 1024)
+    var total = 0
+    var truncated = false
+    while (true) {
+        val remaining = maxBytes - total
+        if (remaining <= 0) {
+            if (stream.read() >= 0) truncated = true
+            break
+        }
+        val toRead = minOf(buffer.size, remaining)
+        val read = stream.read(buffer, 0, toRead)
+        if (read < 0) break
+        output.write(buffer, 0, read)
+        total += read
+    }
+    return output.toByteArray() to truncated
+}
+
+private fun looksLikeBinaryPayload(bytes: ByteArray): Boolean {
+    if (bytes.isEmpty()) return false
+    if (bytes.size >= 8 &&
+        bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+        bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() &&
+        bytes[4] == 0x0D.toByte() && bytes[5] == 0x0A.toByte() &&
+        bytes[6] == 0x1A.toByte() && bytes[7] == 0x0A.toByte()
+    ) return true
+    if (bytes.size >= 5 &&
+        bytes[0] == '%'.code.toByte() && bytes[1] == 'P'.code.toByte() &&
+        bytes[2] == 'D'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+        bytes[4] == '-'.code.toByte()
+    ) return true
+    val sampleSize = minOf(bytes.size, 8 * 1024)
+    for (index in 0 until sampleSize) {
+        if (bytes[index] == 0.toByte()) return true
+    }
+    return false
+}
+
+private fun trimTrailingIncompleteUtf8Sequence(bytes: ByteArray): ByteArray {
+    if (bytes.isEmpty()) return bytes
+    var end = bytes.size
+    var continuationCount = 0
+    while (end > 0 && continuationCount < 4) {
+        val b = bytes[end - 1].toInt() and 0xFF
+        if ((b and 0xC0) == 0x80) {
+            continuationCount++
+            end--
+            continue
+        }
+        val expectedLength = when {
+            (b and 0x80) == 0 -> 1
+            (b and 0xE0) == 0xC0 -> 2
+            (b and 0xF0) == 0xE0 -> 3
+            (b and 0xF8) == 0xF0 -> 4
+            else -> return bytes.copyOf(end - 1)
+        }
+        val actualLength = continuationCount + 1
+        return if (actualLength < expectedLength) bytes.copyOf(end - 1) else bytes
+    }
+    return bytes.copyOf(end)
+}
+
 internal suspend fun loadAttachmentPreviewText(
-    context: Context,
+    context: Context?,
     uriString: String,
     mimeType: String?,
 ): String? = withContext(Dispatchers.IO) {
     val trimmed = uriString.trim()
     if (trimmed.isEmpty() || isImagePreviewUri(trimmed, mimeType)) return@withContext null
-    val mime = mimeType?.trim()?.lowercase().orEmpty()
-    val lowerUri = trimmed.lowercase().substringBefore('?')
+    val mime = mimeType?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+    val lowerUri = trimmed.lowercase(java.util.Locale.ROOT).substringBefore('?').substringBefore('#')
     val looksText = mime.startsWith("text/") ||
         mime.contains("json") || mime.contains("xml") || mime.contains("yaml") || mime.contains("javascript") ||
         listOf(".txt", ".md", ".markdown", ".json", ".yaml", ".yml", ".toml", ".xml", ".csv", ".log",
@@ -459,21 +707,25 @@ internal suspend fun loadAttachmentPreviewText(
             .any { lowerUri.endsWith(it) }
     if (!looksText) return@withContext null
     runCatching {
-        val bytes = when {
-            trimmed.startsWith("content://") -> {
-                context.contentResolver.openInputStream(Uri.parse(trimmed))?.use {
-                    readArtifactBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES)
+        val bounded = when {
+            trimmed.startsWith("content://", ignoreCase = true) -> {
+                context?.contentResolver?.openInputStream(Uri.parse(trimmed))?.use {
+                    readPreviewTextBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES)
                 }
             }
-            trimmed.startsWith("file://") || trimmed.startsWith("/") -> {
-                val path = if (trimmed.startsWith("file://")) Uri.parse(trimmed).path ?: return@runCatching null else trimmed
+            trimmed.startsWith("file:", ignoreCase = true) || trimmed.startsWith("/") -> {
+                val path = localFilePathFromUri(trimmed) ?: return@runCatching null
                 val file = File(path)
                 if (!file.isFile) return@runCatching null
-                file.inputStream().use { readArtifactBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES) }
+                file.inputStream().use { readPreviewTextBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES) }
             }
             else -> null
         } ?: return@runCatching null
-        bytes.toString(Charsets.UTF_8)
+        val (rawBytes, truncated) = bounded
+        if (looksLikeBinaryPayload(rawBytes)) return@runCatching null
+        val safeBytes = if (truncated) trimTrailingIncompleteUtf8Sequence(rawBytes) else rawBytes
+        val decoded = safeBytes.toString(Charsets.UTF_8)
+        if (truncated) decoded + ARTIFACT_TEXT_TRUNCATION_NOTICE else decoded
     }.getOrNull()
 }
 
@@ -484,10 +736,10 @@ private fun ArtifactCard(artifact: PartArtifact) {
     val canOpen = canPreviewAttachmentUri(artifact.uri)
     val openInInspectorOrExternal = {
         val req = AndroidInlinePreviewRequest(artifact.uri, artifact.mimeType, artifact.name)
-        if (inlinePreview != null && !isExternalAnswerSource(artifact.uri)) {
-            inlinePreview(req)
-        } else {
-            openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+        when (resolveAttachmentPreviewTarget(artifact.uri, hasInlineInspector = inlinePreview != null)) {
+            AttachmentPreviewTarget.InlineInspector -> inlinePreview?.invoke(req)
+            AttachmentPreviewTarget.ExternalBrowser -> openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+            AttachmentPreviewTarget.Unsupported -> Unit
         }
     }
     val showImagePreview = canOpen && isImageArtifact(artifact)

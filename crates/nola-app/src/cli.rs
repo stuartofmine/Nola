@@ -151,6 +151,8 @@ fn is_known_subcommand(cmd: &str) -> bool {
             | "web"
             | "server"
             | "tui"
+            | "ask"
+            | "chat"
     )
 }
 

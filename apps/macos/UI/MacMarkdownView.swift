@@ -985,17 +985,19 @@ private struct MacMarkdownDocumentView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.leading, 15)
+                .padding(.trailing, 12)
+                .padding(.vertical, 10)
                 .background(
-                    Color.primary.opacity(0.028),
+                    Color.primary.opacity(0.03),
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
                 .overlay(alignment: .leading) {
                     Capsule()
-                        .fill(Color.accentColor.opacity(0.62))
-                        .frame(width: 2.5)
-                        .padding(.vertical, 7)
+                        .fill(MacDesignColor.info.opacity(0.75))
+                        .frame(width: 3)
+                        .padding(.vertical, 6)
+                        .padding(.leading, 2)
                 }
                 .padding(.vertical, 2)
 
@@ -1069,7 +1071,8 @@ private struct MacMarkdownDocumentView: View {
                                 cell,
                                 width: widths[index],
                                 isHeader: false,
-                                isAlternatingRow: rowIndex.isMultiple(of: 2)
+                                isAlternatingRow: !rowIndex.isMultiple(of: 2),
+                                showsLeadingBorder: index > 0
                             )
                         }
                     }
@@ -1080,11 +1083,11 @@ private struct MacMarkdownDocumentView: View {
             // evidence/code columns into unreadable vertical strips.
             .fixedSize(horizontal: true, vertical: true)
             .frame(width: widths.reduce(0, +), alignment: .topLeading)
-            .background(Color.primary.opacity(0.012))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Color.primary.opacity(0.014))
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(Color.primary.opacity(0.11), lineWidth: 0.75)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -1094,7 +1097,8 @@ private struct MacMarkdownDocumentView: View {
         _ source: String,
         width: CGFloat,
         isHeader: Bool,
-        isAlternatingRow: Bool = false
+        isAlternatingRow: Bool = false,
+        showsLeadingBorder: Bool = false
     ) -> some View {
         inlineText(source)
             .font(.system(size: MacMarkdownTypography.secondaryBodySize, weight: isHeader ? .semibold : .regular))
@@ -1102,24 +1106,31 @@ private struct MacMarkdownDocumentView: View {
             .lineLimit(nil)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8.5)
             .frame(width: width, alignment: .topLeading)
             .frame(minHeight: 36, alignment: .topLeading)
             .gridCellAnchor(.topLeading)
             .background {
                 if isHeader {
-                    Color.primary.opacity(0.055)
+                    Color.primary.opacity(0.065)
                 } else if isAlternatingRow {
-                    Color.primary.opacity(0.024)
+                    Color.primary.opacity(0.028)
                 } else {
                     Color.clear
                 }
             }
+            .overlay(alignment: .leading) {
+                if showsLeadingBorder {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.055))
+                        .frame(width: 0.5)
+                }
+            }
             .overlay(alignment: .bottom) {
                 Rectangle()
-                    .fill(Color.primary.opacity(0.055))
-                    .frame(height: 0.5)
+                    .fill(Color.primary.opacity(isHeader ? 0.11 : 0.06))
+                    .frame(height: isHeader ? 0.75 : 0.5)
             }
     }
 
@@ -1596,9 +1607,12 @@ private struct MacCodeBlockView: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text(language.isEmpty ? "CODE" : language.uppercased())
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .tracking(0.7)
+                    .tracking(0.6)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
@@ -1620,18 +1634,20 @@ private struct MacCodeBlockView: View {
                         copied ? String(localized: "Copied") : String(localized: "Copy Code"),
                         systemImage: copied ? "checkmark" : "doc.on.doc"
                     )
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 }
                 .buttonStyle(MacActionButtonStyle())
                 .foregroundStyle(copied ? MacDesignColor.success : Color.secondary)
             }
             .padding(.horizontal, 11)
-            .padding(.vertical, 3)
-            .frame(minHeight: 38)
+            .padding(.vertical, 4)
+            .frame(minHeight: 36)
             .background(Color.primary.opacity(0.045))
 
-            Divider().opacity(0.45)
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
 
             ScrollView(.horizontal, showsIndicators: true) {
                 let attributed = highlightCache.text(source: source, fileExtension: fileExtension,
@@ -1641,7 +1657,8 @@ private struct MacCodeBlockView: View {
                                        visiblePrefixCount: animatesInitialContent ? 0 : attributed.characters.count)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: true)
-                .padding(12)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -1649,10 +1666,11 @@ private struct MacCodeBlockView: View {
         .alert(String(localized: "Nola could not update the clipboard."), isPresented: $copyFailed) {
             Button("OK", role: .cancel) {}
         }
-        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(MacDesignColor.subtleFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.primary.opacity(0.09), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.10), lineWidth: 0.75)
         }
     }
 }

@@ -855,26 +855,48 @@ internal fun renderCjkLatexReadableFallback(latex: String): String {
 }
 
 internal fun normalizeLatexForMarkwon(markdown: String): String {
-    val source = markdown
-        .replace("\\[", "$$")
-        .replace("\\]", "$$")
-        .replace("\\(", "$")
-        .replace("\\)", "$")
-    val builder = StringBuilder(source.length)
+    val builder = StringBuilder(markdown.length)
     var i = 0
     var inFence = false
-    while (i < source.length) {
-        if (source.startsWith("```", i) || source.startsWith("~~~", i)) {
+    while (i < markdown.length) {
+        if (markdown.startsWith("```", i) || markdown.startsWith("~~~", i)) {
             inFence = !inFence
-            val marker = source.substring(i, i + 3)
+            val marker = markdown.substring(i, i + 3)
             builder.append(marker)
             i += 3
             continue
         }
-        if (!inFence && source.startsWith("$$", i)) {
-            val close = source.indexOf("$$", i + 2)
+        if (!inFence && markdown.startsWith("\\[", i)) {
+            val close = markdown.indexOf("\\]", i + 2)
             if (close > i + 2) {
-                val body = source.substring(i + 2, close)
+                val body = markdown.substring(i + 2, close)
+                if (containsCjkInLatex(body)) {
+                    builder.append(renderCjkLatexReadableFallback(body))
+                } else {
+                    builder.append("$$").append(body).append("$$")
+                }
+                i = close + 2
+                continue
+            }
+        }
+        if (!inFence && markdown.startsWith("\\(", i)) {
+            val close = markdown.indexOf("\\)", i + 2)
+            val nextNewline = markdown.indexOf('\n', i + 2)
+            if (close > i + 2 && (nextNewline < 0 || close < nextNewline)) {
+                val body = markdown.substring(i + 2, close)
+                if (containsCjkInLatex(body)) {
+                    builder.append(renderCjkLatexReadableFallback(body))
+                } else {
+                    builder.append("$$").append(body).append("$$")
+                }
+                i = close + 2
+                continue
+            }
+        }
+        if (!inFence && markdown.startsWith("$$", i)) {
+            val close = markdown.indexOf("$$", i + 2)
+            if (close > i + 2) {
+                val body = markdown.substring(i + 2, close)
                 if (containsCjkInLatex(body)) {
                     // JLaTeXMath's TeX font lacks CJK glyphs; render cleanly with native Unicode + CJK.
                     builder.append(renderCjkLatexReadableFallback(body))
@@ -885,10 +907,10 @@ internal fun normalizeLatexForMarkwon(markdown: String): String {
                 continue
             }
         }
-        if (!inFence && source[i] == '$' && !source.startsWith("$$", i)) {
-            val close = findClosingSingleDollar(source, i + 1)
+        if (!inFence && markdown[i] == '$' && !markdown.startsWith("$$", i)) {
+            val close = findClosingSingleDollar(markdown, i + 1)
             if (close > i + 1) {
-                val body = source.substring(i + 1, close)
+                val body = markdown.substring(i + 1, close)
                 if (containsCjkInLatex(body)) {
                     builder.append(renderCjkLatexReadableFallback(body))
                 } else {
@@ -898,7 +920,7 @@ internal fun normalizeLatexForMarkwon(markdown: String): String {
                 continue
             }
         }
-        builder.append(source[i])
+        builder.append(markdown[i])
         i++
     }
     return builder.toString()

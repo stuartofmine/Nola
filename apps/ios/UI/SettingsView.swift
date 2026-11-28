@@ -132,10 +132,13 @@ struct SettingsView: View {
     private func categoryLabel(_ category: Category) -> some View {
         HStack(spacing: 12) {
             Image(categoryIcon(category)).renderingMode(.template).resizable().scaledToFit()
-                .frame(width: 22, height: 22).foregroundStyle(DesignTokens.actionColor)
+                .frame(width: 19, height: 19)
+                .foregroundStyle(DesignTokens.actionColor)
+                .frame(width: 32, height: 32)
+                .background(DesignTokens.rowFillColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             Text(LocalizedStringKey(category.titleKey)).font(.body).foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.caption.weight(.medium)).foregroundStyle(.tertiary)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, minHeight: 56)
         .padding(.vertical, 8)

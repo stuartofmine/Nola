@@ -23,7 +23,9 @@
     color-scheme: light dark;
     --content: #111113;
     color: var(--content); background: var(--canvas); font-size: 100%; line-height: 1.5;
-    --canvas: #fafafa; --surface: #ffffff; --surface-subtle: #f2f2f4; --surface-elevated: #ffffff; --rail: #f2f2f4; --panel: #f2f2f4; --border: #e4e4e7; --muted: #52525b; --ink-muted: #63636e;
+    --canvas: #fafafa; --surface: #ffffff; --surface-subtle: #f2f2f4; --surface-elevated: #ffffff; --rail: #f3f3f6; --panel: #f2f2f4; --border: #e4e4e7; --muted: #52525b; --ink-muted: #63636e;
+    --user-bubble-bg: #eef0f5; --user-bubble-border: #e0e3ec;
+    --topbar-height: 48px;
     --primary: #18181b; --on-primary: #ffffff;
     --accent: #18181b; --on-accent: #ffffff; --accent-subtle: #ebebef; --outline: #71717a;
     --switch-on: #147537; --switch-off: #e4e4e7; --switch-off-border: #d4d4d8;
@@ -31,10 +33,10 @@
     --control-bg: var(--surface); --control-border: var(--border); --control-hover-bg: var(--accent-subtle); --control-hover-border: var(--outline); --control-active-bg: color-mix(in srgb, var(--accent-subtle) 82%, var(--border));
     --glass-track-bg: var(--panel); --glass-track-border: var(--border);
     --glass-pill-bg: var(--surface); --glass-pill-border: var(--border); --glass-pill-shadow: 0 1px 2px rgba(0, 0, 0, .05);
-    --composer-bg: var(--surface); --composer-border: var(--border); --composer-focus-border: var(--accent); --composer-shadow: 0 2px 10px rgba(0, 0, 0, .04); --composer-focus-shadow: 0 2px 12px rgba(0, 0, 0, .06); --composer-pill-hover-bg: var(--accent-subtle);
+    --composer-bg: var(--surface); --composer-border: #dcdce2; --composer-focus-border: #a1a1aa; --composer-shadow: 0 2px 12px rgba(0, 0, 0, .05); --composer-focus-shadow: 0 4px 18px rgba(0, 0, 0, .08), 0 0 0 3px rgba(24, 24, 27, .06); --composer-pill-bg: #f4f4f6; --composer-pill-hover-bg: #e9e9ee;
     --input-bg: var(--surface); --input-border: var(--border); --input-hover-border: var(--outline); --input-focus-border: var(--accent);
     --dialog-border: var(--border); --dialog-shadow: 0 12px 40px rgb(0 0 0 / .22);
-    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     --danger: #c81e1e; --radius: 16px;
     --surface-gradient: var(--surface);
     --surface-highlight: transparent;
@@ -56,17 +58,18 @@
 @media (prefers-color-scheme: dark) {
     :root:not([data-appearance="light"]) {
         color-scheme: dark;
-        --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-subtle: #1a1a1d; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa; --ink-muted: #8e8e93;
-        --primary: #f5f5f7; --on-primary: #0b0b0c; --accent: #f5f5f7; --on-accent: #0b0b0c; --accent-subtle: #202024; --outline: #7a7a82;
-        --switch-on: #2e8b57; --switch-off: #2c2c30; --switch-off-border: #3f3f46;
+        --content: #f5f5f7; --canvas: #0b0b0d; --surface: #141418; --surface-subtle: #19191f; --surface-elevated: #222229; --rail: #121215; --panel: #16161a; --border: rgba(255, 255, 255, .09); --muted: #a1a1aa; --ink-muted: #8e8e93;
+        --user-bubble-bg: #1c1d24; --user-bubble-border: rgba(255, 255, 255, .11);
+        --primary: #f5f5f7; --on-primary: #0b0b0d; --accent: #f5f5f7; --on-accent: #0b0b0d; --accent-subtle: #202026; --outline: #7a7a85;
+        --switch-on: #2e8b57; --switch-off: #2c2c32; --switch-off-border: #3f3f48;
         --hover: var(--accent-subtle);
         --control-bg: rgba(255, 255, 255, .05); --control-border: rgba(255, 255, 255, .10); --control-hover-bg: rgba(255, 255, 255, .10); --control-hover-border: rgba(255, 255, 255, .18); --control-active-bg: rgba(255, 255, 255, .14);
         --glass-track-bg: rgba(255, 255, 255, .045); --glass-track-border: rgba(255, 255, 255, .08);
-        --glass-pill-bg: rgba(255, 255, 255, .13); --glass-pill-border: rgba(255, 255, 255, .15); --glass-pill-shadow: none;
-        --composer-bg: #141417; --composer-border: rgba(255, 255, 255, .09); --composer-focus-border: rgba(255, 255, 255, .22); --composer-shadow: 0 8px 24px rgba(0, 0, 0, .35); --composer-focus-shadow: 0 8px 24px rgba(0, 0, 0, .35); --composer-pill-hover-bg: rgba(255, 255, 255, .08);
-        --input-bg: rgba(255, 255, 255, .04); --input-border: rgba(255, 255, 255, .10); --input-hover-border: rgba(255, 255, 255, .18); --input-focus-border: rgba(255, 255, 255, .28);
+        --glass-pill-bg: rgba(255, 255, 255, .12); --glass-pill-border: rgba(255, 255, 255, .14); --glass-pill-shadow: none;
+        --composer-bg: #15151a; --composer-border: rgba(255, 255, 255, .11); --composer-focus-border: rgba(255, 255, 255, .26); --composer-shadow: 0 8px 28px rgba(0, 0, 0, .42); --composer-focus-shadow: 0 8px 30px rgba(0, 0, 0, .48), 0 0 0 3px rgba(255, 255, 255, .06); --composer-pill-bg: rgba(255, 255, 255, .06); --composer-pill-hover-bg: rgba(255, 255, 255, .11);
+        --input-bg: rgba(255, 255, 255, .045); --input-border: rgba(255, 255, 255, .10); --input-hover-border: rgba(255, 255, 255, .18); --input-focus-border: rgba(255, 255, 255, .28);
         --dialog-border: rgba(255, 255, 255, .10); --dialog-shadow: 0 16px 48px rgba(0, 0, 0, .55);
-        --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+        --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
         --surface-highlight: transparent;
         --surface-shadow: none;
         --control-shadow: none;
@@ -275,17 +278,18 @@ dialog form { display: grid; gap: 20px; }
 
 :root[data-appearance="dark"] {
     color-scheme: dark;
-    --content: #f5f5f7; --canvas: #0b0b0c; --surface: #131315; --surface-subtle: #1a1a1d; --surface-elevated: #242428; --rail: #131315; --panel: #1a1a1d; --border: #26262a; --muted: #a1a1aa; --ink-muted: #8e8e93;
-    --primary: #f5f5f7; --on-primary: #0b0b0c; --accent: #f5f5f7; --on-accent: #0b0b0c; --accent-subtle: #202024; --outline: #7a7a82;
-    --switch-on: #2e8b57; --switch-off: #2c2c30; --switch-off-border: #3f3f46;
+    --content: #f5f5f7; --canvas: #0b0b0d; --surface: #141418; --surface-subtle: #19191f; --surface-elevated: #222229; --rail: #121215; --panel: #16161a; --border: rgba(255, 255, 255, .09); --muted: #a1a1aa; --ink-muted: #8e8e93;
+    --user-bubble-bg: #1c1d24; --user-bubble-border: rgba(255, 255, 255, .11);
+    --primary: #f5f5f7; --on-primary: #0b0b0d; --accent: #f5f5f7; --on-accent: #0b0b0d; --accent-subtle: #202026; --outline: #7a7a85;
+    --switch-on: #2e8b57; --switch-off: #2c2c32; --switch-off-border: #3f3f48;
     --hover: var(--accent-subtle);
     --control-bg: rgba(255, 255, 255, .05); --control-border: rgba(255, 255, 255, .10); --control-hover-bg: rgba(255, 255, 255, .10); --control-hover-border: rgba(255, 255, 255, .18); --control-active-bg: rgba(255, 255, 255, .14);
     --glass-track-bg: rgba(255, 255, 255, .045); --glass-track-border: rgba(255, 255, 255, .08);
-    --glass-pill-bg: rgba(255, 255, 255, .13); --glass-pill-border: rgba(255, 255, 255, .15); --glass-pill-shadow: none;
-    --composer-bg: #141417; --composer-border: rgba(255, 255, 255, .09); --composer-focus-border: rgba(255, 255, 255, .22); --composer-shadow: 0 8px 24px rgba(0, 0, 0, .35); --composer-focus-shadow: 0 8px 24px rgba(0, 0, 0, .35); --composer-pill-hover-bg: rgba(255, 255, 255, .08);
-    --input-bg: rgba(255, 255, 255, .04); --input-border: rgba(255, 255, 255, .10); --input-hover-border: rgba(255, 255, 255, .18); --input-focus-border: rgba(255, 255, 255, .28);
+    --glass-pill-bg: rgba(255, 255, 255, .12); --glass-pill-border: rgba(255, 255, 255, .14); --glass-pill-shadow: none;
+    --composer-bg: #15151a; --composer-border: rgba(255, 255, 255, .11); --composer-focus-border: rgba(255, 255, 255, .26); --composer-shadow: 0 8px 28px rgba(0, 0, 0, .42); --composer-focus-shadow: 0 8px 30px rgba(0, 0, 0, .48), 0 0 0 3px rgba(255, 255, 255, .06); --composer-pill-bg: rgba(255, 255, 255, .06); --composer-pill-hover-bg: rgba(255, 255, 255, .11);
+    --input-bg: rgba(255, 255, 255, .045); --input-border: rgba(255, 255, 255, .10); --input-hover-border: rgba(255, 255, 255, .18); --input-focus-border: rgba(255, 255, 255, .28);
     --dialog-border: rgba(255, 255, 255, .10); --dialog-shadow: 0 16px 48px rgba(0, 0, 0, .55);
-    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     --surface-highlight: transparent;
     --surface-shadow: none;
     --control-shadow: none;

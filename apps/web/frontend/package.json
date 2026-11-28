@@ -8,7 +8,8 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "node --test src/lib/*.test.ts ../tests/web_locale_preference_test.mjs ../tests/chat_locale_coverage_test.mjs",
-    "test:e2e": "node ../tests/real_e2e.mjs"
+    "test:e2e": "node ../tests/real_e2e.mjs",
+    "test:geometry": "node ../tests/ui_geometry_and_workflows_e2e.mjs"
   },
   "dependencies": {
     "entities": "8.1.0",

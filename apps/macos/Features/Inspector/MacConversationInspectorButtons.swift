@@ -25,9 +25,12 @@ struct MacConversationInspectorButtons: View {
         colorScheme == .dark ? Color.white.opacity(0.16) : MacDesignColor.borderSubtle
     }
 
+    @State private var hoveredGroup: MacChatInspector.InspectorArea?
+
     @ViewBuilder
     private func tabButton(for group: MacChatInspector.InspectorArea) -> some View {
         let active = isVisible && selection.area == group
+        let hovered = !active && hoveredGroup == group
         let pillShape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         Button {
             withAnimation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection)) {
@@ -43,19 +46,25 @@ struct MacConversationInspectorButtons: View {
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(active ? Color.primary : Color.secondary)
+            .foregroundStyle(active || hovered ? Color.primary : Color.secondary)
             .padding(.horizontal, showsLabels ? 9 : 0)
-            .frame(minWidth: showsLabels ? nil : 28, minHeight: 26)
+            .frame(minWidth: showsLabels ? nil : 28, minHeight: 28)
             .background {
                 if active {
                     pillShape
                         .fill(activeFill)
                         .overlay(pillShape.strokeBorder(activeBorder, lineWidth: 0.75))
+                } else if hovered {
+                    pillShape
+                        .fill(Color.primary.opacity(0.055))
                 }
             }
             .contentShape(pillShape)
         }
         .buttonStyle(.plain)
+        .onHover { isHovering in
+            hoveredGroup = isHovering ? group : (hoveredGroup == group ? nil : hoveredGroup)
+        }
         .help(group.title)
         .accessibilityLabel(group.title)
         .accessibilityIdentifier("mac-inspector-group-\(group.id)")

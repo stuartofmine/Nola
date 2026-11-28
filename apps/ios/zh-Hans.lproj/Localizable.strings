@@ -3588,3 +3588,11 @@
 "chat.v2.question.placeholder" = "输入你的回答…";
 "chat.v2.question.submit" = "提交";
 "chat.v2.question.skip" = "跳过";
+
+"chat.attachment.operation.created" = "已生成";
+"chat.attachment.operation.updated" = "已更新";
+"chat.attachment.operation.read" = "已读取";
+"chat.attachment.type.image" = "图片";
+"chat.attachment.type.pdf" = "PDF 文档";
+"chat.attachment.type.text" = "文本文件";
+"chat.attachment.type.document" = "文档";

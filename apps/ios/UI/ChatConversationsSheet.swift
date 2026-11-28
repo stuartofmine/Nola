@@ -33,7 +33,7 @@ nonisolated enum IOSConversationTitlePresentationPolicy {
     static func isRuntimePlaceholder(_ title: String, conversationID: String?) -> Bool {
         let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return true }
-        if ["New conversation", "New Conversation", "新对话"].contains(normalized) {
+        if ["New conversation", "New Conversation", "Untitled", "Untitled conversation", "Untitled Conversation", "未命名对话", "新对话"].contains(normalized) {
             return true
         }
         if UUID(uuidString: normalized) != nil || isLegacySessionPlaceholder(normalized) {
@@ -197,10 +197,15 @@ struct ChatConversationsList: View {
             if directorySnapshot == nil && loadError == nil {
                 ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
             } else if conversations.isEmpty && query.isEmpty && !needsResponseOnly && loadError == nil {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, height: 40)
+                        .background(DesignTokens.rowFillColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     Text(String(localized: "chat.history.empty.title")).font(.headline)
-                    Text(String(localized: "chat.history.empty.message")).foregroundStyle(.secondary)
-                }.padding(.vertical, 20).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
+                    Text(String(localized: "chat.history.empty.message")).font(.subheadline).foregroundStyle(.secondary)
+                }.padding(.vertical, 24).listRowSeparator(.hidden).listRowBackground(DesignTokens.backgroundColor)
             } else if loadError == nil && visibleConversations.isEmpty {
                 if !query.isEmpty && !IOSConversationListPreview.missing(in: conversations, cache: previews, visit: previewRefreshRevision).isEmpty {
                     ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
@@ -362,6 +367,7 @@ struct ChatConversationsList: View {
                         }
                     }
                     .listRowSeparator(.visible, edges: .bottom)
+                    .listRowSeparatorTint(DesignTokens.hairlineBorderColor(for: colorScheme))
                     .listRowBackground(DesignTokens.backgroundColor)
                     .listRowInsets(EdgeInsets(top: 12, leading: pageInset, bottom: 12, trailing: pageInset))
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {

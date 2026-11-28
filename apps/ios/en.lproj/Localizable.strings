@@ -3597,3 +3597,11 @@
 "chat.v2.question.placeholder" = "Type your answer...";
 "chat.v2.question.submit" = "Submit";
 "chat.v2.question.skip" = "Skip";
+
+"chat.attachment.operation.created" = "Created";
+"chat.attachment.operation.updated" = "Updated";
+"chat.attachment.operation.read" = "Read";
+"chat.attachment.type.image" = "Image";
+"chat.attachment.type.pdf" = "PDF Document";
+"chat.attachment.type.text" = "Text File";
+"chat.attachment.type.document" = "Document";

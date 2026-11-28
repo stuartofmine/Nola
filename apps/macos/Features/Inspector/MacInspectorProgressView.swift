@@ -466,13 +466,10 @@ struct MacInspectorProgressContent: View, Equatable {
                 }
             }
             if snapshot?.active == nil && todos.isEmpty && tasks.isEmpty {
-                Label(String(localized: "inspector.no_plan", table: "ConversationInspector"),
-                      systemImage: "checklist")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                MacInspectorEmptyState(
+                    symbol: "checklist",
+                    message: String(localized: "inspector.no_plan", table: "ConversationInspector")
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

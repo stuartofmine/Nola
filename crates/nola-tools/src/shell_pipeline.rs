@@ -702,15 +702,43 @@ impl ToolHandler for BashTool {
         if let Some(err) = full_output_error {
             data["spill_error"] = json!(err);
         }
+        let first_err_line = stderr
+            .lines()
+            .chain(stdout.lines())
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| {
+                let clipped: String = l.chars().take(160).collect();
+                clipped
+            });
+        if exit_code != 0
+            && (stderr.contains("Operation not permitted")
+                || stderr.contains("Permission denied"))
+        {
+            data["sandbox_hint"] = json!(format!(
+                "Write was rejected by the OS sandbox. Writes are restricted to workspace_root '{}'. Retrying with `cd` or `git -C` to a parent/external path will fail the same way; ask the user to run from the repository root or switch permission mode.",
+                ctx.workspace_root.display()
+            ));
+        }
         let summary = if timed_out {
             format!("Shell command timed out after {timeout_secs}s")
+        } else if exit_code != 0 {
+            if let Some(err_line) = first_err_line {
+                format!("Shell exited with status {exit_code} ({duration_ms}ms): {err_line}")
+            } else {
+                format!("Shell exited with status {exit_code} ({duration_ms}ms)")
+            }
         } else {
-            format!("Shell exited with status {exit_code}")
+            format!("Shell exited with status 0 ({duration_ms}ms)")
         };
         let mut res = if timed_out {
             ToolExecutionResult::err_structured("timeout", summary, Some(data))
         } else {
-            ToolExecutionResult::ok_structured(data, summary)
+            let mut r = ToolExecutionResult::ok_structured(data, summary);
+            if exit_code != 0 {
+                r.is_error = true;
+            }
+            r
         };
         res.effects = effects;
         res

@@ -105,6 +105,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.painterResource
@@ -292,10 +293,18 @@ fun ModelsScreen(
                     if (state.isLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp
+                            strokeWidth = 2.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f),
+                            strokeCap = StrokeCap.Round,
                         )
                     } else {
-                        Icon(Icons.Filled.Refresh, null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
             }
@@ -333,12 +342,22 @@ fun ModelsScreen(
                             }
                             sourceTab = index
                         })
-                        .padding(horizontal = 6.dp),
+                        .padding(horizontal = 4.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(stringResource(title), style = MaterialTheme.typography.labelLarge,
+                    Text(
+                        text = stringResource(title),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 12.5.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        ),
                         color = tabFg,
-                        textAlign = TextAlign.Center)
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }
@@ -845,6 +864,7 @@ fun ModelRow(
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val compact = maxWidth < 380.dp
+        val hasOverflowActions = model.source != ModelInfo.ModelSource.WebHost
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -852,9 +872,13 @@ fun ModelRow(
                 .heightIn(min = 62.dp)
                 .clip(RoundedCornerShape(NolaRadius.md))
                 .background(rowBackground)
+                .then(
+                    if (isSelected) Modifier.border(0.75.dp, NolaColors.success.copy(alpha = 0.28f), RoundedCornerShape(NolaRadius.md))
+                    else Modifier
+                )
                 .clickable(enabled = !isAnyActivating) { onClick() }
-                .padding(horizontal = 10.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 0.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 0.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -862,23 +886,23 @@ fun ModelRow(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(36.dp)
                         .clip(RoundedCornerShape(NolaRadius.md))
-                        .background(sourceTint.copy(alpha = 0.10f)),
+                        .background(sourceTint.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         sourceIcon,
                         contentDescription = null,
                         tint = sourceTint,
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
                 Spacer(Modifier.size(NolaSpacing.sm))
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .padding(horizontal = 2.dp, vertical = 2.dp)
                         .testTag(MODEL_ROW_COPY_TEST_TAG_PREFIX + model.id)
                 ) {
                     Text(
@@ -908,8 +932,19 @@ fun ModelRow(
                         isActivating = isActivating,
                         isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
+                        includeOverflow = true,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
+                        onDeleteLocal = onDeleteLocal,
+                        onTest = onTest,
+                        onCapabilities = onCapabilities,
+                        onParams = onParams
+                    )
+                } else if (hasOverflowActions) {
+                    ModelRowOverflowButton(
+                        model = model,
+                        isAnyActivating = isAnyActivating,
+                        isRunning = isRunning,
                         onDeleteLocal = onDeleteLocal,
                         onTest = onTest,
                         onCapabilities = onCapabilities,
@@ -919,8 +954,10 @@ fun ModelRow(
             }
             if (compact) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 46.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     ModelRowActions(
@@ -929,6 +966,7 @@ fun ModelRow(
                         isActivating = isActivating,
                         isAnyActivating = isAnyActivating,
                         isRunning = isRunning,
+                        includeOverflow = false,
                         onClick = onClick,
                         onStartLocal = onStartLocal,
                         onDeleteLocal = onDeleteLocal,
@@ -942,7 +980,6 @@ fun ModelRow(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModelRowActions(
     model: ModelInfo,
@@ -950,6 +987,7 @@ private fun ModelRowActions(
     isActivating: Boolean,
     isAnyActivating: Boolean,
     isRunning: Boolean,
+    includeOverflow: Boolean,
     onClick: () -> Unit,
     onStartLocal: (() -> Unit)?,
     onDeleteLocal: (() -> Unit)?,
@@ -958,25 +996,12 @@ private fun ModelRowActions(
     onParams: () -> Unit
 ) {
     val haptics = rememberNolaHaptics()
-    var overflowExpanded by remember(model.id) { mutableStateOf(false) }
-    val hasOverflowActions = model.source != ModelInfo.ModelSource.WebHost && (
-        true || onTest != null || onCapabilities != null || onDeleteLocal != null
-    )
-    FlowRow(
-        modifier = Modifier
-            .testTag(MODEL_ROW_ACTIONS_TEST_TAG_PREFIX + model.id)
-            .widthIn(min = 120.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    val hasOverflowActions = includeOverflow && model.source != ModelInfo.ModelSource.WebHost
+    Row(
+        modifier = Modifier.testTag(MODEL_ROW_ACTIONS_TEST_TAG_PREFIX + model.id),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (model.source == ModelInfo.ModelSource.Local && onStartLocal != null) {
-            TextButton(onClick = {
-                if (isRunning) haptics.warning() else haptics.primaryAction()
-                onStartLocal()
-            }, enabled = !isAnyActivating) {
-                Text(stringResource(if (isRunning) R.string.models_stop else R.string.models_start))
-            }
-        }
         val actionState = when {
             isActivating -> 0
             isSelected -> 1
@@ -989,131 +1014,162 @@ private fun ModelRowActions(
                 fadeIn(com.nola.ui.components.nolaTween(NolaMotion.base, reduceMotion)) togetherWith
                     fadeOut(com.nola.ui.components.nolaTween(NolaMotion.fast, reduceMotion))
             },
-            contentAlignment = Alignment.CenterEnd,
+            contentAlignment = Alignment.CenterStart,
             label = "model-row-action"
         ) { state ->
             when (state) {
-            0 -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(15.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.size(6.dp))
-                    Text(
-                        stringResource(R.string.models_activating),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                0 -> {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            stringResource(R.string.models_activating),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                1 -> {
+                    NolaBadge(
+                        stringResource(R.string.models_selected),
+                        icon = Icons.Filled.Check,
+                        tint = NolaColors.success
                     )
                 }
-            }
-            1 -> {
-                NolaBadge(
-                    stringResource(R.string.models_selected),
-                    icon = Icons.Filled.Check,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-            else -> {
-                TextButton(onClick = onClick, enabled = !isAnyActivating) {
-                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.size(4.dp))
-                    Text(stringResource(R.string.models_use))
+                else -> {
+                    TextButton(onClick = onClick, enabled = !isAnyActivating) {
+                        Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(stringResource(R.string.models_use))
+                    }
                 }
             }
         }
+        if (model.source == ModelInfo.ModelSource.Local && onStartLocal != null) {
+            TextButton(onClick = {
+                if (isRunning) haptics.warning() else haptics.primaryAction()
+                onStartLocal()
+            }, enabled = !isAnyActivating) {
+                Text(stringResource(if (isRunning) R.string.models_stop else R.string.models_start))
+            }
         }
         if (hasOverflowActions) {
-            Box {
-                IconButton(
-                    onClick = { overflowExpanded = true },
-                    enabled = !isAnyActivating,
-                    modifier = Modifier.size(48.dp)
-                ) {
+            ModelRowOverflowButton(
+                model = model,
+                isAnyActivating = isAnyActivating,
+                isRunning = isRunning,
+                onDeleteLocal = onDeleteLocal,
+                onTest = onTest,
+                onCapabilities = onCapabilities,
+                onParams = onParams
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModelRowOverflowButton(
+    model: ModelInfo,
+    isAnyActivating: Boolean,
+    isRunning: Boolean,
+    onDeleteLocal: (() -> Unit)?,
+    onTest: (() -> Unit)?,
+    onCapabilities: (() -> Unit)?,
+    onParams: () -> Unit
+) {
+    val haptics = rememberNolaHaptics()
+    var overflowExpanded by remember(model.id) { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { overflowExpanded = true },
+            enabled = !isAnyActivating,
+            modifier = Modifier.size(48.dp)
+        ) {
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = stringResource(R.string.intelligence_more),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        DropdownMenu(
+            expanded = overflowExpanded,
+            onDismissRequest = { overflowExpanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.common_parameters)) },
+                leadingIcon = {
                     Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = stringResource(R.string.intelligence_more),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        painterResource(R.drawable.nola_settings),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
                     )
+                },
+                onClick = {
+                    overflowExpanded = false
+                    onParams()
                 }
-                DropdownMenu(
-                    expanded = overflowExpanded,
-                    onDismissRequest = { overflowExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.common_parameters)) },
-                        leadingIcon = {
-                            Icon(
-                                painterResource(R.drawable.nola_settings),
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        onClick = {
-                            overflowExpanded = false
-                            onParams()
-                        }
-                    )
-                    if (onTest != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.models_inference_test)) },
-                            leadingIcon = {
-                                Icon(
-                                    painterResource(R.drawable.nola_execution),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onTest()
-                            }
+            )
+            if (onTest != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.models_inference_test)) },
+                    leadingIcon = {
+                        Icon(
+                            painterResource(R.drawable.nola_execution),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
                         )
+                    },
+                    onClick = {
+                        overflowExpanded = false
+                        onTest()
                     }
-                    if (onCapabilities != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.models_execution_capabilities)) },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Security,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onCapabilities()
-                            }
+                )
+            }
+            if (onCapabilities != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.models_execution_capabilities)) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Security,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
                         )
+                    },
+                    onClick = {
+                        overflowExpanded = false
+                        onCapabilities()
                     }
-                    if (onDeleteLocal != null) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    stringResource(R.string.common_delete),
-                                    color = if (!isRunning) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.error.copy(alpha = 0.38f)
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Delete,
-                                    contentDescription = null,
-                                    tint = if (!isRunning) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.error.copy(alpha = 0.38f),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            enabled = !isRunning,
-                            onClick = {
-                                overflowExpanded = false
-                                haptics.warning()
-                                onDeleteLocal()
-                            }
+                )
+            }
+            if (onDeleteLocal != null) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.common_delete),
+                            color = if (!isRunning) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.error.copy(alpha = 0.38f)
                         )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = if (!isRunning) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.error.copy(alpha = 0.38f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    enabled = !isRunning,
+                    onClick = {
+                        overflowExpanded = false
+                        haptics.warning()
+                        onDeleteLocal()
                     }
-                }
+                )
             }
         }
     }

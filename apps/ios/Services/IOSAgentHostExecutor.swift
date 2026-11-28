@@ -335,7 +335,8 @@ public actor IOSAgentHostExecutor {
             requestedLimit = 8
         }
         let limit = max(1, min(requestedLimit, 20))
-        let candidates = try IOSApplicationRuntime.requireShared().recallProfileMemories(query: query, limit: 50)
+        let runtime = try packageRuntime ?? IOSApplicationRuntime.requireShared()
+        let candidates = try runtime.recallProfileMemories(query: query, limit: 50)
         let formatter = ISO8601DateFormatter()
         let records = try candidates.map {
             try JSONDecoder().decode(CoreMemoryRecord.self, from: JSONEncoder().encode($0.record))

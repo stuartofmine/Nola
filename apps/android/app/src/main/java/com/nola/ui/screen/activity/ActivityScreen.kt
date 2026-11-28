@@ -2,7 +2,9 @@
 package com.nola.ui.screen.activity
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.sp
+import com.nola.domain.model.ConversationTitlePresentationPolicy
 import com.nola.ui.components.NolaBadge
 import com.nola.ui.components.NolaColors
 import com.nola.ui.components.NolaDisclosureBar
@@ -70,9 +73,10 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
         viewModel.resume(source, needsResponse, search)
         onPauseOrDispose { }
     }
+    val fallbackTitle = stringResource(R.string.conversation_untitled)
     Box(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(Modifier.align(Alignment.TopCenter).widthIn(max = 720.dp).fillMaxSize(),
-            contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 24.dp),
+            contentPadding = PaddingValues(start = gutter, end = gutter, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 NolaRootPageTitle(stringResource(R.string.activity_title)) {
@@ -110,14 +114,35 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                 val colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                     selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.65f),
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     listOf(null to R.string.activity_all, "conversation" to R.string.tab_chat, "agent" to R.string.activity_agent, "automation" to R.string.activity_plan).forEach { (value, label) ->
-                        FilterChip(selected = source == value, onClick = { source = value }, colors = colors, border = null,
-                            shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(label)) })
+                        val isSelected = source == value
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { source = value },
+                            colors = colors,
+                            border = if (isSelected) null else BorderStroke(0.75.dp, NolaColors.hairlineBorder),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            label = { Text(stringResource(label), maxLines = 1, softWrap = false) },
+                        )
                     }
-                    FilterChip(selected = needsResponse, onClick = { needsResponse = !needsResponse }, colors = colors, border = null,
-                        shape = MaterialTheme.shapes.extraLarge, label = { Text(stringResource(R.string.activity_needs_response)) })
+                    FilterChip(
+                        selected = needsResponse,
+                        onClick = { needsResponse = !needsResponse },
+                        colors = colors,
+                        border = if (needsResponse) null else BorderStroke(0.75.dp, NolaColors.hairlineBorder),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        label = { Text(stringResource(R.string.activity_needs_response), maxLines = 1, softWrap = false) },
+                    )
                 }
             }
             if (state.hasLoaded && !state.loading && !state.failed && state.entries.isEmpty()) item {
@@ -133,9 +158,10 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                 )
             }
             items(state.entries.filter { it.needs_response } + state.entries.filter { !it.needs_response }, key = { it.run_id }) { entry ->
+                val resolvedTitle = resolveActivityDisplayTitle(entry.title, entry.conversation_id, fallbackTitle)
                 Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { viewModel.open(entry) }.padding(vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    Text(resolvedTitle, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 24.sp))
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -192,7 +218,11 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        selected.detail?.entry?.title ?: selected.entry.title,
+                        resolveActivityDisplayTitle(
+                            selected.detail?.entry?.title ?: selected.entry.title,
+                            selected.detail?.entry?.conversation_id ?: selected.entry.conversation_id,
+                            fallbackTitle,
+                        ),
                         style = MaterialTheme.typography.titleLarge,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
@@ -281,6 +311,16 @@ internal fun ActivityScreen(onOpenConversation: (String) -> Unit, onOpenPlans: (
             }
         }
     }
+}
+
+internal fun resolveActivityDisplayTitle(
+    rawTitle: String?,
+    conversationId: String?,
+    fallback: String,
+): String {
+    val normalized = rawTitle.orEmpty().trim()
+    if (normalized.isEmpty()) return fallback
+    return ConversationTitlePresentationPolicy.displayTitle(normalized, conversationId, fallback)
 }
 
 @Composable

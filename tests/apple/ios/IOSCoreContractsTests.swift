@@ -2,8 +2,12 @@
 // File Overview:
 // - Purpose: High-signal iOS NolaCore FFI, IOSApplicationRuntime, and LocalConversationStore contract tests against isolated temp SQLite stores.
 
+import Combine
 import Foundation
+import QuickLook
 import SQLite3
+import SwiftUI
+import UIKit
 import XCTest
 @testable import Nola
 
@@ -821,25 +825,813 @@ final class IOSCoreContractsTests: XCTestCase {
         XCTAssertTrue(toolResultBlocks.contains(where: { $0["type"] as? String == "tool_result" && $0["tool_use_id"] as? String == "call_weather_1" }))
     }
 
+    // MARK: - 8. Rendered-Geometry & Pixel-Buffer Visual Audit Helpers (iPhone & iPad, Dark & Light)
+
+    private func iosEvidenceDirectory() throws -> URL {
+        let dir = URL(fileURLWithPath: "/tmp/nola-real-e2e-evidence/ios-audit", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @discardableResult
+    private func assertUIImageHasVisibleInk(
+        _ image: UIImage,
+        minRatio: Double = 0.005,
+        maxRatio: Double = 0.95,
+        alphaOnly: Bool = false,
+        context: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> Double {
+        let cgImage = try XCTUnwrap(image.cgImage, "\(context): missing CGImage", file: file, line: line)
+        let width = cgImage.width
+        let height = cgImage.height
+        XCTAssertGreaterThan(width, 8, "\(context): width too small (\(width))", file: file, line: line)
+        XCTAssertGreaterThan(height, 8, "\(context): height too small (\(height))", file: file, line: line)
+
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let ctx = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            throw NSError(domain: "IOSPixelAudit", code: 1)
+        }
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let totalPixels = width * height
+        var inkCount = 0
+        if alphaOnly {
+            for idx in stride(from: 0, to: pixels.count, by: 4) {
+                if pixels[idx + 3] > 20 {
+                    inkCount += 1
+                }
+            }
+        } else {
+            func pixelAt(_ x: Int, _ y: Int) -> (Int, Int, Int) {
+                let offset = (y * width + x) * 4
+                return (Int(pixels[offset]), Int(pixels[offset + 1]), Int(pixels[offset + 2]))
+            }
+            let insetX = min(4, max(0, width - 1))
+            let insetY = min(4, max(0, height - 1))
+            let corners = [
+                pixelAt(insetX, insetY),
+                pixelAt(width - 1 - insetX, insetY),
+                pixelAt(insetX, height - 1 - insetY),
+                pixelAt(width - 1 - insetX, height - 1 - insetY),
+            ]
+            let bgR = corners.map(\.0).sorted()[1]
+            let bgG = corners.map(\.1).sorted()[1]
+            let bgB = corners.map(\.2).sorted()[1]
+            for idx in stride(from: 0, to: pixels.count, by: 4) {
+                let diff = abs(Int(pixels[idx]) - bgR) + abs(Int(pixels[idx + 1]) - bgG) + abs(Int(pixels[idx + 2]) - bgB)
+                if pixels[idx + 3] > 16 && diff > 24 {
+                    inkCount += 1
+                }
+            }
+        }
+
+        let ratio = Double(inkCount) / Double(max(1, totalPixels))
+        XCTAssertGreaterThan(
+            ratio,
+            minRatio,
+            "\(context): rendered bitmap appears blank or collapsed (inkRatio=\(String(format: "%.4f", ratio)))",
+            file: file,
+            line: line
+        )
+        XCTAssertLessThan(
+            ratio,
+            maxRatio,
+            "\(context): rendered bitmap lacks contrast (inkRatio=\(String(format: "%.4f", ratio)))",
+            file: file,
+            line: line
+        )
+        return ratio
+    }
+
     @MainActor
-    func testIOSMathRendererHandlesCJKInLatexWithoutTofu() {
+    private func renderSwiftUIView<V: View>(
+        _ view: V,
+        size: CGSize,
+        style: UIUserInterfaceStyle,
+        saveTo fileURL: URL? = nil,
+        settleMs: UInt64 = 80
+    ) async throws -> (image: UIImage, fittingSize: CGSize) {
+        let colorScheme: ColorScheme = style == .dark ? .dark : .light
+        let root = AnyView(
+            view
+                .environment(\.colorScheme, colorScheme)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(style == .dark ? Color(uiColor: .systemBackground) : Color(uiColor: .systemBackground))
+        )
+        let hosting = UIHostingController(rootView: root)
+        hosting.overrideUserInterfaceStyle = style
+        hosting.view.backgroundColor = style == .dark ? .black : .white
+        let activeScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let window: UIWindow
+        if let activeScene {
+            window = UIWindow(windowScene: activeScene)
+            window.frame = CGRect(origin: .zero, size: size)
+        } else {
+            window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        }
+        window.overrideUserInterfaceStyle = style
+        window.backgroundColor = style == .dark ? .black : .white
+        window.rootViewController = hosting
+        window.isHidden = false
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        hosting.view.frame = CGRect(origin: .zero, size: size)
+        hosting.view.setNeedsLayout()
+        hosting.view.layoutIfNeeded()
+        if settleMs > 0 {
+            try await Task.sleep(for: .milliseconds(settleMs))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.04))
+        }
+        hosting.view.setNeedsLayout()
+        hosting.view.layoutIfNeeded()
+
+        let fittingSize = hosting.sizeThatFits(in: CGSize(width: size.width, height: CGFloat.greatestFiniteMagnitude))
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 2.0
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { ctx in
+            let drew = hosting.view.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
+            if !drew {
+                hosting.view.layer.render(in: ctx.cgContext)
+            }
+        }
+        if let fileURL, let png = image.pngData() {
+            try png.write(to: fileURL, options: .atomic)
+        }
+        return (image, fittingSize)
+    }
+
+    private func generateTestPNG(at url: URL, width: Int, height: Int) throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height))
+        let image = renderer.image { ctx in
+            UIColor(red: 0.95, green: 0.96, blue: 0.98, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            UIColor(red: 0.14, green: 0.40, blue: 0.85, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: width / 10, y: height / 6, width: width * 4 / 5, height: height / 3))
+            UIColor(red: 0.88, green: 0.28, blue: 0.24, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: width / 5, y: height * 3 / 5, width: width * 3 / 5, height: height / 4))
+        }
+        try XCTUnwrap(image.pngData()).write(to: url, options: .atomic)
+    }
+
+    private func generateTestPDF(at url: URL, title: String, body: String) throws {
+        let bounds = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
+        let data = renderer.pdfData { ctx in
+            ctx.beginPage()
+            UIColor.white.setFill()
+            ctx.fill(bounds)
+            UIColor(red: 0.14, green: 0.36, blue: 0.78, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: 40, y: 40, width: 532, height: 44))
+            (title as NSString).draw(
+                in: CGRect(x: 52, y: 50, width: 508, height: 30),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 18), .foregroundColor: UIColor.white]
+            )
+            (body as NSString).draw(
+                in: CGRect(x: 40, y: 110, width: 532, height: 600),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 14), .foregroundColor: UIColor.black]
+            )
+        }
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func decodeProjectionPart(_ object: [String: Any]) throws -> IOSConversationProjectionV1.Part {
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(IOSConversationProjectionV1.Part.self, from: data)
+    }
+
+    // MARK: - 9. CJK-in-LaTeX Pixel Verification (Zero Blank / Zero Tofu)
+
+    @MainActor
+    func testIOSMathRendererHandlesCJKInLatexWithoutTofu() throws {
+        let evidence = try iosEvidenceDirectory()
         XCTAssertTrue(IOSMathRenderer.containsNonLatinMathText(#"S_A = \lambda \cdot S_B + (\text{一小坨残差})"#))
         XCTAssertFalse(IOSMathRenderer.containsNonLatinMathText(#"S_s = \lambda S_t + UV^\top"#))
 
-        let displayImage = IOSMathRenderer.renderCompositeImage(
-            latex: #"S_A = \lambda \cdot S_B + (\text{一小坨残差})"#,
-            display: true,
-            fontSize: 22
+        let displayImage = try XCTUnwrap(
+            IOSMathRenderer.renderCompositeImage(
+                latex: #"S_A = \lambda \cdot S_B + (\text{一小坨残差})"#,
+                display: true,
+                fontSize: 22
+            ),
+            "iOS CJK display LaTeX must render cleanly"
         )
-        XCTAssertNotNil(displayImage, "iOS CJK display LaTeX must render cleanly")
-        XCTAssertGreaterThan(displayImage?.size.width ?? 0, 120)
+        XCTAssertGreaterThan(displayImage.size.width, 120)
+        XCTAssertGreaterThanOrEqual(displayImage.size.height, 14)
+        let displayAspect = displayImage.size.width / max(1, displayImage.size.height)
+        XCTAssertGreaterThan(displayAspect, 1.5, "CJK display formula aspect ratio looks collapsed: \(displayImage.size)")
+        XCTAssertLessThan(displayAspect, 30.0, "CJK display formula aspect ratio looks distorted: \(displayImage.size)")
+        try assertUIImageHasVisibleInk(displayImage, minRatio: 0.02, maxRatio: 0.85, alphaOnly: true, context: "CJK display LaTeX")
+        try displayImage.pngData()?.write(to: evidence.appendingPathComponent("ios-cjk-math-display.png"), options: .atomic)
 
-        let subscriptImage = IOSMathRenderer.renderCompositeImage(
-            latex: #"\mathcal{L}_{\text{总}} = \mathcal{L}_{\text{主}} + \lambda \mathcal{L}_{\text{正则}}"#,
-            display: false,
-            fontSize: 17
+        let subscriptImage = try XCTUnwrap(
+            IOSMathRenderer.renderCompositeImage(
+                latex: #"\mathcal{L}_{\text{总}} = \mathcal{L}_{\text{主}} + \lambda \mathcal{L}_{\text{正则}}"#,
+                display: false,
+                fontSize: 17
+            ),
+            "iOS CJK subscript LaTeX must render cleanly"
         )
-        XCTAssertNotNil(subscriptImage, "iOS CJK subscript LaTeX must render cleanly")
-        XCTAssertGreaterThan(subscriptImage?.size.width ?? 0, 80)
+        XCTAssertGreaterThan(subscriptImage.size.width, 80)
+        XCTAssertGreaterThanOrEqual(subscriptImage.size.height, 12)
+        let subAspect = subscriptImage.size.width / max(1, subscriptImage.size.height)
+        XCTAssertGreaterThan(subAspect, 1.5)
+        XCTAssertLessThan(subAspect, 30.0)
+        try assertUIImageHasVisibleInk(subscriptImage, minRatio: 0.02, maxRatio: 0.85, alphaOnly: true, context: "CJK subscript LaTeX")
+        try subscriptImage.pngData()?.write(to: evidence.appendingPathComponent("ios-cjk-math-subscript.png"), options: .atomic)
+    }
+
+    // MARK: - 10. Bounded Live Thinking Viewport at iPhone (350pt) & iPad (720pt) Widths
+
+    @MainActor
+    func testIOSBoundedLiveThinkingViewportAtIPhoneAndIPadWidths() async throws {
+        let evidence = try iosEvidenceDirectory()
+
+        func makeMixedReasoning(lines count: Int) -> String {
+            (1...count).map { idx in
+                "第 \(idx) 行 iOS Thinking line \(idx): analyzing sibling-conditioned delta-rule state transfer 与移动端排版稳定性。"
+            }.joined(separator: "\n")
+        }
+
+        let r10 = makeMixedReasoning(lines: 10)
+        let r200 = makeMixedReasoning(lines: 200)
+        let r1500 = makeMixedReasoning(lines: 1500)
+
+        let tail = ChatCanonicalExecutionProcess.liveReasoningTail(r1500)
+        XCTAssertTrue(tail.contains("iOS Thinking line 1500"), "iOS liveReasoningTail must roll to trailing line 1500")
+        XCTAssertTrue(tail.contains("第 1500 行"), "iOS liveReasoningTail must retain trailing CJK line")
+        XCTAssertFalse(tail.contains("line 1:"), "iOS liveReasoningTail must drop early line 1")
+
+        func measureProcessHeight(summary: String, width: CGFloat) throws -> CGFloat {
+            let reasoningPart = try decodeProjectionPart([
+                "kind": "reasoning",
+                "part_id": "r-live-1",
+                "revision": 1,
+                "state": "running",
+                "title": "Thinking",
+                "summary": summary,
+            ])
+            let view = ChatCanonicalExecutionProcess(
+                parts: [reasoningPart],
+                events: [],
+                activities: [],
+                isLive: true,
+                expanded: .constant(true),
+                toolExpanded: { _ in .constant(false) },
+                technicalExpanded: { _ in .constant(false) },
+                reader: { _ in .constant(nil) }
+            )
+            .padding(12)
+            .frame(width: width, alignment: .topLeading)
+
+            let hosting = UIHostingController(rootView: AnyView(view.environment(\.colorScheme, .dark)))
+            hosting.view.frame = CGRect(x: 0, y: 0, width: width, height: 1200)
+            hosting.view.setNeedsLayout()
+            hosting.view.layoutIfNeeded()
+            return hosting.sizeThatFits(in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)).height
+        }
+
+        for (deviceName, width) in [("iPhone", CGFloat(350)), ("iPad", CGFloat(720))] {
+            let h10 = try measureProcessHeight(summary: r10, width: width)
+            let h200 = try measureProcessHeight(summary: r200, width: width)
+            let h1500 = try measureProcessHeight(summary: r1500, width: width)
+
+            XCTAssertGreaterThan(h10, 60, "\(deviceName): 10-line live thinking collapsed (h=\(h10))")
+            XCTAssertLessThanOrEqual(h200, 280, "\(deviceName): 200-line live thinking MUST stay bounded <= 280pt (h=\(h200))")
+            XCTAssertLessThanOrEqual(h1500, 280, "\(deviceName): 1500-line live thinking MUST stay bounded <= 280pt (h=\(h1500))")
+            XCTAssertLessThanOrEqual(
+                abs(h1500 - h200),
+                4.0,
+                "\(deviceName): live thinking height MUST NOT explode between 200 and 1500 lines (h200=\(h200), h1500=\(h1500))"
+            )
+        }
+
+        // Visual bitmap audit in Dark & Light at iPhone & iPad sizes
+        let livePart = try decodeProjectionPart([
+            "kind": "reasoning",
+            "part_id": "r-live-visual",
+            "revision": 1,
+            "state": "running",
+            "title": "Thinking",
+            "summary": r1500,
+        ])
+        let processView = ChatCanonicalExecutionProcess(
+            parts: [livePart],
+            events: [],
+            activities: [],
+            isLive: true,
+            expanded: .constant(true),
+            toolExpanded: { _ in .constant(false) },
+            technicalExpanded: { _ in .constant(false) },
+            reader: { _ in .constant(nil) }
+        )
+        .padding(16)
+
+        for (label, size) in [("iphone", CGSize(width: 390, height: 320)), ("ipad", CGSize(width: 760, height: 320))] {
+            for (styleName, style) in [("dark", UIUserInterfaceStyle.dark), ("light", UIUserInterfaceStyle.light)] {
+                let rendered = try await renderSwiftUIView(
+                    processView,
+                    size: size,
+                    style: style,
+                    saveTo: evidence.appendingPathComponent("ios-live-thinking-\(label)-\(styleName).png")
+                )
+                try assertUIImageHasVisibleInk(rendered.image, context: "live-thinking-\(label)-\(styleName)")
+            }
+        }
+    }
+
+    // MARK: - 11. ChatBubble Full Rich Render (iPhone & iPad, Dark & Light) & Right-Sidebar Inspector Routing
+
+    @MainActor
+    func testIOSChatBubbleRichRenderAndRightSidebarInspectorRouting() async throws {
+        let evidence = try iosEvidenceDirectory()
+        let root = try makeTempDirectory("chatbubble-audit")
+        let database = root.appendingPathComponent("bubble.db")
+        let runtime = try IOSApplicationRuntime(databaseURL: database)
+        let container = ServiceContainer(applicationRuntime: runtime)
+
+        let pngURL = root.appendingPathComponent("ios-figure.png")
+        let pdfURL = root.appendingPathComponent("ios-report.pdf")
+        let txtURL = root.appendingPathComponent("ios-notes.txt")
+        try generateTestPNG(at: pngURL, width: 480, height: 300)
+        try generateTestPDF(at: pdfURL, title: "iOS Inspector PDF", body: "Verified right-sidebar QuickLook inspector preview.")
+        try "iOS inspector text fixture line 1\n中文文本预览测试\n".write(to: txtURL, atomically: true, encoding: .utf8)
+
+        let richMarkdown = """
+        ## 移动端学术与工程混合渲染审计
+
+        兄弟分支低秩残差恒等式满足 $S_A = \\lambda \\cdot S_B + (\\text{一小坨残差})$，其中缩放系数 $\\lambda = D_s / D_t$。
+
+        $$S_s = \\lambda S_t + UV^\\top$$
+
+        | 平台 | 宽度 | 状态 |
+        | --- | ---: | --- |
+        | iPhone | 390 pt | 通过 |
+        | iPad | 1024 pt | 通过 |
+
+        ```swift
+        func residualScale(_ ds: Double, _ dt: Double) -> Double {
+            ds / dt
+        }
+        ```
+        """
+
+        let textPart = try decodeProjectionPart([
+            "kind": "text",
+            "part_id": "p-text-1",
+            "revision": 1,
+            "markdown": richMarkdown,
+            "is_final": true,
+        ])
+        let pngPart = try decodeProjectionPart([
+            "kind": "attachment",
+            "part_id": "p-att-png",
+            "revision": 1,
+            "attachment_id": "att-png",
+            "name": "ios-figure.png",
+            "mime_type": "image/png",
+            "uri": pngURL.absoluteString,
+            "operation": "created",
+        ])
+        let pdfPart = try decodeProjectionPart([
+            "kind": "attachment",
+            "part_id": "p-att-pdf",
+            "revision": 1,
+            "attachment_id": "att-pdf",
+            "name": "ios-report.pdf",
+            "mime_type": "application/pdf",
+            "uri": pdfURL.absoluteString,
+            "operation": "created",
+        ])
+
+        let message = ChatMessage(
+            role: .assistant,
+            content: richMarkdown,
+            canonicalParts: [textPart, pngPart, pdfPart]
+        )
+
+        var routedURLs: [URL] = []
+        let bubble = ScrollView {
+            ChatBubble(
+                conversationID: UUID(),
+                message: message,
+                isLatestAssistant: true,
+                isStreaming: false,
+                isRetrieving: false,
+                pendingHostPermissionRequest: nil,
+                onHostPermissionDecision: { _, _ in }
+            )
+            .padding(16)
+        }
+        .environmentObject(container)
+        .environment(\.iosOpenAttachmentPreview) { url in
+            routedURLs.append(url)
+        }
+
+        // Measure intrinsic width/height and capture bitmaps at iPhone (390x844) & iPad (1024x768) in Dark & Light modes
+        for (deviceName, viewport) in [("iphone", CGSize(width: 390, height: 844)), ("ipad", CGSize(width: 1024, height: 768))] {
+            let measureHost = UIHostingController(rootView: AnyView(
+                ChatBubble(
+                    conversationID: UUID(),
+                    message: message,
+                    isLatestAssistant: true,
+                    isStreaming: false,
+                    isRetrieving: false,
+                    pendingHostPermissionRequest: nil,
+                    onHostPermissionDecision: { _, _ in }
+                )
+                .padding(16)
+                .environmentObject(container)
+            ))
+            measureHost.view.frame = CGRect(origin: .zero, size: viewport)
+            measureHost.view.setNeedsLayout()
+            measureHost.view.layoutIfNeeded()
+            let measured = measureHost.sizeThatFits(in: CGSize(width: viewport.width, height: CGFloat.greatestFiniteMagnitude))
+            XCTAssertGreaterThan(measured.height, 80, "\(deviceName): ChatBubble height collapsed (\(measured.height))")
+            XCTAssertLessThanOrEqual(
+                measured.width,
+                viewport.width + 1.0,
+                "\(deviceName): ChatBubble overflowed container width (\(measured.width) > \(viewport.width))"
+            )
+
+            for (styleName, style) in [("dark", UIUserInterfaceStyle.dark), ("light", UIUserInterfaceStyle.light)] {
+                let rendered = try await renderSwiftUIView(
+                    bubble,
+                    size: viewport,
+                    style: style,
+                    saveTo: evidence.appendingPathComponent("ios-chatbubble-\(deviceName)-\(styleName).png"),
+                    settleMs: 120
+                )
+                try assertUIImageHasVisibleInk(rendered.image, context: "chatbubble-\(deviceName)-\(styleName)")
+            }
+        }
+
+        // Verify right-sidebar inspector routing via \.iosOpenAttachmentPreview across png -> txt -> pdf -> nil
+        final class InspectorRouterState: ObservableObject {
+            @Published var previewURL: URL? = nil
+            @Published var fallbackSheetCount = 0
+        }
+        struct InspectorRoutingHarness: View {
+            @ObservedObject var state: InspectorRouterState
+            var body: some View {
+                VStack(spacing: 12) {
+                    Text("Chat Canvas")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.iosOpenAttachmentPreview) { url in
+                    state.previewURL = url
+                }
+                .inspector(isPresented: Binding(
+                    get: { state.previewURL != nil },
+                    set: { if !$0 { state.previewURL = nil } }
+                )) {
+                    if let url = state.previewURL {
+                        NavigationStack {
+                            ChatAttachmentQuickLook(url: url)
+                                .id(url)
+                                .navigationTitle(url.lastPathComponent)
+                        }
+                        .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
+                    }
+                }
+            }
+        }
+
+        let routerState = InspectorRouterState()
+        let host = UIHostingController(rootView: InspectorRoutingHarness(state: routerState))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1024, height: 768))
+        window.rootViewController = host
+        window.isHidden = false
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        // Verify QuickLook coordinator serves each file type accurately and inspector switches cleanly png -> txt -> pdf -> nil
+        for fixture in [pngURL, txtURL, pdfURL] {
+            let quickLook = ChatAttachmentQuickLook(url: fixture)
+            let coordinator = quickLook.makeCoordinator()
+            let controller = QLPreviewController()
+            XCTAssertEqual(coordinator.numberOfPreviewItems(in: controller), 1)
+            XCTAssertEqual(coordinator.previewController(controller, previewItemAt: 0).previewItemURL, fixture)
+
+            routerState.previewURL = fixture
+            try await Task.sleep(for: .milliseconds(80))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            XCTAssertEqual(routerState.previewURL, fixture)
+            XCTAssertEqual(routerState.fallbackSheetCount, 0, "Inspector preview must not trigger modal sheet fallback")
+        }
+        routerState.previewURL = nil
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertNil(routerState.previewURL)
+    }
+
+    // MARK: - 12. Deterministic Local Mock-HTTP Multi-Turn Streaming, Tool Execution & HTTP 400 Persistence
+
+    private final class IOSMockLLMURLProtocol: URLProtocol {
+        nonisolated(unsafe) static var handler: ((URLRequest, Int) -> (Int, [String: String], Data))?
+        private static let lock = NSLock()
+        private static var callCount = 0
+
+        static func reset() {
+            lock.lock()
+            callCount = 0
+            handler = nil
+            lock.unlock()
+        }
+
+        override class func canInit(with request: URLRequest) -> Bool {
+            request.url?.host == "mock-ios-llm.local"
+        }
+
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            Self.lock.lock()
+            Self.callCount += 1
+            let index = Self.callCount
+            let currentHandler = Self.handler
+            Self.lock.unlock()
+
+            guard let currentHandler, let url = request.url else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+                return
+            }
+            let (status, headers, data) = currentHandler(request, index)
+            guard let response = HTTPURLResponse(
+                url: url,
+                statusCode: status,
+                httpVersion: "HTTP/1.1",
+                headerFields: headers
+            ) else {
+                client?.urlProtocol(self, didFailWithError: URLError(.cannotParseResponse))
+                return
+            }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
+    @MainActor
+    func testIOSMockHTTPMultiTurnStreamingToolExecutionErrorAndColdReopenPersistence() async throws {
+        let root = try makeTempDirectory("ios-mock-http-multiturn")
+        let database = root.appendingPathComponent("ios-multiturn.db")
+        let conversationID: UUID
+        let turn2RunID: String
+
+        IOSMockLLMURLProtocol.reset()
+        defer { IOSMockLLMURLProtocol.reset() }
+
+        IOSMockLLMURLProtocol.handler = { _, index in
+            if index == 1 {
+                let args = #"{"query":"concise","limit":4}"#.replacingOccurrences(of: "\"", with: "\\\"")
+                let sse = [
+                    #"data: {"id":"ios-1","object":"chat.completion.chunk","created":1700000101,"model":"ios-mock-model","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"先调用 memory_search 检索本地用户偏好记忆。"},"finish_reason":null}]}"#,
+                    #"data: {"id":"ios-1","object":"chat.completion.chunk","created":1700000101,"model":"ios-mock-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_ios_mem_1","type":"function","function":{"name":"memory_search","arguments":"\#(args)"}}]},"finish_reason":null}]}"#,
+                    #"data: {"id":"ios-1","object":"chat.completion.chunk","created":1700000101,"model":"ios-mock-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+                    "data: [DONE]",
+                ].joined(separator: "\n\n") + "\n\n"
+                return (200, ["Content-Type": "text/event-stream"], Data(sse.utf8))
+            } else if index == 2 {
+                let sse = [
+                    #"data: {"id":"ios-2","object":"chat.completion.chunk","created":1700000102,"model":"ios-mock-model","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"已拿到记忆检索结果，生成最终回答。"},"finish_reason":null}]}"#,
+                    #"data: {"id":"ios-2","object":"chat.completion.chunk","created":1700000102,"model":"ios-mock-model","choices":[{"index":0,"delta":{"content":"已完成本地记忆检索：IOS_MOCK_TURN1_OK"},"finish_reason":null}]}"#,
+                    #"data: {"id":"ios-2","object":"chat.completion.chunk","created":1700000102,"model":"ios-mock-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                    "data: [DONE]",
+                ].joined(separator: "\n\n") + "\n\n"
+                return (200, ["Content-Type": "text/event-stream"], Data(sse.utf8))
+            } else {
+                let errJSON = #"{"error":{"message":"Mock iOS upstream HTTP 400 invalid_request_error","type":"invalid_request_error"}}"#
+                return (400, ["Content-Type": "application/json"], Data(errJSON.utf8))
+            }
+        }
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [IOSMockLLMURLProtocol.self]
+        let mockSession = URLSession(configuration: sessionConfig)
+        defer { mockSession.invalidateAndCancel() }
+
+        let provider = OpenAIProvider(
+            config: OpenAIProvider.Config(
+                baseURL: try XCTUnwrap(URL(string: "https://mock-ios-llm.local/v1")),
+                apiKey: "sk-ios-mock-key",
+                model: "ios-mock-model",
+                wireProtocol: .chatCompletions,
+                executionCapabilities: ModelExecutionCapabilities(
+                    toolCalls: true,
+                    imageInput: false,
+                    reasoning: true,
+                    samplingParameters: true
+                )
+            ),
+            streamSession: mockSession
+        )
+        let modelClient = TextAgentModelClient(client: provider)
+
+        do {
+            let runtime = try IOSApplicationRuntime(databaseURL: database)
+            // Seed a profile memory so memory_search exercises real SQLite recall on isolated DB
+            let memoryStore = CanonicalChatMemoryProfileStore(applicationRuntime: runtime)
+            _ = try memoryStore.saveMemoryText(
+                longTermMemory: "User prefers concise verified summaries.",
+                userPreferences: "Keep replies focused.",
+                expected: memoryStore.loadProfile()
+            )
+            // Persist model profile to verify cold reopen config durability
+            try runtime.upsertModelProfile(IOSCanonicalModelProfile(
+                id: "ios-mock-profile",
+                displayName: "iOS Mock LLM",
+                provider: "openai",
+                modelName: "ios-mock-model",
+                runtime: "remote",
+                sourceJSON: #"{"baseURL":"https://mock-ios-llm.local/v1","wireProtocol":"chat_completions"}"#,
+                parametersJSON: "{}",
+                selected: true,
+                enabled: true,
+                revision: 0,
+                createdAtMs: 1_000,
+                updatedAtMs: 1_000,
+                deletedAtMs: nil
+            ))
+
+            let convStore = try LocalConversationStore(applicationRuntime: runtime)
+            conversationID = try convStore.createConversation(title: "iOS Mock Multi-Turn", language: "zh-Hans").id
+            let convIDStr = conversationID.uuidString
+            let hostExecutor = IOSAgentHostExecutor(applicationRuntime: runtime, session: mockSession)
+            let config = AgentCoreRuntimeConfig(
+                platform: .ios,
+                executionMode: .deviceLocal,
+                model: "ios-mock-model",
+                grantedCapabilities: [.network],
+                permissionProfile: .allowAll
+            )
+
+            // Turn 1: Streaming reasoning + memory_search tool execution + final text answer
+            let turn1Identity = IOSCanonicalAgentTurnIdentity(userMessageID: UUID())
+            let turn1App = IOSCanonicalAgentApplication(
+                store: runtime,
+                descriptor: IOSCanonicalAgentRunDescriptor(
+                    conversationID: convIDStr,
+                    conversationTitle: "iOS Mock Multi-Turn",
+                    identity: turn1Identity,
+                    userText: "请先查一下我的记忆偏好，然后回复我。",
+                    userContentJSON: nil,
+                    contextCheckpointID: nil
+                )
+            )
+            let turn1Plan = try AgentCoreToolCatalog.prepareBoundPlan(
+                for: .deviceLocal,
+                expectedIdentity: AgentCoreExpectedIdentity(sessionId: convIDStr),
+                isForeground: true,
+                applicationRuntime: runtime
+            )
+            let coordinator1 = DeviceAgentCoordinator(
+                modelClient: modelClient,
+                hostExecutor: hostExecutor,
+                toolPlan: turn1Plan,
+                modelSupportsToolCalls: true,
+                canonicalApplication: turn1App
+            )
+
+            var turn1Completed: IOSRunResult?
+            for try await event in await coordinator1.start(
+                sessionId: convIDStr,
+                input: "请先查一下我的记忆偏好，然后回复我。",
+                history: [],
+                turnIdentity: turn1Identity,
+                config: config
+            ) {
+                if case .completed(let result) = event {
+                    turn1Completed = result
+                }
+            }
+            let result1 = try XCTUnwrap(turn1Completed, "Turn 1 must emit .completed")
+            XCTAssertEqual(result1.value.kind, .answered, "Turn 1 must terminate with .answered")
+            let midProjection = try runtime.loadConversationProjectionV1(id: convIDStr)
+            let turn1Reply = midProjection.messages
+                .filter { $0.role == .assistant }
+                .flatMap(\.parts)
+                .compactMap { part -> String? in
+                    if case .text(let t) = part { return t.markdown }
+                    return nil
+                }
+                .joined()
+            XCTAssertTrue(turn1Reply.contains("IOS_MOCK_TURN1_OK"), "Turn 1 final content must match mock response: \(turn1Reply)")
+
+            // Turn 2: Upstream HTTP 400 error -> must seal failed run cleanly and persist failure
+            let turn2Identity = IOSCanonicalAgentTurnIdentity(userMessageID: UUID())
+            turn2RunID = turn2Identity.submissionID
+            let turn2App = IOSCanonicalAgentApplication(
+                store: runtime,
+                descriptor: IOSCanonicalAgentRunDescriptor(
+                    conversationID: convIDStr,
+                    conversationTitle: "iOS Mock Multi-Turn",
+                    identity: turn2Identity,
+                    userText: "第二轮触发 400 错误测试。",
+                    userContentJSON: nil,
+                    contextCheckpointID: nil
+                )
+            )
+            let turn2Plan = try AgentCoreToolCatalog.prepareBoundPlan(
+                for: .deviceLocal,
+                expectedIdentity: AgentCoreExpectedIdentity(sessionId: convIDStr),
+                isForeground: true,
+                applicationRuntime: runtime
+            )
+            let coordinator2 = DeviceAgentCoordinator(
+                modelClient: modelClient,
+                hostExecutor: hostExecutor,
+                toolPlan: turn2Plan,
+                modelSupportsToolCalls: true,
+                canonicalApplication: turn2App
+            )
+
+            var turn2ThrewError = false
+            var turn2TerminalFailed = false
+            var turn2CompletedResult: IOSRunResult?
+            do {
+                for try await event in await coordinator2.start(
+                    sessionId: convIDStr,
+                    input: "第二轮触发 400 错误测试。",
+                    history: [
+                        AgentCoreMessage(role: "user", content: "请先查一下我的记忆偏好，然后回复我。"),
+                        AgentCoreMessage(role: "assistant", content: turn1Reply),
+                    ],
+                    turnIdentity: turn2Identity,
+                    config: config
+                ) {
+                    if case .coreTurnTerminal(let terminal) = event, terminal.status == .failed {
+                        turn2TerminalFailed = true
+                    } else if case .completed(let res) = event {
+                        turn2CompletedResult = res
+                    }
+                }
+            } catch {
+                turn2ThrewError = true
+            }
+            XCTAssertTrue(
+                turn2ThrewError || turn2TerminalFailed || turn2CompletedResult?.value.kind == .failed,
+                "Turn 2 HTTP 400 must cleanly surface an error or seal failed terminal status (result=\(String(describing: turn2CompletedResult?.value.kind)))"
+            )
+        }
+
+        // Cold reopen from the EXACT same temp SQLite DB -> verify full multi-turn transcript, tool/reasoning parts, failed run seal & model profile!
+        let reopened = try IOSApplicationRuntime(databaseURL: database)
+        let projection = try reopened.loadConversationProjectionV1(id: conversationID.uuidString)
+        XCTAssertGreaterThanOrEqual(projection.messages.count, 3, "Cold reopen must retain Turn 1 user/assistant and Turn 2 user messages")
+        XCTAssertEqual(projection.messages.filter { $0.role == .user }.count, 2, "Cold reopen must retain both user turns")
+
+        let assistantMessages = projection.messages.filter { $0.role == .assistant }
+        XCTAssertGreaterThanOrEqual(assistantMessages.count, 1)
+        let firstAssistant = assistantMessages[0]
+        XCTAssertEqual(firstAssistant.state, .completed)
+        let firstAssistantTexts = firstAssistant.parts.compactMap { part -> String? in
+            if case .text(let t) = part { return t.markdown }
+            return nil
+        }.joined()
+        XCTAssertTrue(firstAssistantTexts.contains("IOS_MOCK_TURN1_OK"), "Cold reopen must preserve Turn 1 assistant text")
+        XCTAssertTrue(
+            firstAssistant.parts.contains(where: { if case .tool(let tool) = $0 { return tool.capabilityID == "memory_search" }; return false }),
+            "Cold reopen must preserve executed memory_search tool part"
+        )
+        XCTAssertTrue(
+            firstAssistant.parts.contains(where: { if case .reasoning = $0 { return true }; return false }),
+            "Cold reopen must preserve streamed reasoning part"
+        )
+
+        let turn2Terminal = try reopened.executeAgentCommand(.object([
+            "type": .string("canonical_run_terminal"),
+            "conversation_id": .string(conversationID.uuidString),
+            "run_id": .string(turn2RunID),
+        ]))
+        let turn2Kind = turn2Terminal.objectFields?["result"]?.objectFields?["value"]?.objectFields?["kind"]
+        XCTAssertEqual(turn2Kind, .string("failed"), "Cold reopen must preserve Turn 2 HTTP 400 failed terminal seal in SQLite")
+
+        let persistedModel = try XCTUnwrap(try reopened.modelProfile(id: "ios-mock-profile"))
+        XCTAssertEqual(persistedModel.modelName, "ios-mock-model")
     }
 }

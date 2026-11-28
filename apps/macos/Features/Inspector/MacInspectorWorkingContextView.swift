@@ -35,11 +35,10 @@ struct MacInspectorWorkingContextView: View {
           if resourcesOnly {
             let conversationAttachments = model.selectedConversationAttachments
             if model.attachments.isEmpty && conversationAttachments.isEmpty {
-                Label(String(localized: "No attached files"), systemImage: "doc")
-                    .font(.system(size: MacDesignTokens.Typography.inspectorBody, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                MacInspectorEmptyState(
+                    symbol: "paperclip",
+                    message: String(localized: "No attached files")
+                )
             }
 
             if !model.attachments.isEmpty {
@@ -67,11 +66,11 @@ struct MacInspectorWorkingContextView: View {
                             MacInspectorRow(
                                 symbol: "paperclip",
                                 title: attachment.name,
-                                value: attachment.locationLabel
+                                value: (attachment.locationLabel as NSString).abbreviatingWithTildeInPath
                             )
                         }
                         .buttonStyle(.plain)
-                        .help(attachment.url.path)
+                        .help((attachment.url.path as NSString).abbreviatingWithTildeInPath)
                         .contextMenu {
                             Button(String(localized: "Preview")) {
                                 openFileReference(.init(url: attachment.url, line: nil, column: nil))

@@ -78,7 +78,38 @@
     let refreshToken = $state(0);
     let localPreview = $state<InspectorPreviewItem | null>(null);
     let previewCopied = $state(false);
+    let previewImageDims = $state<{ width: number; height: number } | null>(null);
     const activePreview = $derived(previewItem ?? localPreview);
+
+    function localizeTaskStatus(status: string, currentLocale: Locale): string {
+        switch (status.toLowerCase()) {
+            case 'completed':
+            case 'done':
+                return t(currentLocale, 'chatPage.toolCompleted');
+            case 'failed':
+            case 'error':
+                return t(currentLocale, 'chatPage.toolFailed');
+            case 'running':
+            case 'executing':
+            case 'in_progress':
+                return t(currentLocale, 'chatPage.toolRunning');
+            case 'pending':
+            case 'waiting':
+                return t(currentLocale, 'chatPage.toolPending');
+            case 'queued':
+                return t(currentLocale, 'chatPage.stateQueued');
+            case 'cancelled':
+            case 'canceled':
+                return t(currentLocale, 'chatPage.toolCancelled');
+            default:
+                return status;
+        }
+    }
+
+    $effect(() => {
+        activePreview?.imageUrl;
+        previewImageDims = null;
+    });
 
     function openInlinePreview(item: InspectorPreviewItem) {
         onclearpreview?.();
@@ -734,14 +765,28 @@
         <div class="inspector-body inspector-preview-body" data-testid="inspector-inline-preview">
             {#if activePreview.kind === 'image' && activePreview.imageUrl}
                 <div class="inspector-image-stage">
-                    <img class="inspector-image-full" src={activePreview.imageUrl} alt={activePreview.title} />
+                    <img
+                        class="inspector-image-full"
+                        class:pixel-crisp={Boolean(previewImageDims && previewImageDims.width <= 64 && previewImageDims.height <= 64)}
+                        src={activePreview.imageUrl}
+                        alt={activePreview.title}
+                        onload={e => {
+                            const img = e.currentTarget as HTMLImageElement;
+                            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                                previewImageDims = { width: img.naturalWidth, height: img.naturalHeight };
+                            }
+                        }}
+                    />
+                    {#if previewImageDims}
+                        <span class="image-dims-badge">{previewImageDims.width} × {previewImageDims.height} px</span>
+                    {/if}
                 </div>
             {:else if activePreview.kind === 'pdf' && activePreview.pdfUrl}
                 <div class="inspector-pdf-actions">
-                    <a class="compact-btn" href={activePreview.pdfUrl} target="_blank" rel="noopener noreferrer">
+                    <a class="pdf-toolbar-pill" href={activePreview.pdfUrl} target="_blank" rel="noopener noreferrer">
                         {t($locale, 'chatResource.openSeparate')}
                     </a>
-                    <a class="compact-btn" href={activePreview.pdfUrl} download={activePreview.title}>
+                    <a class="pdf-toolbar-pill" href={activePreview.pdfUrl} download={activePreview.title}>
                         {t($locale, 'chatResource.download')}
                     </a>
                 </div>
@@ -821,8 +866,9 @@
                     <h3>{t($locale, 'chatInspector.planMode')}</h3>
                     <button
                         type="button"
-                        class="compact-btn"
-                        class:primary={effectivePlan.enabled}
+                        class="plan-toggle-pill"
+                        class:active={effectivePlan.enabled}
+                        aria-pressed={effectivePlan.enabled}
                         disabled={planBusy}
                         onclick={() =>
                             void handlePlanAction({
@@ -830,7 +876,8 @@
                                 action: effectivePlan.enabled ? 'disable' : 'enable',
                             })}
                     >
-                        {effectivePlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
+                        <span class="plan-toggle-dot" aria-hidden="true"></span>
+                        <span>{effectivePlan.enabled ? t($locale, 'chatInspector.planStatusOn') : t($locale, 'chatInspector.planStatusOff')}</span>
                     </button>
                 </div>
                 {#if effectivePlan.summary || effectivePlan.markdown || effectivePlan.steps.length || effectivePlan.status === 'proposed' || effectivePlan.status === 'pending' || effectivePlan.status === 'awaiting_approval'}
@@ -841,14 +888,14 @@
                                     ? t($locale, 'chatInspector.planPendingApproval')
                                     : effectivePlan.summary || t($locale, 'chatInspector.planMode')}
                             </strong>
-                            <span class="status-pill">{effectivePlan.status}</span>
+                            <span class="status-pill">{localizeTaskStatus(effectivePlan.status, $locale)}</span>
                         </div>
                         {#if effectivePlan.steps.length}
                             <ol class="plan-steps">
                                 {#each effectivePlan.steps as step, sIdx (step.id ?? sIdx)}
                                     <li>
                                         <span>{step.title}</span>
-                                        {#if step.status}<small class="inspector-muted">({step.status})</small>{/if}
+                                        {#if step.status}<small class="inspector-muted">({localizeTaskStatus(step.status, $locale)})</small>{/if}
                                     </li>
                                 {/each}
                             </ol>
@@ -961,7 +1008,7 @@
                                         <div class="task-title-row">
                                             <span class="task-label">{item.title}</span>
                                             {#if item.agent}<span class="status-pill">@{item.agent}</span>{/if}
-                                            <span class="status-pill">{item.status}</span>
+                                            <span class="status-pill" data-status={item.status}>{localizeTaskStatus(item.status, $locale)}</span>
                                         </div>
                                         {#if item.detail}
                                             <small class="inspector-muted">{item.detail.slice(0, 140)}</small>
@@ -1306,45 +1353,96 @@
         overflow-y: auto;
     }
     .inspector-image-stage {
+        position: relative;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 8px;
+        padding: 24px 16px 32px;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--canvas);
-        min-height: 160px;
+        border-radius: 10px;
+        background-color: var(--surface-subtle);
+        background-image:
+            linear-gradient(45deg, color-mix(in srgb, var(--content) 6%, transparent) 25%, transparent 25%),
+            linear-gradient(-45deg, color-mix(in srgb, var(--content) 6%, transparent) 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--content) 6%, transparent) 75%),
+            linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--content) 6%, transparent) 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+        min-height: 200px;
     }
     .inspector-image-full {
         max-width: 100%;
-        max-height: calc(100dvh - 180px);
+        max-height: calc(100dvh - 200px);
         object-fit: contain;
         border-radius: 6px;
+        box-shadow: 0 2px 12px rgb(0 0 0 / 0.14);
+    }
+    .inspector-image-full.pixel-crisp {
+        min-width: 72px;
+        min-height: 72px;
+        image-rendering: pixelated;
+    }
+    .image-dims-badge {
+        position: absolute;
+        right: 10px;
+        bottom: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+        backdrop-filter: blur(6px);
+        font-family: var(--font-code);
+        font-size: 10.5px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
     }
     .inspector-pdf-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
+        gap: 8px;
+    }
+    .pdf-toolbar-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        min-height: 30px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--control-border);
+        background: var(--surface);
+        color: var(--content);
+        font-size: 12px;
+        font-weight: 500;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
+    }
+    .pdf-toolbar-pill:hover {
+        background: var(--control-hover-bg);
+        border-color: var(--control-hover-border);
     }
     .inspector-pdf-frame {
         width: 100%;
         flex: 1;
         min-height: 480px;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--canvas);
+        border-radius: 10px;
+        background: var(--surface-subtle);
     }
     .inspector-text-preview {
         margin: 0;
-        padding: 10px 12px;
+        padding: 12px 14px;
         border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--canvas);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--content);
+        font-family: var(--font-code);
         font-size: 12px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
+        line-height: 1.55;
+        tab-size: 4;
+        white-space: pre;
+        overflow-x: auto;
         user-select: text;
     }
     .inspector-scrim {
@@ -1383,10 +1481,10 @@
     .inspector-icon-btn:not(:disabled) {
         display: grid;
         place-items: center;
-        width: 36px;
-        height: 36px;
-        min-width: 36px;
-        min-height: 36px;
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
         padding: 0;
         border: 1px solid transparent;
         border-radius: 8px;
@@ -1394,11 +1492,12 @@
         box-shadow: none;
         color: var(--muted);
         cursor: pointer;
+        transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease;
     }
     .inspector-icon-btn:not(:disabled):hover {
         color: var(--content);
-        border-color: var(--border);
-        background: var(--surface);
+        border-color: transparent;
+        background: var(--composer-pill-hover-bg);
     }
     .inspector-refresh-icon {
         width: 16px;
@@ -1530,13 +1629,67 @@
         font-size: 11px;
         color: var(--muted);
     }
+    .plan-toggle-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 28px;
+        min-width: 0;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--control-border);
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 11.5px;
+        font-weight: 550;
+        cursor: pointer;
+        transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease;
+    }
+    .plan-toggle-pill:hover:not(:disabled) {
+        color: var(--content);
+        border-color: var(--control-hover-border);
+        background: var(--control-hover-bg);
+    }
+    .plan-toggle-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--outline);
+        flex: none;
+    }
+    .plan-toggle-pill.active {
+        border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+        background: color-mix(in srgb, var(--success) 12%, var(--surface));
+        color: var(--success);
+    }
+    .plan-toggle-pill.active .plan-toggle-dot {
+        background: var(--success);
+    }
     .status-pill {
-        padding: 1px 6px;
+        padding: 1px 7px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        font-size: 10px;
+        background: var(--panel);
+        font-size: 10.5px;
+        font-weight: 550;
         color: var(--muted);
         white-space: nowrap;
+    }
+    .status-pill[data-status='completed'] {
+        color: var(--success);
+        border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+        background: color-mix(in srgb, var(--success) 12%, transparent);
+    }
+    .status-pill[data-status='failed'],
+    .status-pill[data-status='error'] {
+        color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
+    }
+    .status-pill[data-status='running'] {
+        color: var(--info);
+        border-color: color-mix(in srgb, var(--info) 40%, var(--border));
+        background: color-mix(in srgb, var(--info) 12%, transparent);
     }
     .inspector-form {
         display: flex;

@@ -58,11 +58,17 @@ nonisolated enum AppleExpertAppearance {
 struct AppleConversationSignature: View {
     var body: some View {
         HStack(spacing: 7) {
-            Text(verbatim: "n").font(.system(size: 13, weight: .medium))
-                .frame(width: 19, height: 19)
-                .overlay(Circle().stroke(Color.primary.opacity(0.3), lineWidth: 1))
+            Text(verbatim: "n")
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
+                .frame(width: 21, height: 21)
+                .background(Color.primary.opacity(0.07), in: Circle())
+                .overlay(Circle().stroke(Color.primary.opacity(0.22), lineWidth: 0.75))
                 .accessibilityHidden(true)
-            Text(verbatim: "Nola").font(.system(size: 14, weight: .semibold))
-        }.padding(.bottom, 4)
+            Text(verbatim: "Nola")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.bottom, 4)
     }
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount, tick } from 'svelte';
-    import { locale, t } from '../lib/i18n';
+    import { locale, t, type Locale } from '../lib/i18n';
     import { darkAppearance, toggleAppearance } from '../lib/appearance';
     import { ApiError, errorMessage } from '../lib/api';
     import { pushToast } from '../lib/toast';
@@ -25,7 +25,7 @@
         contentTabDomId,
         type ConversationContentTabs,
     } from '../lib/conversationContentTabs';
-    import type { ChatConversation } from '../lib/chatConversations';
+    import { displayConversationTitle, type ChatConversation } from '../lib/chatConversations';
     import type { UiInteraction, UiSnapshot, UiSubmissionOutcome } from '../lib/generativeUi';
     import {
         branchV2Conversation,
@@ -68,6 +68,7 @@
         type V2PermissionScope,
         type V2ReasoningEffort,
         type V2TokenUsage,
+        type V2ToolCall,
         type V2UiActionPayload,
         type V2UserQuestion,
     } from '../lib/v2Chat';
@@ -218,12 +219,137 @@
 
     const permissionSummary = $derived(pendingPermission ? formatPermissionSummary(pendingPermission) : null);
 
+    function shortenDisplayPath(raw: string): string {
+        const cleaned = raw.trim().replace(/^['"]|['"]$/g, '');
+        if (!cleaned) return '';
+        const normalized = cleaned.replace(/\\/g, '/');
+        const tempMatch = normalized.match(/(?:^|\/)(?:var\/folders\/[^/]+\/[^/]+\/T|private\/tmp|tmp)\/[^/]+\/(.+)$/);
+        if (tempMatch?.[1]) {
+            const parts = tempMatch[1].split('/').filter(Boolean);
+            return parts.length > 2 ? parts.slice(-2).join('/') : parts.join('/');
+        }
+        const parts = normalized.split('/').filter(Boolean);
+        if (parts.length > 2) return parts.slice(-2).join('/');
+        return cleaned;
+    }
+
+    function formatToolInlinePreview(tc: V2ToolCall): string {
+        const summary = (tc.summary ?? '').trim();
+        const args =
+            tc.arguments && typeof tc.arguments === 'object' && !Array.isArray(tc.arguments)
+                ? (tc.arguments as Record<string, unknown>)
+                : null;
+        if (tc.status === 'failed' && summary) {
+            const exitMatch = summary.match(/shell exited with status (\d+)[^:]*:\s*(.+)/i);
+            if (exitMatch) {
+                return `exit ${exitMatch[1]} · ${exitMatch[2].trim().split('\n')[0]}`;
+            }
+            const firstLine = summary.split('\n')[0].trim();
+            return firstLine.replace(/\/(?:var\/folders\/[^\s]+|private\/tmp\/[^\s]+|tmp\/[^\s]+)/g, m => shortenDisplayPath(m));
+        }
+        if (args) {
+            for (const key of ['path', 'file_path', 'filePath', 'target_path', 'target']) {
+                if (typeof args[key] === 'string' && args[key].trim()) {
+                    const shortened = shortenDisplayPath(args[key]);
+                    const basename = shortened.split('/').pop() || shortened;
+                    return basename;
+                }
+            }
+            for (const key of ['command', 'cmd', 'query', 'pattern', 'url', 'uri']) {
+                if (typeof args[key] === 'string' && args[key].trim()) {
+                    return args[key].trim().split('\n')[0];
+                }
+            }
+        }
+        if (summary) {
+            const firstLine = summary.split('\n')[0].trim();
+            const readMatch = firstLine.match(/^Read\s+(.+?)(\s*\([^)]+\))?$/i);
+            if (readMatch) {
+                const file = shortenDisplayPath(readMatch[1]).split('/').pop() || shortenDisplayPath(readMatch[1]);
+                return `${file}${readMatch[2] ?? ''}`;
+            }
+            const wroteMatch = firstLine.match(/^Wrote\s+(.+?)(\s*\([^)]+\))?$/i);
+            if (wroteMatch) {
+                const file = shortenDisplayPath(wroteMatch[1]).split('/').pop() || shortenDisplayPath(wroteMatch[1]);
+                return `${file}${wroteMatch[2] ?? ''}`;
+            }
+            return firstLine.replace(/\/(?:var\/folders\/[^\s]+|private\/tmp\/[^\s]+|tmp\/[^\s]+)/g, m => shortenDisplayPath(m));
+        }
+        return '';
+    }
+
+    function formatPermissionReason(prompt: V2PermissionPrompt, currentLocale: Locale): string {
+        const raw = (prompt.reason ?? '').trim();
+        if (!raw) return t(currentLocale, 'chatPermission.ready');
+        const cautiousMatch = raw.match(/^(?:cautious profile requires approval for|approval required for)\s+(.+)$/i);
+        if (cautiousMatch) {
+            return t(currentLocale, 'chatPermission.cautiousRequiresApproval', {
+                tool: cautiousMatch[1].trim(),
+            });
+        }
+        return raw;
+    }
+
+    function formatDisplayError(raw: string): string {
+        const trimmed = raw.trim();
+        if (!trimmed) return '';
+        const statusJsonMatch = trimmed.match(/^(?:llm error:\s*)?(?:provider returned\s+)?status\s+(\d{3})\s*:\s*(\{[\s\S]*\})$/i);
+        if (statusJsonMatch) {
+            const status = statusJsonMatch[1];
+            try {
+                const parsed = JSON.parse(statusJsonMatch[2]) as {
+                    error?: { message?: unknown; code?: unknown };
+                    message?: unknown;
+                    detail?: unknown;
+                };
+                const msg =
+                    (typeof parsed?.error?.message === 'string' && parsed.error.message.trim()) ||
+                    (typeof parsed?.message === 'string' && parsed.message.trim()) ||
+                    (typeof parsed?.detail === 'string' && parsed.detail.trim()) ||
+                    '';
+                if (msg) {
+                    return msg.includes(status) ? msg : `HTTP ${status} · ${msg}`;
+                }
+            } catch {
+                // Fall through to generic cleanup.
+            }
+        }
+        const jsonIdx = trimmed.indexOf('{');
+        if (jsonIdx > 0 && trimmed.endsWith('}')) {
+            const prefix = trimmed.slice(0, jsonIdx).replace(/[:\s]+$/, '');
+            try {
+                const parsed = JSON.parse(trimmed.slice(jsonIdx)) as {
+                    error?: { message?: unknown };
+                    message?: unknown;
+                    detail?: unknown;
+                };
+                const msg =
+                    (typeof parsed?.error?.message === 'string' && parsed.error.message.trim()) ||
+                    (typeof parsed?.message === 'string' && parsed.message.trim()) ||
+                    (typeof parsed?.detail === 'string' && parsed.detail.trim()) ||
+                    '';
+                if (msg) {
+                    const statusMatch = prefix.match(/\b([45]\d{2})\b/);
+                    if (statusMatch && !msg.includes(statusMatch[1])) {
+                        return `HTTP ${statusMatch[1]} · ${msg}`;
+                    }
+                    return msg;
+                }
+            } catch {
+                // Keep original message.
+            }
+        }
+        return trimmed;
+    }
+
+    const formattedError = $derived(error ? formatDisplayError(error) : '');
+
     let contentTabs = $state<ConversationContentTabs>(emptyContentTabs());
     const tabViewports = new Map<string, { top: number }>();
     const selectedContentTab = $derived(contentTabs.items.find(item => item.key === contentTabs.selected));
     const managementContentSelected = $derived(selectedContentTab?.kind === 'page');
     const isConversationTabActive = $derived(contentTabs.selected === conversationTabKey);
-    const activeTabTitle = $derived(active?.title || t($locale, 'shell.conversations.new'));
+    const activeTabTitle = $derived(displayConversationTitle(active?.title, t($locale, 'shell.conversations.new')));
     const ownerKey = $derived(active?.conversationId ?? 'workspace');
 
     function currentDraftKey(conv: ChatConversation | null = active): string {
@@ -622,9 +748,12 @@
         try {
             await patchV2ConversationConfiguration(targetId, { permissionProfile: normalized });
             if (active?.conversationId === targetId) {
-                statusNotice = streaming
-                    ? t($locale, 'chatPermissionMode.active')
-                    : t($locale, 'chatPermissionMode.saved');
+                pushToast(
+                    streaming
+                        ? t($locale, 'chatPermissionMode.active')
+                        : t($locale, 'chatPermissionMode.saved'),
+                    'info',
+                );
             }
         } catch (cause) {
             if (active?.conversationId === targetId) {
@@ -1534,7 +1663,7 @@
         }
     }}
 />
-<svelte:head><title>{active?.title || t($locale, 'chatPage.title')} — Nola</title></svelte:head>
+<svelte:head><title>{activeTabTitle} — Nola</title></svelte:head>
 <ConfirmationDialog bind:this={confirmation} />
 <ExpertRoomManager
     open={expertManagerOpen}
@@ -1740,6 +1869,7 @@
         >
             <div class="chat-stage-columns">
                 <div class="chat-conversation-column">
+                    <div class="transcript-stage">
                     <div
                         class="transcript"
                         bind:this={transcriptEl}
@@ -1764,36 +1894,49 @@
                                         style:--expert-accent={msgExpertPalette?.accent}
                                         style:--expert-light={msgExpertPalette?.light}
                                         style:--expert-dark={msgExpertPalette?.dark}
+                                        data-role={msg.role}
                                         data-message-id={msg.id}
+                                        aria-label={msg.role === 'user' ? t($locale, 'chatInspector.you') : msg.expertName ? `@${msg.expertName}` : 'Nola'}
                                     >
-                                        <div class="message-head">
-                                            <div class="message-role">
-                                                {#if msg.role === 'user'}
-                                                    {t($locale, 'chatInspector.you')}
-                                                {:else if msg.expertName}
-                                                    <span class="expert-role-badge">
-                                                        <span class="expert-dot" aria-hidden="true"></span>
-                                                        @{msg.expertName}
-                                                    </span>
-                                                {:else}
-                                                    Nola
-                                                {/if}
-                                            </div>
-                                            <div class="message-actions">
+                                        {#if msg.role === 'user'}
+                                            <span class="sr-only">{t($locale, 'chatInspector.you')}</span>
+                                            <div class="message-actions user-floating-actions">
                                                 <button type="button" class="msg-action" onclick={() => copyMessage(msg)}>
                                                     {copiedMessageIds[msg.id] ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
                                                 </button>
-                                                {#if msg.role === 'user' && !streaming}
+                                                {#if !streaming}
                                                     <button type="button" class="msg-action" onclick={() => requestEditAndResend(msgIndex)}>
                                                         {t($locale, 'chatInspector.edit')}
                                                     </button>
-                                                {:else if msg.role === 'assistant' && !streaming}
-                                                    <button type="button" class="msg-action" onclick={() => regenerateFrom(msgIndex)}>
-                                                        {t($locale, 'chatInspector.regenerate')}
-                                                    </button>
                                                 {/if}
                                             </div>
-                                        </div>
+                                        {:else}
+                                            <div class="message-head">
+                                                <div class="message-role">
+                                                    {#if msg.expertName}
+                                                        <span class="expert-role-badge">
+                                                            <span class="expert-dot" aria-hidden="true"></span>
+                                                            @{msg.expertName}
+                                                        </span>
+                                                    {:else}
+                                                        <span class="nola-role-mark">
+                                                            <span class="nola-role-glyph" aria-hidden="true">n</span>
+                                                            <span>Nola</span>
+                                                        </span>
+                                                    {/if}
+                                                </div>
+                                                <div class="message-actions assistant-hover-actions">
+                                                    <button type="button" class="msg-action" onclick={() => copyMessage(msg)}>
+                                                        {copiedMessageIds[msg.id] ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
+                                                    </button>
+                                                    {#if !streaming}
+                                                        <button type="button" class="msg-action" onclick={() => regenerateFrom(msgIndex)}>
+                                                            {t($locale, 'chatInspector.regenerate')}
+                                                        </button>
+                                                    {/if}
+                                                </div>
+                                            </div>
+                                        {/if}
 
                                         {#if confirmEditIndex === msgIndex && msg.role === 'user'}
                                             <div class="inline-confirm" role="alertdialog" aria-label={t($locale, 'chatInspector.editTruncateConfirm')}>
@@ -1839,16 +1982,25 @@
                                         {#if msg.reasoning}
                                             {@const isLiveReasoning = streaming && msgIndex === messages.length - 1 && msg.role === 'assistant' && !msg.content}
                                             <details class="reasoning-box" open={isLiveReasoning || undefined}>
-                                                <summary>{t($locale, 'chatPage.thinking')}</summary>
+                                                <summary>
+                                                    <span class="disclosure-label">{t($locale, 'chatPage.thinking')}</span>
+                                                    <svg class="disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true">
+                                                        <path d="M4 6l4 4 4-4" />
+                                                    </svg>
+                                                </summary>
                                                 <pre class="reasoning-scroll" use:stickReasoningToBottom={isLiveReasoning ? msg.reasoning : ''}>{msg.reasoning}</pre>
                                             </details>
                                         {/if}
                                         {#if msg.toolCalls?.length}
                                             <div class="tool-calls">
                                                 {#each msg.toolCalls as tc (tc.callId)}
+                                                    {@const inlinePreview = formatToolInlinePreview(tc)}
                                                     <details class="tool-card" data-status={tc.status}>
                                                         <summary>
                                                             <span class="tool-name">{tc.name}</span>
+                                                            {#if inlinePreview}
+                                                                <span class="tool-inline-preview" title={inlinePreview}>{inlinePreview}</span>
+                                                            {/if}
                                                             <span class="tool-status">
                                                                 {tc.status === 'running'
                                                                     ? t($locale, 'chatPage.toolRunning')
@@ -1856,6 +2008,9 @@
                                                                       ? t($locale, 'chatPage.toolFailed')
                                                                       : t($locale, 'chatPage.toolCompleted')}
                                                             </span>
+                                                            <svg class="disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true">
+                                                                <path d="M4 6l4 4 4-4" />
+                                                            </svg>
                                                         </summary>
                                                         {#if tc.summary}<pre class="tool-summary">{tc.summary}</pre>{/if}
                                                     </details>
@@ -1922,6 +2077,7 @@
                                     <div class="interactive-card permission-card" role="region" aria-label={t($locale, 'chatPermission.title')}>
                                         <header class="interactive-head">
                                             <div class="permission-title-row">
+                                                <span class="permission-accent-dot" aria-hidden="true"></span>
                                                 <strong>{t($locale, 'chatPermission.title')}</strong>
                                                 <code class="permission-tool-badge">{pendingPermission.tool}</code>
                                             </div>
@@ -1931,10 +2087,15 @@
                                             {#if permissionSummary.target}
                                                 <code class="permission-target">{permissionSummary.target}</code>
                                             {/if}
-                                            <span class="muted permission-reason">{pendingPermission.reason || t($locale, 'chatPermission.ready')}</span>
+                                            <span class="muted permission-reason">{formatPermissionReason(pendingPermission, $locale)}</span>
                                         </header>
                                         <details class="permission-raw-details">
-                                            <summary>{t($locale, 'chatPage.toolTechnicalDetails')}</summary>
+                                            <summary>
+                                                <span class="disclosure-label">{t($locale, 'chatPage.toolTechnicalDetails')}</span>
+                                                <svg class="disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true">
+                                                    <path d="M4 6l4 4 4-4" />
+                                                </svg>
+                                            </summary>
                                             <pre class="interactive-args">{JSON.stringify(pendingPermission.arguments, null, 2)}</pre>
                                         </details>
                                         {#if permissionSubmitting}
@@ -2016,6 +2177,7 @@
                             </button>
                         </div>
                     {/if}
+                    </div>
 
                     <footer class="composer-wrap">
                         {#if needsModelConfig}
@@ -2072,118 +2234,22 @@
                         {#if statusNotice}
                             <p class="notice" role="status">{statusNotice}</p>
                         {/if}
-                        {#if error}
-                            <p class="notice error" role="alert">{error}</p>
-                        {/if}
-                        {#if attachments.length || selectedExperts.length}
-                            <div class="attachment-chips">
-                                {#each selectedExperts as exp (exp.id)}
-                                    <span class="attachment-chip expert-chip">
-                                        @{exp.name}
-                                        <button
-                                            type="button"
-                                            class="chip-remove"
-                                            aria-label={t($locale, 'chatInspector.clearExperts')}
-                                            onclick={() => removeSelectedExpert(exp.id)}
-                                        >×</button>
-                                    </span>
-                                {/each}
-                                {#each attachments as att, idx}
-                                    <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
-                                        <button
-                                            type="button"
-                                            class="chip-preview-btn"
-                                            title={att.name}
-                                            onclick={() => openAttachmentInInspector(att)}
-                                        >
-                                            {#if att.dataUrl}
-                                                <img class="attachment-thumb" src={att.dataUrl} alt={att.name} />
-                                            {/if}
-                                            <span>{att.name}</span>
-                                        </button>
-                                        <button type="button" class="chip-remove" aria-label={t($locale, 'shell.cancel')} onclick={() => removeAttachment(idx)}>×</button>
-                                    </span>
-                                {/each}
-                            </div>
-                        {/if}
-
-                        <div class="composer-toolbar">
-                            <input
-                                bind:this={fileInputEl}
-                                type="file"
-                                multiple
-                                hidden
-                                onchange={handleFileSelect}
-                            />
-                            <button
-                                type="button"
-                                class="toolbar-btn"
-                                disabled={streaming}
-                                onclick={() => fileInputEl?.click()}
-                            >
-                                {t($locale, 'chatInspector.attach')}
-                            </button>
-                            <button
-                                bind:this={expertToggleBtnEl}
-                                type="button"
-                                class="toolbar-btn"
-                                class:active={expertPickerOpen}
-                                disabled={streaming}
-                                aria-expanded={expertPickerOpen}
-                                aria-label={t($locale, 'chatInspector.mentionExpert')}
-                                onclick={toggleExpertPicker}
-                            >
-                                @ {t($locale, 'rooms.experts')}
-                            </button>
-                            {#if active}
+                        {#if formattedError}
+                            <div class="notice error error-banner" role="alert">
+                                <svg class="error-banner-icon" viewBox="0 0 16 16" aria-hidden="true">
+                                    <circle cx="8" cy="8" r="6.5" />
+                                    <path d="M8 4.8v3.6M8 11.1h.01" />
+                                </svg>
+                                <span class="error-banner-text">{formattedError}</span>
                                 <button
                                     type="button"
-                                    class="toolbar-btn"
-                                    class:active={conversationPlan.enabled}
-                                    disabled={planBusy}
-                                    aria-pressed={conversationPlan.enabled}
-                                    onclick={() => void handleTogglePlanMode()}
-                                >
-                                    {conversationPlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
-                                </button>
-                            {/if}
-                            {#if modelChoices.length}
-                                <select
-                                    class="toolbar-select"
-                                    aria-label={t($locale, 'chatSession.model')}
-                                    value={selectedModelId}
-                                    disabled={streaming}
-                                    onchange={e => void handleModelChange(e.currentTarget.value)}
-                                >
-                                    {#each modelChoices as choice (choice.id)}
-                                        <option value={choice.id}>{choice.displayName}</option>
-                                    {/each}
-                                </select>
-                            {/if}
-                            <select
-                                class="toolbar-select"
-                                aria-label={t($locale, 'chatSession.permission')}
-                                value={permissionProfile}
-                                disabled={permissionSaving}
-                                onchange={e => void handlePermissionModeChange(e.currentTarget.value as V2PermissionProfile)}
-                            >
-                                <option value="cautious">{t($locale, 'chatSession.cautious')}</option>
-                                <option value="allow_all">{t($locale, 'chatSession.allowAll')}</option>
-                            </select>
-                            <select
-                                class="toolbar-select"
-                                aria-label={t($locale, 'chatSession.reasoning')}
-                                value={reasoningEffort}
-                                disabled={streaming}
-                                onchange={e => void handleReasoningEffortChange(e.currentTarget.value as V2ReasoningEffort)}
-                            >
-                                <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
-                                <option value="none">{t($locale, 'chatSession.none')}</option>
-                                <option value="low">{t($locale, 'chatSession.low')}</option>
-                                <option value="medium">{t($locale, 'chatSession.medium')}</option>
-                                <option value="high">{t($locale, 'chatSession.high')}</option>
-                            </select>
-                        </div>
+                                    class="notice-dismiss"
+                                    title={t($locale, 'shell.dismiss')}
+                                    aria-label={t($locale, 'shell.dismiss')}
+                                    onclick={() => (error = '')}
+                                >×</button>
+                            </div>
+                        {/if}
 
                         <div class="composer-anchor">
                             {#if expertPickerOpen}
@@ -2239,6 +2305,37 @@
                                     void send();
                                 }}
                             >
+                                {#if attachments.length || selectedExperts.length}
+                                    <div class="attachment-chips composer-staged-chips">
+                                        {#each selectedExperts as exp (exp.id)}
+                                            <span class="attachment-chip expert-chip">
+                                                @{exp.name}
+                                                <button
+                                                    type="button"
+                                                    class="chip-remove"
+                                                    aria-label={t($locale, 'chatInspector.clearExperts')}
+                                                    onclick={() => removeSelectedExpert(exp.id)}
+                                                >×</button>
+                                            </span>
+                                        {/each}
+                                        {#each attachments as att, idx}
+                                            <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
+                                                <button
+                                                    type="button"
+                                                    class="chip-preview-btn"
+                                                    title={att.name}
+                                                    onclick={() => openAttachmentInInspector(att)}
+                                                >
+                                                    {#if att.dataUrl}
+                                                        <img class="attachment-thumb" src={att.dataUrl} alt={att.name} />
+                                                    {/if}
+                                                    <span>{att.name}</span>
+                                                </button>
+                                                <button type="button" class="chip-remove" aria-label={t($locale, 'shell.cancel')} onclick={() => removeAttachment(idx)}>×</button>
+                                            </span>
+                                        {/each}
+                                    </div>
+                                {/if}
                                 <textarea
                                     id="chat-composer"
                                     bind:this={composerEl}
@@ -2251,16 +2348,95 @@
                                     onkeydown={onComposerKeydown}
                                     onpaste={event => void handleComposerPaste(event)}
                                 ></textarea>
-                                <div class="composer-actions">
-                                    {#if streaming}
-                                        <button type="button" class="danger" disabled={cancelling} onclick={() => void cancelActiveRun()}>
-                                            {t($locale, cancelling ? 'chatPage.cancelPending' : 'chatPage.stop')}
+                                <div class="composer-footer">
+                                    <div class="composer-toolbar">
+                                        <input
+                                            bind:this={fileInputEl}
+                                            type="file"
+                                            multiple
+                                            hidden
+                                            onchange={handleFileSelect}
+                                        />
+                                        <button
+                                            type="button"
+                                            class="toolbar-btn"
+                                            disabled={streaming}
+                                            onclick={() => fileInputEl?.click()}
+                                        >
+                                            {t($locale, 'chatInspector.attach')}
                                         </button>
-                                    {:else}
-                                        <button type="submit" class="primary" disabled={(!draft.trim() && !attachments.length) || loading}>
-                                            {t($locale, 'chatPage.send')}
+                                        <button
+                                            bind:this={expertToggleBtnEl}
+                                            type="button"
+                                            class="toolbar-btn"
+                                            class:active={expertPickerOpen}
+                                            disabled={streaming}
+                                            aria-expanded={expertPickerOpen}
+                                            aria-label={t($locale, 'chatInspector.mentionExpert')}
+                                            onclick={toggleExpertPicker}
+                                        >
+                                            @ {t($locale, 'rooms.experts')}
                                         </button>
-                                    {/if}
+                                        {#if active}
+                                            <button
+                                                type="button"
+                                                class="toolbar-btn"
+                                                class:active={conversationPlan.enabled}
+                                                disabled={planBusy}
+                                                aria-pressed={conversationPlan.enabled}
+                                                onclick={() => void handleTogglePlanMode()}
+                                            >
+                                                {conversationPlan.enabled ? t($locale, 'chatInspector.planActive') : t($locale, 'chatInspector.planMode')}
+                                            </button>
+                                        {/if}
+                                        {#if modelChoices.length}
+                                            <select
+                                                class="toolbar-select"
+                                                aria-label={t($locale, 'chatSession.model')}
+                                                value={selectedModelId}
+                                                disabled={streaming}
+                                                onchange={e => void handleModelChange(e.currentTarget.value)}
+                                            >
+                                                {#each modelChoices as choice (choice.id)}
+                                                    <option value={choice.id}>{choice.displayName}</option>
+                                                {/each}
+                                            </select>
+                                        {/if}
+                                        <select
+                                            class="toolbar-select"
+                                            aria-label={t($locale, 'chatSession.permission')}
+                                            value={permissionProfile}
+                                            disabled={permissionSaving}
+                                            onchange={e => void handlePermissionModeChange(e.currentTarget.value as V2PermissionProfile)}
+                                        >
+                                            <option value="cautious">{t($locale, 'chatSession.cautious')}</option>
+                                            <option value="allow_all">{t($locale, 'chatSession.allowAll')}</option>
+                                        </select>
+                                        <select
+                                            class="toolbar-select"
+                                            aria-label={t($locale, 'chatSession.reasoning')}
+                                            value={reasoningEffort}
+                                            disabled={streaming}
+                                            onchange={e => void handleReasoningEffortChange(e.currentTarget.value as V2ReasoningEffort)}
+                                        >
+                                            <option value="automatic">{t($locale, 'chatSession.automatic')}</option>
+                                            <option value="none">{t($locale, 'chatSession.none')}</option>
+                                            <option value="low">{t($locale, 'chatSession.low')}</option>
+                                            <option value="medium">{t($locale, 'chatSession.medium')}</option>
+                                            <option value="high">{t($locale, 'chatSession.high')}</option>
+                                        </select>
+                                    </div>
+                                    <div class="composer-actions">
+                                        {#if streaming}
+                                            <button type="button" class="danger composer-stop-btn" disabled={cancelling} onclick={() => void cancelActiveRun()}>
+                                                {t($locale, cancelling ? 'chatPage.cancelPending' : 'chatPage.stop')}
+                                            </button>
+                                        {:else}
+                                            <button type="submit" class="primary composer-send-btn" disabled={(!draft.trim() && !attachments.length) || loading}>
+                                                {t($locale, 'chatPage.send')}
+                                            </button>
+                                        {/if}
+                                    </div>
                                 </div>
                             </form>
                         </div>
@@ -2350,7 +2526,7 @@
         min-height: 0;
         overflow: visible;
         border-right: 1px solid var(--border);
-        background: var(--panel);
+        background: var(--rail);
         padding: 10px 8px;
         gap: 10px;
     }
@@ -2457,7 +2633,7 @@
     .workspace-topbar {
         display: flex;
         align-items: center;
-        min-height: 44px;
+        min-height: var(--topbar-height, 48px);
         padding: 4px 12px;
         border-bottom: 1px solid var(--border);
         background: var(--canvas);
@@ -2469,23 +2645,50 @@
         align-items: center;
         gap: 6px;
     }
-    .topbar-pill,
-    .toolbar-btn,
-    .toolbar-select {
+    .topbar-pill {
         width: auto;
         max-width: 220px;
         min-height: 30px;
         min-width: 0;
         padding: 4px 10px;
         border: 1px solid var(--border);
-        border-radius: 7px;
+        border-radius: 8px;
         background: var(--panel);
         color: var(--content);
         font-size: 12px;
         cursor: pointer;
     }
+    .toolbar-btn,
     .toolbar-select {
-        padding: 4px 28px 4px 10px;
+        width: auto;
+        max-width: 200px;
+        height: 30px;
+        min-height: 30px;
+        min-width: 0;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background-color: var(--composer-pill-bg, var(--surface-subtle));
+        color: var(--content);
+        font-size: 12px;
+        line-height: 28px;
+        white-space: nowrap;
+        flex: 0 0 auto;
+        cursor: pointer;
+        transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease;
+    }
+    .toolbar-select {
+        padding: 0 26px 0 10px;
+        background-color: var(--composer-pill-bg, var(--surface-subtle));
+        background-image: var(--select-chevron);
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+        background-size: 12px 12px;
+    }
+    .toolbar-btn:hover:not(:disabled),
+    .toolbar-select:hover:not(:disabled) {
+        background-color: var(--composer-pill-hover-bg);
+        border-color: var(--border);
     }
     .topbar-icon-pill {
         display: inline-flex;
@@ -2504,12 +2707,14 @@
     }
     .inspector-toggle-btn.active,
     .toolbar-btn.active {
-        border-color: var(--primary);
-        background: var(--accent-subtle);
+        border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+        background-color: var(--accent-subtle);
+        color: var(--content);
+        font-weight: 550;
     }
-    .topbar-pill:hover:not(:disabled),
-    .toolbar-btn:hover:not(:disabled) {
-        border-color: var(--primary);
+    .topbar-pill:hover:not(:disabled) {
+        border-color: var(--outline);
+        background: var(--composer-pill-hover-bg);
     }
     .chat-stage {
         flex: 1;
@@ -2541,26 +2746,57 @@
         display: flex;
         flex-direction: column;
     }
+    .transcript-stage {
+        flex: 1;
+        min-height: 0;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+    }
     .transcript {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
-        padding: 24px 20px;
+        padding: 24px 20px 48px;
     }
     .scroll-anchor-bar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 14px;
+        z-index: 10;
         display: flex;
         justify-content: center;
-        padding: 0 20px 6px;
+        padding: 0 20px;
+        pointer-events: none;
     }
     .scroll-latest-btn {
-        min-height: 28px;
-        padding: 3px 12px;
+        pointer-events: auto;
+        min-height: 30px;
+        padding: 4px 14px;
         border-radius: 999px;
         font-size: 12px;
-        background: var(--surface);
+        font-weight: 550;
+        background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         border: 1px solid var(--border);
         color: var(--content);
-        box-shadow: var(--glass-pill-shadow);
+        box-shadow: 0 4px 14px rgb(0 0 0 / 0.14);
+        transition: transform var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+    }
+    .scroll-latest-btn:hover {
+        background: var(--surface-elevated);
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+    }
+    .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
     .status-note {
         max-width: 780px;
@@ -2583,39 +2819,114 @@
         margin: 0 auto;
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 20px;
     }
     .message {
+        position: relative;
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        padding: 14px 16px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: var(--panel);
+        gap: 10px;
+        min-width: 0;
     }
     .message.user {
-        background: var(--canvas);
+        align-self: flex-end;
+        max-width: min(84%, 640px);
+        width: fit-content;
+        padding: 11px 16px;
+        border-radius: 18px 18px 6px 18px;
+        border: 1px solid var(--user-bubble-border);
+        background: var(--user-bubble-bg);
+        color: var(--content);
+    }
+    .message.assistant {
+        width: 100%;
+        padding: 4px 2px;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
     }
     .message-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+        min-height: 24px;
     }
     .message-role {
         font-size: 12px;
         font-weight: 600;
         color: var(--muted);
     }
+    .nola-role-mark {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12.5px;
+        font-weight: 600;
+    }
+    .nola-role-glyph {
+        display: inline-grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--content);
+        font-family: var(--font-display);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1;
+    }
     .message-actions {
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 2px;
+    }
+    .user-floating-actions {
+        position: absolute;
+        top: -14px;
+        right: 10px;
+        padding: 2px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 2px 10px rgb(0 0 0 / 0.08);
+        opacity: 0;
+        transition: opacity 130ms ease;
+        z-index: 4;
+    }
+    .assistant-hover-actions {
+        opacity: 0;
+        transition: opacity 130ms ease;
+    }
+    .message.user:hover .user-floating-actions,
+    .message.user:focus-within .user-floating-actions,
+    .message.assistant:hover .assistant-hover-actions,
+    .message.assistant:focus-within .assistant-hover-actions {
+        opacity: 1;
+    }
+    @media (hover: none), (pointer: coarse) {
+        .user-floating-actions {
+            position: static;
+            align-self: flex-end;
+            margin-top: -4px;
+            margin-bottom: -2px;
+            opacity: 1;
+            box-shadow: none;
+            background: transparent;
+            border: 0;
+            padding: 0;
+        }
+        .assistant-hover-actions {
+            opacity: 1;
+        }
     }
     .msg-action {
         padding: 2px 8px;
-        min-height: 26px;
+        min-height: 24px;
         min-width: 0;
         border: 1px solid transparent;
         border-radius: 6px;
@@ -2626,7 +2937,8 @@
     }
     .msg-action:hover {
         color: var(--content);
-        border-color: var(--border);
+        background: var(--composer-pill-hover-bg);
+        border-color: transparent;
     }
     .inline-confirm {
         display: flex;
@@ -2656,14 +2968,15 @@
         margin: 0;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
+        line-height: 1.55;
     }
     .reasoning-box,
     .tool-card,
     .permission-raw-details {
         border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 6px 10px;
-        background: var(--canvas);
+        border-radius: 10px;
+        padding: 6px 11px;
+        background: var(--panel);
         font-size: 13px;
     }
     .reasoning-box summary,
@@ -2674,7 +2987,6 @@
         color: var(--muted);
         display: flex;
         align-items: center;
-        justify-content: space-between;
         gap: 8px;
         min-height: 28px;
         padding-block: 2px;
@@ -2685,28 +2997,34 @@
     .permission-raw-details summary::-webkit-details-marker {
         display: none;
     }
-    .reasoning-box summary::after,
-    .tool-card summary::after,
-    .permission-raw-details summary::after {
-        content: '';
-        width: 12px;
-        height: 12px;
-        flex: none;
-        background: currentColor;
-        opacity: 0.65;
-        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
-        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
-        transition: transform var(--motion-fast) ease;
+    .disclosure-label {
+        flex: 1;
+        min-width: 0;
+        font-weight: 500;
     }
-    .reasoning-box[open] > summary::after,
-    .tool-card[open] > summary::after,
-    .permission-raw-details[open] > summary::after {
+    .disclosure-chevron {
+        width: 14px;
+        height: 14px;
+        flex: none;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.9;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.65;
+        transform-origin: 50% 50%;
+        transition: transform 140ms ease, opacity 140ms ease;
+    }
+    .reasoning-box[open] > summary .disclosure-chevron,
+    .tool-card[open] > summary .disclosure-chevron,
+    .permission-raw-details[open] > summary .disclosure-chevron {
         transform: rotate(180deg);
+        opacity: 0.9;
     }
     .reasoning-box pre,
     .tool-summary,
     .interactive-args {
-        margin: 8px 0 0;
+        margin: 8px 0 2px;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         font-size: 12px;
@@ -2727,9 +3045,23 @@
     }
     .tool-name {
         font-family: var(--font-code, monospace);
+        font-weight: 550;
         color: var(--content);
+        flex: none;
+    }
+    .tool-inline-preview {
+        flex: 1;
         min-width: 0;
-        overflow-wrap: anywhere;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: var(--font-code, monospace);
+        font-size: 11.5px;
+        color: var(--muted);
+        opacity: 0.88;
+    }
+    .tool-card[open] .tool-inline-preview {
+        opacity: 0.6;
     }
     .tool-status {
         display: inline-flex;
@@ -2738,7 +3070,7 @@
         padding: 1px 8px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        background: var(--panel);
+        background: var(--surface);
         color: var(--muted);
         font-size: 11px;
         font-weight: 600;
@@ -2762,13 +3094,20 @@
         background: color-mix(in srgb, var(--danger) 12%, transparent);
     }
     .interactive-card {
-        border: 1px solid var(--primary);
+        border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+        border-left: 3px solid var(--warning);
         border-radius: 12px;
         padding: 14px 16px;
-        background: var(--panel);
+        background: color-mix(in srgb, var(--warning) 6%, var(--surface));
+        box-shadow: 0 4px 18px rgb(0 0 0 / 0.06);
         display: flex;
         flex-direction: column;
         gap: 10px;
+    }
+    .question-card {
+        border-color: color-mix(in srgb, var(--info) 42%, var(--border));
+        border-left-color: var(--info);
+        background: color-mix(in srgb, var(--info) 5%, var(--surface));
     }
     .interactive-head {
         display: flex;
@@ -2781,12 +3120,20 @@
         gap: 8px;
         flex-wrap: wrap;
     }
+    .permission-accent-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--warning);
+        flex: none;
+    }
     .permission-tool-badge {
-        padding: 2px 7px;
+        padding: 2px 8px;
         border-radius: 6px;
-        background: var(--canvas);
-        border: 1px solid var(--border);
+        background: var(--surface);
+        border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
         font-size: 12px;
+        color: var(--content);
     }
     .permission-headline {
         margin: 0;
@@ -2795,9 +3142,9 @@
     }
     .permission-target {
         display: block;
-        padding: 6px 8px;
-        border-radius: 6px;
-        background: var(--canvas);
+        padding: 7px 10px;
+        border-radius: 8px;
+        background: var(--surface);
         border: 1px solid var(--border);
         font-size: 12px;
         overflow-wrap: anywhere;
@@ -2896,16 +3243,37 @@
         max-width: 820px;
         width: 100%;
         margin: 0 auto;
-        padding: 10px 20px max(16px, env(safe-area-inset-bottom));
+        padding: 6px 20px max(16px, env(safe-area-inset-bottom));
         display: flex;
         flex-direction: column;
         gap: 8px;
     }
-    .composer-toolbar {
+    .composer-footer {
         display: flex;
-        flex-wrap: wrap;
         align-items: center;
+        justify-content: space-between;
         gap: 8px;
+        padding-top: 8px;
+        border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    }
+    .composer-toolbar {
+        flex: 1;
+        min-width: 0;
+        height: 32px;
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .composer-toolbar::-webkit-scrollbar {
+        display: none;
+    }
+    .composer-staged-chips {
+        padding-bottom: 4px;
+        border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
     }
     .composer-anchor {
         position: relative;
@@ -2983,6 +3351,9 @@
         color: var(--content);
     }
     .message.expert-styled {
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
         border-left: 3px solid var(--expert-accent, var(--info));
         background: var(--expert-light, var(--panel));
     }
@@ -3094,11 +3465,11 @@
     }
     .composer-box {
         display: flex;
-        align-items: flex-end;
-        gap: 10px;
-        padding: 10px 12px;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 14px 10px;
         border: 1px solid var(--composer-border);
-        border-radius: 12px;
+        border-radius: 16px;
         background: var(--composer-bg);
         box-shadow: var(--composer-shadow);
         transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-fast) ease;
@@ -3113,11 +3484,11 @@
         box-shadow: var(--composer-focus-shadow);
     }
     #chat-composer {
-        flex: 1;
+        width: 100%;
         min-width: 0;
         min-height: 44px;
         max-height: 220px;
-        padding: 0;
+        padding: 2px 2px 0;
         resize: none;
         border: none;
         background: transparent;
@@ -3133,21 +3504,95 @@
         box-shadow: none;
     }
     .composer-actions {
+        flex: none;
         display: flex;
         align-items: center;
         gap: 6px;
     }
+    .composer-send-btn,
+    .composer-stop-btn {
+        height: 32px;
+        min-height: 32px;
+        padding: 0 14px;
+        border-radius: 10px;
+        font-size: 12.5px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .composer-send-btn:disabled {
+        background: var(--composer-pill-bg);
+        border-color: transparent;
+        color: var(--muted);
+        opacity: 0.72;
+        box-shadow: none;
+    }
+    .composer-stop-btn {
+        border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
+        color: var(--danger);
+    }
+    .composer-stop-btn:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--danger) 20%, transparent);
+        border-color: var(--danger);
+    }
     .notice {
         margin: 0;
-        padding: 8px 12px;
-        border-radius: 8px;
+        padding: 9px 12px;
+        border-radius: 10px;
         border: 1px solid var(--border);
         background: var(--panel);
         font-size: 13px;
     }
     .notice.error {
-        border-color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+        background: color-mix(in srgb, var(--danger) 8%, var(--surface));
         color: var(--danger);
+    }
+    .error-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+    }
+    .error-banner-icon {
+        width: 16px;
+        height: 16px;
+        margin-top: 2px;
+        flex: none;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+    .error-banner-text {
+        flex: 1;
+        min-width: 0;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+    }
+    .notice-dismiss {
+        flex: none;
+        display: inline-grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+        min-height: 24px;
+        margin: -2px -4px -2px 0;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        opacity: 0.72;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+    }
+    .notice-dismiss:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--danger) 14%, transparent);
+        border-color: transparent;
     }
     .muted {
         color: var(--muted);
@@ -3205,22 +3650,14 @@
             justify-content: center;
         }
         .composer-wrap {
-            padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+            padding: 6px 12px max(12px, env(safe-area-inset-bottom));
+        }
+        .composer-box {
+            padding: 10px 12px 8px;
+            border-radius: 14px;
         }
         .composer-toolbar {
-            flex-wrap: nowrap;
-            overflow-x: auto;
-            scrollbar-width: none;
-            -webkit-overflow-scrolling: touch;
-            padding-bottom: 2px;
-        }
-        .composer-toolbar::-webkit-scrollbar {
-            display: none;
-        }
-        .composer-toolbar > .toolbar-btn,
-        .composer-toolbar > .toolbar-select {
-            flex: 0 0 auto;
-            white-space: nowrap;
+            padding-bottom: 0;
         }
         .chip-remove {
             min-width: 36px;

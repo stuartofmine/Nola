@@ -110,10 +110,10 @@ object NolaColors {
     val borderStrong: Color @Composable get() = MaterialTheme.colorScheme.outline
 
     val isDark: Boolean @Composable get() = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val hairlineBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.09f) else MaterialTheme.colorScheme.outlineVariant
-    val composerBorderUnfocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.10f) else MaterialTheme.colorScheme.outlineVariant
-    val composerBorderFocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.22f) else MaterialTheme.colorScheme.outline
-    val composerDisabledFill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    val hairlineBorder: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.11f) else MaterialTheme.colorScheme.outlineVariant
+    val composerBorderUnfocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.16f) else MaterialTheme.colorScheme.outlineVariant
+    val composerBorderFocused: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.34f) else MaterialTheme.colorScheme.outline
+    val composerDisabledFill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
     val segmentTrack: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.045f) else MaterialTheme.colorScheme.surfaceContainer
     val segmentSelected: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.13f) else MaterialTheme.colorScheme.surfaceContainerHigh
     val navSelectionPill: Color @Composable get() = if (isDark) Color.White.copy(alpha = 0.13f) else MaterialTheme.colorScheme.surfaceContainer
@@ -288,7 +288,7 @@ fun NolaTopAppBar(
         },
         navigationIcon = {
             if (onBack != null) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back))
                 }
             }
@@ -356,7 +356,7 @@ fun NolaPage(
                 .verticalScroll(scrollState)
                 .displayCutoutPadding()
                 .padding(horizontal = nolaPageGutter())
-                .padding(top = topPadding, bottom = 48.dp),
+                .padding(top = topPadding, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(NolaSpacing.xl),
             content = content
         )

@@ -46,6 +46,8 @@ impl ToolHandler for GitTool {
                                 "log",
                                 "show",
                                 "blame",
+                                "add",
+                                "stage",
                                 "commit",
                                 "worktree_list",
                                 "worktree_create",
@@ -56,7 +58,13 @@ impl ToolHandler for GitTool {
                         "message": { "type": "string", "description": "Commit message (for action=commit)" },
                         "author": { "type": "string", "description": "Optional commit author 'Name <email>' (for action=commit)" },
                         "target": { "type": "string", "description": "Commit ref (show), file path (blame), or worktree path (worktree_create/remove/integrate)" },
-                        "path": { "type": "string", "description": "Optional file/directory filter for diff or log" },
+                        "path": { "type": "string", "description": "Optional file/directory filter for diff, log, or add/stage" },
+                        "paths": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "File paths to stage for action=add/stage"
+                        },
+                        "all": { "type": "boolean", "description": "Stage all modified/untracked files (-A) for action=add/stage" },
                         "staged": { "type": "boolean", "description": "Diff staged changes (--cached) for action=diff" },
                         "stat_only": { "type": "boolean", "description": "Return compact --stat summary for action=diff" },
                         "branch": { "type": "string", "description": "Optional branch name for worktree_create or worktree_integrate" },
@@ -225,6 +233,49 @@ impl ToolHandler for GitTool {
                 }
             }
             "worktree_integrate" => worktree_integrate(ctx, &args),
+            "add" | "stage" => {
+                let stage_all = args.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+                let mut paths: Vec<String> = Vec::new();
+                if let Some(arr) = args.get("paths").and_then(|v| v.as_array()) {
+                    for p in arr.iter().filter_map(|v| v.as_str()) {
+                        let trimmed = p.trim();
+                        if !trimmed.is_empty() {
+                            if let Err(e) = reject_flag_injection(trimmed, "paths") {
+                                return e;
+                            }
+                            paths.push(trimmed.to_string());
+                        }
+                    }
+                }
+                if let Some(p) = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    if let Err(e) = reject_flag_injection(p, "path") {
+                        return e;
+                    }
+                    paths.push(p.to_string());
+                }
+                if !stage_all && paths.is_empty() {
+                    return ToolExecutionResult::err_structured(
+                        "missing_param",
+                        "git add/stage requires 'paths', 'path', or 'all: true'",
+                        None,
+                    );
+                }
+                let mut cmd_args: Vec<&str> = vec!["add"];
+                if stage_all && paths.is_empty() {
+                    cmd_args.push("-A");
+                } else {
+                    cmd_args.push("--");
+                    for p in &paths {
+                        cmd_args.push(p.as_str());
+                    }
+                }
+                run_git(ctx, &cmd_args, "git add")
+            }
             "commit" => {
                 let Some(msg) = args
                     .get("message")

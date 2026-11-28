@@ -105,25 +105,36 @@ struct MacConversationRow: View {
     @State private var participantNames: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
-                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
-                .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
-                .lineLimit(1)
-                .help(MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id))
+        let displayTitle = MacConversationTitlePolicy.displayTitle(conversation.title, conversationID: conversation.id)
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if !conversation.preview.isEmpty && conversation.preview != conversation.title {
-                    Text(conversation.preview)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+                if conversation.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(isSelected ? MacDesignColor.brand : .secondary)
+                        .accessibilityHidden(true)
                 }
+                Text(displayTitle)
+                    .font(.system(size: 13.5, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? MacDesignColor.brand : Color("NolaTextPrimary"))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(displayTitle)
+                Spacer(minLength: 6)
                 Text(conversation.updatedAt, format: Calendar.current.isDateInToday(conversation.updatedAt)
                      ? .dateTime.hour().minute() : .dateTime.month().day())
-                    .font(.caption.monospacedDigit())
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Color("NolaTextSecondary"))
                     .fixedSize()
+                    .layoutPriority(1)
             }
-            .font(.system(size: 12))
-            .foregroundStyle(Color("NolaTextSecondary"))
+            if !conversation.preview.isEmpty && conversation.preview != conversation.title {
+                Text(conversation.preview)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color("NolaTextSecondary"))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             if !participantNames.isEmpty {
                 Label(participantNames.joined(separator: " · "), systemImage: "person.2")
                     .font(.caption)
@@ -132,8 +143,8 @@ struct MacConversationRow: View {
                     .help(participantNames.joined(separator: " · "))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
         .frame(minHeight: 44)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

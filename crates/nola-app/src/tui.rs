@@ -8,7 +8,7 @@
 //! - File/image attachments (`/attach`, `@<path>`, `/paste`), Tab completion,
 //!   command history, EN/ZH-Hans i18n, and full 35+ slash command parity.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
     KeyModifiers, MouseEventKind,
 };
-use crossterm::style::{Attribute, Color, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{Attribute, SetAttribute};
 use crossterm::terminal::{
     self, disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen,
     LeaveAlternateScreen,
@@ -62,6 +62,59 @@ use crate::config::{
 const MAX_ATTACHMENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DOC_ATTACHMENT_CHARS: usize = 32_000;
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+const SLASH_COMMAND_DESCS: &[(&str, &str, &str)] = &[
+    ("/help", "Show all slash commands", "查看所有斜杠命令"),
+    ("/model", "Open interactive model picker or live-switch model", "打开交互面板选择或切换模型"),
+    ("/thinking", "Open reasoning effort picker (auto/none/low/medium/high)", "选择推理思考深度"),
+    ("/allow", "Switch permission mode (cautious / allow_all)", "切换权限模式（谨慎 / 全部允许）"),
+    ("/new", "Start a fresh conversation", "开启新会话"),
+    ("/resume", "Resume a previous session", "恢复历史会话"),
+    ("/sessions", "List recent sessions", "列出最近会话"),
+    ("/compact", "Compact model context while preserving full history", "压缩模型上下文，同时保留完整历史"),
+    ("/config", "Inspect active configuration and model sources", "查看当前配置与模型来源"),
+    ("/continue", "Continue the current session", "继续当前会话"),
+    ("/verbose", "Toggle full reasoning & detailed tool arguments", "开关完整思考过程与工具详情"),
+    ("/plan", "Toggle, inspect, or approve Plan Mode", "开关、查看或批准计划模式"),
+    ("/diff", "Show git status and diff summary", "查看 Git 变更状态与差异"),
+    ("/checkpoint", "Create a persistent workspace checkpoint", "创建持久化工作区检查点"),
+    ("/checkpoints", "List saved workspace checkpoints", "列出工作区检查点"),
+    ("/undo", "Undo last workspace checkpoint changes", "撤销上次检查点修改"),
+    ("/redo", "Redo undone workspace checkpoint changes", "重做已撤销的检查点修改"),
+    ("/worktree", "Manage and integrate Git worktrees", "管理与集成 Git worktree"),
+    ("/tasks", "Inspect active subagent tasks", "查看运行中的子智能体任务"),
+    ("/jobs", "Inspect background shell jobs", "查看后台任务"),
+    ("/stop", "Stop active turn or background job", "停止当前任务或后台作业"),
+    ("/guide", "Inject live steering guidance mid-run", "运行中实时注入引导指令"),
+    ("/goal", "Manage autonomous goals", "管理自主目标"),
+    ("/goals", "List autonomous goals", "列出自主目标"),
+    ("/sources", "Manage and search RAG data sources", "管理与检索 RAG 数据源"),
+    ("/mcp", "Inspect MCP servers, tools, and OAuth", "查看 MCP 服务、工具与 OAuth"),
+    ("/memory", "List, search, or save persistent memory", "查看、检索或保存持久化记忆"),
+    ("/agent", "Select or clear active expert persona", "切换或清除专家角色"),
+    ("/room", "Send a message in an AgentRoom", "在多智能体协作房间发消息"),
+    ("/rooms", "List AgentRooms", "列出协作房间"),
+    ("/skills", "List available skills", "查看可用技能列表"),
+    ("/tools", "Inspect registered tools", "查看已注册工具"),
+    ("/questions", "Inspect pending user questions", "查看待回答提问"),
+    ("/attach", "Attach local file or image", "附加本地文件或图片"),
+    ("/paste", "Attach image or text from clipboard", "粘贴剪贴板图片或文本"),
+    ("/edit", "Compose prompt in external $EDITOR", "调用外部编辑器输入提示词"),
+    ("/export", "Export conversation to Markdown", "导出当前会话为 Markdown"),
+    ("/history", "Inspect raw session event history", "查看会话底层事件历史"),
+    ("/status", "Show session, model, permission, and usage overview", "查看会话、模型、权限与用量总览"),
+    ("/clear", "Clear current screen transcript", "清空当前屏幕显示"),
+    ("/exit", "Exit interactive CLI", "退出交互式终端"),
+    ("/quit", "Exit interactive CLI", "退出交互式终端"),
+];
+
+fn slash_command_description(cmd: &str, locale: TuiLocale) -> &'static str {
+    SLASH_COMMAND_DESCS
+        .iter()
+        .find(|(c, _, _)| *c == cmd)
+        .map(|(_, en, zh)| locale.t(en, zh))
+        .unwrap_or("")
+}
 
 const SLASH_COMMANDS: &[&str] = &[
     "/help",
@@ -490,7 +543,7 @@ fn build_completion(
 // Composer State (cursor movement, UTF-8 editing, history, Tab completion)
 // ============================================================================
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct ComposerState {
     buffer: String,
     cursor: usize,
@@ -568,6 +621,32 @@ impl ComposerState {
         self.history_idx = None;
     }
 
+    fn delete_word_backward(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let before = &self.buffer[..self.cursor];
+        let trimmed_end = before.trim_end_matches(char::is_whitespace).len();
+        let new_cursor = if trimmed_end == 0 {
+            0
+        } else {
+            before[..trimmed_end]
+                .rfind(char::is_whitespace)
+                .map(|idx| idx + before[idx..].chars().next().map_or(1, char::len_utf8))
+                .unwrap_or(0)
+        };
+        self.buffer.drain(new_cursor..self.cursor);
+        self.cursor = new_cursor;
+        self.history_idx = None;
+    }
+
+    fn kill_to_end(&mut self) {
+        if self.cursor < self.buffer.len() {
+            self.buffer.truncate(self.cursor);
+            self.history_idx = None;
+        }
+    }
+
     fn submit(&mut self) -> String {
         let text = self.buffer.clone();
         let trimmed = text.trim();
@@ -642,8 +721,27 @@ fn char_display_width(c: char) -> usize {
         return 0;
     }
     let cp = c as u32;
-    // Wide CJK, fullwidth, and emoji ranges
+    // Zero-width combining marks, variation selectors, ZWJ/ZWNJ, BOM
+    if (0x0300..=0x036F).contains(&cp)
+        || (0x1AB0..=0x1AFF).contains(&cp)
+        || (0x1DC0..=0x1DFF).contains(&cp)
+        || (0x200B..=0x200F).contains(&cp)
+        || cp == 0x2060
+        || (0x20D0..=0x20FF).contains(&cp)
+        || (0xFE00..=0xFE0F).contains(&cp)
+        || (0xFE20..=0xFE2F).contains(&cp)
+        || cp == 0xFEFF
+        || (0xE0100..=0xE01EF).contains(&cp)
+    {
+        return 0;
+    }
+    // Wide CJK, fullwidth, and common wide emoji ranges
     if (0x1100..=0x115F).contains(&cp)
+        || (0x231A..=0x231B).contains(&cp)
+        || (0x23E9..=0x23F3).contains(&cp)
+        || (0x23F8..=0x23FA).contains(&cp)
+        || (0x2600..=0x26FF).contains(&cp)
+        || (0x2700..=0x27BF).contains(&cp)
         || (0x2E80..=0xA4CF).contains(&cp)
         || (0xAC00..=0xD7A3).contains(&cp)
         || (0xF900..=0xFAFF).contains(&cp)
@@ -677,19 +775,129 @@ fn str_display_width(s: &str) -> usize {
     w
 }
 
+/// ANSI-aware truncation to exact terminal display columns.
 fn truncate_to_width(s: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
     }
     let mut out = String::new();
     let mut w = 0usize;
-    for c in s.chars() {
+    let mut has_sgr = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            let mut seq = String::from("\x1b[");
+            chars.next();
+            for esc in chars.by_ref() {
+                seq.push(esc);
+                if ('@'..='~').contains(&esc) {
+                    break;
+                }
+            }
+            if seq == "\x1b[0m" {
+                has_sgr = false;
+            } else if seq.ends_with('m') {
+                has_sgr = true;
+            }
+            out.push_str(&seq);
+            continue;
+        }
         let cw = char_display_width(c);
         if w + cw > max_width {
             break;
         }
         out.push(c);
         w += cw;
+    }
+    if has_sgr && !out.ends_with("\x1b[0m") {
+        out.push_str("\x1b[0m");
+    }
+    out
+}
+
+/// Render a full 4-sided rounded box (`╭─...─╮`, `│ ... │`, `╰─...─╯`) with exact column alignment.
+fn render_rounded_box(
+    border_sgr: &str,
+    title: &str,
+    body_lines: &[String],
+    footer_hint: Option<&str>,
+    box_width: usize,
+) -> Vec<String> {
+    let total_w = box_width.max(20);
+    let inner_w = total_w.saturating_sub(4); // "│ " + content + " │"
+    let mut out = Vec::with_capacity(body_lines.len() + 2);
+
+    // Top border: ╭─ <title> ──────╮
+    let top = if title.is_empty() {
+        format!("{border_sgr}╭{}╮\x1b[0m", "─".repeat(total_w - 2))
+    } else {
+        let max_title_w = total_w.saturating_sub(6);
+        let clipped_title = truncate_to_width(title, max_title_w);
+        let tw = str_display_width(&clipped_title);
+        let fill = total_w.saturating_sub(5 + tw); // "╭─ " (3) + title + " " (1) + "╮" (1)
+        format!(
+            "{border_sgr}╭─ \x1b[1m{clipped_title}\x1b[0m{border_sgr} {}╮\x1b[0m",
+            "─".repeat(fill)
+        )
+    };
+    out.push(top);
+
+    // Body rows: │ <content padded to inner_w> │
+    for row in body_lines {
+        let clipped = truncate_to_width(row, inner_w);
+        let vw = str_display_width(&clipped);
+        let pad = inner_w.saturating_sub(vw);
+        out.push(format!(
+            "{border_sgr}│\x1b[0m {clipped}{} {border_sgr}│\x1b[0m",
+            " ".repeat(pad)
+        ));
+    }
+
+    // Bottom border: ╰─ <footer_hint> ──────╯
+    let bottom = match footer_hint.filter(|h| !h.is_empty()) {
+        Some(hint) => {
+            let max_hint_w = total_w.saturating_sub(6);
+            let clipped_hint = truncate_to_width(hint, max_hint_w);
+            let hw = str_display_width(&clipped_hint);
+            let fill = total_w.saturating_sub(5 + hw);
+            format!(
+                "{border_sgr}╰─ \x1b[2m{clipped_hint}\x1b[0m{border_sgr} {}╯\x1b[0m",
+                "─".repeat(fill)
+            )
+        }
+        None => format!("{border_sgr}╰{}╯\x1b[0m", "─".repeat(total_w - 2)),
+    };
+    out.push(bottom);
+    out
+}
+
+/// Render a user prompt block with a subtle full-width background tint and left accent bar (no "You" label).
+fn render_user_tinted_lines(body: &str, width: usize) -> Vec<String> {
+    let total_w = width.max(20);
+    let text_w = total_w.saturating_sub(4).max(12); // "▎ " (2) + text + " " (1) + right margin (1)
+    let mut wrapped: Vec<String> = Vec::new();
+    for raw_line in body.lines() {
+        if raw_line.is_empty() {
+            wrapped.push(String::new());
+        } else {
+            wrapped.extend(wrap_ansi_line(raw_line, text_w));
+        }
+    }
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+    let bg = "\x1b[48;5;236m";
+    let accent = "\x1b[38;5;75m";
+    let fg = "\x1b[38;5;255m";
+    let mut out = Vec::with_capacity(wrapped.len());
+    for line in wrapped {
+        let clipped = truncate_to_width(&line, text_w);
+        let vw = str_display_width(&clipped);
+        let pad = total_w.saturating_sub(2 + vw);
+        out.push(format!(
+            "{bg}{accent}▎ {fg}{clipped}{}\x1b[0m",
+            " ".repeat(pad)
+        ));
     }
     out
 }
@@ -746,26 +954,106 @@ fn wrap_ansi_line(line: &str, max_width: usize) -> Vec<String> {
     result
 }
 
+/// ANSI-aware truncation to exact terminal display columns, with trailing `…` if clipped.
+fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
+    if str_display_width(s) <= max_width {
+        return s.to_string();
+    }
+    if max_width <= 1 {
+        return truncate_to_width(s, max_width);
+    }
+    let clipped = truncate_to_width(s, max_width - 1);
+    format!("{clipped}…")
+}
+
+/// Abbreviate a filesystem path by collapsing `$HOME` to `~` and middle-truncating with `…`.
+fn abbreviate_path_with_ellipsis(path: &Path, max_width: usize) -> String {
+    let raw = path.display().to_string();
+    let display = if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() && raw.starts_with(&home) {
+            let rest = &raw[home.len()..];
+            if rest.is_empty() || rest.starts_with('/') {
+                format!("~{rest}")
+            } else {
+                raw
+            }
+        } else {
+            raw
+        }
+    } else {
+        raw
+    };
+    if str_display_width(&display) <= max_width || max_width < 8 {
+        return truncate_with_ellipsis(&display, max_width);
+    }
+    let keep_tail = (max_width / 2).max(4);
+    let keep_head = max_width.saturating_sub(keep_tail + 1).max(3);
+    let head = truncate_to_width(&display, keep_head);
+    // Collect trailing characters fitting within `keep_tail` columns
+    let mut tail_chars = Vec::new();
+    let mut tw = 0usize;
+    for ch in display.chars().rev() {
+        let cw = char_display_width(ch);
+        if tw + cw > keep_tail {
+            break;
+        }
+        tail_chars.push(ch);
+        tw += cw;
+    }
+    tail_chars.reverse();
+    let tail: String = tail_chars.into_iter().collect();
+    format!("{head}…{tail}")
+}
+
 fn render_inline_markdown_ansi(line: &str) -> String {
-    let mut out = String::with_capacity(line.len() + 16);
+    let mut out = String::with_capacity(line.len() + 24);
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0usize;
     let mut in_bold = false;
+    let mut in_italic = false;
     let mut in_code = false;
 
     while i < chars.len() {
         if chars[i] == '`' {
             in_code = !in_code;
             if in_code {
-                out.push_str("\x1b[33m");
+                out.push_str("\x1b[48;5;237;38;5;222m ");
             } else {
-                out.push_str("\x1b[0m");
+                out.push_str(" \x1b[0m");
                 if in_bold {
                     out.push_str("\x1b[1m");
+                }
+                if in_italic {
+                    out.push_str("\x1b[3m");
                 }
             }
             i += 1;
             continue;
+        }
+        if !in_code && chars[i] == '[' {
+            // Markdown link: [label](url)
+            if let Some(close_bracket) = chars[i + 1..].iter().position(|&c| c == ']') {
+                let cb_idx = i + 1 + close_bracket;
+                if cb_idx + 1 < chars.len() && chars[cb_idx + 1] == '(' {
+                    if let Some(close_paren) = chars[cb_idx + 2..].iter().position(|&c| c == ')') {
+                        let cp_idx = cb_idx + 2 + close_paren;
+                        let label: String = chars[i + 1..cb_idx].iter().collect();
+                        let url: String = chars[cb_idx + 2..cp_idx].iter().collect();
+                        if !label.is_empty() && !url.is_empty() && !url.contains(char::is_whitespace)
+                        {
+                            out.push_str(&format!("\x1b[4;36m{label}\x1b[0m \x1b[2m({url})\x1b[0m"));
+                            if in_bold {
+                                out.push_str("\x1b[1m");
+                            }
+                            if in_italic {
+                                out.push_str("\x1b[3m");
+                            }
+                            i = cp_idx + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
         }
         if !in_code && i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
             in_bold = !in_bold;
@@ -777,46 +1065,218 @@ fn render_inline_markdown_ansi(line: &str) -> String {
             i += 2;
             continue;
         }
+        if !in_code && chars[i] == '*' {
+            let prev_is_space = i == 0 || chars[i - 1].is_whitespace();
+            let next_is_space = i + 1 >= chars.len() || chars[i + 1].is_whitespace();
+            if (!in_italic && !next_is_space) || (in_italic && !prev_is_space) {
+                in_italic = !in_italic;
+                if in_italic {
+                    out.push_str("\x1b[3m");
+                } else {
+                    out.push_str("\x1b[23m");
+                }
+                i += 1;
+                continue;
+            }
+        }
         out.push(chars[i]);
         i += 1;
     }
-    if in_bold || in_code {
+    if in_bold || in_italic || in_code {
+        if in_code {
+            out.push(' ');
+        }
         out.push_str("\x1b[0m");
     }
     out
+}
+
+fn is_markdown_hr(trimmed: &str) -> bool {
+    let compact: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    compact.len() >= 3
+        && (compact.chars().all(|c| c == '-')
+            || compact.chars().all(|c| c == '*')
+            || compact.chars().all(|c| c == '_'))
+}
+
+fn split_table_cells(line: &str) -> Option<Vec<String>> {
+    let t = line.trim();
+    if !t.contains('|') {
+        return None;
+    }
+    let stripped = t.strip_prefix('|').unwrap_or(t);
+    let stripped = stripped.strip_suffix('|').unwrap_or(stripped);
+    let cells: Vec<String> = stripped.split('|').map(|c| c.trim().to_string()).collect();
+    if cells.len() >= 2 {
+        Some(cells)
+    } else {
+        None
+    }
+}
+
+fn is_table_separator_row(line: &str) -> bool {
+    let Some(cells) = split_table_cells(line) else {
+        return false;
+    };
+    cells.iter().all(|cell| {
+        let c = cell.trim();
+        !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')) && c.contains('-')
+    })
+}
+
+fn render_markdown_table_ansi(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
+    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if col_count == 0 {
+        return Vec::new();
+    }
+    let border = "\x1b[38;5;240m";
+    let overhead = 3 * col_count + 1;
+    let avail = max_width.saturating_sub(overhead).max(col_count * 3);
+    let mut col_widths = vec![3usize; col_count];
+    for row in rows {
+        for (idx, cell) in row.iter().enumerate() {
+            let styled = render_inline_markdown_ansi(cell);
+            col_widths[idx] = col_widths[idx].max(str_display_width(&styled));
+        }
+    }
+    let sum_w: usize = col_widths.iter().sum();
+    if sum_w > avail {
+        let mut excess = sum_w - avail;
+        while excess > 0 {
+            if let Some((max_i, &max_val)) = col_widths.iter().enumerate().max_by_key(|&(_, w)| w) {
+                if max_val <= 4 {
+                    break;
+                }
+                col_widths[max_i] -= 1;
+                excess -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    let make_rule = |left: &str, mid: &str, right: &str| -> String {
+        let segs: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w + 2)).collect();
+        format!("{border}{left}{}{right}\x1b[0m", segs.join(mid))
+    };
+
+    let mut out = Vec::with_capacity(rows.len() + 3);
+    out.push(make_rule("┌", "┬", "┐"));
+    for (r_idx, row) in rows.iter().enumerate() {
+        let mut line = format!("{border}│\x1b[0m");
+        for (c_idx, &cw) in col_widths.iter().enumerate() {
+            let raw_cell = row.get(c_idx).map(|s| s.as_str()).unwrap_or("");
+            let styled = render_inline_markdown_ansi(raw_cell);
+            let clipped = truncate_with_ellipsis(&styled, cw);
+            let vw = str_display_width(&clipped);
+            let pad = cw.saturating_sub(vw);
+            if r_idx == 0 {
+                line.push_str(&format!(" \x1b[1;38;5;255m{clipped}\x1b[0m{} {border}│\x1b[0m", " ".repeat(pad)));
+            } else {
+                line.push_str(&format!(" {clipped}{} {border}│\x1b[0m", " ".repeat(pad)));
+            }
+        }
+        out.push(line);
+        if r_idx == 0 && rows.len() > 1 {
+            out.push(make_rule("├", "┼", "┤"));
+        }
+    }
+    out.push(make_rule("└", "┴", "┘"));
+    out
+}
+
+fn parse_ordered_list_prefix(trimmed: &str) -> Option<(&str, &str)> {
+    let dot_idx = trimmed.find(". ")?;
+    if dot_idx == 0 || dot_idx > 4 {
+        return None;
+    }
+    let num = &trimmed[..dot_idx];
+    if num.chars().all(|c| c.is_ascii_digit()) {
+        Some((num, &trimmed[dot_idx + 2..]))
+    } else {
+        None
+    }
 }
 
 fn render_markdown_ansi(markdown: &str, width: usize) -> Vec<String> {
     let safe_w = width.max(20);
     let mut lines = Vec::new();
     let mut in_code_block = false;
+    let mut code_lang = String::new();
+    let mut code_lines: Vec<String> = Vec::new();
+    let raw_lines: Vec<&str> = markdown.lines().collect();
+    let mut idx = 0usize;
 
-    for raw_line in markdown.lines() {
+    while idx < raw_lines.len() {
+        let raw_line = raw_lines[idx];
         let trimmed = raw_line.trim_start();
         if let Some(fence_rest) = trimmed.strip_prefix("```") {
             if !in_code_block {
                 in_code_block = true;
                 let lang = fence_rest.trim();
-                let header = if lang.is_empty() {
-                    "┌─ code ─────────────────".to_string()
+                code_lang = if lang.is_empty() {
+                    "code".to_string()
                 } else {
-                    format!("┌─ {lang} ─────────────────")
+                    lang.to_string()
                 };
-                lines.push(format!("\x1b[36m{}\x1b[0m", truncate_to_width(&header, safe_w)));
+                code_lines.clear();
             } else {
                 in_code_block = false;
-                lines.push("\x1b[36m└────────────────────────\x1b[0m".to_string());
+                let inner_w = safe_w.saturating_sub(4).max(16);
+                let mut wrapped_code = Vec::new();
+                for cl in &code_lines {
+                    for wline in wrap_ansi_line(&format!("\x1b[38;5;252m{cl}\x1b[0m"), inner_w) {
+                        wrapped_code.push(wline);
+                    }
+                }
+                if wrapped_code.is_empty() {
+                    wrapped_code.push(String::new());
+                }
+                let header = if code_lines.is_empty() {
+                    code_lang.clone()
+                } else {
+                    format!("{code_lang} · {} lines", code_lines.len())
+                };
+                lines.extend(render_rounded_box(
+                    "\x1b[38;5;240m",
+                    &header,
+                    &wrapped_code,
+                    None,
+                    safe_w,
+                ));
+                code_lines.clear();
             }
+            idx += 1;
             continue;
         }
 
         if in_code_block {
-            let styled = format!("\x1b[36m│ \x1b[37m{raw_line}\x1b[0m");
-            lines.extend(wrap_ansi_line(&styled, safe_w));
+            code_lines.push(raw_line.to_string());
+            idx += 1;
             continue;
         }
 
-        if let Some(h) = trimmed.strip_prefix("### ") {
+        // GFM Table block: header row followed by |---|---| separator
+        if idx + 1 < raw_lines.len() && is_table_separator_row(raw_lines[idx + 1]) {
+            if let Some(header_cells) = split_table_cells(raw_line) {
+                let mut table_rows = vec![header_cells];
+                idx += 2;
+                while idx < raw_lines.len() {
+                    if let Some(row_cells) = split_table_cells(raw_lines[idx]) {
+                        table_rows.push(row_cells);
+                        idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                lines.extend(render_markdown_table_ansi(&table_rows, safe_w));
+                continue;
+            }
+        }
+
+        if is_markdown_hr(trimmed) {
+            lines.push(format!("\x1b[38;5;238m{}\x1b[0m", "─".repeat(safe_w)));
+        } else if let Some(h) = trimmed.strip_prefix("### ") {
             let styled = format!("\x1b[1;36m### {}\x1b[0m", render_inline_markdown_ansi(h));
             lines.extend(wrap_ansi_line(&styled, safe_w));
         } else if let Some(h) = trimmed.strip_prefix("## ") {
@@ -826,7 +1286,15 @@ fn render_markdown_ansi(markdown: &str, width: usize) -> Vec<String> {
             let styled = format!("\x1b[1;35m# {}\x1b[0m", render_inline_markdown_ansi(h));
             lines.extend(wrap_ansi_line(&styled, safe_w));
         } else if let Some(q) = trimmed.strip_prefix("> ") {
-            let styled = format!("\x1b[2m│ {}\x1b[0m", render_inline_markdown_ansi(q));
+            let styled = format!("\x1b[38;5;242m▎\x1b[0m \x1b[2m{}\x1b[0m", render_inline_markdown_ansi(q));
+            lines.extend(wrap_ansi_line(&styled, safe_w));
+        } else if let Some((num, item)) = parse_ordered_list_prefix(trimmed) {
+            let indent_len = raw_line.len().saturating_sub(trimmed.len());
+            let indent = &raw_line[..indent_len];
+            let styled = format!(
+                "{indent}\x1b[36m{num}.\x1b[0m {}",
+                render_inline_markdown_ansi(item)
+            );
             lines.extend(wrap_ansi_line(&styled, safe_w));
         } else if let Some(item) = trimmed
             .strip_prefix("- ")
@@ -843,10 +1311,27 @@ fn render_markdown_ansi(markdown: &str, width: usize) -> Vec<String> {
             let styled = render_inline_markdown_ansi(raw_line);
             lines.extend(wrap_ansi_line(&styled, safe_w));
         }
+        idx += 1;
     }
 
     if in_code_block {
-        lines.push("\x1b[36m└────────────────────────\x1b[0m".to_string());
+        let inner_w = safe_w.saturating_sub(4).max(16);
+        let mut wrapped_code = Vec::new();
+        for cl in &code_lines {
+            for wline in wrap_ansi_line(&format!("\x1b[38;5;252m{cl}\x1b[0m"), inner_w) {
+                wrapped_code.push(wline);
+            }
+        }
+        if wrapped_code.is_empty() {
+            wrapped_code.push(String::new());
+        }
+        lines.extend(render_rounded_box(
+            "\x1b[38;5;240m",
+            &code_lang,
+            &wrapped_code,
+            None,
+            safe_w,
+        ));
     }
     if lines.is_empty() {
         lines.push(String::new());
@@ -1170,6 +1655,116 @@ enum WorkerMsg {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerKind {
+    Model,
+    Thinking,
+    Permission,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PickerItem {
+    value: String,
+    label: String,
+    detail: String,
+    is_current: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PickerState {
+    kind: PickerKind,
+    title: String,
+    items: Vec<PickerItem>,
+    selected: usize,
+    scroll: usize,
+    filter: ComposerState,
+}
+
+impl PickerState {
+    fn new(kind: PickerKind, title: String, items: Vec<PickerItem>) -> Self {
+        let initial_selected = items.iter().position(|it| it.is_current).unwrap_or(0);
+        Self {
+            kind,
+            title,
+            items,
+            selected: initial_selected,
+            scroll: 0,
+            filter: ComposerState::default(),
+        }
+    }
+
+    fn filtered_indices(&self) -> Vec<usize> {
+        let q = self.filter.buffer.trim().to_ascii_lowercase();
+        if q.is_empty() {
+            return (0..self.items.len()).collect();
+        }
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                item.label.to_ascii_lowercase().contains(&q)
+                    || item.value.to_ascii_lowercase().contains(&q)
+                    || item.detail.to_ascii_lowercase().contains(&q)
+            })
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    fn clamp_selection(&mut self, max_visible: usize) {
+        let count = self.filtered_indices().len();
+        if count == 0 {
+            self.selected = 0;
+            self.scroll = 0;
+            return;
+        }
+        if self.selected >= count {
+            self.selected = count - 1;
+        }
+        let window = max_visible.max(1);
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        } else if self.selected >= self.scroll + window {
+            self.scroll = self.selected + 1 - window;
+        }
+        let max_scroll = count.saturating_sub(window);
+        if self.scroll > max_scroll {
+            self.scroll = max_scroll;
+        }
+    }
+
+    fn move_up(&mut self, step: usize) {
+        let count = self.filtered_indices().len();
+        if count == 0 {
+            return;
+        }
+        if step == 1 && self.selected == 0 {
+            self.selected = count - 1;
+        } else {
+            self.selected = self.selected.saturating_sub(step);
+        }
+        self.clamp_selection(10);
+    }
+
+    fn move_down(&mut self, step: usize) {
+        let count = self.filtered_indices().len();
+        if count == 0 {
+            return;
+        }
+        if step == 1 && self.selected + 1 >= count {
+            self.selected = 0;
+        } else {
+            self.selected = (self.selected + step).min(count - 1);
+        }
+        self.clamp_selection(10);
+    }
+
+    fn selected_item(&self) -> Option<&PickerItem> {
+        let filtered = self.filtered_indices();
+        let idx = *filtered.get(self.selected)?;
+        self.items.get(idx)
+    }
+}
+
 enum ActiveModal {
     Approval {
         tool_name: String,
@@ -1185,6 +1780,7 @@ enum ActiveModal {
         input: ComposerState,
         reply: mpsc::Sender<Option<String>>,
     },
+    Picker(PickerState),
 }
 
 #[derive(Debug, Clone)]
@@ -1219,6 +1815,7 @@ struct TuiApp {
     store: Store,
     suite: Arc<ModulesSuite>,
     workspace: PathBuf,
+    git_root: Option<PathBuf>,
     db_path: PathBuf,
     cfg: AppliedConfig,
     live_route: Arc<Mutex<ModelRouteConfig>>,
@@ -1244,6 +1841,9 @@ struct TuiApp {
     verbose_tools: bool,
     locale: TuiLocale,
     running: bool,
+    turn_started_at: Option<Instant>,
+    active_tool: Option<(String, String, Instant)>,
+    tool_call_previews: HashMap<String, String>,
     spinner_idx: usize,
     transcript: Vec<TranscriptEntry>,
     streaming_text: String,
@@ -1251,6 +1851,8 @@ struct TuiApp {
     scroll_offset: usize,
     auto_follow: bool,
     composer: ComposerState,
+    slash_menu_selected: usize,
+    slash_menu_dismissed: bool,
     completion_hint: Option<String>,
     active_modal: Option<ActiveModal>,
     worker_tx: mpsc::Sender<WorkerMsg>,
@@ -1440,6 +2042,9 @@ impl TuiApp {
         self.streaming_text.clear();
         self.streaming_reasoning.clear();
         self.running = true;
+        self.turn_started_at = Some(Instant::now());
+        self.active_tool = None;
+        self.tool_call_previews.clear();
 
         let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
         self.active_inbox = Some(Arc::clone(&inbox));
@@ -1474,19 +2079,33 @@ impl TuiApp {
         let interactive_mode = self.interactive;
 
         let approval_cb = Arc::new(move |spec: &nola_types::ToolSpec, args: &Value, reason: &str| {
-            let target_key = extract_target_key(&spec.schema.name, args);
-            let grant_key = (spec.schema.name.clone(), target_key.clone());
-            if grants.lock().unwrap().contains(&grant_key) {
+            if matches!(spec.schema.name.as_str(), "bash" | "pty_exec")
+                && args
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(is_readonly_safe_shell_command)
+            {
                 return true;
             }
-            let summary = format_permission_summary(&spec.schema.name, &target_key, args);
+            let target_key = extract_target_key(&spec.schema.name, args);
+            let grant_prefix = extract_session_grant_key(&spec.schema.name, args);
+            let exact_key = (spec.schema.name.clone(), target_key.clone());
+            let prefix_key = (spec.schema.name.clone(), grant_prefix.clone());
+            {
+                let guard = grants.lock().unwrap();
+                if guard.contains(&exact_key) || guard.contains(&prefix_key) {
+                    return true;
+                }
+            }
+            let display_target = format_approval_target(&spec.schema.name, args);
+            let summary = format_permission_summary(&spec.schema.name, &display_target, args);
 
             let choice = if interactive_mode {
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx_for_approval
                     .send(WorkerMsg::ApprovalRequest {
                         tool_name: spec.schema.name.clone(),
-                        target_key: target_key.clone(),
+                        target_key: display_target.clone(),
                         summary,
                         reason: reason.to_string(),
                         reply: reply_tx,
@@ -1497,13 +2116,17 @@ impl TuiApp {
                 }
                 reply_rx.recv().unwrap_or(ApprovalChoice::Deny)
             } else {
-                prompt_approval_line_mode(&spec.schema.name, &target_key, &summary, reason)
+                prompt_approval_line_mode(&spec.schema.name, &display_target, &summary, reason)
             };
 
             match choice {
                 ApprovalChoice::AllowOnce => true,
                 ApprovalChoice::AllowForTargetInSession => {
-                    grants.lock().unwrap().insert(grant_key);
+                    {
+                        let mut guard = grants.lock().unwrap();
+                        guard.insert(exact_key);
+                        guard.insert(prefix_key);
+                    }
                     let _ = nola_engine::policy::persist_session_target_approval(
                         &store_for_grant, &sid_for_grant, &ws_for_grant, &spec.schema.name, args,
                     );
@@ -1511,9 +2134,22 @@ impl TuiApp {
                 }
                 ApprovalChoice::ReturnToInput => {
                     cancel_for_prompt.store(true, Ordering::SeqCst);
+                    let _ = tx_for_approval.send(WorkerMsg::Notice {
+                        is_error: false,
+                        text: format!(
+                            "Paused before `{}` ({}) — returned to input.",
+                            spec.schema.name, display_target
+                        ),
+                    });
                     false
                 }
-                ApprovalChoice::Deny => false,
+                ApprovalChoice::Deny => {
+                    let _ = tx_for_approval.send(WorkerMsg::Notice {
+                        is_error: false,
+                        text: format!("Denied `{}` ({}).", spec.schema.name, display_target),
+                    });
+                    false
+                }
             }
         });
 
@@ -1606,6 +2242,8 @@ impl TuiApp {
 
     fn finish_turn(&mut self, prompt: String, result: Result<AgentRunResult, String>) {
         self.running = false;
+        self.turn_started_at = None;
+        self.active_tool = None;
         self.active_inbox = None;
         self.subagents.set_parent_inbox(None);
 
@@ -1634,6 +2272,11 @@ impl TuiApp {
                         title: route.model.clone(),
                         body: final_body,
                     });
+                } else if !res.cancelled {
+                    self.push_system(self.locale.t(
+                        "Turn ended without a final reply (a tool call was blocked or declined).",
+                        "本轮未生成最终回复（工具调用被拦截或已取消）。",
+                    ));
                 }
                 let _ = MemoryWorker::distill_turn(&self.suite, "tui", &prompt, &res.final_text);
                 let step_usage = self
@@ -1654,6 +2297,16 @@ impl TuiApp {
                 }
             }
             Err(e) => {
+                let _ = self.store.append_event(
+                    &self.session_id,
+                    "turn_failed",
+                    json!({
+                        "type": "turn_failed",
+                        "session_id": self.session_id,
+                        "error": e,
+                    }),
+                    now_ms(),
+                );
                 if self.store.get_session(&self.session_id).ok().flatten().is_some() {
                     self.first_turn = false;
                 }
@@ -1678,7 +2331,10 @@ impl TuiApp {
                         self.streaming_text.push_str(&delta);
                     }
                     AgentEvent::ToolStarted {
-                        name, arguments, ..
+                        call_id,
+                        name,
+                        arguments,
+                        ..
                     } => {
                         if !self.streaming_reasoning.is_empty() {
                             let r = std::mem::take(&mut self.streaming_reasoning);
@@ -1697,6 +2353,10 @@ impl TuiApp {
                                 body: t,
                             });
                         }
+                        let preview = summarize_tool_args(&name, &arguments);
+                        self.tool_call_previews
+                            .insert(call_id.clone(), preview.clone());
+                        self.active_tool = Some((name.clone(), preview.clone(), Instant::now()));
                         if self.verbose_tools {
                             let safe_args = PrivacyRedactor::redact_text(
                                 &serde_json::to_string(&arguments).unwrap_or_default(),
@@ -1709,16 +2369,28 @@ impl TuiApp {
                         }
                     }
                     AgentEvent::ToolFinished {
+                        call_id,
                         name,
                         is_error,
                         summary,
                         ..
                     } => {
-                        let tag = if is_error { "ERR" } else { "OK" };
+                        self.active_tool = None;
+                        let arg_preview = self
+                            .tool_call_previews
+                            .remove(&call_id)
+                            .unwrap_or_default();
+                        let body = if arg_preview.is_empty() {
+                            summary
+                        } else if is_error {
+                            format!("{arg_preview} — {summary}")
+                        } else {
+                            format!("{arg_preview} · {summary}")
+                        };
                         self.transcript.push(TranscriptEntry {
                             kind: TranscriptKind::Tool { is_error },
-                            title: format!("{tag} {name}"),
-                            body: summary,
+                            title: name,
+                            body,
                         });
                     }
                     AgentEvent::Compacted {
@@ -2074,9 +2746,134 @@ impl TuiApp {
         }
     }
 
+    fn collect_model_picker_items(&mut self, route: &ModelRouteConfig) -> Vec<PickerItem> {
+        // Refresh active config from SQLite so models added via CLI/Web/Desktop appear immediately.
+        let fresh = load_active_config(&self.store);
+        if !fresh.llm.connections.is_empty() {
+            self.cfg = fresh;
+        }
+
+        let mut items: Vec<PickerItem> = Vec::new();
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+
+        for conn in &self.cfg.llm.connections {
+            for m in &conn.models {
+                if seen.insert((conn.id.clone(), m.id.clone())) {
+                    let is_current = conn.id == route.connection_id && m.id == route.model;
+                    let value = format!("{}:{}", conn.id, m.id);
+                    let mut detail_parts = vec![conn.endpoint.clone()];
+                    if let Some(ctx) = m.context_window {
+                        detail_parts.push(format!("ctx={}k", ctx / 1000));
+                    }
+                    items.push(PickerItem {
+                        value: value.clone(),
+                        label: value,
+                        detail: detail_parts.join(" · "),
+                        is_current,
+                    });
+                }
+            }
+        }
+
+        // Also include enabled models from canonical `model_connection` records in SQLite
+        // (e.g. configured via macOS/iOS/Android/Web Model Center).
+        if let Ok(conns) = self.store.list_module_records::<Value>("model_connection") {
+            for c in conns {
+                let enabled = c
+                    .pointer("/connection/enabled")
+                    .or_else(|| c.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                if !enabled {
+                    continue;
+                }
+                let conn_id = c
+                    .pointer("/connection/id")
+                    .or_else(|| c.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let endpoint = c
+                    .pointer("/connection/base_url")
+                    .or_else(|| c.pointer("/connection/endpoint"))
+                    .or_else(|| c.get("base_url"))
+                    .or_else(|| c.get("endpoint"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if conn_id.is_empty() {
+                    continue;
+                }
+                if let Some(models) = c.pointer("/catalog/models").and_then(|v| v.as_array()) {
+                    for m in models {
+                        let mid = m
+                            .get("model_id")
+                            .or_else(|| m.get("id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+                        if mid.is_empty() || !seen.insert((conn_id.clone(), mid.clone())) {
+                            continue;
+                        }
+                        let is_current = conn_id == route.connection_id && mid == route.model;
+                        let value = format!("{conn_id}:{mid}");
+                        items.push(PickerItem {
+                            value: value.clone(),
+                            label: value,
+                            detail: endpoint.clone(),
+                            is_current,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Ensure the currently active route is always selectable/visible even if launched with ad-hoc `--model`.
+        if !route.model.is_empty()
+            && seen.insert((route.connection_id.clone(), route.model.clone()))
+        {
+            let value = if route.connection_id.is_empty() {
+                route.model.clone()
+            } else {
+                format!("{}:{}", route.connection_id, route.model)
+            };
+            items.insert(
+                0,
+                PickerItem {
+                    value: value.clone(),
+                    label: value,
+                    detail: format!(
+                        "{} · ctx={}k",
+                        route.endpoint,
+                        route.context_window / 1000
+                    ),
+                    is_current: true,
+                },
+            );
+        }
+
+        items
+    }
+
     fn cmd_model(&mut self, arg: &str) {
         let mut route = self.route_snapshot();
         if arg.is_empty() {
+            let items = self.collect_model_picker_items(&route);
+            if self.interactive && !items.is_empty() {
+                let mut picker = PickerState::new(
+                    PickerKind::Model,
+                    self.locale
+                        .t("Select Model", "选择模型")
+                        .to_string(),
+                    items,
+                );
+                picker.clamp_selection(10);
+                self.active_modal = Some(ActiveModal::Picker(picker));
+                return;
+            }
             let mut lines = vec![format!(
                 "Active model: {}:{} ({}, ctx={}k, thinking={})",
                 route.connection_id,
@@ -2085,15 +2882,9 @@ impl TuiApp {
                 route.context_window / 1000,
                 route.reasoning_effort.as_deref().unwrap_or("automatic")
             )];
-            for conn in &self.cfg.llm.connections {
-                for m in &conn.models {
-                    let marker = if conn.id == route.connection_id && m.id == route.model {
-                        "*"
-                    } else {
-                        " "
-                    };
-                    lines.push(format!("  {marker} {}:{}  ({})", conn.id, m.id, conn.endpoint));
-                }
+            for item in &items {
+                let marker = if item.is_current { "*" } else { " " };
+                lines.push(format!("  {marker} {}  ({})", item.label, item.detail));
             }
             self.push_system(lines.join("\n"));
             return;
@@ -2166,6 +2957,76 @@ impl TuiApp {
                 }
             }
             if !matched {
+                if let Some((conn_id, model_id)) = arg.split_once(':') {
+                    let conn_id = conn_id.trim();
+                    let model_id = model_id.trim();
+                    if let Ok(conns) = self.store.list_module_records::<Value>("model_connection") {
+                        if let Some(c) = conns.into_iter().find(|c| {
+                            c.pointer("/connection/id")
+                                .or_else(|| c.get("id"))
+                                .and_then(|v| v.as_str())
+                                == Some(conn_id)
+                        }) {
+                            let endpoint = c
+                                .pointer("/connection/base_url")
+                                .or_else(|| c.pointer("/connection/endpoint"))
+                                .or_else(|| c.get("base_url"))
+                                .or_else(|| c.get("endpoint"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
+                            let proto_raw = c
+                                .pointer("/connection/wire_protocol")
+                                .or_else(|| c.pointer("/connection/protocol"))
+                                .or_else(|| c.get("wire_protocol"))
+                                .or_else(|| c.get("protocol"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("openai_chat");
+                            if !endpoint.is_empty() && !model_id.is_empty() {
+                                let protocol = match proto_raw {
+                                    "responses" | "openai_responses" | "open_ai_responses" => {
+                                        ModelProtocol::OpenAiResponses
+                                    }
+                                    "anthropic" | "anthropic_messages" => {
+                                        ModelProtocol::AnthropicMessages
+                                    }
+                                    "siwc" | "siwc_responses" | "chatgpt" => {
+                                        ModelProtocol::SiwcResponses
+                                    }
+                                    "gemini" | "google_gemini" | "google" => ModelProtocol::Gemini,
+                                    _ => ModelProtocol::OpenAiChat,
+                                };
+                                let vault_key = Vault::open(default_vault_path(&self.db_path))
+                                    .ok()
+                                    .and_then(|v| {
+                                        v.get_secret(&format!("llm.connection.{conn_id}.api_key"))
+                                            .ok()
+                                            .flatten()
+                                            .or_else(|| {
+                                                v.get_secret(&format!("model_connection:{conn_id}"))
+                                                    .ok()
+                                                    .flatten()
+                                            })
+                                    })
+                                    .unwrap_or_default();
+                                route.connection_id = conn_id.to_string();
+                                route.model = model_id.to_string();
+                                route.endpoint = endpoint;
+                                route.protocol = protocol;
+                                if !vault_key.is_empty() {
+                                    route.api_key = vault_key;
+                                }
+                                if route.reasoning_effort.is_none() {
+                                    route.reasoning_effort = prev_effort.clone();
+                                }
+                                matched = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !matched {
                 route.model = arg.to_string();
             }
         }
@@ -2177,6 +3038,13 @@ impl TuiApp {
         } else {
             format!("Switched active model to {}:{}", route.connection_id, route.model)
         };
+        if !route.connection_id.is_empty() && !route.model.is_empty() {
+            self.cfg.llm.default_model = Some(DefaultModelSelection {
+                connection: route.connection_id.clone(),
+                model: route.model.clone(),
+            });
+            let _ = crate::config::save_applied_config(&self.store, &self.cfg);
+        }
         self.update_route(route);
         self.push_system(msg);
     }
@@ -2185,6 +3053,54 @@ impl TuiApp {
         let mut route = self.route_snapshot();
         if arg.is_empty() {
             let cur = route.reasoning_effort.as_deref().unwrap_or("automatic");
+            if self.interactive {
+                let options = [
+                    (
+                        "automatic",
+                        self.locale.t("automatic", "automatic (自动)"),
+                        self.locale.t("Follow model default", "跟随模型默认推理策略"),
+                    ),
+                    (
+                        "none",
+                        self.locale.t("none", "none (关闭)"),
+                        self.locale.t("Disable extended reasoning", "关闭深度思考"),
+                    ),
+                    (
+                        "low",
+                        self.locale.t("low", "low (轻度)"),
+                        self.locale.t("Fast brief reasoning", "快速轻量思考"),
+                    ),
+                    (
+                        "medium",
+                        self.locale.t("medium", "medium (中等)"),
+                        self.locale.t("Balanced depth and speed", "兼顾速度与思考深度"),
+                    ),
+                    (
+                        "high",
+                        self.locale.t("high", "high (深度)"),
+                        self.locale.t("Maximum reasoning budget", "最大深度推理预算"),
+                    ),
+                ];
+                let items = options
+                    .into_iter()
+                    .map(|(val, label, detail)| PickerItem {
+                        value: val.to_string(),
+                        label: label.to_string(),
+                        detail: detail.to_string(),
+                        is_current: cur.eq_ignore_ascii_case(val),
+                    })
+                    .collect();
+                let mut picker = PickerState::new(
+                    PickerKind::Thinking,
+                    self.locale
+                        .t("Select Reasoning Effort", "选择推理深度")
+                        .to_string(),
+                    items,
+                );
+                picker.clamp_selection(10);
+                self.active_modal = Some(ActiveModal::Picker(picker));
+                return;
+            }
             self.push_system(format!(
                 "Reasoning effort: {cur} (options: none | low | medium | high | automatic)"
             ));
@@ -2220,6 +3136,45 @@ impl TuiApp {
 
     fn cmd_allow(&mut self, rest: &str) {
         if rest.is_empty() {
+            if self.interactive {
+                let cur = self.permission_profile.as_canonical_str();
+                let items = vec![
+                    PickerItem {
+                        value: "cautious".to_string(),
+                        label: self.locale.t("cautious", "cautious (谨慎模式)").to_string(),
+                        detail: self
+                            .locale
+                            .t(
+                                "Ask before write/exec/network actions",
+                                "写文件/执行命令/联网操作前需确认",
+                            )
+                            .to_string(),
+                        is_current: cur == "cautious",
+                    },
+                    PickerItem {
+                        value: "allow_all".to_string(),
+                        label: self.locale.t("allow_all", "allow_all (全部允许)").to_string(),
+                        detail: self
+                            .locale
+                            .t(
+                                "Auto-approve workspace tools without prompts",
+                                "自动放行工作区工具调用（免确认）",
+                            )
+                            .to_string(),
+                        is_current: cur == "allow_all",
+                    },
+                ];
+                let mut picker = PickerState::new(
+                    PickerKind::Permission,
+                    self.locale
+                        .t("Select Permission Mode", "选择权限模式")
+                        .to_string(),
+                    items,
+                );
+                picker.clamp_selection(10);
+                self.active_modal = Some(ActiveModal::Picker(picker));
+                return;
+            }
             self.push_system(format!(
                 "Active permission profile: {} (use `/allow cautious` or `/allow allow_all`)",
                 self.permission_profile.as_canonical_str()
@@ -3417,16 +4372,151 @@ impl TuiApp {
     // Fullscreen Viewport Rendering & Input Handling
     // ========================================================================
 
-    fn render_transcript_lines(&self, width: usize) -> Vec<String> {
+    fn slash_menu_candidates(&self) -> Vec<&'static str> {
+        if self.active_modal.is_some() || self.slash_menu_dismissed {
+            return Vec::new();
+        }
+        let buf = self.composer.buffer.as_str();
+        if !buf.starts_with('/') || buf.starts_with("//") || buf.contains(char::is_whitespace) {
+            return Vec::new();
+        }
+        let lower = buf.to_ascii_lowercase();
+        SLASH_COMMANDS
+            .iter()
+            .copied()
+            .filter(|cmd| cmd.starts_with(&lower))
+            .collect()
+    }
+
+    fn build_slash_menu_lines(&self, cols: usize) -> Vec<String> {
+        let candidates = self.slash_menu_candidates();
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        let max_visible = 7usize;
+        let total = candidates.len();
+        let selected = self.slash_menu_selected.min(total - 1);
+        let scroll = if selected >= max_visible {
+            selected + 1 - max_visible
+        } else {
+            0
+        };
+        let end = (scroll + max_visible).min(total);
+        let box_w = cols.saturating_sub(2).max(24);
+        let inner_w = box_w.saturating_sub(4);
+        let mut rows = Vec::with_capacity(end - scroll + 1);
+        let cmd_col_w = if inner_w < 54 { 12usize } else { 15usize };
+        for (offset, cmd) in candidates[scroll..end].iter().enumerate() {
+            let idx = scroll + offset;
+            let is_sel = idx == selected;
+            let desc = slash_command_description(cmd, self.locale);
+            let pad = cmd_col_w.saturating_sub(cmd.len()).max(1);
+            let desc_w = inner_w.saturating_sub(2 + cmd.len() + pad);
+            let clipped_desc = truncate_with_ellipsis(desc, desc_w);
+            if is_sel {
+                let used = 2 + cmd.len() + pad + str_display_width(&clipped_desc);
+                let fill = inner_w.saturating_sub(used);
+                rows.push(format!(
+                    "\x1b[48;5;237m\x1b[36m› \x1b[1;38;5;255m{cmd}\x1b[0;48;5;237m{}\x1b[38;5;250m{clipped_desc}{}\x1b[0m",
+                    " ".repeat(pad),
+                    " ".repeat(fill)
+                ));
+            } else {
+                rows.push(format!(
+                    "  \x1b[38;5;250m{cmd}\x1b[0m{}\x1b[2m{clipped_desc}\x1b[0m",
+                    " ".repeat(pad)
+                ));
+            }
+        }
+        if total > max_visible {
+            rows.push(format!(
+                "\x1b[2m  … {}-{end} / {total}\x1b[0m",
+                scroll + 1
+            ));
+        }
+        let hint = self.locale.t(
+            "↑↓ Select · Tab Complete · Enter Run · Esc Dismiss",
+            "↑↓ 选择 · Tab 补全 · Enter 执行 · Esc 收起",
+        );
+        let title = format!("{} ({total})", self.composer.buffer);
+        let raw_box = render_rounded_box(
+            "\x1b[38;5;242m",
+            &title,
+            &rows,
+            Some(hint),
+            box_w,
+        );
+        raw_box.into_iter().map(|l| format!(" {l}")).collect()
+    }
+
+    fn render_welcome_lines(&self, width: usize) -> Vec<String> {
+        let content_w = width.saturating_sub(4).max(24);
+        let route = self.route_snapshot();
+        let perm_label = match self.permission_profile {
+            PermissionProfile::Cautious => self.locale.t("cautious", "谨慎"),
+            PermissionProfile::AllowAll => self.locale.t("allow_all", "全部允许"),
+        };
         let mut lines = Vec::new();
+        lines.push(String::new());
+        lines.push(format!(
+            "  \x1b[1;38;5;255mNola\x1b[0m  \x1b[2m{}\x1b[0m",
+            self.locale
+                .t("Local-first Personal AI Assistant", "本地优先个人助手")
+        ));
+        lines.push(format!(
+            "  \x1b[38;5;238m{}\x1b[0m",
+            "─".repeat(content_w)
+        ));
+        lines.push(format!(
+            "  \x1b[2m{}\x1b[0m  {}",
+            self.locale.t("Workspace", "工作目录"),
+            abbreviate_path_with_ellipsis(&self.workspace, content_w.saturating_sub(12))
+        ));
+        lines.push(format!(
+            "  \x1b[2m{}\x1b[0m  \x1b[36m{}\x1b[0m \x1b[2m· {perm_label}\x1b[0m",
+            self.locale.t("Active   ", "当前配置"),
+            truncate_with_ellipsis(&route.model, content_w.saturating_sub(24))
+        ));
+        if let Some(ref root) = self.git_root {
+            if root != &self.workspace {
+                let root_disp = abbreviate_path_with_ellipsis(root, content_w.saturating_sub(24).max(16));
+                lines.push(format!(
+                    "  \x1b[33m{}\x1b[0m  \x1b[2m{}\x1b[0m",
+                    self.locale.t("Git Root ", "Git 仓库根"),
+                    truncate_with_ellipsis(
+                        &format!(
+                            "{root_disp} ({})",
+                            self.locale.t(
+                                "launch from repo root for full Git writes",
+                                "如需写 .git 建议从仓库根目录启动"
+                            )
+                        ),
+                        content_w.saturating_sub(13)
+                    )
+                ));
+            }
+        }
+        lines.push(String::new());
+        lines.push(format!(
+            "  \x1b[2m/help · /model · /thinking · /allow · /resume · /attach · @file\x1b[0m"
+        ));
+        lines
+    }
+
+    fn render_transcript_lines(&self, width: usize) -> Vec<String> {
+        if self.transcript.is_empty()
+            && self.streaming_reasoning.is_empty()
+            && self.streaming_text.is_empty()
+            && self.active_tool.is_none()
+        {
+            return self.render_welcome_lines(width);
+        }
+
+        let mut lines = vec![String::new()];
         for entry in &self.transcript {
             match entry.kind {
-                TranscriptKind::Reasoning if !self.verbose_tools => continue,
                 TranscriptKind::User => {
-                    lines.push(format!("\x1b[1;32m▸ {}\x1b[0m", entry.title));
-                    for l in entry.body.lines() {
-                        lines.extend(wrap_ansi_line(&format!("  {l}"), width));
-                    }
+                    lines.extend(render_user_tinted_lines(&entry.body, width));
                     lines.push(String::new());
                 }
                 TranscriptKind::Assistant => {
@@ -3435,41 +4525,106 @@ impl TuiApp {
                     lines.push(String::new());
                 }
                 TranscriptKind::Reasoning => {
-                    lines.push("\x1b[2m┄ reasoning ┄\x1b[0m".to_string());
-                    for l in entry.body.lines() {
-                        lines.extend(wrap_ansi_line(&format!("\x1b[2m  {l}\x1b[0m"), width));
+                    if self.verbose_tools {
+                        lines.push(format!(
+                            "\x1b[2m◦ {}\x1b[0m",
+                            self.locale.t("Reasoning", "思考过程")
+                        ));
+                        for l in entry.body.lines() {
+                            lines.extend(wrap_ansi_line(
+                                &format!("\x1b[38;5;244m│ {l}\x1b[0m"),
+                                width,
+                            ));
+                        }
+                    } else {
+                        let chars = entry.body.chars().count();
+                        lines.push(format!(
+                            "\x1b[2m  ◦ {} ({chars} {}, /verbose)\x1b[0m",
+                            self.locale.t("Thought", "思考完成"),
+                            self.locale.t("chars", "字")
+                        ));
                     }
                 }
                 TranscriptKind::Tool { is_error } => {
-                    let color = if is_error { "\x1b[31m" } else { "\x1b[33m" };
-                    let header = format!("{color}[{}]\x1b[0m {}", entry.title, entry.body);
-                    lines.extend(wrap_ansi_line(&header, width));
+                    let line = if is_error {
+                        format!(
+                            "  \x1b[1;31m✗ {}\x1b[0m  \x1b[31m{}\x1b[0m",
+                            entry.title, entry.body
+                        )
+                    } else {
+                        format!(
+                            "  \x1b[32m✓\x1b[0m \x1b[1m{}\x1b[0m  \x1b[2m{}\x1b[0m",
+                            entry.title, entry.body
+                        )
+                    };
+                    lines.extend(wrap_ansi_line(&line, width));
                 }
                 TranscriptKind::System => {
                     for l in entry.body.lines() {
-                        lines.extend(wrap_ansi_line(&format!("\x1b[36m{l}\x1b[0m"), width));
+                        lines.extend(wrap_ansi_line(
+                            &format!("\x1b[38;5;240m▎\x1b[0m \x1b[38;5;110m{l}\x1b[0m"),
+                            width,
+                        ));
                     }
                     lines.push(String::new());
                 }
                 TranscriptKind::Error => {
-                    for l in entry.body.lines() {
-                        lines.extend(wrap_ansi_line(&format!("\x1b[1;31m{l}\x1b[0m"), width));
+                    for (idx, l) in entry.body.lines().enumerate() {
+                        let formatted = if idx == 0 {
+                            format!("\x1b[31m▎\x1b[0m \x1b[1;31m✗ {l}\x1b[0m")
+                        } else {
+                            format!("\x1b[31m▎\x1b[0m   \x1b[31m{l}\x1b[0m")
+                        };
+                        lines.extend(wrap_ansi_line(&formatted, width));
                     }
                     lines.push(String::new());
                 }
             }
         }
 
-        if self.verbose_tools && !self.streaming_reasoning.is_empty() {
-            lines.push("\x1b[2m┄ thinking... ┄\x1b[0m".to_string());
+        if !self.streaming_reasoning.is_empty() {
+            let spinner = SPINNER_FRAMES[self.spinner_idx % SPINNER_FRAMES.len()];
+            lines.push(format!(
+                "\x1b[2m  {spinner} {}\x1b[0m",
+                self.locale.t("Thinking...", "思考中...")
+            ));
+            let mut wrapped = Vec::new();
             for l in self.streaming_reasoning.lines() {
-                lines.extend(wrap_ansi_line(&format!("\x1b[2m  {l}\x1b[0m"), width));
+                wrapped.extend(wrap_ansi_line(
+                    &format!("\x1b[38;5;244m  │ {l}\x1b[0m"),
+                    width,
+                ));
             }
+            if self.verbose_tools {
+                lines.extend(wrapped);
+            } else {
+                let tail_start = wrapped.len().saturating_sub(5);
+                lines.extend(wrapped.into_iter().skip(tail_start));
+            }
+        }
+        if let Some((ref name, ref preview, started)) = self.active_tool {
+            let spinner = SPINNER_FRAMES[self.spinner_idx % SPINNER_FRAMES.len()];
+            let secs = started.elapsed().as_secs_f32();
+            let detail = if preview.is_empty() {
+                format!("{secs:.1}s")
+            } else {
+                format!("{preview} · {secs:.1}s")
+            };
+            let live_line = format!(
+                "  \x1b[36m{spinner}\x1b[0m \x1b[1m{name}\x1b[0m  \x1b[2m{detail}\x1b[0m"
+            );
+            lines.extend(wrap_ansi_line(&live_line, width));
         }
         if !self.streaming_text.is_empty() {
             let model = self.route_snapshot().model;
-            lines.push(format!("\x1b[1;36m◆ {model} ...\x1b[0m"));
-            lines.extend(render_markdown_ansi(&self.streaming_text, width));
+            lines.push(format!("\x1b[1;36m◆ {model}\x1b[0m"));
+            let mut rendered = render_markdown_ansi(&self.streaming_text, width);
+            if let Some(last) = rendered.last_mut() {
+                if !last.ends_with('╯') && !last.ends_with('┘') {
+                    last.push_str("\x1b[36m▍\x1b[0m");
+                }
+            }
+            lines.extend(rendered);
         }
 
         lines
@@ -3481,6 +4636,11 @@ impl TuiApp {
         let rows = rows_u16.max(12) as usize;
 
         let route = self.route_snapshot();
+        let ws_name = self
+            .workspace
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("workspace");
         let plan_badge = if self.current_plan_mode() {
             " [PLAN]"
         } else {
@@ -3489,29 +4649,23 @@ impl TuiApp {
         let expert_badge = self
             .active_expert
             .as_ref()
-            .map(|e| format!(" @{}", e.role))
+            .map(|e| format!(" · @{}", e.role))
             .unwrap_or_default();
         let tasks_count = self.active_background_count();
-        let spinner = if self.running {
-            format!(" {}", SPINNER_FRAMES[self.spinner_idx % SPINNER_FRAMES.len()])
-        } else {
-            String::new()
-        };
-        let short_sid: String = self.session_id.chars().take(8).collect();
-        let header_text = format!(
-            " Nola v2{spinner} | {} | think:{} | perm:{}{plan_badge}{expert_badge} | sid:{short_sid} | tasks:{tasks_count}",
-            route.model,
-            route.reasoning_effort.as_deref().unwrap_or("auto"),
-            self.permission_profile.as_canonical_str()
-        );
 
-        let modal_lines = self.build_modal_lines(cols);
-        let modal_height = modal_lines.len();
-        let footer_height = 3 + modal_height; // status line + separator + composer (+ hint/modal)
+        let overlay_lines = if self.active_modal.is_some() {
+            self.build_modal_lines(cols)
+        } else {
+            self.build_slash_menu_lines(cols)
+        };
+        let show_attach_bar = !self.pending_attachments.is_empty() && self.active_modal.is_none();
+        let overlay_height = overlay_lines.len() + usize::from(show_attach_bar);
+        // Bottom stack: overlay + optional attach bar + top sep + composer + bottom sep + status bar
+        let footer_height = 4 + overlay_height;
         let header_height = 2usize;
         let viewport_height = rows.saturating_sub(header_height + footer_height).max(2);
 
-        let all_lines = self.render_transcript_lines(cols.saturating_sub(1));
+        let all_lines = self.render_transcript_lines(cols.saturating_sub(3));
         let max_scroll = all_lines.len().saturating_sub(viewport_height);
         if self.auto_follow {
             self.scroll_offset = 0;
@@ -3522,131 +4676,280 @@ impl TuiApp {
         let start_idx = end_idx.saturating_sub(viewport_height);
 
         let mut out = io::stdout().lock();
+        // Synchronized update reduces flicker in modern terminals (ignored safely by older terminals)
+        let _ = write!(out, "\x1b[?2026h");
         out.queue(Hide)?;
+
+        // Row 0: Minimalist dark top bar (no harsh solid blue banner)
         out.queue(MoveTo(0, 0))?;
+        out.queue(Clear(ClearType::CurrentLine))?;
+        let left_header = format!("  \x1b[1mNola\x1b[0m \x1b[2m· {ws_name}{plan_badge}{expert_badge}\x1b[0m");
+        let right_header = if self.running {
+            let spinner = SPINNER_FRAMES[self.spinner_idx % SPINNER_FRAMES.len()];
+            let elapsed = self
+                .turn_started_at
+                .map(|t| format!("{:.1}s", t.elapsed().as_secs_f32()))
+                .unwrap_or_else(|| "RUN".to_string());
+            format!("\x1b[36m{spinner}\x1b[0m \x1b[2m{elapsed}\x1b[0m  ")
+        } else {
+            "\x1b[32m●\x1b[0m \x1b[2mLIVE\x1b[0m  ".to_string()
+        };
+        let rw = str_display_width(&right_header);
+        let clipped_left = truncate_to_width(&left_header, cols.saturating_sub(rw + 1));
+        let lw = str_display_width(&clipped_left);
+        let hpad = cols.saturating_sub(lw + rw);
+        write!(out, "{clipped_left}{}{right_header}", " ".repeat(hpad))?;
 
-        // Row 0: Header status bar
-        out.queue(SetBackgroundColor(Color::DarkBlue))?;
-        out.queue(SetForegroundColor(Color::White))?;
-        out.queue(SetAttribute(Attribute::Bold))?;
-        let clipped_header = truncate_to_width(&header_text, cols);
-        let pad = cols.saturating_sub(str_display_width(&clipped_header));
-        write!(out, "{clipped_header}{}", " ".repeat(pad))?;
-        out.queue(SetAttribute(Attribute::Reset))?;
-        out.queue(ResetColor)?;
-
-        // Row 1: Separator
+        // Row 1: Subtle divider
         out.queue(MoveTo(0, 1))?;
-        out.queue(SetForegroundColor(Color::DarkGrey))?;
-        write!(out, "{}", "─".repeat(cols))?;
-        out.queue(ResetColor)?;
+        out.queue(Clear(ClearType::CurrentLine))?;
+        write!(out, "\x1b[38;5;238m{}\x1b[0m", "─".repeat(cols))?;
 
-        // Viewport rows
+        // Viewport rows + subtle right-edge scrollbar when content overflows
+        let needs_scrollbar = all_lines.len() > viewport_height && viewport_height >= 3;
+        let thumb_len = if needs_scrollbar {
+            ((viewport_height * viewport_height) / all_lines.len().max(1)).clamp(1, viewport_height)
+        } else {
+            0
+        };
+        let thumb_top = if needs_scrollbar && max_scroll > 0 {
+            let progress = max_scroll.saturating_sub(self.scroll_offset);
+            (progress * viewport_height.saturating_sub(thumb_len)) / max_scroll
+        } else {
+            0
+        };
+
         for row_idx in 0..viewport_height {
             let y = (header_height + row_idx) as u16;
             out.queue(MoveTo(0, y))?;
             out.queue(Clear(ClearType::CurrentLine))?;
             if let Some(line) = all_lines.get(start_idx + row_idx) {
-                write!(out, "{line}\x1b[0m")?;
+                write!(out, " {line}\x1b[0m")?;
+            }
+            if needs_scrollbar {
+                let in_thumb = row_idx >= thumb_top && row_idx < thumb_top + thumb_len;
+                out.queue(MoveTo((cols - 1) as u16, y))?;
+                if in_thumb {
+                    write!(out, "\x1b[38;5;244m┃\x1b[0m")?;
+                } else {
+                    write!(out, "\x1b[38;5;236m│\x1b[0m")?;
+                }
             }
         }
 
-        // Optional modal overlay above footer
+        // Optional full-enclosed modal or live slash menu overlay above composer
         let mut cursor_y = (header_height + viewport_height) as u16;
-        for mline in &modal_lines {
+        for oline in &overlay_lines {
             out.queue(MoveTo(0, cursor_y))?;
             out.queue(Clear(ClearType::CurrentLine))?;
-            write!(out, "{mline}\x1b[0m")?;
+            write!(out, "{oline}\x1b[0m")?;
             cursor_y += 1;
         }
 
-        // Status/context footer line
+        // Visible pending-attachments pill bar above composer
+        if show_attach_bar {
+            out.queue(MoveTo(0, cursor_y))?;
+            out.queue(Clear(ClearType::CurrentLine))?;
+            let names: Vec<&str> = self
+                .pending_attachments
+                .iter()
+                .map(|a| a.display_name.as_str())
+                .collect();
+            let prefix = self.locale.t("Attached:", "已附加:");
+            let clear_hint = "/attach clear";
+            let bar_text = format!(
+                "  \x1b[36m+\x1b[0m \x1b[2m{prefix}\x1b[0m {}  \x1b[2m({clear_hint})\x1b[0m",
+                names.join(" · ")
+            );
+            write!(out, "{}\x1b[0m", truncate_with_ellipsis(&bar_text, cols.saturating_sub(1)))?;
+            cursor_y += 1;
+        }
+
+        // Top composer divider (with scrollback jump pill when scrolled up)
         out.queue(MoveTo(0, cursor_y))?;
         out.queue(Clear(ClearType::CurrentLine))?;
-        out.queue(SetAttribute(Attribute::Dim))?;
-        let footer_text = if let Some(ref hint) = self.completion_hint {
-            hint.clone()
-        } else if self.running {
-            self.locale
-                .t(
-                    "Running... Esc/Ctrl+C cancel · /guide <msg> · /model <id> · /thinking <lvl> · PgUp/PgDn scroll",
-                    "运行中... Esc/Ctrl+C 中断 · /guide <消息> · /model <模型> · /thinking <等级> · PgUp/PgDn 翻页",
-                )
-                .to_string()
+        if self.scroll_offset > 0 {
+            let pill = if self.locale == TuiLocale::ZhHans {
+                format!(" ↑ 向上 {} 行 · PgDn/End 回到底部 ", self.scroll_offset)
+            } else {
+                format!(" ↑ {} lines above · PgDn/End to follow ", self.scroll_offset)
+            };
+            let pill_clipped = truncate_to_width(&pill, cols.saturating_sub(6));
+            let pw = str_display_width(&pill_clipped);
+            let left_d = cols.saturating_sub(pw) / 2;
+            let right_d = cols.saturating_sub(pw + left_d);
+            write!(
+                out,
+                "\x1b[38;5;238m{}\x1b[33m{pill_clipped}\x1b[38;5;238m{}\x1b[0m",
+                "─".repeat(left_d),
+                "─".repeat(right_d)
+            )?;
         } else {
-            let usage_part = self
-                .last_usage
-                .as_ref()
-                .map(|u| format_context_usage_line(&route, u))
-                .unwrap_or_else(|| {
-                    self.locale
-                        .t("Type /help for commands · Tab to complete · @path to attach", "输入 /help 查看命令 · Tab 自动补全 · @路径 附加文件")
-                        .to_string()
-                });
-            let att_part = if self.pending_attachments.is_empty() {
-                String::new()
-            } else {
-                format!(" · files:{}", self.pending_attachments.len())
-            };
-            let scroll_part = if self.scroll_offset > 0 {
-                format!(" · ↑{}", self.scroll_offset)
-            } else {
-                String::new()
-            };
-            format!("{usage_part}{att_part}{scroll_part}")
-        };
-        write!(out, "{}", truncate_to_width(&footer_text, cols))?;
-        out.queue(SetAttribute(Attribute::Reset))?;
-        cursor_y += 1;
-
-        // Bottom separator
-        out.queue(MoveTo(0, cursor_y))?;
-        out.queue(SetForegroundColor(Color::DarkGrey))?;
-        write!(out, "{}", "─".repeat(cols))?;
-        out.queue(ResetColor)?;
+            write!(out, "\x1b[38;5;238m{}\x1b[0m", "─".repeat(cols))?;
+        }
         cursor_y += 1;
 
         // Composer line
-        out.queue(MoveTo(0, cursor_y))?;
+        let composer_y = cursor_y;
+        out.queue(MoveTo(0, composer_y))?;
         out.queue(Clear(ClearType::CurrentLine))?;
         let (prompt_prefix, active_composer) = match self.active_modal.as_ref() {
-            Some(ActiveModal::AskUser { input, .. }) => ("answer> ", input),
-            _ => ("nola> ", &self.composer),
+            Some(ActiveModal::AskUser { input, .. }) => ("  answer› ", input),
+            Some(ActiveModal::Picker(picker)) => ("  filter› ", &picker.filter),
+            _ => ("  › ", &self.composer),
         };
-        out.queue(SetForegroundColor(Color::Green))?;
-        out.queue(SetAttribute(Attribute::Bold))?;
-        write!(out, "{prompt_prefix}")?;
-        out.queue(SetAttribute(Attribute::Reset))?;
-        out.queue(ResetColor)?;
+        let prompt_w = str_display_width(prompt_prefix);
+        write!(out, "\x1b[1;36m{prompt_prefix}\x1b[0m")?;
 
-        let avail = cols.saturating_sub(prompt_prefix.len() + 1).max(10);
+        let avail = cols.saturating_sub(prompt_w + 2).max(10);
         let mut slice_start = 0usize;
-        let visible_buf = if str_display_width(&active_composer.buffer) <= avail {
-            active_composer.buffer.clone()
-        } else {
-            // Simple tail window keeping cursor visible
-            while slice_start < active_composer.cursor
-                && str_display_width(&active_composer.buffer[slice_start..active_composer.cursor])
-                    > avail.saturating_sub(2)
-            {
-                if let Some(ch) = active_composer.buffer[slice_start..].chars().next() {
-                    slice_start += ch.len_utf8();
-                } else {
-                    break;
+        if active_composer.buffer.is_empty() {
+            match self.active_modal.as_ref() {
+                None => {
+                    let placeholder = if self.running {
+                        self.locale.t(
+                            "Running... /guide <msg> or Esc to cancel",
+                            "执行中... 输入 /guide 引导或按 Esc 中断",
+                        )
+                    } else {
+                        self.locale.t("Type a message...", "输入消息...")
+                    };
+                    let right_hint = if cols >= 56 { "/help · @file  " } else { "" };
+                    let rh_w = str_display_width(right_hint);
+                    let clipped_ph = truncate_to_width(placeholder, avail.saturating_sub(rh_w + 1));
+                    let ph_w = str_display_width(&clipped_ph);
+                    let gap = cols.saturating_sub(prompt_w + ph_w + rh_w);
+                    write!(out, "\x1b[2m{clipped_ph}{}{right_hint}\x1b[0m", " ".repeat(gap))?;
+                }
+                Some(ActiveModal::Picker(_)) => {
+                    let ph = self.locale.t("Type to filter...", "输入关键字过滤...");
+                    write!(out, "\x1b[2m{}\x1b[0m", truncate_to_width(ph, avail))?;
+                }
+                Some(ActiveModal::AskUser { .. }) => {
+                    let ph = self.locale.t("Type option number or answer...", "输入选项编号或回答...");
+                    write!(out, "\x1b[2m{}\x1b[0m", truncate_to_width(ph, avail))?;
+                }
+                Some(ActiveModal::Approval { .. }) => {
+                    let ph = self.locale.t("Press 1 / 2 / 3 / n...", "按 1 / 2 / 3 / n 响应审批...");
+                    write!(out, "\x1b[2m{}\x1b[0m", truncate_to_width(ph, avail))?;
                 }
             }
-            truncate_to_width(&active_composer.buffer[slice_start..], avail)
+        } else {
+            let total_buf_w = str_display_width(&active_composer.buffer);
+            let visible_buf = if total_buf_w <= avail {
+                active_composer.buffer.clone()
+            } else {
+                let inner_avail = avail.saturating_sub(2).max(6);
+                while slice_start < active_composer.cursor
+                    && str_display_width(
+                        &active_composer.buffer[slice_start..active_composer.cursor],
+                    ) > inner_avail.saturating_sub(1)
+                {
+                    if let Some(ch) = active_composer.buffer[slice_start..].chars().next() {
+                        slice_start += ch.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                let sliced = truncate_to_width(&active_composer.buffer[slice_start..], inner_avail);
+                let has_left = slice_start > 0;
+                let has_right = slice_start + sliced.len() < active_composer.buffer.len();
+                format!(
+                    "{}{sliced}{}",
+                    if has_left { "\x1b[2m‹\x1b[0m" } else { "" },
+                    if has_right { "\x1b[2m›\x1b[0m" } else { "" }
+                )
+            };
+            write!(out, "{visible_buf}")?;
+        }
+        cursor_y += 1;
+
+        // Bottom composer divider
+        out.queue(MoveTo(0, cursor_y))?;
+        out.queue(Clear(ClearType::CurrentLine))?;
+        write!(out, "\x1b[38;5;238m{}\x1b[0m", "─".repeat(cols))?;
+        cursor_y += 1;
+
+        // Minimalist bottom status bar with dynamic context usage color & mini gauge
+        out.queue(MoveTo(0, cursor_y))?;
+        out.queue(Clear(ClearType::CurrentLine))?;
+        let perm_label = match self.permission_profile {
+            PermissionProfile::Cautious => self.locale.t("cautious", "谨慎"),
+            PermissionProfile::AllowAll => self.locale.t("allow_all", "全部允许"),
         };
-        write!(out, "{visible_buf}")?;
+        let think_label = route.reasoning_effort.as_deref().unwrap_or("auto");
+        let mut left_parts = vec![
+            route.model.clone(),
+            perm_label.to_string(),
+            format!("think:{think_label}"),
+        ];
+        if tasks_count > 0 {
+            left_parts.push(format!("tasks:{tasks_count}"));
+        }
+        if !self.pending_attachments.is_empty() {
+            left_parts.push(format!("files:{}", self.pending_attachments.len()));
+        }
+        if self.scroll_offset > 0 {
+            left_parts.push(format!("↑{}", self.scroll_offset));
+        }
+        let left_status = if let Some(ref hint) = self.completion_hint {
+            format!("  {hint}")
+        } else {
+            format!("  {}", left_parts.join(" · "))
+        };
+        let ctx_pct = self
+            .last_usage
+            .as_ref()
+            .map(|u| {
+                let used = u.input_tokens.saturating_add(u.cache_read_tokens);
+                let win = route.context_window.max(1);
+                ((used as f64 / win as f64) * 100.0).min(100.0)
+            })
+            .unwrap_or(0.0);
+        let ctx_sgr = if ctx_pct >= 85.0 {
+            "\x1b[1;31m"
+        } else if ctx_pct >= 65.0 {
+            "\x1b[33m"
+        } else {
+            "\x1b[2m"
+        };
+        let gauge = if cols >= 74 {
+            let filled = ((ctx_pct / 20.0).round() as usize).min(5);
+            format!("{}{} ", "▪".repeat(filled), "▫".repeat(5 - filled))
+        } else {
+            String::new()
+        };
+        let right_status_plain = format!(
+            "{} {gauge}{:.0}%  ",
+            self.locale.t("Context", "上下文"),
+            ctx_pct
+        );
+        let rsw = str_display_width(&right_status_plain);
+        let clipped_ls = truncate_with_ellipsis(&left_status, cols.saturating_sub(rsw + 1));
+        let lsw = str_display_width(&clipped_ls);
+        let spad = cols.saturating_sub(lsw + rsw);
+        write!(
+            out,
+            "\x1b[2m{clipped_ls}\x1b[0m{}{ctx_sgr}{right_status_plain}\x1b[0m",
+            " ".repeat(spad)
+        )?;
+
+        // Clear any leftover rows below status bar after terminal shrink or modal close
+        if (cursor_y as usize + 1) < rows {
+            out.queue(MoveTo(0, cursor_y + 1))?;
+            out.queue(Clear(ClearType::FromCursorDown))?;
+        }
 
         if !matches!(self.active_modal, Some(ActiveModal::Approval { .. })) {
-            let cursor_col_in_view =
-                str_display_width(&active_composer.buffer[slice_start..active_composer.cursor]);
-            let cursor_x = (prompt_prefix.len() + cursor_col_in_view.min(avail)) as u16;
-            out.queue(MoveTo(cursor_x, cursor_y))?;
+            let left_marker_col = usize::from(slice_start > 0);
+            let cursor_col_in_view = left_marker_col
+                + str_display_width(&active_composer.buffer[slice_start..active_composer.cursor]);
+            let cursor_x = (prompt_w + cursor_col_in_view.min(avail)) as u16;
+            out.queue(MoveTo(cursor_x, composer_y))?;
             out.queue(Show)?;
         }
 
+        let _ = write!(out, "\x1b[?2026l");
         out.flush()
     }
 
@@ -3654,8 +4957,9 @@ impl TuiApp {
         let Some(modal) = self.active_modal.as_ref() else {
             return Vec::new();
         };
-        let inner_w = cols.saturating_sub(4).max(20);
-        match modal {
+        let box_w = cols.saturating_sub(2).max(24);
+        let inner_w = box_w.saturating_sub(4);
+        let raw_box = match modal {
             ActiveModal::Approval {
                 tool_name,
                 target_key,
@@ -3665,62 +4969,123 @@ impl TuiApp {
             } => {
                 let title = self.locale.t("Permission Approval", "权限审批");
                 let prompt = self.locale.t(
-                    "[1/y] Allow once  [2/a] Allow in session (durable)  [3/r/Esc] Return to input  [n/Enter] Deny",
-                    "[1/y] 允许一次  [2/a] 本会话持久化允许  [3/r/Esc] 返回输入  [n/Enter] 拒绝",
+                    "[1/y] Allow once · [2/a] Allow in session · [3/r/Esc] Pause · [n/Enter] Deny",
+                    "[1/y] 允许一次 · [2/a] 本会话允许 · [3/r/Esc] 暂停返回 · [n/Enter] 拒绝",
                 );
-                vec![
-                    format!("\x1b[1;33m┌─ {title} ─────────────────────────────\x1b[0m"),
+                let body = vec![
                     format!(
-                        "\x1b[33m│\x1b[0m Tool:    {}",
-                        truncate_to_width(tool_name, inner_w)
+                        "\x1b[2m{}:\x1b[0m  \x1b[1m{}\x1b[0m",
+                        self.locale.t("Tool", "工具"),
+                        truncate_to_width(tool_name, inner_w.saturating_sub(10))
                     ),
                     format!(
-                        "\x1b[33m│\x1b[0m Target:  {}",
-                        truncate_to_width(target_key, inner_w)
+                        "\x1b[2m{}:\x1b[0m  {}",
+                        self.locale.t("Target", "目标"),
+                        truncate_to_width(target_key, inner_w.saturating_sub(10))
                     ),
                     format!(
-                        "\x1b[33m│\x1b[0m Summary: {}",
-                        truncate_to_width(summary, inner_w)
+                        "\x1b[2m{}:\x1b[0m  {}",
+                        self.locale.t("Detail", "详情"),
+                        truncate_to_width(summary, inner_w.saturating_sub(10))
                     ),
                     format!(
-                        "\x1b[33m│\x1b[0m Reason:  {}",
-                        truncate_to_width(reason, inner_w)
+                        "\x1b[2m{}:\x1b[0m  {}",
+                        self.locale.t("Reason", "原因"),
+                        truncate_to_width(reason, inner_w.saturating_sub(10))
                     ),
-                    format!(
-                        "\x1b[1;33m└─ {}\x1b[0m",
-                        truncate_to_width(prompt, inner_w)
-                    ),
-                ]
+                ];
+                render_rounded_box("\x1b[33m", title, &body, Some(prompt), box_w)
             }
             ActiveModal::AskUser {
                 question, options, ..
             } => {
                 let title = self.locale.t("Agent Question", "助手提问");
-                let mut lines = vec![
-                    format!("\x1b[1;35m┌─ {title} ─────────────────────────────\x1b[0m"),
-                    format!(
-                        "\x1b[35m│\x1b[0m {}",
-                        truncate_to_width(question, inner_w)
-                    ),
-                ];
+                let mut body = vec![truncate_to_width(question, inner_w)];
                 for (i, opt) in options.iter().enumerate() {
-                    lines.push(format!(
-                        "\x1b[35m│\x1b[0m   \x1b[1m{}.\x1b[0m {}",
+                    body.push(format!(
+                        "  \x1b[1;35m{}.\x1b[0m {}",
                         i + 1,
                         truncate_to_width(opt, inner_w.saturating_sub(5))
                     ));
                 }
                 let hint = self.locale.t(
-                    "Type option number or free-text answer and press Enter (Esc to cancel)",
-                    "输入选项编号或自由文本并按 Enter 提交（Esc 取消）",
+                    "Type option number or answer · Enter Submit · Esc Cancel",
+                    "输入选项编号或内容 · Enter 提交 · Esc 取消",
                 );
-                lines.push(format!(
-                    "\x1b[1;35m└─ {}\x1b[0m",
-                    truncate_to_width(hint, inner_w)
-                ));
-                lines
+                render_rounded_box("\x1b[35m", title, &body, Some(hint), box_w)
             }
-        }
+            ActiveModal::Picker(picker) => {
+                let filtered = picker.filtered_indices();
+                let total = filtered.len();
+                let max_visible = 10usize;
+                let scroll = picker
+                    .scroll
+                    .min(total.saturating_sub(max_visible.min(total)));
+                let end = (scroll + max_visible).min(total);
+                let count_badge = if total == 0 {
+                    format!("0/{}", picker.items.len())
+                } else {
+                    format!("{}/{total}", picker.selected.min(total - 1) + 1)
+                };
+                let title = format!("{} ({count_badge})", picker.title);
+                let mut body = Vec::new();
+                if total == 0 {
+                    body.push(format!(
+                        "  \x1b[2m{}\x1b[0m",
+                        self.locale.t("No matching items", "没有匹配项")
+                    ));
+                } else {
+                    for (pos, &item_idx) in filtered[scroll..end].iter().enumerate() {
+                        let abs_pos = scroll + pos;
+                        let item = &picker.items[item_idx];
+                        let is_sel = abs_pos == picker.selected;
+                        let label_part = truncate_with_ellipsis(&item.label, inner_w.saturating_sub(6));
+                        let detail_budget = inner_w
+                            .saturating_sub(6 + str_display_width(&label_part));
+                        let detail_part = if !item.detail.is_empty() && detail_budget >= 6 {
+                            format!(
+                                "  ({})",
+                                truncate_with_ellipsis(&item.detail, detail_budget.saturating_sub(4))
+                            )
+                        } else {
+                            String::new()
+                        };
+                        let total_text_w =
+                            4 + str_display_width(&label_part) + str_display_width(&detail_part);
+                        if is_sel {
+                            let pad = inner_w.saturating_sub(total_text_w);
+                            let mark_sgr = if item.is_current {
+                                "\x1b[32m●\x1b[38;5;255m"
+                            } else {
+                                " "
+                            };
+                            body.push(format!(
+                                "\x1b[48;5;238m\x1b[1;36m› {mark_sgr} \x1b[1;38;5;255m{label_part}\x1b[0;48;5;238;38;5;250m{detail_part}{}\x1b[0m",
+                                " ".repeat(pad)
+                            ));
+                        } else {
+                            let mark_sgr = if item.is_current {
+                                "\x1b[32m●\x1b[0m"
+                            } else {
+                                " "
+                            };
+                            body.push(format!(
+                                "  {mark_sgr} {label_part}\x1b[2m{detail_part}\x1b[0m"
+                            ));
+                        }
+                    }
+                    if scroll > 0 || end < total {
+                        body.push(format!("\x1b[2m  … {}-{end} / {total}\x1b[0m", scroll + 1));
+                    }
+                }
+                let hint = self.locale.t(
+                    "↑↓ Select · Type to filter · Enter Confirm · Esc Cancel",
+                    "↑↓ 选择 · 输入关键字过滤 · Enter 确认切换 · Esc 取消",
+                );
+                render_rounded_box("\x1b[36m", &title, &body, Some(hint), box_w)
+            }
+        };
+        raw_box.into_iter().map(|l| format!(" {l}")).collect()
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
@@ -3839,6 +5204,83 @@ impl TuiApp {
                     });
                     return;
                 }
+                ActiveModal::Picker(mut picker) => {
+                    if key.code == KeyCode::Esc
+                        || (key.modifiers.contains(KeyModifiers::CONTROL)
+                            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C')))
+                    {
+                        return;
+                    }
+                    match key.code {
+                        KeyCode::Enter => {
+                            if let Some(chosen) = picker.selected_item().cloned() {
+                                match picker.kind {
+                                    PickerKind::Model => self.cmd_model(&chosen.value),
+                                    PickerKind::Thinking => self.cmd_thinking(&chosen.value),
+                                    PickerKind::Permission => self.cmd_allow(&chosen.value),
+                                }
+                                return;
+                            }
+                        }
+                        KeyCode::Up | KeyCode::BackTab => picker.move_up(1),
+                        KeyCode::Down | KeyCode::Tab => picker.move_down(1),
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            picker.move_up(1);
+                        }
+                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            picker.move_down(1);
+                        }
+                        KeyCode::PageUp => picker.move_up(5),
+                        KeyCode::PageDown => picker.move_down(5),
+                        KeyCode::Left => picker.filter.move_left(),
+                        KeyCode::Right => picker.filter.move_right(),
+                        KeyCode::Home => {
+                            if picker.filter.buffer.is_empty() {
+                                picker.selected = 0;
+                                picker.clamp_selection(10);
+                            } else {
+                                picker.filter.move_home();
+                            }
+                        }
+                        KeyCode::End => {
+                            if picker.filter.buffer.is_empty() {
+                                let count = picker.filtered_indices().len();
+                                if count > 0 {
+                                    picker.selected = count - 1;
+                                    picker.clamp_selection(10);
+                                }
+                            } else {
+                                picker.filter.move_end();
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            picker.filter.backspace();
+                            picker.selected = 0;
+                            picker.clamp_selection(10);
+                        }
+                        KeyCode::Delete => {
+                            picker.filter.delete();
+                            picker.selected = 0;
+                            picker.clamp_selection(10);
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            picker.filter.clear();
+                            picker.selected = 0;
+                            picker.clamp_selection(10);
+                        }
+                        KeyCode::Char(c)
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            picker.filter.insert_char(c);
+                            picker.selected = 0;
+                            picker.clamp_selection(10);
+                        }
+                        _ => {}
+                    }
+                    self.active_modal = Some(ActiveModal::Picker(picker));
+                    return;
+                }
             }
         }
 
@@ -3879,6 +5321,18 @@ impl TuiApp {
                     self.composer.move_end();
                     return;
                 }
+                KeyCode::Char('w') | KeyCode::Char('W') => {
+                    self.composer.delete_word_backward();
+                    self.slash_menu_dismissed = false;
+                    self.slash_menu_selected = 0;
+                    return;
+                }
+                KeyCode::Char('k') | KeyCode::Char('K') => {
+                    self.composer.kill_to_end();
+                    self.slash_menu_dismissed = false;
+                    self.slash_menu_selected = 0;
+                    return;
+                }
                 KeyCode::Char('l') | KeyCode::Char('L') => {
                     self.transcript.clear();
                     self.scroll_offset = 0;
@@ -3888,9 +5342,15 @@ impl TuiApp {
             }
         }
 
+        let slash_candidates = self.slash_menu_candidates();
+        let slash_menu_open = !slash_candidates.is_empty();
+
         match key.code {
             KeyCode::Esc => {
-                if self.running {
+                if slash_menu_open {
+                    self.slash_menu_dismissed = true;
+                    self.slash_menu_selected = 0;
+                } else if self.running {
                     self.cancel.store(true, Ordering::SeqCst);
                     self.push_system(self.locale.t(
                         "Cancelling active turn...",
@@ -3914,26 +5374,73 @@ impl TuiApp {
             KeyCode::Right => self.composer.move_right(),
             KeyCode::Home => self.composer.move_home(),
             KeyCode::End => self.composer.move_end(),
-            KeyCode::Up => self.composer.history_up(),
-            KeyCode::Down => self.composer.history_down(),
-            KeyCode::Backspace => self.composer.backspace(),
-            KeyCode::Delete => self.composer.delete(),
+            KeyCode::Up => {
+                if slash_menu_open {
+                    let count = slash_candidates.len();
+                    if self.slash_menu_selected == 0 {
+                        self.slash_menu_selected = count - 1;
+                    } else {
+                        self.slash_menu_selected -= 1;
+                    }
+                } else {
+                    self.composer.history_up();
+                }
+            }
+            KeyCode::Down => {
+                if slash_menu_open {
+                    let count = slash_candidates.len();
+                    self.slash_menu_selected = (self.slash_menu_selected + 1) % count;
+                } else {
+                    self.composer.history_down();
+                }
+            }
+            KeyCode::Backspace => {
+                self.composer.backspace();
+                self.slash_menu_dismissed = false;
+                self.slash_menu_selected = 0;
+            }
+            KeyCode::Delete => {
+                self.composer.delete();
+                self.slash_menu_dismissed = false;
+                self.slash_menu_selected = 0;
+            }
             KeyCode::Tab => {
-                let experts = self.known_expert_names();
-                let candidates = self.composer.apply_tab_completion(&experts);
-                if candidates.len() > 1 {
-                    self.completion_hint = Some(format!("Tab: {}", candidates.join("  ")));
+                if slash_menu_open {
+                    let sel = self.slash_menu_selected.min(slash_candidates.len() - 1);
+                    let chosen = slash_candidates[sel];
+                    self.composer.buffer = format!("{chosen} ");
+                    self.composer.cursor = self.composer.buffer.len();
+                    self.slash_menu_selected = 0;
+                } else {
+                    let experts = self.known_expert_names();
+                    let candidates = self.composer.apply_tab_completion(&experts);
+                    if candidates.len() > 1 {
+                        self.completion_hint = Some(format!("Tab: {}", candidates.join("  ")));
+                    }
                 }
             }
             KeyCode::Enter => {
-                let line = self.composer.submit();
-                self.execute_input(&line);
+                if slash_menu_open {
+                    let sel = self.slash_menu_selected.min(slash_candidates.len() - 1);
+                    let chosen = slash_candidates[sel].to_string();
+                    self.composer.clear();
+                    self.slash_menu_selected = 0;
+                    self.slash_menu_dismissed = false;
+                    self.execute_input(&chosen);
+                } else {
+                    let line = self.composer.submit();
+                    self.slash_menu_selected = 0;
+                    self.slash_menu_dismissed = false;
+                    self.execute_input(&line);
+                }
             }
             KeyCode::Char(c)
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
                 self.composer.insert_char(c);
+                self.slash_menu_dismissed = false;
+                self.slash_menu_selected = 0;
             }
             _ => {}
         }
@@ -4092,10 +5599,12 @@ pub fn run_tui(
     let session_grants = Arc::new(Mutex::new(BTreeSet::<(String, String)>::new()));
     let locale = TuiLocale::from_env();
 
+    let git_root = detect_git_root(workspace);
     let mut app = TuiApp {
         store,
         suite,
         workspace: workspace.to_path_buf(),
+        git_root,
         db_path: launch.db_path,
         cfg,
         live_route,
@@ -4121,6 +5630,9 @@ pub fn run_tui(
         verbose_tools: false,
         locale,
         running: false,
+        turn_started_at: None,
+        active_tool: None,
+        tool_call_previews: HashMap::new(),
         spinner_idx: 0,
         transcript: Vec::new(),
         streaming_text: String::new(),
@@ -4128,6 +5640,8 @@ pub fn run_tui(
         scroll_offset: 0,
         auto_follow: true,
         composer: ComposerState::default(),
+        slash_menu_selected: 0,
+        slash_menu_dismissed: false,
         completion_hint: None,
         active_modal: None,
         worker_tx,
@@ -4138,22 +5652,18 @@ pub fn run_tui(
         interactive,
     };
 
-    let welcome = format!(
-        "{} | model={} | permission={} | workspace={}",
-        locale.t("Nola v2 Interactive TUI", "Nola v2 交互式终端"),
-        route.model,
-        permission_profile.as_canonical_str(),
-        workspace.display()
-    );
-    app.push_system(welcome);
     if !first_turn {
         app.push_system(format!("Resuming session {session_id}"));
         app.load_session_preview(&session_id);
-    } else {
-        app.push_system(locale.t(
-            "Type /help for 35+ slash commands (/plan /checkpoint /undo /diff /worktree /tasks /goal /sources /mcp /memory /agent /attach /paste).",
-            "输入 /help 查看 35+ 斜杠命令（/plan /checkpoint /undo /diff /worktree /tasks /goal /sources /mcp /memory /agent /attach /paste）。",
-        ));
+    } else if !interactive {
+        let welcome = format!(
+            "{} | model={} | permission={} | workspace={}",
+            locale.t("Nola v2 Interactive TUI", "Nola v2 交互式终端"),
+            route.model,
+            permission_profile.as_canonical_str(),
+            workspace.display()
+        );
+        app.push_system(welcome);
     }
 
     if interactive {
@@ -4208,14 +5718,22 @@ fn run_interactive_loop(app: &mut TuiApp) -> Result<(), String> {
                 }
                 Ok(Event::Mouse(mouse)) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
-                        app.auto_follow = false;
-                        app.scroll_offset = app.scroll_offset.saturating_add(3);
+                        if let Some(ActiveModal::Picker(ref mut picker)) = app.active_modal {
+                            picker.move_up(1);
+                        } else {
+                            app.auto_follow = false;
+                            app.scroll_offset = app.scroll_offset.saturating_add(3);
+                        }
                         dirty = true;
                     }
                     MouseEventKind::ScrollDown => {
-                        app.scroll_offset = app.scroll_offset.saturating_sub(3);
-                        if app.scroll_offset == 0 {
-                            app.auto_follow = true;
+                        if let Some(ActiveModal::Picker(ref mut picker)) = app.active_modal {
+                            picker.move_down(1);
+                        } else {
+                            app.scroll_offset = app.scroll_offset.saturating_sub(3);
+                            if app.scroll_offset == 0 {
+                                app.auto_follow = true;
+                            }
                         }
                         dirty = true;
                     }
@@ -4488,6 +6006,130 @@ fn prompt_approval_line_mode(
     }
 }
 
+fn detect_git_root(workspace: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(raw))
+    }
+}
+
+/// Pure read-only shell commands with no redirection, piping, subshell, or command chaining.
+fn is_readonly_safe_shell_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    for forbidden in ['|', ';', '&', '>', '<', '`', '$', '\n', '\r'] {
+        if trimmed.contains(forbidden) {
+            return false;
+        }
+    }
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+    let Some(&first) = tokens.first() else {
+        return false;
+    };
+    match first {
+        "pwd" | "ls" | "ll" | "which" | "uname" | "whoami" | "date" | "wc" | "stat" | "file"
+        | "head" | "tail" | "cat" => true,
+        "git" => matches!(
+            tokens.get(1).copied().unwrap_or(""),
+            "status" | "rev-parse" | "branch" | "log" | "diff" | "show" | "remote" | "tag"
+        ),
+        _ => false,
+    }
+}
+
+fn summarize_tool_args(tool_name: &str, args: &Value) -> String {
+    let raw = match tool_name {
+        "bash" | "pty_exec" => args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        "git" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let path = args
+                .get("path")
+                .or_else(|| args.get("target"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if path.is_empty() {
+                action.to_string()
+            } else {
+                format!("{action} {path}")
+            }
+        }
+        "read_file" | "write_file" | "edit_file" | "delete_file" | "list_dir" => args
+            .get("path")
+            .or_else(|| args.get("file_path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "grep" | "glob" | "web_search" => args
+            .get("pattern")
+            .or_else(|| args.get("query"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => String::new(),
+    };
+    let redacted = PrivacyRedactor::redact_text(&raw);
+    let single_line: String = redacted.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_to_width(&single_line, 64)
+}
+
+fn format_approval_target(tool_name: &str, args: &Value) -> String {
+    if matches!(tool_name, "bash" | "pty_exec") {
+        if let Some(cmd) = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let normalized: String = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+            let redacted = PrivacyRedactor::redact_text(&normalized);
+            return truncate_to_width(&redacted, 120);
+        }
+    }
+    extract_target_key(tool_name, args)
+}
+
+fn extract_session_grant_key(tool_name: &str, args: &Value) -> String {
+    if matches!(tool_name, "bash" | "pty_exec") {
+        if let Some(cmd) = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let tokens: Vec<&str> = cmd.split_whitespace().collect();
+            if tokens.len() >= 2 && matches!(tokens[0], "git" | "cargo" | "npm" | "npx" | "python3" | "pytest") {
+                return format!("prefix:{} {}", tokens[0], tokens[1]);
+            }
+            if let Some(&first) = tokens.first() {
+                return format!("prefix:{first}");
+            }
+        }
+    }
+    extract_target_key(tool_name, args)
+}
+
 fn extract_target_key(tool_name: &str, args: &Value) -> String {
     if matches!(tool_name, "bash" | "pty_exec") {
         if let Some(cmd) = args
@@ -4643,10 +6285,10 @@ fn format_tui_help(locale: TuiLocale) -> String {
     /edit | /attach <path|list|clear>      外部编辑器 / 附加图片或文档（也支持 @<路径>）
     /paste | /status | /config | /verbose  粘贴剪贴板 / 状态总览 / 配置 / 思考详情开关
   模型与实时控制（支持轮次运行中直接执行）：
-    /model [id]                            列出或实时切换模型
-    /thinking [none|low|medium|high|auto]  查看或实时切换推理深度
+    /model [id]                            打开交互面板选择或直接实时切换模型
+    /thinking [none|low|medium|high|auto]  打开交互面板或直接实时切换推理深度
     /guide <text>                          向运行中的轮次实时注入引导指令
-    /allow [cautious|allow_all]            切换权限模式
+    /allow [cautious|allow_all]            打开交互面板或直接切换权限模式
     /plan [on|off|show|approve]            计划模式开关、查看或批准计划
   代码检查点与 Git：
     /checkpoint [label] | /checkpoints     创建/列出持久化工作区检查点
@@ -4673,10 +6315,10 @@ Slash commands (Tab-completable; live commands work mid-run):
     /edit | /attach <path|list|clear>      External $EDITOR / attach image or doc (or @<path>)
     /paste | /status | /config | /verbose  Paste clipboard / status / config / toggle reasoning
   Model & Live Controls (available while streaming):
-    /model [id]                            List or live-switch active model
-    /thinking [none|low|medium|high|auto]  View or live-switch reasoning effort
+    /model [id]                            Open interactive picker or live-switch model
+    /thinking [none|low|medium|high|auto]  Open interactive picker or live-switch reasoning
     /guide <text>                          Push steering guidance into active turn inbox
-    /allow [cautious|allow_all]            Switch strict permission profile
+    /allow [cautious|allow_all]            Open interactive picker or switch permission mode
     /plan [on|off|show|approve]            Toggle Plan Mode, view plan, or approve plan
   Checkpoints & Git:
     /checkpoint [label] | /checkpoints     Create or list persistent workspace checkpoints

@@ -1473,10 +1473,44 @@ private struct MacJournalStatusText: View {
         default: "Unknown"
         }
     }
+
+    private var tint: Color {
+        switch state {
+        case "completed", "finished":
+            return MacDesignColor.success
+        case "failed":
+            return MacDesignColor.danger
+        case "running", "cancelling":
+            return MacDesignColor.info
+        case "waiting_for_permission", "waiting_for_input", "stall_warning", "stall_timeout":
+            return MacDesignColor.warning
+        default:
+            return .secondary
+        }
+    }
+
+    private var pillBackground: Color {
+        switch state {
+        case "completed", "finished":
+            return MacDesignColor.success.opacity(0.13)
+        case "failed":
+            return MacDesignColor.danger.opacity(0.14)
+        case "running", "cancelling":
+            return MacDesignColor.info.opacity(0.13)
+        case "waiting_for_permission", "waiting_for_input", "stall_warning", "stall_timeout":
+            return MacDesignColor.warning.opacity(0.14)
+        default:
+            return Color.primary.opacity(0.06)
+        }
+    }
+
     var body: some View {
         MacFlowingStatusText(text: Text(label), isRunning: state == "running" || state == "cancelling")
-            .font(.caption)
-            .foregroundStyle((state == "stall_warning" || state == "stall_timeout") ? MacDesignColor.warning : .primary)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(pillBackground, in: Capsule())
     }
 }
 
@@ -1809,6 +1843,52 @@ struct MacJournalToolView: View {
         }
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @ViewBuilder
+    private var toolStatusIcon: some View {
+        switch tool.state {
+        case "completed", "finished":
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(MacDesignColor.success)
+                .frame(width: 18, height: 18)
+        case "failed":
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(MacDesignColor.danger)
+                .frame(width: 18, height: 18)
+        case "running", "pending", "cancelling":
+            if reduceMotion {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(MacDesignColor.info)
+                    .frame(width: 18, height: 18)
+            } else {
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.85)
+                    .tint(MacDesignColor.info)
+                    .frame(width: 18, height: 18)
+            }
+        case "waiting_for_permission", "waiting_for_input":
+            Image(systemName: "hand.raised.fill")
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(MacDesignColor.warning)
+                .frame(width: 18, height: 18)
+        case "cancelled":
+            Image(systemName: "minus.circle.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+        default:
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+        }
+    }
+
     var body: some View {
         DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
             Group {
@@ -1833,24 +1913,31 @@ struct MacJournalToolView: View {
                 }.padding(.top, 6)
             }
         } label: {
-            HStack {
-                Image(systemName: "wrench.and.screwdriver")
-                VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 10) {
+                toolStatusIcon
+                VStack(alignment: .leading, spacing: 3) {
                     if case .inline(let title) = tool.title, !title.isEmpty, title != tool.capability_id {
-                        Text(verbatim: AppleToolDisplayName.localized(tool.capability_id, title: title) ?? title).lineLimit(2)
+                        Text(verbatim: AppleToolDisplayName.localized(tool.capability_id, title: title) ?? title)
+                            .font(.system(size: 13.5, weight: .medium))
+                            .lineLimit(2)
                     } else {
-                        Text(verbatim: MacToolPresentationPolicy.displayTitle(for: tool.capability_id)).lineLimit(2)
+                        Text(verbatim: MacToolPresentationPolicy.displayTitle(for: tool.capability_id))
+                            .font(.system(size: 13.5, weight: .medium))
+                            .lineLimit(2)
                     }
                     if !expanded, tool.state == "failed", let summary = tool.summary,
                        case .inline(let text) = summary, !text.isEmpty {
-                        Text(verbatim: text).lineLimit(2).foregroundStyle(.red)
+                        Text(verbatim: text)
+                            .font(.system(size: 12))
+                            .lineLimit(2)
+                            .foregroundStyle(MacDesignColor.danger)
                     }
                 }
                 Spacer(minLength: 8)
                 MacJournalStatusText(state: tool.state)
             }
             .font(.body)
-            .frame(minHeight: 28)
+            .frame(minHeight: 30)
         }
         .disclosureGroupStyle(MacRowDisclosureStyle(isPlain: true))
         .accessibilityElement(children: .contain)
@@ -1938,8 +2025,15 @@ struct MacJournalProcessView<Content: View>: View {
 
     private var heading: String {
         if delivery == .running {
-            let title = currentActivityTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return title.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Processing")
+            let trimmed = currentActivityTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty { return String(localized: "Processing") }
+            if trimmed.caseInsensitiveCompare("Thinking") == .orderedSame {
+                return String(localized: "Thinking")
+            }
+            if trimmed.caseInsensitiveCompare("Processing") == .orderedSame {
+                return String(localized: "Processing")
+            }
+            return trimmed
         }
         return reasoningOnly ? String(localized: "Thinking Process") : String(localized: "Execution process", table: "Chat")
     }
@@ -1953,26 +2047,59 @@ struct MacJournalProcessView<Content: View>: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                    Group {
                         if delivery == .running {
-                            MacFlowingStatusText(text: Text(verbatim: heading)).lineLimit(1)
-                        } else { Text(verbatim: heading) }
-                    }.fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    if expanded, toolCount > 0 {
-                        Label { Text(verbatim: String(toolCount)) } icon: { Image(systemName: "wrench.and.screwdriver") }
+                            if reduceMotion {
+                                Circle()
+                                    .fill(MacDesignColor.info)
+                                    .frame(width: 7, height: 7)
+                                    .accessibilityHidden(true)
+                            } else {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .scaleEffect(0.82)
+                                    .tint(MacDesignColor.info)
+                                    .frame(width: 14, height: 14)
+                                    .accessibilityHidden(true)
+                            }
+                        } else {
+                            Image(systemName: reasoningOnly ? "sparkles" : "checkmark.circle")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
+                        Group {
+                            if delivery == .running {
+                                MacFlowingStatusText(text: Text(verbatim: heading))
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(1)
+                            } else {
+                                Text(verbatim: heading)
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                        }.fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if expanded, toolCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 11, weight: .medium))
+                                Text(verbatim: String(toolCount))
+                                    .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
                             .accessibilityLabel(Text("Tool calls", tableName: "Chat"))
                             .accessibilityValue(Text(verbatim: String(toolCount)))
+                        }
+                        if let state = MacJournalProcessStatus.primary(delivery: delivery, attention: attentionState) {
+                            MacJournalStatusText(state: state)
+                        }
+                        Image(systemName: "chevron.down")
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                     }
-                    if let state = MacJournalProcessStatus.primary(delivery: delivery, attention: attentionState) {
-                        MacJournalStatusText(state: state)
-                    }
-                    Image(systemName: "chevron.down")
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
-                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    }
-
                 }
                 .font(.body)
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -1999,6 +2126,7 @@ struct MacJournalProcessView<Content: View>: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(.horizontal, 12)
+                            .padding(.top, 4)
                             .padding(.bottom, 10)
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                                 if height > 0, abs(liveContentHeight - height) > 0.5 {
@@ -2008,6 +2136,21 @@ struct MacJournalProcessView<Content: View>: View {
                         }
                         .frame(height: liveContentHeight > 0 ? min(liveContentHeight, 168) : nil)
                         .frame(maxHeight: 168, alignment: .topLeading)
+                        .mask {
+                            if liveContentHeight > 140 {
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .clear, location: 0.0),
+                                        .init(color: .black, location: 0.14),
+                                        .init(color: .black, location: 1.0),
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            } else {
+                                Rectangle()
+                            }
+                        }
                         .onAppear {
                             proxy.scrollTo("mac-journal-process-live-bottom", anchor: .bottom)
                         }
@@ -2030,11 +2173,16 @@ struct MacJournalProcessView<Content: View>: View {
                 }
             }
         }
-        .background(expanded ? MacDesignColor.surfaceRaised : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+        .background(expanded ? MacDesignColor.surfaceRaised : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            if requiresAttention || contrast == .increased {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+            if expanded || requiresAttention || contrast == .increased {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(
+                        requiresAttention || contrast == .increased
+                            ? Color(nsColor: .separatorColor)
+                            : Color.primary.opacity(0.08),
+                        lineWidth: requiresAttention || contrast == .increased ? 1 : 0.75
+                    )
             }
         }
         .environment(\.journalProcessPartIDs, partIDs)
@@ -2252,7 +2400,7 @@ private struct MacJournalTextPreview: View {
 }
 
 @MainActor
-private struct MacJournalArtifactList: View {
+struct MacJournalArtifactList: View {
     private struct ProofReadKey: Hashable {
         let owner: MacJournalOwnerKey
         let retry: Int
@@ -2373,28 +2521,56 @@ private struct MacJournalArtifactList: View {
 }
 
 @MainActor
-private struct MacJournalArtifactImageThumbnail<Fallback: View>: View {
+struct MacJournalArtifactImageThumbnail<Fallback: View>: View {
     let url: URL
     let name: String
     let onOpen: () -> Void
     @ViewBuilder let fallback: () -> Fallback
     @State private var image: NSImage?
     @State private var loadFailed = false
+    @State private var isHovered = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if let image {
                 Button(action: onOpen) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 420, maxHeight: 280)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    VStack(alignment: .leading, spacing: 5) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(nsImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 420, maxHeight: 280)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .strokeBorder(
+                                            Color.primary.opacity(isHovered ? 0.24 : (colorScheme == .dark ? 0.14 : 0.10)),
+                                            lineWidth: isHovered ? 1.0 : 0.75
+                                        )
+                                }
+                                .shadow(
+                                    color: Color.black.opacity(colorScheme == .dark ? 0.24 : 0.06),
+                                    radius: isHovered ? 6 : 3,
+                                    y: 1
+                                )
+
+                            if isHovered {
+                                Label(String(localized: "Preview"), systemImage: "eye")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .overlay {
+                                        Capsule()
+                                            .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+                                    }
+                                    .padding(8)
+                                    .transition(.opacity)
                             }
+                        }
                         Text(verbatim: name)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -2403,6 +2579,15 @@ private struct MacJournalArtifactImageThumbnail<Fallback: View>: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    if reduceMotion {
+                        isHovered = hovering
+                    } else {
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            isHovered = hovering
+                        }
+                    }
+                }
                 .help(name)
             } else {
                 fallback()

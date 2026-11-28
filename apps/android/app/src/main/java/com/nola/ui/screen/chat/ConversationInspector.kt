@@ -1,7 +1,10 @@
 package com.nola.ui.screen.chat
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -402,6 +405,9 @@ internal fun ConversationResourcesPanel(
 ) {
     val context = LocalContext.current
     var localPreview by remember(state.conversationId) { mutableStateOf<AndroidInlinePreviewRequest?>(null) }
+    LaunchedEffect(selectedPreview) {
+        if (selectedPreview == null) localPreview = null
+    }
     val activePreview = selectedPreview ?: localPreview
     val setPreview: (AndroidInlinePreviewRequest?) -> Unit = { next ->
         localPreview = next
@@ -409,9 +415,9 @@ internal fun ConversationResourcesPanel(
     }
 
     if (activePreview != null) {
-        var previewBitmap by remember(activePreview.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
-        var previewText by remember(activePreview.uri) { mutableStateOf<String?>(null) }
-        var loadingPreview by remember(activePreview.uri) { mutableStateOf(true) }
+        var previewBitmap by remember(activePreview.uri, activePreview.mimeType) { mutableStateOf<android.graphics.Bitmap?>(null) }
+        var previewText by remember(activePreview.uri, activePreview.mimeType) { mutableStateOf<String?>(null) }
+        var loadingPreview by remember(activePreview.uri, activePreview.mimeType) { mutableStateOf(true) }
         LaunchedEffect(activePreview.uri, activePreview.mimeType) {
             loadingPreview = true
             previewBitmap = null
@@ -423,26 +429,50 @@ internal fun ConversationResourcesPanel(
             }
             loadingPreview = false
         }
-        Column(Modifier.fillMaxSize().testTag("inspector.inline.preview")) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .testTag("inspector.inline.preview")
+        ) {
             NolaTopAppBar(
                 title = activePreview.title,
                 onBack = { setPreview(null) },
             ) {
-                IconButton(onClick = {
-                    openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
-                }) {
-                    Icon(Icons.Filled.OpenInNew, contentDescription = activePreview.title)
+                IconButton(
+                    onClick = {
+                        openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
+                    },
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.OpenInNew,
+                        contentDescription = activePreview.title,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
             }
+            HorizontalDivider(thickness = 0.5.dp, color = NolaColors.hairlineBorder)
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (loadingPreview) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
                 previewBitmap?.let { bitmap ->
-                    NolaCard {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .border(0.75.dp, NolaColors.hairlineBorder, RoundedCornerShape(14.dp))
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = activePreview.title,
@@ -454,12 +484,21 @@ internal fun ConversationResourcesPanel(
                         )
                     }
                 } ?: previewText?.let { text ->
-                    NolaCard {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .border(0.75.dp, NolaColors.hairlineBorder, RoundedCornerShape(14.dp))
+                            .horizontalScroll(rememberScrollState())
+                            .padding(14.dp)
+                    ) {
                         SelectionContainer {
                             Text(
                                 text = text,
                                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                                 color = MaterialTheme.colorScheme.onSurface,
+                                softWrap = false,
                             )
                         }
                     }
@@ -469,9 +508,12 @@ internal fun ConversationResourcesPanel(
                         activePreview.mimeType?.takeIf { it.isNotBlank() }?.let { mime ->
                             Text(mime, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        TextButton(onClick = {
-                            openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
-                        }) {
+                        TextButton(
+                            onClick = {
+                                openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
+                            },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
                             Text(stringResource(R.string.intelligence_view))
                         }
                     }
@@ -490,7 +532,7 @@ internal fun ConversationResourcesPanel(
     val sources = messages.flatMap { com.nola.domain.model.decodeAnswerSourcesFromMeta(it.meta) }.distinctBy { it.id }
     val attachments = messages.flatMap { decodeMessageAttachments(it.meta) }.distinctBy { it.uri }
     val selectedDataSources = state.dataSources.filter { it.id in state.selectedDataSourceIds }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().testTag("inspector.resources.list")) {
         NolaTopAppBar(title = stringResource(R.string.inspector_resources), onBack = onClose)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (parts.isEmpty() && sources.isEmpty() && attachments.isEmpty() && selectedDataSources.isEmpty()) {
@@ -528,10 +570,14 @@ internal fun ConversationResourcesPanel(
                                 .fillMaxWidth()
                                 .heightIn(min = 48.dp)
                                 .clickable(enabled = canOpen, role = Role.Button) {
-                                    if (isExternalAnswerSource(attachment.uri)) {
-                                        openAttachmentPreview(context, attachment.uri, attachment.mimeType, attachment.name)
-                                    } else {
-                                        setPreview(AndroidInlinePreviewRequest(attachment.uri, attachment.mimeType, attachment.name))
+                                    when (resolveAttachmentPreviewTarget(attachment.uri, hasInlineInspector = true)) {
+                                        AttachmentPreviewTarget.InlineInspector -> setPreview(
+                                            AndroidInlinePreviewRequest(attachment.uri, attachment.mimeType, attachment.name)
+                                        )
+                                        AttachmentPreviewTarget.ExternalBrowser -> openAttachmentPreview(
+                                            context, attachment.uri, attachment.mimeType, attachment.name
+                                        )
+                                        AttachmentPreviewTarget.Unsupported -> Unit
                                     }
                                 },
                             verticalAlignment = Alignment.CenterVertically,

@@ -442,10 +442,16 @@ enum MacCodeSyntaxHighlighter {
             func color(_ value: NSColor) -> NSColor {
                 resolveColors ? (value.usingColorSpace(.deviceRGB) ?? value) : value
             }
+            let targetAccent = NSColor(name: nil) { appearance in
+                let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                return isDark
+                    ? NSColor(calibratedRed: 0.47, green: 0.71, blue: 0.97, alpha: 1.0)
+                    : NSColor(calibratedRed: 0.15, green: 0.39, blue: 0.92, alpha: 1.0)
+            }
             prefix = [.font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular),
-                      .foregroundColor: color(.secondaryLabelColor.withAlphaComponent(0.62))]
-            targetPrefix = [.font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .medium),
-                            .foregroundColor: color(.controlAccentColor)]
+                      .foregroundColor: color(.secondaryLabelColor.withAlphaComponent(0.68))]
+            targetPrefix = [.font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .semibold),
+                            .foregroundColor: color(targetAccent)]
             body = [.font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular),
                     .foregroundColor: color(.labelColor.withAlphaComponent(0.92))]
             keywordFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .semibold)
@@ -453,7 +459,7 @@ enum MacCodeSyntaxHighlighter {
             literal = color(.systemBlue)
             string = color(.systemRed)
             comment = color(.systemGreen)
-            targetBackground = color(.controlAccentColor.withAlphaComponent(0.075))
+            targetBackground = color(targetAccent.withAlphaComponent(0.13))
         }
     }
 
@@ -631,6 +637,7 @@ struct MacCodeReferenceInspector: View {
     @State private var errorMessage: String?
     @State private var isLoading = true
     @State private var copied = false
+    @State private var wrapsLines = true
     @State private var manualCopy = ""
     @State private var showsManualCopy = false
     @State private var scopedURL: URL?
@@ -696,17 +703,28 @@ struct MacCodeReferenceInspector: View {
                     }
                 }
                 Label(
-                    reference.url.deletingLastPathComponent().lastPathComponent,
+                    abbreviatedFolderLabel,
                     systemImage: "folder"
                 )
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .help(reference.url.path)
+                    .truncationMode(.middle)
+                    .help((reference.url.path as NSString).abbreviatingWithTildeInPath)
             }
 
             Spacer(minLength: 10)
             if let document {
+                Button {
+                    wrapsLines.toggle()
+                } label: {
+                    Image(systemName: "arrow.turn.down.left")
+                }
+                .macToolbarIcon(isActive: wrapsLines)
+                .help(wrapsLines ? String(localized: "Disable Line Wrapping") : String(localized: "Wrap Lines"))
+                .accessibilityLabel(wrapsLines ? String(localized: "Disable Line Wrapping") : String(localized: "Wrap Lines"))
+                .accessibilityValue(wrapsLines ? String(localized: "Enabled") : String(localized: "Disabled"))
+
                 Button {
                     NSPasteboard.general.clearContents()
                     guard NSPasteboard.general.setString(document.text, forType: .string) else {
@@ -781,7 +799,8 @@ struct MacCodeReferenceInspector: View {
         } else if let document {
             MacCodeReferenceDocumentView(
                 document: document,
-                targetLine: reference.line
+                targetLine: reference.line,
+                wrapsLines: wrapsLines
             )
         } else {
             ContentUnavailableView(
@@ -844,6 +863,15 @@ struct MacCodeReferenceInspector: View {
         }
     }
 
+    private var abbreviatedFolderLabel: String {
+        let parentPath = reference.url.deletingLastPathComponent().path
+        let abbreviated = (parentPath as NSString).abbreviatingWithTildeInPath
+        if abbreviated.hasPrefix("~/") {
+            return abbreviated
+        }
+        return reference.url.deletingLastPathComponent().lastPathComponent
+    }
+
     private var fileColor: Color {
         switch reference.url.pathExtension.lowercased() {
         case "swift": return .orange
@@ -858,14 +886,20 @@ struct MacCodeReferenceInspector: View {
 private struct MacCodeReferenceDocumentView: View {
     let document: MacCodeReferenceDocument
     let targetLine: Int?
+    let wrapsLines: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             MacSelectableCodeView(
                 document: document,
-                targetLine: targetLine
+                targetLine: targetLine,
+                wrapsLines: wrapsLines
             )
             .background(MacDesignColor.panel)
+
+            Rectangle()
+                .fill(MacDesignColor.borderSubtle)
+                .frame(height: 1)
 
             HStack(spacing: 7) {
                 Text("\(document.lineCount.formatted()) lines")
@@ -875,18 +909,59 @@ private struct MacCodeReferenceDocumentView: View {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(document.byteCount), countStyle: .file))
                 Spacer()
             }
-            .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-            .foregroundStyle(.tertiary)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 13)
-            .frame(height: 28)
+            .frame(height: 30)
             .background(MacDesignColor.chrome)
         }
+    }
+}
+
+private final class MacCodeHighlightTextView: NSTextView {
+    var highlightedLineRange: NSRange?
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let targetRange = highlightedLineRange,
+              let layoutManager,
+              let textContainer,
+              targetRange.location != NSNotFound,
+              NSMaxRange(targetRange) <= (string as NSString).length else { return }
+
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil)
+        guard glyphRange.length > 0 else { return }
+
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let accentColor = isDark
+            ? NSColor(calibratedRed: 0.47, green: 0.71, blue: 0.97, alpha: 1.0)
+            : NSColor(calibratedRed: 0.15, green: 0.39, blue: 0.92, alpha: 1.0)
+        let fillColor = accentColor.withAlphaComponent(isDark ? 0.14 : 0.09)
+
+        let origin = textContainerOrigin
+        var unionRect = NSRect.null
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
+            let band = NSRect(
+                x: 0,
+                y: usedRect.minY + origin.y,
+                width: max(self.bounds.width, self.enclosingScrollView?.contentView.bounds.width ?? self.bounds.width),
+                height: usedRect.height
+            )
+            unionRect = unionRect.isNull ? band : unionRect.union(band)
+        }
+        guard !unionRect.isNull else { return }
+        fillColor.setFill()
+        unionRect.fill()
+
+        accentColor.setFill()
+        NSRect(x: 0, y: unionRect.minY, width: 2.5, height: unionRect.height).fill()
     }
 }
 
 private struct MacSelectableCodeView: NSViewRepresentable {
     let document: MacCodeReferenceDocument
     let targetLine: Int?
+    let wrapsLines: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.macDetailScrollPositions) private var positions
     @Environment(\.macDetailScrollScope) private var scope
@@ -920,12 +995,12 @@ private struct MacSelectableCodeView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = !wrapsLines
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
 
-        let textView = NSTextView()
+        let textView = MacCodeHighlightTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.allowsUndo = false
@@ -941,20 +1016,38 @@ private struct MacSelectableCodeView: NSViewRepresentable {
             height: CGFloat.greatestFiniteMagnitude
         )
         textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = true
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        applyWrapping(wrapsLines, to: textView, in: scrollView)
         scrollView.documentView = textView
         return scrollView
+    }
+
+    private func applyWrapping(_ wraps: Bool, to textView: NSTextView, in scrollView: NSScrollView) {
+        scrollView.hasHorizontalScroller = !wraps
+        if wraps {
+            textView.isHorizontallyResizable = false
+            textView.autoresizingMask = [.width]
+            textView.textContainer?.widthTracksTextView = true
+            let contentWidth = max(120, scrollView.contentSize.width)
+            textView.frame.size.width = contentWidth
+            textView.textContainer?.containerSize = NSSize(
+                width: max(80, contentWidth - textView.textContainerInset.width * 2),
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        } else {
+            textView.isHorizontallyResizable = true
+            textView.autoresizingMask = []
+            textView.textContainer?.widthTracksTextView = false
+            textView.textContainer?.containerSize = NSSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        }
     }
 
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) { coordinator.detach() }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else {
+        guard let textView = scrollView.documentView as? MacCodeHighlightTextView else {
             return
         }
         let documentIdentity = [
@@ -962,20 +1055,53 @@ private struct MacSelectableCodeView: NSViewRepresentable {
             String(document.byteCount),
             String(targetLine ?? 0),
         ].joined(separator: ":")
-        let identity = documentIdentity + ":" + (colorScheme == .dark ? "dark" : "light")
+        let identity = documentIdentity + ":" + (colorScheme == .dark ? "dark" : "light") + ":" + (wrapsLines ? "wrap" : "nowrap")
         guard context.coordinator.identity != identity else { return }
         context.coordinator.identity = identity
         let viewportKey = scope + "/file/" + documentIdentity
         let savedPosition = positions?.position(for: viewportKey)
         context.coordinator.detach()
 
-        textView.textStorage?.setAttributedString(
-            MacCodeSyntaxHighlighter.attributedText(
-                for: document,
-                targetLine: targetLine
-            )
+        applyWrapping(wrapsLines, to: textView, in: scrollView)
+        let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
+        let attributed = MacCodeSyntaxHighlighter.attributedText(
+            for: document,
+            targetLine: targetLine,
+            appearance: appearance
         )
+        // Full-width target line highlight + left accent bar are drawn cleanly by MacCodeHighlightTextView.
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        mutable.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: mutable.length))
+        let lineNumberWidth = max(3, String(max(1, document.lineCount)).count)
+        let samplePrefix = String(repeating: "0", count: lineNumberWidth) + "  "
+        let prefixAdvance = (samplePrefix as NSString).size(withAttributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        ]).width
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.headIndent = ceil(prefixAdvance)
+        paragraphStyle.lineSpacing = 1.5
+        mutable.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: mutable.length))
+        textView.textStorage?.setAttributedString(mutable)
         textView.setSelectedRange(NSRange(location: 0, length: 0))
+
+        let resolvedTargetRange: NSRange? = targetLine.flatMap { target in
+            let clamped = min(max(1, target), max(1, document.lineCount))
+            let nsString = textView.string as NSString
+            guard nsString.length > 0 else { return nil }
+            var cursor = 0
+            var currentLine = 1
+            while cursor < nsString.length {
+                let range = nsString.lineRange(for: NSRange(location: cursor, length: 0))
+                if currentLine == clamped {
+                    return range
+                }
+                cursor = NSMaxRange(range)
+                currentLine += 1
+            }
+            return nil
+        }
+        textView.highlightedLineRange = resolvedTargetRange
+        textView.needsDisplay = true
 
         if let savedPosition {
             let coordinator = context.coordinator
@@ -992,30 +1118,12 @@ private struct MacSelectableCodeView: NSViewRepresentable {
             return
         }
         context.coordinator.observe(scrollView, key: viewportKey, positions: positions)
-        guard let targetLine else {
+        guard let targetRange = resolvedTargetRange else {
             textView.scrollToBeginningOfDocument(nil)
             return
         }
-        let clampedTarget = min(
-            max(1, targetLine),
-            max(1, document.lineCount)
-        )
-        let lineStart = document.lines
-            .prefix(clampedTarget - 1)
-            .reduce(0) { partial, line in
-                partial + line.utf16.count + 1
-            }
-        let lineNumberWidth = max(3, String(max(1, document.lineCount)).count)
-        let prefixLength = lineNumberWidth + 2
-        let precedingPrefixes = (clampedTarget - 1) * prefixLength
-        let location = min(
-            max(0, lineStart + precedingPrefixes),
-            max(0, textView.string.utf16.count - 1)
-        )
         DispatchQueue.main.async {
-            textView.scrollRangeToVisible(
-                NSRange(location: location, length: 0)
-            )
+            textView.scrollRangeToVisible(NSRange(location: targetRange.location, length: 0))
         }
     }
 }

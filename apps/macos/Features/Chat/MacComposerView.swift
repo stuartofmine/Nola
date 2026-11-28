@@ -616,13 +616,15 @@ struct MacComposerView: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(composerStrokeColor, lineWidth: dropTargeted ? 1.5 : 1)
+                .strokeBorder(composerStrokeColor, lineWidth: (dropTargeted || composerFocused.wrappedValue) ? 1.5 : 1)
                 .allowsHitTesting(false)
         }
         .shadow(
-            color: Color.black.opacity(colorScheme == .dark ? 0.36 : 0.05),
-            radius: colorScheme == .dark ? 16 : 8,
-            y: colorScheme == .dark ? 6 : 2
+            color: composerFocused.wrappedValue
+                ? MacDesignColor.info.opacity(colorScheme == .dark ? 0.20 : 0.14)
+                : Color.black.opacity(colorScheme == .dark ? 0.36 : 0.05),
+            radius: composerFocused.wrappedValue ? 10 : (colorScheme == .dark ? 16 : 8),
+            y: composerFocused.wrappedValue ? 2 : (colorScheme == .dark ? 6 : 2)
         )
         .onHover { isInputHovered = $0 }
         .animation(reduceMotion ? nil : MacDesignTokens.Motion.responsive, value: dropTargeted)
@@ -758,7 +760,7 @@ struct MacComposerView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(String(format: String(localized: "Quick Look %@"), attachment.name))
+            .help(String(format: String(localized: "Preview %@"), attachment.name))
             Button {
                 actions.perform(.removeAttachment(
                     conversationID: state.conversationID,
@@ -778,10 +780,14 @@ struct MacComposerView: View {
             )
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .frame(maxWidth: 180, alignment: .leading)
-        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.vertical, 6)
+        .frame(maxWidth: 196, alignment: .leading)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.75)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachment.name), \(attachmentAccessibilityStatus(attachment))")
         .contextMenu {
@@ -932,7 +938,13 @@ struct MacComposerView: View {
     @ViewBuilder
     private var sendOrStopButton: some View {
         let showsStopAction = state.isVisiblyRunning && !state.draft.hasPrefix("/")
-        let isActiveAction = (state.canSend && isModelConfigured) || state.isVisiblyRunning
+        let isActiveSend = state.canSend && isModelConfigured
+        let buttonFill: Color = showsStopAction
+            ? MacDesignColor.danger
+            : (isActiveSend ? MacDesignColor.primaryAction : Color.primary.opacity(0.08))
+        let buttonForeground: Color = showsStopAction
+            ? Color.white
+            : (isActiveSend ? MacDesignColor.onPrimaryAction : Color.secondary)
         Button {
             if localCommand() { return }
             if state.isVisiblyRunning {
@@ -946,12 +958,10 @@ struct MacComposerView: View {
             Image(systemName: showsStopAction ? "stop.fill" : "arrow.up")
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 .animation(reduceMotion ? nil : .easeOut(duration: MacDesignTokens.Motion.selection), value: showsStopAction)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(isActiveAction ? MacDesignColor.onPrimaryAction : Color.secondary)
+                .font(.system(size: showsStopAction ? 11.5 : 13, weight: .bold))
+                .foregroundStyle(buttonForeground)
         }
-        .buttonStyle(MacCircularComposerButtonStyle(
-            baseFill: isActiveAction ? MacDesignColor.primaryAction : Color.primary.opacity(0.07)
-        ))
+        .buttonStyle(MacCircularComposerButtonStyle(baseFill: buttonFill))
         .disabled(!state.draft.hasPrefix("/") && (state.isPrimaryActionDisabled || (!isModelConfigured && !state.isVisiblyRunning)))
         .accessibilityIdentifier(showsStopAction ? "mac-composer-stop" : "mac-composer-send")
         .help(
@@ -1077,14 +1087,15 @@ struct MacComposerView: View {
     }
 
     private var composerStrokeColor: Color {
-        if dropTargeted { return MacDesignColor.brand }
+        if dropTargeted { return MacDesignColor.info }
         if state.isPlanMode { return MacDesignColor.brand.opacity(colorScheme == .dark ? 0.55 : 0.45) }
-        if colorScheme == .dark {
-            if contrast == .increased { return Color.white.opacity(composerFocused.wrappedValue ? 0.50 : 0.28) }
-            if composerFocused.wrappedValue { return Color.white.opacity(0.22) }
-            return isInputHovered ? Color.white.opacity(0.15) : Color.white.opacity(0.09)
+        if composerFocused.wrappedValue {
+            return MacDesignColor.info.opacity(colorScheme == .dark ? 0.65 : 0.55)
         }
-        if composerFocused.wrappedValue { return Color.primary.opacity(0.28) }
+        if colorScheme == .dark {
+            if contrast == .increased { return Color.white.opacity(0.28) }
+            return isInputHovered ? Color.white.opacity(0.16) : Color.white.opacity(0.10)
+        }
         return contrast == .increased || isInputHovered ? MacDesignColor.controlOutline : MacDesignColor.borderSubtle
     }
 
