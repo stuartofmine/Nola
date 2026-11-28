@@ -8,14 +8,12 @@ import kotlinx.serialization.json.put
 /** Canonical product modes shared with the CLI permission panel. */
 enum class AndroidAgentPermissionMode(val wireValue: String) {
     Cautious("cautious"),
-    AcceptEdits("accept_edits"),
     AllowAll("allow_all");
 
     private val rank: Int
         get() = when (this) {
             Cautious -> 0
-            AcceptEdits -> 1
-            AllowAll -> 2
+            AllowAll -> 1
         }
 
     /** Recovery keeps the frozen Run mode; widening may resume stricter modes, while tightening blocks resume. */
@@ -25,20 +23,14 @@ enum class AndroidAgentPermissionMode(val wireValue: String) {
     companion object {
         fun fromWireValue(value: String?): AndroidAgentPermissionMode = when (value) {
             null, Cautious.wireValue -> Cautious
-            AcceptEdits.wireValue -> AcceptEdits
             AllowAll.wireValue -> AllowAll
-            else -> throw IllegalArgumentException("Permission profile must be cautious, accept_edits, or allow_all")
+            else -> throw IllegalArgumentException("Permission profile must be cautious or allow_all")
         }
     }
 }
 
 internal fun AndroidAgentPermissionMode.corePermissionRule(): JsonObject? = when (this) {
     AndroidAgentPermissionMode.Cautious -> permissionRule(
-        decision = "allow",
-        source = "product_default",
-    )
-    AndroidAgentPermissionMode.AcceptEdits -> permissionRule(
-        capability = "files_write",
         decision = "allow",
         source = "product_default",
     )

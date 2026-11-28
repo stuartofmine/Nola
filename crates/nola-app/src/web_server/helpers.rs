@@ -214,41 +214,805 @@ pub(super) fn filter_superseded_memories(store: &Store, items: Vec<MemoryItem>) 
 }
 
 
-pub(super) fn discover_endpoint_models(conn: &ConnectionConfig) -> Vec<String> {
-    let base = conn.endpoint.trim_end_matches('/');
+pub(super) fn resolve_connection_api_key(conn: &ConnectionConfig) -> Option<String> {
+    conn.api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(|k| std::env::var(k).ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            conn.api_key.as_deref().and_then(|raw| {
+                if let Some(env_name) = raw.trim().strip_prefix("env:") {
+                    std::env::var(env_name.trim())
+                        .ok()
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                } else {
+                    let trimmed = raw.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }
+            })
+        })
+}
+
+pub(super) fn discover_endpoint_models(conn: &ConnectionConfig) -> Result<Vec<String>, String> {
+    let base = conn.endpoint.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Vec::new();
+        return Err("endpoint URL is empty".to_string());
     }
+    let proto = conn
+        .protocol
+        .as_deref()
+        .unwrap_or("openai_chat")
+        .trim()
+        .to_ascii_lowercase();
+    let is_anthropic = matches!(proto.as_str(), "anthropic" | "anthropic_messages");
+    let is_gemini = matches!(proto.as_str(), "gemini" | "google_gemini");
+
     let url = if base.ends_with("/models") {
         base.to_string()
+    } else if is_anthropic {
+        if base.ends_with("/v1") || base.contains("/v1/") {
+            format!("{base}/models")
+        } else {
+            format!("{base}/v1/models")
+        }
+    } else if is_gemini {
+        if base.ends_with("/v1beta") || base.ends_with("/v1") {
+            format!("{base}/models")
+        } else {
+            format!("{base}/v1beta/models")
+        }
     } else {
         format!("{base}/models")
     };
-    let mut models: Vec<String> = Vec::new();
-    let mut builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10));
-    if is_loopback_url(&url) {
+
+    validate_configured_endpoint_url(&url)?;
+
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none());
+    if is_local_or_lan_url(&url) {
         builder = builder.no_proxy();
     }
-    if let Ok(client) = builder.build() {
-        let mut rb = client.get(&url);
-        if let Some(ref key) = conn.api_key {
-            if !key.trim().is_empty() && !key.starts_with("env:") {
-                rb = rb.bearer_auth(key.trim());
-            }
+    let client = builder
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    let mut rb = client.get(&url);
+    if let Some(key) = resolve_connection_api_key(conn) {
+        if is_anthropic {
+            rb = rb
+                .header("x-api-key", key)
+                .header("anthropic-version", "2023-06-01");
+        } else if is_gemini {
+            rb = rb.header("x-goog-api-key", key);
+        } else {
+            rb = rb.bearer_auth(key);
         }
-        if let Ok(resp) = rb.send() {
-            if let Ok(val) = resp.json::<Value>() {
-                if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
-                    for item in arr {
-                        if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
-                            models.push(id.to_string());
-                        }
-                    }
+    } else if is_anthropic {
+        rb = rb.header("anthropic-version", "2023-06-01");
+    }
+
+    let resp = rb
+        .send()
+        .map_err(|e| format!("failed to reach {url}: {e}"))?;
+    let status = resp.status();
+    let body_text = resp
+        .text()
+        .map_err(|e| format!("failed to read discovery response from {url}: {e}"))?;
+    if !status.is_success() {
+        let snippet: String = body_text.trim().chars().take(240).collect();
+        return Err(if snippet.is_empty() {
+            format!("upstream returned HTTP {}", status.as_u16())
+        } else {
+            format!("upstream returned HTTP {}: {snippet}", status.as_u16())
+        });
+    }
+
+    let val: Value = serde_json::from_str(&body_text)
+        .map_err(|e| format!("invalid JSON from {url}: {e}"))?;
+
+    let mut models: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(id) = item
+                .get("id")
+                .or_else(|| item.get("name"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let clean = id.strip_prefix("models/").unwrap_or(id).to_string();
+                if seen.insert(clean.clone()) {
+                    models.push(clean);
                 }
             }
         }
     }
-    models
+    if let Some(arr) = val.get("models").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(raw_name) = item
+                .get("name")
+                .or_else(|| item.get("id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let clean = raw_name.strip_prefix("models/").unwrap_or(raw_name).to_string();
+                if seen.insert(clean.clone()) {
+                    models.push(clean);
+                }
+            }
+        }
+    }
+    Ok(models)
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ParsedImportModel {
+    pub(super) model_id: String,
+    pub(super) display_name: String,
+    pub(super) protocol: String,
+    pub(super) context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ParsedImportCandidate {
+    pub(super) id: String,
+    pub(super) display_name: String,
+    pub(super) base_url: String,
+    pub(super) protocol: String,
+    pub(super) source: String,
+    pub(super) models: Vec<ParsedImportModel>,
+    pub(super) api_key: Option<String>,
+    pub(super) api_key_env: Option<String>,
+}
+
+fn strip_jsonc_comments_and_trailing_commas(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut no_comments = String::with_capacity(raw.len());
+    let mut i = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        if in_string {
+            no_comments.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            no_comments.push(ch);
+            i += 1;
+            continue;
+        }
+        if ch == '/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if ch == '/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        no_comments.push(ch);
+        i += 1;
+    }
+
+    // Remove trailing commas before '}' or ']'
+    let chars: Vec<char> = no_comments.chars().collect();
+    let mut out = String::with_capacity(no_comments.len());
+    let mut idx = 0;
+    in_string = false;
+    escaped = false;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            idx += 1;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            idx += 1;
+            continue;
+        }
+        if ch == ',' {
+            let mut look = idx + 1;
+            while look < chars.len() && chars[look].is_whitespace() {
+                look += 1;
+            }
+            if look < chars.len() && matches!(chars[look], '}' | ']') {
+                idx += 1;
+                continue;
+            }
+        }
+        out.push(ch);
+        idx += 1;
+    }
+    out
+}
+
+fn unquote_toml_string(val: &str) -> String {
+    let trimmed = val.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        inner
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+    } else if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn strip_toml_inline_comment(line: &str) -> &str {
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut escaped = false;
+    for (idx, ch) in line.char_indices() {
+        if in_double {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_double = false;
+            }
+        } else if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+        } else if ch == '"' {
+            in_double = true;
+        } else if ch == '\'' {
+            in_single = true;
+        } else if ch == '#' {
+            return &line[..idx];
+        }
+    }
+    line
+}
+
+fn parse_simple_toml_tables(raw: &str) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+    let mut tables: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    let mut current_section = String::new();
+    for (line_no, raw_line) in raw.lines().enumerate() {
+        let cleaned = strip_toml_inline_comment(raw_line).trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if cleaned.starts_with('[') && cleaned.ends_with(']') {
+            let header = cleaned
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim();
+            if header.is_empty() {
+                return Err(format!("empty TOML table header at line {}", line_no + 1));
+            }
+            // Strip quotes on dotted path segments like [providers."my-prov"]
+            let normalized: String = header
+                .split('.')
+                .map(|seg| unquote_toml_string(seg.trim()))
+                .collect::<Vec<_>>()
+                .join(".");
+            current_section = normalized;
+            tables.entry(current_section.clone()).or_default();
+            continue;
+        }
+        if let Some((k, v)) = cleaned.split_once('=') {
+            let key = unquote_toml_string(k.trim());
+            let val = unquote_toml_string(v.trim());
+            if !key.is_empty() {
+                tables
+                    .entry(current_section.clone())
+                    .or_default()
+                    .insert(key, val);
+            }
+        } else if !cleaned.starts_with(']') {
+            return Err(format!("invalid TOML syntax at line {}", line_no + 1));
+        }
+    }
+    Ok(tables)
+}
+
+fn resolve_import_secret(
+    raw_val: Option<&str>,
+    env_key: Option<&str>,
+    cred_map: &BTreeMap<String, String>,
+    prov_id: &str,
+    include_credentials: bool,
+    allow_environment: bool,
+) -> (Option<String>, Option<String>) {
+    if !include_credentials {
+        return (None, None);
+    }
+    if let Some(raw) = raw_val.map(str::trim).filter(|s| !s.is_empty()) {
+        // Handle OpenCode `{env:VAR}` or Nola `env:VAR`
+        let env_ref = raw
+            .strip_prefix("{env:")
+            .and_then(|s| s.strip_suffix('}'))
+            .or_else(|| raw.strip_prefix("env:"));
+        if let Some(var_name) = env_ref.map(str::trim).filter(|s| !s.is_empty()) {
+            if allow_environment {
+                let resolved = std::env::var(var_name)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty());
+                return (resolved, Some(var_name.to_string()));
+            }
+            return (None, None);
+        }
+        return (Some(raw.to_string()), None);
+    }
+    if let Some(ek) = env_key.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(found) = cred_map.get(ek) {
+            return (Some(found.clone()), Some(ek.to_string()));
+        }
+        if allow_environment {
+            if let Ok(val) = std::env::var(ek) {
+                let trimmed = val.trim().to_string();
+                if !trimmed.is_empty() {
+                    return (Some(trimmed), Some(ek.to_string()));
+                }
+            }
+        }
+    }
+    if let Some(found) = cred_map
+        .get(prov_id)
+        .or_else(|| cred_map.get(&prov_id.to_ascii_lowercase()))
+        .or_else(|| cred_map.get(&format!("{}_API_KEY", prov_id.to_ascii_uppercase())))
+        .or_else(|| cred_map.get("OPENAI_API_KEY"))
+    {
+        return (Some(found.clone()), None);
+    }
+    (None, None)
+}
+
+fn load_credential_file_map(raw: &str) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let cleaned = strip_jsonc_comments_and_trailing_commas(raw);
+    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&cleaned) {
+        for (k, v) in map {
+            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                out.insert(k, s.to_string());
+            } else if let Some(obj) = v.as_object() {
+                if let Some(secret) = obj
+                    .get("key")
+                    .or_else(|| obj.get("apiKey"))
+                    .or_else(|| obj.get("api_key"))
+                    .or_else(|| obj.get("token"))
+                    .or_else(|| obj.get("access"))
+                    .and_then(|x| x.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    out.insert(k, secret.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn infer_import_wire_protocol(raw: Option<&str>, base_url: &str) -> String {
+    let lower_raw = raw.unwrap_or("").trim().to_ascii_lowercase();
+    let lower_url = base_url.to_ascii_lowercase();
+    if lower_raw.contains("anthropic") || lower_url.contains("anthropic.com") {
+        "anthropic".to_string()
+    } else if lower_raw.contains("gemini")
+        || lower_raw.contains("google")
+        || lower_url.contains("generativelanguage.googleapis.com")
+    {
+        "gemini".to_string()
+    } else if lower_raw == "responses" || lower_raw == "openai_responses" {
+        "responses".to_string()
+    } else {
+        "chat_completions".to_string()
+    }
+}
+
+pub(super) fn parse_model_import_candidates(
+    source: &str,
+    path_str: &str,
+    raw: &str,
+    credential_raw: Option<&str>,
+    include_credentials: bool,
+    allow_environment: bool,
+) -> Result<Vec<ParsedImportCandidate>, String> {
+    let cred_map = credential_raw
+        .map(load_credential_file_map)
+        .unwrap_or_default();
+    let is_toml_hint = matches!(source, "codex" | "kimi_code")
+        || path_str.to_ascii_lowercase().ends_with(".toml");
+
+    // 1. Try JSON / JSONC when not explicitly TOML (or as fallback)
+    let cleaned_json = strip_jsonc_comments_and_trailing_commas(raw);
+    if !is_toml_hint {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&cleaned_json) {
+            let mut candidates = Vec::new();
+            // OpenCode format: { "provider": { "<id>": { options: { baseURL, apiKey }, models: {...} } } }
+            if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
+                for (prov_id, prov_val) in providers {
+                    let base_url = prov_val
+                        .pointer("/options/baseURL")
+                        .or_else(|| prov_val.get("baseURL"))
+                        .or_else(|| prov_val.get("base_url"))
+                        .or_else(|| prov_val.get("endpoint"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .unwrap_or("")
+                        .to_string();
+                    if base_url.is_empty() {
+                        continue;
+                    }
+                    let wire_proto = infer_import_wire_protocol(
+                        prov_val
+                            .get("protocol")
+                            .or_else(|| prov_val.get("npm"))
+                            .and_then(|v| v.as_str()),
+                        &base_url,
+                    );
+                    let raw_key = prov_val
+                        .pointer("/options/apiKey")
+                        .or_else(|| prov_val.get("apiKey"))
+                        .or_else(|| prov_val.get("api_key"))
+                        .and_then(|v| v.as_str());
+                    let (api_key, api_key_env) = resolve_import_secret(
+                        raw_key,
+                        None,
+                        &cred_map,
+                        prov_id,
+                        include_credentials,
+                        allow_environment,
+                    );
+                    let display_name = prov_val
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or(prov_id)
+                        .to_string();
+                    let mut models = Vec::new();
+                    if let Some(m_map) = prov_val.get("models").and_then(|v| v.as_object()) {
+                        for (mid, mval) in m_map {
+                            let m_display = mval
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or(mid)
+                                .to_string();
+                            let ctx = mval
+                                .pointer("/limit/context")
+                                .or_else(|| mval.get("context_window"))
+                                .and_then(|v| v.as_u64());
+                            models.push(ParsedImportModel {
+                                model_id: mid.clone(),
+                                display_name: m_display,
+                                protocol: wire_proto.clone(),
+                                context_window: ctx,
+                            });
+                        }
+                    } else if let Some(m_arr) = prov_val.get("models").and_then(|v| v.as_array()) {
+                        for item in m_arr {
+                            if let Some(mid) = item
+                                .as_str()
+                                .or_else(|| item.get("id").and_then(|v| v.as_str()))
+                                .or_else(|| item.get("model_id").and_then(|v| v.as_str()))
+                            {
+                                models.push(ParsedImportModel {
+                                    model_id: mid.to_string(),
+                                    display_name: mid.to_string(),
+                                    protocol: wire_proto.clone(),
+                                    context_window: item.get("context_window").and_then(|v| v.as_u64()),
+                                });
+                            }
+                        }
+                    }
+                    candidates.push(ParsedImportCandidate {
+                        id: prov_id.clone(),
+                        display_name,
+                        base_url,
+                        protocol: wire_proto,
+                        source: source.to_string(),
+                        models,
+                        api_key,
+                        api_key_env,
+                    });
+                }
+            }
+            // Nola format: { "llm": { "connections": [...] } } or { "connections": [...] }
+            let nola_conns = parsed
+                .pointer("/llm/connections")
+                .or_else(|| parsed.get("connections"))
+                .and_then(|v| v.as_array());
+            if let Some(conns) = nola_conns {
+                for c in conns {
+                    let Some(cid) = c
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    let base_url = c
+                        .get("endpoint")
+                        .or_else(|| c.get("base_url"))
+                        .or_else(|| c.get("baseURL"))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .unwrap_or("")
+                        .to_string();
+                    if base_url.is_empty() {
+                        continue;
+                    }
+                    let wire_proto = infer_import_wire_protocol(
+                        c.get("protocol").and_then(|v| v.as_str()),
+                        &base_url,
+                    );
+                    let raw_key = c
+                        .get("api_key")
+                        .or_else(|| c.get("apiKey"))
+                        .and_then(|v| v.as_str());
+                    let env_key = c.get("api_key_env").and_then(|v| v.as_str());
+                    let (api_key, api_key_env) = resolve_import_secret(
+                        raw_key,
+                        env_key,
+                        &cred_map,
+                        cid,
+                        include_credentials,
+                        allow_environment,
+                    );
+                    let models = c
+                        .get("models")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|m| {
+                                    let mid = m
+                                        .as_str()
+                                        .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                                        .or_else(|| m.get("model_id").and_then(|v| v.as_str()))?;
+                                    Some(ParsedImportModel {
+                                        model_id: mid.to_string(),
+                                        display_name: m
+                                            .get("display_name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(mid)
+                                            .to_string(),
+                                        protocol: wire_proto.clone(),
+                                        context_window: m
+                                            .get("context_window")
+                                            .and_then(|v| v.as_u64()),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    candidates.push(ParsedImportCandidate {
+                        id: cid.to_string(),
+                        display_name: c
+                            .get("display_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(cid)
+                            .to_string(),
+                        base_url,
+                        protocol: wire_proto,
+                        source: if source.is_empty() { "nola".to_string() } else { source.to_string() },
+                        models,
+                        api_key,
+                        api_key_env,
+                    });
+                }
+            }
+            if !candidates.is_empty() {
+                return Ok(candidates);
+            }
+            return Err("no supported providers or llm.connections found in JSON config".to_string());
+        } else if !path_str.to_ascii_lowercase().ends_with(".toml") {
+            // Try TOML as fallback if JSON failed
+            if let Ok(tables) = parse_simple_toml_tables(raw) {
+                let toml_cands = extract_candidates_from_toml(
+                    source,
+                    &tables,
+                    &cred_map,
+                    include_credentials,
+                    allow_environment,
+                );
+                if !toml_cands.is_empty() {
+                    return Ok(toml_cands);
+                }
+            }
+            return Err("failed to parse config file as JSON/JSONC or TOML".to_string());
+        }
+    }
+
+    // 2. TOML parsing (Codex config.toml & Kimi Code CLI config.toml)
+    let tables = parse_simple_toml_tables(raw)?;
+    let candidates = extract_candidates_from_toml(
+        source,
+        &tables,
+        &cred_map,
+        include_credentials,
+        allow_environment,
+    );
+    if candidates.is_empty() {
+        return Err("no supported model_providers or providers tables found in TOML config".to_string());
+    }
+    Ok(candidates)
+}
+
+fn extract_candidates_from_toml(
+    source: &str,
+    tables: &BTreeMap<String, BTreeMap<String, String>>,
+    cred_map: &BTreeMap<String, String>,
+    include_credentials: bool,
+    allow_environment: bool,
+) -> Vec<ParsedImportCandidate> {
+    let mut candidates = Vec::new();
+    let root = tables.get("");
+    let root_model = root.and_then(|m| m.get("model")).cloned();
+    let root_provider = root.and_then(|m| m.get("model_provider")).cloned();
+
+    // Codex: [model_providers.<id>]
+    for (section, kv) in tables {
+        if let Some(prov_id) = section.strip_prefix("model_providers.") {
+            let base_url = kv
+                .get("base_url")
+                .or_else(|| kv.get("baseURL"))
+                .cloned()
+                .unwrap_or_default();
+            if base_url.is_empty() {
+                continue;
+            }
+            let wire_proto = infer_import_wire_protocol(
+                kv.get("wire_api")
+                    .or_else(|| kv.get("protocol"))
+                    .map(String::as_str),
+                &base_url,
+            );
+            let (api_key, api_key_env) = resolve_import_secret(
+                kv.get("api_key").map(String::as_str),
+                kv.get("env_key").map(String::as_str),
+                cred_map,
+                prov_id,
+                include_credentials,
+                allow_environment,
+            );
+            let mut models = Vec::new();
+            if root_provider.as_deref() == Some(prov_id) {
+                if let Some(ref mid) = root_model {
+                    models.push(ParsedImportModel {
+                        model_id: mid.clone(),
+                        display_name: mid.clone(),
+                        protocol: wire_proto.clone(),
+                        context_window: None,
+                    });
+                }
+            }
+            if let Some(mid) = kv.get("model").filter(|s| !s.is_empty()) {
+                if !models.iter().any(|m| m.model_id == *mid) {
+                    models.push(ParsedImportModel {
+                        model_id: mid.clone(),
+                        display_name: mid.clone(),
+                        protocol: wire_proto.clone(),
+                        context_window: None,
+                    });
+                }
+            }
+            candidates.push(ParsedImportCandidate {
+                id: prov_id.to_string(),
+                display_name: kv
+                    .get("name")
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| prov_id.to_string()),
+                base_url,
+                protocol: wire_proto,
+                source: source.to_string(),
+                models,
+                api_key,
+                api_key_env,
+            });
+        }
+    }
+
+    // Kimi Code CLI: [providers.<id>] + [models.<alias>]
+    let mut kimi_models_by_prov: BTreeMap<String, Vec<ParsedImportModel>> = BTreeMap::new();
+    for (section, kv) in tables {
+        if let Some(alias) = section.strip_prefix("models.") {
+            if let (Some(prov), Some(mid)) = (kv.get("provider"), kv.get("model")) {
+                let ctx = kv
+                    .get("max_context_size")
+                    .or_else(|| kv.get("context_window"))
+                    .and_then(|s| s.parse::<u64>().ok());
+                kimi_models_by_prov
+                    .entry(prov.clone())
+                    .or_default()
+                    .push(ParsedImportModel {
+                        model_id: mid.clone(),
+                        display_name: alias.to_string(),
+                        protocol: "chat_completions".to_string(),
+                        context_window: ctx,
+                    });
+            }
+        }
+    }
+    for (section, kv) in tables {
+        if let Some(prov_id) = section.strip_prefix("providers.") {
+            let base_url = kv
+                .get("base_url")
+                .or_else(|| kv.get("baseURL"))
+                .cloned()
+                .unwrap_or_default();
+            if base_url.is_empty() {
+                continue;
+            }
+            let wire_proto = infer_import_wire_protocol(
+                kv.get("type")
+                    .or_else(|| kv.get("protocol"))
+                    .map(String::as_str),
+                &base_url,
+            );
+            let (api_key, api_key_env) = resolve_import_secret(
+                kv.get("api_key").map(String::as_str),
+                kv.get("env_key").map(String::as_str),
+                cred_map,
+                prov_id,
+                include_credentials,
+                allow_environment,
+            );
+            let mut models = kimi_models_by_prov.remove(prov_id).unwrap_or_default();
+            for m in &mut models {
+                m.protocol = wire_proto.clone();
+            }
+            candidates.push(ParsedImportCandidate {
+                id: prov_id.to_string(),
+                display_name: kv
+                    .get("name")
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| prov_id.to_string()),
+                base_url,
+                protocol: wire_proto,
+                source: source.to_string(),
+                models,
+                api_key,
+                api_key_env,
+            });
+        }
+    }
+
+    candidates
 }
 
 pub(super) fn bump_endpoint_credential_revision(store: &Store, ep_id: &str) -> i64 {
@@ -1284,8 +2048,27 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
     let mut seen_ids: HashSet<String> = HashSet::new();
     let now = now_ms();
 
+    let model_conn_records: BTreeMap<String, Value> = suite
+        .list_records::<Value>("model_connection")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|rec| {
+            let id = rec
+                .get("id")
+                .or_else(|| rec.pointer("/connection/id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            Some((id, rec))
+        })
+        .collect();
+
+    let vault_opt = Vault::open(resolve_vault_path_for_store(store)).ok();
+
     for conn in &cfg.llm.connections {
         seen_ids.insert(conn.id.clone());
+        let rec_opt = model_conn_records.get(&conn.id);
         let wire_proto = match conn.protocol.as_deref().unwrap_or("chat_completions") {
             "anthropic" | "anthropic_messages" => "anthropic",
             "responses" | "openai_responses" => "responses",
@@ -1305,8 +2088,11 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
                     .collect()
             });
         let mut catalog_models: Vec<Value> = Vec::new();
+        let mut seen_models: HashSet<String> = HashSet::new();
         let mut capability_assessments: Vec<Value> = Vec::new();
+        let mut seen_assess: HashSet<String> = HashSet::new();
         for m in &conn.models {
+            seen_models.insert(m.id.clone());
             let caps = infer_model_capabilities(&m.id, m.capabilities.as_ref());
             let mut modalities = vec!["text".to_string()];
             if caps.image_input {
@@ -1366,6 +2152,7 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
                             .and_then(|v| v.get("protocol").and_then(|s| s.as_str()))
                     })
                     .unwrap_or(wire_proto);
+                seen_assess.insert(format!("{assess_proto}:{}", m.id));
                 capability_assessments.push(json!({
                     "model_id": m.id,
                     "protocol": assess_proto,
@@ -1374,6 +2161,101 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
                 }));
             }
         }
+        // Merge any additional catalog models or assessments stored on the `model_connection` record.
+        if let Some(rec) = rec_opt {
+            if let Some(rec_models) = rec
+                .pointer("/catalog/models")
+                .or_else(|| rec.get("models"))
+                .and_then(|v| v.as_array())
+            {
+                for rm in rec_models {
+                    let Some(mid) = rm
+                        .get("model_id")
+                        .or_else(|| rm.get("id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    else {
+                        continue;
+                    };
+                    if !seen_models.insert(mid.to_string()) {
+                        continue;
+                    }
+                    let m_proto = rm
+                        .get("protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(wire_proto);
+                    let ckey = format!("{m_proto}:{mid}");
+                    let is_enabled = match saved_sel_enabled.as_ref() {
+                        Some(set) => set.contains(&ckey) || set.contains(mid),
+                        None => false,
+                    };
+                    selections.push(json!({
+                        "connection_id": conn.id,
+                        "catalog_key": ckey,
+                        "enabled": is_enabled,
+                        "selected": false
+                    }));
+                    catalog_models.push(rm.clone());
+                }
+            }
+            if let Some(rec_assess) = rec
+                .get("capability_assessments")
+                .or_else(|| rec.pointer("/document/capability_assessments"))
+                .and_then(|v| v.as_array())
+            {
+                for a in rec_assess {
+                    let mid = a.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let proto = a.get("protocol").and_then(|v| v.as_str()).unwrap_or(wire_proto);
+                    if !mid.is_empty() && seen_assess.insert(format!("{proto}:{mid}")) {
+                        capability_assessments.push(a.clone());
+                    }
+                }
+            }
+        }
+        let rec_rev = rec_opt
+            .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+            .unwrap_or(1);
+        let rec_display = rec_opt
+            .and_then(|r| {
+                r.get("display_name")
+                    .or_else(|| r.pointer("/connection/display_name"))
+                    .and_then(|v| v.as_str())
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&conn.id);
+        let rec_source = rec_opt
+            .and_then(|r| {
+                r.get("source")
+                    .or_else(|| r.pointer("/connection/source"))
+                    .and_then(|v| v.as_str())
+            })
+            .or(conn.provider.as_deref())
+            .unwrap_or("config");
+        let rec_source_id = rec_opt
+            .and_then(|r| {
+                r.get("source_id")
+                    .or_else(|| r.pointer("/connection/source_id"))
+                    .cloned()
+            })
+            .unwrap_or(Value::Null);
+        let rec_account_id = rec_opt
+            .and_then(|r| {
+                r.get("account_id")
+                    .or_else(|| r.pointer("/connection/account_id"))
+                    .cloned()
+            })
+            .unwrap_or(Value::Null);
+        let rec_enabled = rec_opt
+            .and_then(|r| {
+                r.get("enabled")
+                    .or_else(|| r.pointer("/connection/enabled"))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true);
+        let observed_at_ms = rec_opt
+            .and_then(|r| r.pointer("/catalog/observed_at_ms").and_then(|v| v.as_i64()))
+            .unwrap_or(now);
+
         let mut bindings = serde_json::Map::new();
         if configured {
             bindings.insert(wire_proto.to_string(), json!("vault"));
@@ -1381,23 +2263,23 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
             bindings.insert(wire_proto.to_string(), json!("none"));
         }
         connections.push(json!({
-            "revision": 1,
+            "revision": rec_rev,
             "hasApiKey": configured,
             "probe_credential_bindings": Value::Object(bindings),
             "document": {
                 "format_version": 1,
                 "connection": {
                     "id": conn.id,
-                    "display_name": conn.id,
+                    "display_name": rec_display,
                     "base_url": conn.endpoint,
                     "protocols": [wire_proto],
-                    "source": conn.provider.as_deref().unwrap_or("config"),
-                    "source_id": Value::Null,
-                    "account_id": Value::Null,
-                    "enabled": true
+                    "source": rec_source,
+                    "source_id": rec_source_id,
+                    "account_id": rec_account_id,
+                    "enabled": rec_enabled
                 },
                 "catalog": {
-                    "observed_at_ms": now,
+                    "observed_at_ms": observed_at_ms,
                     "models": catalog_models
                 },
                 "capability_assessments": capability_assessments
@@ -1405,69 +2287,274 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
         }));
     }
 
-    for rec in suite.list_records::<Value>("model_connection").unwrap_or_default() {
-        let id = rec
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if id.is_empty() || seen_ids.contains(&id) {
+    for (id, rec) in &model_conn_records {
+        if seen_ids.contains(id) {
             continue;
         }
         let base_url = rec
             .get("base_url")
             .or_else(|| rec.get("endpoint"))
+            .or_else(|| rec.pointer("/connection/base_url"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let proto = rec
-            .get("protocol")
-            .and_then(|v| v.as_str())
+        let protocols: Vec<String> = rec
+            .get("protocols")
+            .or_else(|| rec.pointer("/connection/protocols"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| {
+                vec![rec
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("chat_completions")
+                    .to_string()]
+            });
+        let primary_proto = protocols
+            .first()
+            .map(String::as_str)
             .unwrap_or("chat_completions");
+        let revision = rec
+            .get("revision")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let account_id_val = rec
+            .get("account_id")
+            .or_else(|| rec.pointer("/connection/account_id"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let account_id_str = account_id_val.as_str().filter(|s| !s.trim().is_empty());
+        let source_str = rec
+            .get("source")
+            .or_else(|| rec.pointer("/connection/source"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom");
+        let source_id_val = rec
+            .get("source_id")
+            .or_else(|| rec.pointer("/connection/source_id"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let display_name = rec
+            .get("display_name")
+            .or_else(|| rec.pointer("/connection/display_name"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(id);
+        let enabled = rec
+            .get("enabled")
+            .or_else(|| rec.pointer("/connection/enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let observed_at_ms = rec
+            .pointer("/catalog/observed_at_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(now);
+
+        let saved_sel_enabled: Option<HashSet<String>> = store
+            .get_kv(&format!("model_conn_selections:{id}"))
+            .ok()
+            .flatten()
+            .and_then(|v| v.get("enabled").and_then(|a| a.as_array()).cloned())
+            .map(|arr| {
+                arr.into_iter()
+                    .filter_map(|x| x.as_str().map(ToString::to_string))
+                    .collect()
+            });
+
+        let mut catalog_models: Vec<Value> = Vec::new();
+        let mut capability_assessments: Vec<Value> = rec
+            .get("capability_assessments")
+            .or_else(|| rec.pointer("/document/capability_assessments"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut seen_assess: HashSet<String> = capability_assessments
+            .iter()
+            .filter_map(|a| {
+                let mid = a.get("model_id").and_then(|v| v.as_str())?;
+                let p = a.get("protocol").and_then(|v| v.as_str()).unwrap_or(primary_proto);
+                Some(format!("{p}:{mid}"))
+            })
+            .collect();
+
+        if let Some(raw_models) = rec
+            .pointer("/catalog/models")
+            .or_else(|| rec.get("models"))
+            .and_then(|v| v.as_array())
+        {
+            for rm in raw_models {
+                let Some(mid) = rm
+                    .get("model_id")
+                    .or_else(|| rm.get("id"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| rm.as_str())
+                    .filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                let m_proto = rm
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(primary_proto);
+                let caps = infer_model_capabilities(mid, None);
+                let mut modalities = vec!["text".to_string()];
+                if caps.image_input {
+                    modalities.push("image".to_string());
+                }
+                let catalog_key = format!("{m_proto}:{mid}");
+                let is_enabled = match saved_sel_enabled.as_ref() {
+                    Some(set) => set.contains(&catalog_key) || set.contains(mid),
+                    None => true,
+                };
+                let is_selected = is_enabled
+                    && default_sel
+                        .map(|d| d.connection == *id && d.model == mid)
+                        .unwrap_or(false);
+                selections.push(json!({
+                    "connection_id": id,
+                    "catalog_key": catalog_key,
+                    "enabled": is_enabled,
+                    "selected": is_selected
+                }));
+                let normalized_model = if rm.is_object() {
+                    let mut mobj = rm.as_object().cloned().unwrap_or_default();
+                    mobj.entry("model_id".to_string()).or_insert_with(|| json!(mid));
+                    mobj.entry("display_name".to_string()).or_insert_with(|| json!(mid));
+                    mobj.entry("protocol".to_string()).or_insert_with(|| json!(m_proto));
+                    mobj.entry("context_window".to_string()).or_insert(Value::Null);
+                    mobj.entry("modalities".to_string()).or_insert_with(|| json!(modalities));
+                    mobj.entry("reasoning_levels".to_string())
+                        .or_insert_with(|| json!(caps.supported_reasoning_levels));
+                    Value::Object(mobj)
+                } else {
+                    json!({
+                        "model_id": mid,
+                        "display_name": mid,
+                        "protocol": m_proto,
+                        "context_window": Value::Null,
+                        "modalities": modalities,
+                        "reasoning_levels": caps.supported_reasoning_levels,
+                        "summary_supported": caps.supports_reasoning_summary
+                    })
+                };
+                catalog_models.push(normalized_model);
+
+                let override_kv = store
+                    .get_kv(&format!("model_cap_override:{id}:{mid}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object());
+                let probe_kv = store
+                    .get_kv(&format!("model_cap_probe:{id}:{mid}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| v.is_object());
+                let user_override = override_kv
+                    .as_ref()
+                    .and_then(|v| v.get("user_override"))
+                    .cloned()
+                    .filter(|v| !v.is_null());
+                let evidence = probe_kv
+                    .as_ref()
+                    .and_then(|v| v.get("evidence"))
+                    .cloned()
+                    .filter(|v| !v.is_null());
+                if (user_override.is_some() || evidence.is_some())
+                    && seen_assess.insert(format!("{m_proto}:{mid}"))
+                {
+                    capability_assessments.push(json!({
+                        "model_id": mid,
+                        "protocol": m_proto,
+                        "evidence": evidence.unwrap_or(Value::Null),
+                        "user_override": user_override.unwrap_or(Value::Null)
+                    }));
+                }
+            }
+        }
+
+        let has_vault_key = vault_opt.as_ref().is_some_and(|v| {
+            v.get_secret(&crate::config::vault_secret_key(id))
+                .ok()
+                .flatten()
+                .is_some_and(|s| !s.trim().is_empty())
+                || account_id_str.is_some_and(|aid| {
+                    v.get_secret(&format!("model_account_secret:{aid}"))
+                        .ok()
+                        .flatten()
+                        .is_some_and(|s| !s.trim().is_empty())
+                        || v.get_secret(&format!("source_account_token:{aid}"))
+                            .ok()
+                            .flatten()
+                            .is_some_and(|s| !s.trim().is_empty())
+                })
+        });
         let mut rec_bindings = serde_json::Map::new();
-        if is_loopback_url(base_url) {
-            rec_bindings.insert(proto.to_string(), json!("none"));
+        for p in &protocols {
+            if has_vault_key {
+                rec_bindings.insert(p.clone(), json!("vault"));
+            } else if is_loopback_url(base_url) {
+                rec_bindings.insert(p.clone(), json!("none"));
+            }
         }
         connections.push(json!({
-            "revision": 1,
-            "hasApiKey": false,
+            "revision": revision,
+            "hasApiKey": has_vault_key,
             "probe_credential_bindings": Value::Object(rec_bindings),
             "document": {
                 "format_version": 1,
                 "connection": {
                     "id": id,
-                    "display_name": rec.get("display_name").and_then(|v| v.as_str()).unwrap_or(&id),
+                    "display_name": display_name,
                     "base_url": base_url,
-                    "protocols": [proto],
-                    "source": "custom",
-                    "source_id": Value::Null,
-                    "account_id": Value::Null,
-                    "enabled": rec.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true)
+                    "protocols": protocols,
+                    "source": source_str,
+                    "source_id": source_id_val,
+                    "account_id": account_id_val,
+                    "enabled": enabled
                 },
                 "catalog": {
-                    "observed_at_ms": now,
-                    "models": []
+                    "observed_at_ms": observed_at_ms,
+                    "models": catalog_models
                 },
-                "capability_assessments": []
+                "capability_assessments": capability_assessments
             }
         }));
     }
 
-    let accounts: Vec<Value> = suite
-        .list_records::<Value>("source_account")
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|rec| {
-            let id = rec.get("id").and_then(|v| v.as_str())?.to_string();
+    let mut accounts: Vec<Value> = Vec::new();
+    let mut seen_account_ids: HashSet<String> = HashSet::new();
+    for kind in ["model_account", "source_account"] {
+        for rec in suite.list_records::<Value>(kind).unwrap_or_default() {
+            let Some(id) = rec
+                .get("id")
+                .or_else(|| rec.get("account_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            if !seen_account_ids.insert(id.to_string()) {
+                continue;
+            }
             let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
             let display_name = rec
                 .get("display_name")
+                .or_else(|| rec.get("name"))
                 .and_then(|v| v.as_str())
-                .unwrap_or(&id);
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(id);
             let source = rec
                 .get("source")
+                .or_else(|| rec.get("provider"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("custom");
-            Some(json!({
+            accounts.push(json!({
                 "revision": rev,
                 "account": {
                     "id": id,
@@ -1475,9 +2562,9 @@ pub(super) fn build_model_connections_inventory(store: &Store, suite: &ModulesSu
                     "source": source,
                     "state": rec.get("state").and_then(|v| v.as_str()).unwrap_or("connected")
                 }
-            }))
-        })
-        .collect();
+            }));
+        }
+    }
 
     json!({
         "connections": connections,
@@ -1570,6 +2657,99 @@ pub(super) fn validate_probe_url_ssrf(raw_url: &str) -> Result<Url, String> {
     Ok(parsed)
 }
 
+fn is_disallowed_configured_endpoint_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_loopback() || v4.is_private() {
+                return false;
+            }
+            let oct = v4.octets();
+            v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || oct[0] == 0
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                return false;
+            }
+            if let Some(mapped_v4) = v6.to_ipv4_mapped() {
+                return is_disallowed_configured_endpoint_ip(IpAddr::V4(mapped_v4));
+            }
+            let segs = v6.segments();
+            if (segs[0] & 0xfe00) == 0xfc00 {
+                return false; // ULA LAN fc00::/7
+            }
+            v6.is_unspecified()
+                || v6.is_multicast()
+                || (segs[0] & 0xffc0) == 0xfe80 // Link-local fe80::/10
+        }
+    }
+}
+
+pub(super) fn is_local_or_lan_url(raw_url: &str) -> bool {
+    if is_loopback_url(raw_url) {
+        return true;
+    }
+    let Ok(parsed) = Url::parse(raw_url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let clean = host.trim_start_matches('[').trim_end_matches(']');
+    match clean.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => v4.is_loopback() || v4.is_private(),
+        Ok(IpAddr::V6(v6)) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
+/// Validates a user-configured saved model endpoint URL: still blocks cloud metadata
+/// (`169.254.169.254`, `metadata.google.internal`), link-local, unspecified, multicast,
+/// and broadcast addresses, while allowing owner-configured LAN endpoints (RFC1918 / ULA).
+pub(super) fn validate_configured_endpoint_url(raw_url: &str) -> Result<Url, String> {
+    let parsed = Url::parse(raw_url).map_err(|e| format!("invalid probe URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("probe URL must use http:// or https://".into());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "probe URL missing host".to_string())?;
+    let host_lc = host.to_ascii_lowercase();
+    if matches!(
+        host_lc.as_str(),
+        "metadata.google.internal" | "metadata.goog" | "169.254.169.254"
+    ) {
+        return Err("probe target rejected: cloud metadata host is blocked".into());
+    }
+    let clean_host = host.trim_start_matches('[').trim_end_matches(']');
+    if clean_host.eq_ignore_ascii_case("localhost") {
+        return Ok(parsed);
+    }
+    if let Ok(ip) = clean_host.parse::<IpAddr>() {
+        if is_disallowed_configured_endpoint_ip(ip) {
+            return Err(format!(
+                "probe target rejected: link-local or invalid IP {ip} is blocked"
+            ));
+        }
+        return Ok(parsed);
+    }
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    if let Ok(addrs) = (clean_host, port).to_socket_addrs() {
+        for sock in addrs {
+            if is_disallowed_configured_endpoint_ip(sock.ip()) {
+                return Err(format!(
+                    "probe target rejected: host resolves to link-local or invalid IP {}",
+                    sock.ip()
+                ));
+            }
+        }
+    }
+    Ok(parsed)
+}
+
 pub(super) fn run_real_model_connection_probe(store: &Store, body: &Value) -> Value {
     let start = Instant::now();
     let cfg = load_active_config(store);
@@ -1639,8 +2819,19 @@ pub(super) fn run_real_model_connection_probe(store: &Store, body: &Value) -> Va
     } else {
         format!("{trimmed}/models")
     };
-    // SEC-3: Reject private/link-local/metadata IPs (e.g. 169.254.169.254) unless loopback!
-    if let Err(ssrf_err) = validate_probe_url_ssrf(&probe_url) {
+    // SEC-3: Allow RFC1918 LAN endpoints when probing a saved owner-configured connection;
+    // strictly block private/link-local/metadata IPs for arbitrary caller-supplied URLs.
+    let matches_saved_connection = conn.is_some_and(|c| {
+        caller_endpoint
+            .as_deref()
+            .is_none_or(|ep| same_origin_url(ep, &c.endpoint))
+    });
+    let ssrf_check = if matches_saved_connection {
+        validate_configured_endpoint_url(&probe_url)
+    } else {
+        validate_probe_url_ssrf(&probe_url)
+    };
+    if let Err(ssrf_err) = ssrf_check {
         return json!({
             "ok": false,
             "reachable": false,
@@ -2108,6 +3299,22 @@ pub(super) fn resolve_requested_model_selection(
         .find(|c| c.models.iter().any(|m| m.id == mid))
     {
         return Some((conn.id.clone(), mid.to_string()));
+    }
+    // 4. Match running local models in LocalModelProcessManager cleanly
+    let running = LocalModelProcessManager::global().list_running_models();
+    let stripped_local = mid.strip_prefix("local:").unwrap_or(mid);
+    if let Some(rt) = running.iter().find(|r| {
+        let rid = r.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let rmodel = r.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        rid == mid || rid == stripped_local || rmodel == mid
+    }) {
+        if let Some(rid) = rt
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            return Some((format!("local:{rid}"), rid.to_string()));
+        }
     }
     None
 }
@@ -2833,15 +4040,17 @@ pub(super) fn handle_sse_chat_turn(
             .filter(|s| !s.is_empty() && *s != "automatic" && *s != "inherit")
             .map(ToString::to_string)
     });
-    let override_source = body
+    let explicit_source_field = body
         .get("selectedModelSource")
         .or_else(|| body.get("modelSource"))
         .or_else(|| body.get("model_source"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-        .or(intent_source)
-        .or_else(|| sess.as_ref().and_then(|s| s.model_connection.clone()));
+        .and_then(|v| v.as_str());
+    let override_source = match explicit_source_field {
+        // Explicit `""` clears any previous session `local` binding when switching back to cloud.
+        Some(raw) if raw.trim().is_empty() => None,
+        Some(raw) => Some(raw.trim().to_string()),
+        None => intent_source.or_else(|| sess.as_ref().and_then(|s| s.model_connection.clone())),
+    };
     let override_model = body
         .get("modelId")
         .or_else(|| body.get("selectedModelId"))
@@ -2920,6 +4129,34 @@ pub(super) fn handle_sse_chat_turn(
         }
     } else if let Some(ref mid) = override_model {
         if let Some((conn_id, model_name)) = resolve_requested_model_selection(&store, &cfg, mid) {
+            if let Some(local_id) = conn_id.strip_prefix("local:") {
+                if !cfg.llm.connections.iter().any(|c| c.id == conn_id) {
+                    let running = LocalModelProcessManager::global().list_running_models();
+                    if let Some(ep) = running
+                        .iter()
+                        .find(|r| r.get("id").and_then(|v| v.as_str()) == Some(local_id))
+                        .and_then(|r| r.get("endpoint").and_then(|v| v.as_str()))
+                    {
+                        cfg.llm.connections.push(ConnectionConfig {
+                            id: conn_id.clone(),
+                            endpoint: format!("{}/v1", ep.trim_end_matches('/')),
+                            protocol: Some("chat_completions".into()),
+                            provider: Some("local".into()),
+                            api_key: None,
+                            api_key_env: None,
+                            models: vec![ModelEntry {
+                                id: model_name.clone(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            }],
+                        });
+                    }
+                }
+            }
             cfg.llm.default_model = Some(DefaultModelSelection {
                 connection: conn_id,
                 model: model_name,
@@ -4744,6 +5981,58 @@ pub(super) fn handle_auxiliary_dispatch(
         })
         .unwrap_or(1)
         .max(1);
+    let provider_str = body
+        .pointer("/configuration/provider")
+        .or_else(|| body.get("provider"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            body.get("profile_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(|p| {
+                    if p.starts_with("configured:") {
+                        p.to_string()
+                    } else {
+                        format!("configured:{p}")
+                    }
+                })
+        })
+        .or_else(|| {
+            prev_env.as_ref().and_then(|e| {
+                e.pointer("/receipt/operation/configuration/provider")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
+        })
+        .unwrap_or_else(|| "configured:default".to_string());
+    let configuration_revision = body
+        .get("expected_profile_revision")
+        .or_else(|| body.get("configuration_revision"))
+        .or_else(|| body.pointer("/configuration/configuration_revision"))
+        .or_else(|| body.get("revision"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            prev_env.as_ref().and_then(|e| {
+                e.pointer("/receipt/operation/configuration/configuration_revision")
+                    .and_then(|v| v.as_u64())
+            })
+        })
+        .unwrap_or(1)
+        .max(1);
+    let maximum_duration_ms = body
+        .get("maximum_duration_ms")
+        .or_else(|| body.pointer("/configuration/maximum_duration_ms"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            prev_env.as_ref().and_then(|e| {
+                e.pointer("/receipt/operation/configuration/maximum_duration_ms")
+                    .and_then(|v| v.as_u64())
+            })
+        })
+        .unwrap_or(300_000)
+        .max(1_000);
 
     let make_receipt = |op_state: &str,
                         attempt_state: Option<&str>,
@@ -4773,6 +6062,9 @@ pub(super) fn handle_auxiliary_dispatch(
                     "source_host_id": host_id
                 },
                 "configuration": {
+                    "provider": provider_str,
+                    "configuration_revision": configuration_revision,
+                    "maximum_duration_ms": maximum_duration_ms,
                     "input_digest": input_digest,
                     "max_attempts": max_attempts
                 },
@@ -5233,7 +6525,7 @@ pub(super) fn handle_source_oauth_route(
                     account_id: account_id.clone(),
                     provider: "kimi".into(),
                     method: 0,
-                    state: "awaiting_authorization".into(),
+                    state: "pending".into(),
                     csrf_state,
                     code_challenge: challenge,
                     authorization_url: Some(verification_url.clone()),
@@ -5243,6 +6535,7 @@ pub(super) fn handle_source_oauth_route(
                     instructions: Some("Open verification URL and enter the user code.".into()),
                     poll_interval_seconds: Some(5),
                     cancellation_confirmed: None,
+                    expires_at_ms: now_ms().saturating_add(600_000),
                 };
                 flows.insert(flow_id.clone(), flow);
                 (
@@ -5251,7 +6544,7 @@ pub(super) fn handle_source_oauth_route(
                         "account": { "revision": rev, "account": { "id": account_id } },
                         "origin": origin,
                         "server_id": server_id,
-                        "state": "awaiting_authorization",
+                        "state": "pending",
                         "flow_id": flow_id,
                         "verification_url": verification_url,
                         "user_code": user_code,
@@ -5262,8 +6555,26 @@ pub(super) fn handle_source_oauth_route(
                 )
             } else if path.ends_with("/cancel") {
                 let fid = flow_id_in.unwrap_or_default();
-                let confirmed = if let Some(flow) = flows.get_mut(&fid) {
+                let mut cancelled_fid = fid.clone();
+                let confirmed = if !fid.is_empty() {
+                    if let Some(flow) = flows.get_mut(&fid) {
+                        flow.state = "cancelled".into();
+                        flow.verification_url = None;
+                        flow.user_code = None;
+                        flow.poll_interval_seconds = None;
+                        flow.cancellation_confirmed = Some(true);
+                    }
+                    true
+                } else if let Some((k, flow)) = flows
+                    .iter_mut()
+                    .rev()
+                    .find(|(_, f)| f.account_id == account_id && f.state == "pending")
+                {
+                    cancelled_fid = k.clone();
                     flow.state = "cancelled".into();
+                    flow.verification_url = None;
+                    flow.user_code = None;
+                    flow.poll_interval_seconds = None;
                     flow.cancellation_confirmed = Some(true);
                     true
                 } else {
@@ -5276,7 +6587,7 @@ pub(super) fn handle_source_oauth_route(
                         "origin": origin,
                         "server_id": server_id,
                         "state": "cancelled",
-                        "flow_id": if fid.is_empty() { Value::Null } else { json!(fid) },
+                        "flow_id": if cancelled_fid.is_empty() { Value::Null } else { json!(cancelled_fid) },
                         "verification_url": Value::Null,
                         "user_code": Value::Null,
                         "poll_interval_seconds": Value::Null,
@@ -5285,26 +6596,41 @@ pub(super) fn handle_source_oauth_route(
                     }),
                 )
             } else {
-                let flow_opt = flow_id_in
+                let target_key = flow_id_in
                     .as_deref()
-                    .and_then(|id| flows.get(id))
-                    .or_else(|| flows.values().rev().find(|f| f.account_id == account_id));
-                match flow_opt {
-                    Some(f) => (
-                        200,
-                        json!({
-                            "account": { "revision": rev, "account": { "id": account_id } },
-                            "origin": origin,
-                            "server_id": server_id,
-                            "state": f.state,
-                            "flow_id": f.request_id,
-                            "verification_url": f.verification_url,
-                            "user_code": f.user_code,
-                            "poll_interval_seconds": f.poll_interval_seconds,
-                            "inference_supported": false,
-                            "cancellation_confirmed": f.cancellation_confirmed
-                        }),
-                    ),
+                    .filter(|id| flows.contains_key(*id))
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        flows
+                            .iter()
+                            .rev()
+                            .find(|(_, f)| f.account_id == account_id)
+                            .map(|(k, _)| k.clone())
+                    });
+                match target_key.and_then(|k| flows.get_mut(&k)) {
+                    Some(f) => {
+                        if f.state == "pending" && now_ms() >= f.expires_at_ms {
+                            f.state = "expired".into();
+                            f.verification_url = None;
+                            f.user_code = None;
+                            f.poll_interval_seconds = None;
+                        }
+                        (
+                            200,
+                            json!({
+                                "account": { "revision": rev, "account": { "id": account_id } },
+                                "origin": origin,
+                                "server_id": server_id,
+                                "state": f.state,
+                                "flow_id": f.request_id,
+                                "verification_url": f.verification_url,
+                                "user_code": f.user_code,
+                                "poll_interval_seconds": f.poll_interval_seconds,
+                                "inference_supported": false,
+                                "cancellation_confirmed": f.cancellation_confirmed
+                            }),
+                        )
+                    }
                     None => (
                         200,
                         json!({
@@ -5454,8 +6780,8 @@ pub(super) fn handle_source_oauth_route(
                 account_id,
                 provider: provider.clone(),
                 method: method_idx,
-                state: "awaiting_authorization".into(),
-                csrf_state,
+                state: "pending".into(),
+                csrf_state: csrf_state.clone(),
                 code_challenge: challenge,
                 authorization_url: Some(auth_url.clone()),
                 verification_url: None,
@@ -5464,6 +6790,7 @@ pub(super) fn handle_source_oauth_route(
                 instructions: Some("Complete authorization and paste the returned code.".into()),
                 poll_interval_seconds: None,
                 cancellation_confirmed: None,
+                expires_at_ms: now_ms().saturating_add(600_000),
             };
             oauth_flows
                 .lock()
@@ -5475,7 +6802,9 @@ pub(super) fn handle_source_oauth_route(
                     "request_id": request_id,
                     "provider": provider,
                     "method": method_idx,
-                    "state": "awaiting_authorization",
+                    "state": "pending",
+                    "oauth_state": csrf_state,
+                    "state_token": csrf_state,
                     "authorization_url": auth_url,
                     "callback_mode": "code",
                     "instructions": "Complete authorization and paste the returned code."
@@ -5491,9 +6820,15 @@ pub(super) fn handle_source_oauth_route(
                 .unwrap_or_default();
             let provided_state = body
                 .get("state")
+                .or_else(|| body.get("oauth_state"))
+                .or_else(|| body.get("state_token"))
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string)
-                .or_else(|| parse_query_str(query, "state"))
+                .or_else(|| {
+                    parse_query_str(query, "state")
+                        .or_else(|| parse_query_str(query, "oauth_state"))
+                        .or_else(|| parse_query_str(query, "state_token"))
+                })
                 .unwrap_or_default();
             let code = body
                 .get("code")
@@ -5639,6 +6974,7 @@ pub(super) fn handle_source_oauth_route(
                 instructions: Some("Complete PKCE authorization in browser.".into()),
                 poll_interval_seconds: Some(2),
                 cancellation_confirmed: None,
+                expires_at_ms: now_ms().saturating_add(600_000),
             };
             oauth_flows
                 .lock()

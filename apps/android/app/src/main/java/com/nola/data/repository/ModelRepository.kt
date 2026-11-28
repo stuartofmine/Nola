@@ -11,7 +11,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -40,11 +42,12 @@ class ModelRepositoryImpl @Inject constructor(
     private val memoryProfileDataStore: MemoryProfileDataStore
 ) : ModelRepository {
 
-    override suspend fun listConfiguredModels(): List<ModelInfo> =
+    override suspend fun listConfiguredModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
         memoryProfileDataStore.configuredApiModelProfiles().map(CanonicalModelProfile::toConfiguredModelInfo)
+    }
 
-    override suspend fun listOfficialModels(): List<ModelInfo> {
-        return try {
+    override suspend fun listOfficialModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
+        try {
             val response = api.listModels()
             (response.data?.map { ModelInfo(id = it.id, name = it.id) }
                 ?: response.models?.map { ModelInfo(id = it, name = it) }
@@ -54,9 +57,9 @@ class ModelRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun getApiModelConfig(): ApiModelConfig? {
-        val profile=memoryProfileDataStore.configuredApiModelProfiles().let {all->all.firstOrNull {it.selected} ?: all.firstOrNull()} ?: return null
-        return resolve(profile)
+    override suspend fun getApiModelConfig(): ApiModelConfig? = withContext(Dispatchers.IO) {
+        val profile=memoryProfileDataStore.configuredApiModelProfiles().let {all->all.firstOrNull {it.selected} ?: all.firstOrNull()} ?: return@withContext null
+        resolve(profile)
     }
 
     private fun resolve(profile: CanonicalModelProfile, parameters: ModelParameters? = null): ApiModelConfig {
@@ -72,13 +75,14 @@ class ModelRepositoryImpl @Inject constructor(
         return ApiModelConfig(endpoint, secret, model, protocol, runtime)
     }
 
-    override suspend fun getApiModelConfigFor(model: ModelInfo, parameters: ModelParameters?): ApiModelConfig? {
-        val profile=memoryProfileDataStore.configuredApiModelProfiles().singleOrNull {
-            it.id==model.profileId && it.modelName==model.id
-        } ?: return null
-        require(model.profileRevision==null || profile.revision==model.profileRevision) {"Model profile revision changed"}
-        return resolve(profile, parameters)
-    }
+    override suspend fun getApiModelConfigFor(model: ModelInfo, parameters: ModelParameters?): ApiModelConfig? =
+        withContext(Dispatchers.IO) {
+            val profile=memoryProfileDataStore.configuredApiModelProfiles().singleOrNull {
+                it.id==model.profileId && it.modelName==model.id
+            } ?: return@withContext null
+            require(model.profileRevision==null || profile.revision==model.profileRevision) {"Model profile revision changed"}
+            resolve(profile, parameters)
+        }
 
     override suspend fun saveApiModelConfig(config: ApiModelConfig) {
         memoryProfileDataStore.addAgentLlmConfig(config.endpoint, config.apiKey, config.model, config.wireProtocol.wireValue)

@@ -26,12 +26,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 enum class IntelligenceEntryKind {
     Preference,
@@ -100,17 +102,22 @@ class IntelligenceViewModel @Inject constructor(
             try {
             memoryProfileDataStore.profile.collect { profile ->
                 val principalId = memoryProfileDataStore.getOrCreateResourcePrincipalId()
+                val (skillAccess, mcpAccess) = withContext(Dispatchers.IO) {
+                    val skills = profile.uploadedSkills.map { skill ->
+                        AndroidManagedResourceAccess.project(skill, principalId)
+                    }
+                    val mcps = profile.mcpServers.map { server ->
+                        AndroidManagedResourceAccess.project(server, principalId)
+                    }
+                    skills to mcps
+                }
                 _uiState.update {
                     it.copy(
                         profile = profile,
                         isLoadingProfile = false,
                         profileLoadError = null,
-                        skillAccess = profile.uploadedSkills.map { skill ->
-                            AndroidManagedResourceAccess.project(skill, principalId)
-                        },
-                        mcpAccess = profile.mcpServers.map { server ->
-                            AndroidManagedResourceAccess.project(server, principalId)
-                        },
+                        skillAccess = skillAccess,
+                        mcpAccess = mcpAccess,
                     )
                 }
             }
@@ -303,7 +310,7 @@ class IntelligenceViewModel @Inject constructor(
         return items.mapIndexed { itemIndex, item -> if (itemIndex == index) value else item }
     }
 
-    private fun requireAccess(
+    private suspend fun requireAccess(
         skill: UploadedContent,
         principalId: String,
         permission: AgentCoreResourcePermission,
@@ -320,7 +327,7 @@ class IntelligenceViewModel @Inject constructor(
         )
     }
 
-    private fun requireAccess(
+    private suspend fun requireAccess(
         server: McpServerConfig,
         principalId: String,
         permission: AgentCoreResourcePermission,
@@ -337,7 +344,7 @@ class IntelligenceViewModel @Inject constructor(
         )
     }
 
-    private fun requireAccess(
+    private suspend fun requireAccess(
         kind: AgentCoreResourceKind,
         resourceId: String,
         ownerId: String,
@@ -347,22 +354,24 @@ class IntelligenceViewModel @Inject constructor(
         principalId: String,
         permission: AgentCoreResourcePermission,
     ) {
-        val actor = AgentCoreResourcePrincipal(AgentCoreResourcePrincipalKind.LocalUser, principalId)
-        val identity = AgentCoreManagedResourceIdentity(
-            kind = kind,
-            resourceId = resourceId,
-            owner = AgentCoreResourcePrincipal(AgentCoreResourcePrincipalKind.LocalUser, ownerId),
-            revision = revision.coerceAtLeast(1),
-            contentDigest = "sha256:${sha256(content)}",
-        )
-        val decision = AgentCoreResourceAccess.evaluate(
-            AgentCoreResourceAccessRequest(
-                resource = identity,
-                actor = actor,
-                permission = permission,
-                grants = grants.mapNotNull { it.toCoreGrant(kind, resourceId) },
+        val decision = withContext(Dispatchers.IO) {
+            val actor = AgentCoreResourcePrincipal(AgentCoreResourcePrincipalKind.LocalUser, principalId)
+            val identity = AgentCoreManagedResourceIdentity(
+                kind = kind,
+                resourceId = resourceId,
+                owner = AgentCoreResourcePrincipal(AgentCoreResourcePrincipalKind.LocalUser, ownerId),
+                revision = revision.coerceAtLeast(1),
+                contentDigest = "sha256:${sha256(content)}",
             )
-        )
+            AgentCoreResourceAccess.evaluate(
+                AgentCoreResourceAccessRequest(
+                    resource = identity,
+                    actor = actor,
+                    permission = permission,
+                    grants = grants.mapNotNull { it.toCoreGrant(kind, resourceId) },
+                )
+            )
+        }
         if (decision?.allowed != true) {
             throw SecurityException(context.getString(R.string.intelligence_resource_access_denied))
         }

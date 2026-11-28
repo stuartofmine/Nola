@@ -1,38 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
 
-nonisolated struct MacModelConnectionSnapshot: Codable, Identifiable, Sendable {
+nonisolated struct MacModelConnectionSnapshot: Codable, Identifiable, Equatable, Sendable {
     let revision: Int64
     var document: Document
     var id: String { document.connection.id }
-    struct Document: Codable, Sendable {
+    struct Document: Codable, Equatable, Sendable {
         let format_version: Int; var connection: Connection; var catalog: Catalog?
         var capability_assessments: [CapabilityAssessment]? = nil
     }
-    struct CapabilityAssessment: Codable, Sendable {
+    struct CapabilityAssessment: Codable, Equatable, Sendable {
         let model_id: String
         let `protocol`: String
         let evidence: Evidence?
         let user_override: MacCanonicalJSONValue?
-        struct Evidence: Codable, Sendable {
+        struct Evidence: Codable, Equatable, Sendable {
             let text_generation: Bool
             let account_revision: Int64?
             let credential_binding: String
             let observed_at_ms: Int64
         }
     }
-    struct Connection: Codable, Sendable {
+    struct Connection: Codable, Equatable, Sendable {
         let id: String
         var display_name: String
-        let base_url: String
-        let protocols: [String]
-        let account_id: String?
+        var base_url: String
+        var protocols: [String]
+        var account_id: String?
         let source: String
         let source_id: String?
         var enabled: Bool
     }
-    struct Catalog: Codable, Sendable { let observed_at_ms: Int64; let source: String; let models: [Model] }
-    struct Model: Codable, Identifiable, Sendable {
+    struct Catalog: Codable, Equatable, Sendable { let observed_at_ms: Int64; let source: String; let models: [Model] }
+    struct Model: Codable, Identifiable, Equatable, Sendable {
         let model_id: String
         let display_name: String
         let `protocol`: String
@@ -129,12 +129,39 @@ nonisolated final class MacModelConnectionService: Sendable {
         return dict["state"] != nil || dict["credential_ref"] != nil || dict["account_id"] != nil
     }
     func enabledModels(connectionID: String) throws -> Set<String> {
-        Set(try application.listModelProfiles().compactMap { profile in
+        try enabledModelsByConnection()[connectionID] ?? []
+    }
+
+    func enabledModelsByConnection() throws -> [String: Set<String>] {
+        var result: [String: Set<String>] = [:]
+        for profile in try application.listModelProfiles() {
             guard profile.enabled, profile.deletedAtMs == nil,
                   let source = try JSONSerialization.jsonObject(with: Data(profile.sourceJSON.utf8)) as? [String: Any],
-                  source["connectionID"] as? String == connectionID else { return nil }
-            return source["catalogKey"] as? String
+                  let connectionID = source["connectionID"] as? String,
+                  let catalogKey = source["catalogKey"] as? String else { continue }
+            result[connectionID, default: []].insert(catalogKey)
+        }
+        return result
+    }
+
+    struct InventorySnapshot: Sendable {
+        let connections: [MacModelConnectionSnapshot]
+        let accounts: [MacModelAccountSnapshot]
+        let enabledByConnection: [String: Set<String>]
+    }
+
+    func loadInventory() throws -> InventorySnapshot {
+        let currentConnections = try connections()
+        let currentAccounts = try accounts()
+        let enabledMap = try enabledModelsByConnection()
+        let normalizedEnabled = Dictionary(uniqueKeysWithValues: currentConnections.map {
+            ($0.id, enabledMap[$0.id] ?? [])
         })
+        return InventorySnapshot(
+            connections: currentConnections,
+            accounts: currentAccounts,
+            enabledByConnection: normalizedEnabled
+        )
     }
     func credential(connectionID: String, endpoint: String, wireProtocol: String) throws -> (reference: String, secret: String) {
         guard wireProtocol != "siwc_responses" else {
@@ -172,13 +199,197 @@ nonisolated final class MacModelConnectionService: Sendable {
                 "expected_revision": .null, "updated_at_ms": now])
             accountID = account
         }
-        return try command(["type": .string("save_connection"), "input": .object([
+        let created: MacModelConnectionSnapshot = try command(["type": .string("save_connection"), "input": .object([
             "id": .string(id),
                 "display_name": .string(name), "base_url": .string(endpoint), "protocols": .array([.string(wireProtocol)]),
                 "account_id": accountID.map { .string($0) } ?? .null, "source": .string("manual"),
                 "source_id": .null, "enabled": .bool(true)]),
             "expected_revision": .null, "updated_at_ms": now])
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+        return created
     }
+
+    func update(
+        _ snapshot: MacModelConnectionSnapshot,
+        name: String,
+        endpoint: String,
+        wireProtocol: String,
+        secret: String? = nil,
+        clearSecret: Bool = false
+    ) throws -> MacModelConnectionSnapshot {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URLComponents(string: trimmedEndpoint),
+              let scheme = url.scheme?.lowercased(), ["https", "http"].contains(scheme),
+              url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              !trimmedName.isEmpty else {
+            throw MacApplicationPortError.rejected("Enter a name and an HTTP(S) endpoint without credentials or query")
+        }
+        let old = snapshot.document.connection
+        let routeChanged = (trimmedEndpoint != old.base_url) || (old.protocols != [wireProtocol])
+        let credentialStore = MacAppleChatConfigurationStore(applicationPort: application)
+        var nextAccountID = old.account_id
+        var oldRefToDelete: String?
+
+        let existingAccount: MacModelAccountSnapshot?
+        if let accountID = old.account_id {
+            existingAccount = try command(["type": .string("get_account"), "id": .string(accountID)])
+        } else {
+            existingAccount = nil
+        }
+
+        if clearSecret {
+            if let oldRef = existingAccount?.account.credential_ref, !oldRef.isEmpty {
+                oldRefToDelete = oldRef
+            }
+            if let existingAccount {
+                let _: MacModelAccountSnapshot = try command([
+                    "type": .string("save_account"),
+                    "input": .object([
+                        "id": .string(existingAccount.account.id),
+                        "display_name": .string(trimmedName),
+                        "source": .string(existingAccount.account.source),
+                        "credential_ref": .null,
+                        "state": .string("disconnected"),
+                    ]),
+                    "expected_revision": .signedInteger(existingAccount.revision),
+                    "updated_at_ms": now,
+                ])
+            }
+            nextAccountID = nil
+        } else if let newSecret = secret, !newSecret.isEmpty {
+            let newReference = try credentialStore.storeAccountSecret(
+                newSecret,
+                connectionID: old.id,
+                endpoint: trimmedEndpoint,
+                protocols: [wireProtocol]
+            )
+            if let existingAccount {
+                if let oldRef = existingAccount.account.credential_ref, !oldRef.isEmpty, oldRef != newReference {
+                    oldRefToDelete = oldRef
+                }
+                let _: MacModelAccountSnapshot = try command([
+                    "type": .string("save_account"),
+                    "input": .object([
+                        "id": .string(existingAccount.account.id),
+                        "display_name": .string(trimmedName),
+                        "source": .string(existingAccount.account.source),
+                        "credential_ref": .string(newReference),
+                        "state": .string("ready"),
+                    ]),
+                    "expected_revision": .signedInteger(existingAccount.revision),
+                    "updated_at_ms": now,
+                ])
+                nextAccountID = existingAccount.account.id
+            } else {
+                let accountID = UUID().uuidString.lowercased()
+                let _: MacModelAccountSnapshot = try command([
+                    "type": .string("save_account"),
+                    "input": .object([
+                        "id": .string(accountID),
+                        "display_name": .string(trimmedName),
+                        "source": .string(old.source),
+                        "credential_ref": .string(newReference),
+                        "state": .string("ready"),
+                    ]),
+                    "expected_revision": .null,
+                    "updated_at_ms": now,
+                ])
+                nextAccountID = accountID
+            }
+        } else if routeChanged, let existingAccount,
+                  let oldRef = existingAccount.account.credential_ref, !oldRef.isEmpty,
+                  let oldWire = old.protocols.first {
+            // Re-bind the existing Keychain secret to the updated endpoint/protocol so discovery and chat continue working.
+            let existingSecret = try credentialStore.resolveAccountSecret(
+                oldRef,
+                connectionID: old.id,
+                endpoint: old.base_url,
+                wireProtocol: oldWire
+            )
+            let reboundRef = try credentialStore.storeAccountSecret(
+                existingSecret,
+                connectionID: old.id,
+                endpoint: trimmedEndpoint,
+                protocols: [wireProtocol]
+            )
+            oldRefToDelete = oldRef
+            let _: MacModelAccountSnapshot = try command([
+                "type": .string("save_account"),
+                "input": .object([
+                    "id": .string(existingAccount.account.id),
+                    "display_name": .string(trimmedName),
+                    "source": .string(existingAccount.account.source),
+                    "credential_ref": .string(reboundRef),
+                    "state": .string("ready"),
+                ]),
+                "expected_revision": .signedInteger(existingAccount.revision),
+                "updated_at_ms": now,
+            ])
+        } else if let existingAccount, trimmedName != existingAccount.account.display_name {
+            let _: MacModelAccountSnapshot = try command([
+                "type": .string("save_account"),
+                "input": .object([
+                    "id": .string(existingAccount.account.id),
+                    "display_name": .string(trimmedName),
+                    "source": .string(existingAccount.account.source),
+                    "credential_ref": existingAccount.account.credential_ref.map { .string($0) } ?? .null,
+                    "state": .string(existingAccount.account.state),
+                ]),
+                "expected_revision": .signedInteger(existingAccount.revision),
+                "updated_at_ms": now,
+            ])
+        }
+
+        var updatedConnection = old
+        updatedConnection.display_name = trimmedName
+        updatedConnection.base_url = trimmedEndpoint
+        updatedConnection.protocols = [wireProtocol]
+        updatedConnection.account_id = nextAccountID
+        let input = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(updatedConnection))
+        let updated: MacModelConnectionSnapshot = try command([
+            "type": .string("save_connection"),
+            "input": input,
+            "clear_catalog": .bool(routeChanged),
+            "expected_revision": .signedInteger(snapshot.revision),
+            "updated_at_ms": now,
+        ])
+        if let oldRefToDelete {
+            credentialStore.deleteAccountSecret(oldRefToDelete)
+        }
+        if routeChanged {
+            try enable(updated, modelIDs: [])
+        }
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+        return updated
+    }
+
+    func delete(_ snapshot: MacModelConnectionSnapshot, deleteAccount: Bool = true) throws {
+        struct DeleteResult: Decodable {
+            let ok: Bool?
+            let deleted: Bool?
+            let deleted_account_id: String?
+        }
+        let credentialStore = MacAppleChatConfigurationStore(applicationPort: application)
+        var credentialRefToDelete: String?
+        if deleteAccount, let accountID = snapshot.document.connection.account_id {
+            if let acct: MacModelAccountSnapshot = try? command(["type": .string("get_account"), "id": .string(accountID)]),
+               let ref = acct.account.credential_ref, !ref.isEmpty {
+                credentialRefToDelete = ref
+            }
+        }
+        let result: DeleteResult = try command([
+            "type": .string("delete_connection"),
+            "id": .string(snapshot.id),
+            "delete_account": .bool(deleteAccount),
+            "deleted_at_ms": now,
+        ])
+        if result.deleted_account_id != nil, let ref = credentialRefToDelete {
+            credentialStore.deleteAccountSecret(ref)
+        }
+        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+    }
+
     func disconnect(_ snapshot: MacModelConnectionSnapshot) throws -> MacModelConnectionSnapshot {
         var document = snapshot.document; document.connection.enabled = false
         let input = try JSONDecoder().decode(MacCanonicalJSONValue.self, from: JSONEncoder().encode(document.connection))
@@ -201,15 +412,42 @@ nonisolated final class MacModelConnectionService: Sendable {
         guard let wire = connection.protocols.first else {
             throw MacApplicationPortError.rejected("Invalid model discovery route")
         }
-        let credential = try credential(connectionID: connection.id, endpoint: connection.base_url, wireProtocol: wire)
-        let models = try await AppleModelCatalogDiscovery.discover(
-            endpoint: connection.base_url, wireProtocol: wire, secret: credential.secret)
-        let entries: [MacCanonicalJSONValue] = try models.map {
-            try JSONDecoder().decode(MacCanonicalJSONValue.self, from: $0.catalogData(wireProtocol: wire))
+        do {
+            let credential = try await Task.detached(priority: .userInitiated) { [self] in
+                try self.credential(connectionID: connection.id, endpoint: connection.base_url, wireProtocol: wire)
+            }.value
+            let models = try await AppleModelCatalogDiscovery.discover(
+                endpoint: connection.base_url, wireProtocol: wire, secret: credential.secret)
+            let entries: [MacCanonicalJSONValue] = try models.map {
+                try JSONDecoder().decode(MacCanonicalJSONValue.self, from: $0.catalogData(wireProtocol: wire))
+            }
+            try Task.checkCancellation()
+            let updated: MacModelConnectionSnapshot = try await Task.detached(priority: .userInitiated) { [self] in
+                try self.command(["type": .string("refresh_connection_catalog"), "connection_id": .string(connection.id),
+                    "expected_revision": .signedInteger(snapshot.revision), "models": .array(entries), "observed_at_ms": self.now])
+            }.value
+            NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+            return updated
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let nsErr = error as NSError
+            let host = URL(string: connection.base_url)?.host ?? "unknown"
+            await Logger.shared.log(
+                .error,
+                "MacModelConnectionService",
+                "Model catalog discovery failed",
+                metadata: [
+                    "connectionID": connection.id,
+                    "host": host,
+                    "protocol": wire,
+                    "errorDomain": nsErr.domain,
+                    "errorCode": String(nsErr.code),
+                    "error": error.localizedDescription,
+                ]
+            )
+            throw error
         }
-        try Task.checkCancellation()
-        return try command(["type": .string("refresh_connection_catalog"), "connection_id": .string(connection.id),
-            "expected_revision": .signedInteger(snapshot.revision), "models": .array(entries), "observed_at_ms": now])
     }
     func enable(_ snapshot: MacModelConnectionSnapshot, modelIDs: Set<String>) throws {
         let _: MacCanonicalJSONValue = try command(["type": .string("configure_connection_models"),

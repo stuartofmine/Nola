@@ -47,7 +47,7 @@ use nola_modules::{
 use nola_store::{Store, Vault};
 use nola_tools::{extract_document_text_from_bytes, SandboxMode, ToolContext, ToolRegistry};
 use nola_types::{
-    new_id, now_ms, sha256_hex, AgentRoom, DataSourceRecord, ExpertPeer, FrozenSystemBlock,
+    new_id, now_ms, sha256_hex, AgentRoom, ExpertPeer, FrozenSystemBlock,
     GoalStatus, HostCapabilities, MediaAttachment, MemoryItem, ModelProtocol, ModelRouteConfig,
     ModelStreamDelta, NormalizedModelResponse, PermissionProfile, StructuredModelRequest,
     TokenUsage,
@@ -398,7 +398,7 @@ fn complete_composer_input(
                 .iter()
                 .map(|s| (*s).to_string())
                 .collect(),
-            "/allow" => ["cautious", "accept_edits", "allow_all"]
+            "/allow" => ["cautious", "allow_all"]
                 .iter()
                 .map(|s| (*s).to_string())
                 .collect(),
@@ -1164,6 +1164,10 @@ enum WorkerMsg {
         is_error: bool,
         text: String,
     },
+    AssistantEntry {
+        title: String,
+        body: String,
+    },
 }
 
 enum ActiveModal {
@@ -1329,8 +1333,32 @@ impl TuiApp {
         is_plan_mode(&self.store, &self.session_id)
     }
 
+    fn read_tail_events(&self, sid: &str, limit: usize) -> Result<Vec<nola_store::StoredEvent>, nola_store::StoreError> {
+        let mut tail = std::collections::VecDeque::with_capacity(limit.max(1));
+        let mut next_seq = 1i64;
+        loop {
+            let batch = self.store.read_event_range(sid, next_seq, 500)?;
+            if batch.is_empty() {
+                break;
+            }
+            let count = batch.len();
+            let last_seq = batch.last().map(|e| e.seq).unwrap_or(next_seq);
+            for ev in batch {
+                if tail.len() >= limit.max(1) {
+                    tail.pop_front();
+                }
+                tail.push_back(ev);
+            }
+            if count < 500 || last_seq < next_seq {
+                break;
+            }
+            next_seq = last_seq.saturating_add(1);
+        }
+        Ok(tail.into_iter().collect())
+    }
+
     fn load_session_preview(&mut self, sid: &str) {
-        if let Ok(events) = self.store.read_event_range(sid, 1, 200) {
+        if let Ok(events) = self.read_tail_events(sid, 200) {
             let mut shown = 0usize;
             for ev in events.iter().rev().take(20).rev() {
                 if ev.kind == "turn_completed" {
@@ -1742,6 +1770,9 @@ impl TuiApp {
                         self.push_system(text);
                     }
                 }
+                WorkerMsg::AssistantEntry { title, body } => {
+                    self.push_entry(TranscriptKind::Assistant, title, body);
+                }
             }
             if self.auto_follow {
                 self.scroll_offset = 0;
@@ -2093,7 +2124,49 @@ impl TuiApp {
             }
         }
         if !matched {
-            route.model = arg.to_string();
+            if let Some((conn_id, model_id)) = arg.split_once(':') {
+                let conn_id = conn_id.trim();
+                let model_id = model_id.trim();
+                if !conn_id.is_empty()
+                    && !model_id.is_empty()
+                    && self.cfg.llm.connections.iter().any(|c| c.id == conn_id)
+                {
+                    let mut next_cfg = self.cfg.clone();
+                    if let Some(conn) = next_cfg
+                        .llm
+                        .connections
+                        .iter_mut()
+                        .find(|c| c.id == conn_id)
+                    {
+                        if !conn.models.iter().any(|m| m.id == model_id) {
+                            conn.models.push(crate::config::ModelEntry {
+                                id: model_id.to_string(),
+                                context_window: None,
+                                max_output_tokens: None,
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            });
+                        }
+                    }
+                    next_cfg.llm.default_model = Some(DefaultModelSelection {
+                        connection: conn_id.to_string(),
+                        model: model_id.to_string(),
+                    });
+                    if let Ok(mut resolved) = resolve_model_route(&next_cfg) {
+                        if resolved.reasoning_effort.is_none() {
+                            resolved.reasoning_effort = prev_effort.clone();
+                        }
+                        resolved.model = model_id.to_string();
+                        route = resolved;
+                        matched = true;
+                    }
+                }
+            }
+            if !matched {
+                route.model = arg.to_string();
+            }
         }
         let msg = if self.running {
             format!(
@@ -2147,7 +2220,7 @@ impl TuiApp {
     fn cmd_allow(&mut self, rest: &str) {
         if rest.is_empty() {
             self.push_system(format!(
-                "Active permission profile: {} (use `/allow cautious`, `/allow accept_edits`, or `/allow allow_all`)",
+                "Active permission profile: {} (use `/allow cautious` or `/allow allow_all`)",
                 self.permission_profile.as_canonical_str()
             ));
             return;
@@ -2578,27 +2651,38 @@ impl TuiApp {
         let body = parts.next().unwrap_or("").trim();
 
         match sub {
-            "" | "list" => match self.suite.list_records::<DataSourceRecord>("data_source") {
-                Ok(list) if !list.is_empty() => {
-                    let lines: Vec<String> = list
+            "" | "list" => match self.suite.list_records::<Value>("data_source") {
+                Ok(raw_list) => {
+                    let list: Vec<Value> = raw_list
                         .into_iter()
-                        .map(|ds| {
-                            let chunks = ds
-                                .metadata
-                                .get("indexed_chunks")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            format!(
-                                "  {}  [{}]  {}  -> {} (chunks={chunks})",
-                                ds.id, ds.kind, ds.name, ds.location
-                            )
-                        })
+                        .filter(|v| v.get("deleted_at_ms").is_none_or(|d| d.is_null()))
                         .collect();
-                    self.push_system(lines.join("\n"));
+                    if !list.is_empty() {
+                        let lines: Vec<String> = list
+                            .into_iter()
+                            .map(|ds| {
+                                let id = ds.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                let kind = ds.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let name = ds.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                                let location = ds
+                                    .pointer("/configuration/location")
+                                    .or_else(|| ds.get("location"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let chunks = ds
+                                    .pointer("/metadata/indexed_chunks")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                format!("  {id}  [{kind}]  {name}  -> {location} (chunks={chunks})")
+                            })
+                            .collect();
+                        self.push_system(lines.join("\n"));
+                    } else {
+                        self.push_system(
+                            "No data sources registered. Use `/sources add <name> <dir|file> <path>`.",
+                        );
+                    }
                 }
-                Ok(_) => self.push_system(
-                    "No data sources registered. Use `/sources add <name> <dir|file> <path>`.",
-                ),
                 Err(e) => self.push_error(format!("sources list error: {e}")),
             },
             "add" => {
@@ -2607,19 +2691,41 @@ impl TuiApp {
                     self.push_error("Usage: /sources add <name> <dir|file|url> <location>");
                     return;
                 }
-                let rec = DataSourceRecord {
-                    id: new_id(),
-                    name: toks[0].trim().to_string(),
-                    kind: toks[1].trim().to_string(),
-                    location: toks[2].trim().to_string(),
-                    metadata: json!({}),
-                    usage_count: 0,
-                    updated_at_ms: now_ms(),
+                let id = new_id();
+                let name = toks[0].trim().to_string();
+                let kind = toks[1].trim().to_string();
+                let location = toks[2].trim().to_string();
+                let ts = now_ms();
+                let (connector_id, location_kind) = match kind.to_ascii_lowercase().as_str() {
+                    "dir" | "folder" | "localfolder" | "local_folder" => ("local_folder", "local_path"),
+                    "file" | "localfile" | "local_file" => ("local_file", "local_path"),
+                    _ => ("generic", "http_url"),
                 };
-                match self.suite.upsert_record("data_source", &rec.id, &rec) {
+                let rec = json!({
+                    "id": id,
+                    "name": name,
+                    "kind": kind,
+                    "location": location,
+                    "configuration": {
+                        "connector_id": connector_id,
+                        "location_kind": location_kind,
+                        "location": location,
+                        "parameters": {},
+                        "secret_references": []
+                    },
+                    "access_policy": "read_only",
+                    "default_enabled": true,
+                    "lifecycle": "ready",
+                    "revision": 1,
+                    "metadata": {},
+                    "usage_count": 0,
+                    "created_at_ms": ts,
+                    "updated_at_ms": ts,
+                    "deleted_at_ms": Value::Null
+                });
+                match self.suite.upsert_record("data_source", &id, &rec) {
                     Ok(()) => self.push_system(format!(
-                        "Added data source {} ({} -> {}). Run `/sources index {}` to index.",
-                        rec.id, rec.name, rec.location, rec.id
+                        "Added data source {id} ({name} -> {location}). Run `/sources index {id}` to index."
                     )),
                     Err(e) => self.push_error(format!("sources add error: {e}")),
                 }
@@ -3025,7 +3131,7 @@ impl TuiApp {
 
     fn cmd_history(&mut self, rest: &str) {
         let limit = rest.parse::<usize>().unwrap_or(20).clamp(1, 100);
-        match self.store.read_event_range(&self.session_id, 1, limit) {
+        match self.read_tail_events(&self.session_id, limit) {
             Ok(events) if !events.is_empty() => {
                 let lines: Vec<String> = events
                     .into_iter()
@@ -3228,23 +3334,62 @@ impl TuiApp {
             (None, tail)
         };
         let route = self.route_snapshot();
-        match RoomRuntime::send_message_to(
-            &self.suite,
-            Arc::clone(&self.raw_caller),
-            route,
-            self.base_policy.clone(),
-            room_id,
-            message,
-            recipient,
-        ) {
-            Ok(replies) => {
-                for r in replies {
-                    let name = r["expert_name"].as_str().unwrap_or("Expert");
-                    let content = r["content"].as_str().unwrap_or("");
-                    self.push_entry(TranscriptKind::Assistant, format!("room:{name}"), content);
+        if self.interactive {
+            let suite = Arc::clone(&self.suite);
+            let caller = Arc::clone(&self.raw_caller);
+            let policy = self.base_policy.clone();
+            let room_id_owned = room_id.to_string();
+            let message_owned = message.to_string();
+            let recipient_owned = recipient.map(ToString::to_string);
+            let tx = self.worker_tx.clone();
+            self.push_system(format!("Sending message to room {room_id} in background..."));
+            thread::spawn(move || {
+                match RoomRuntime::send_message_to(
+                    &suite,
+                    caller,
+                    route,
+                    policy,
+                    &room_id_owned,
+                    &message_owned,
+                    recipient_owned.as_deref(),
+                ) {
+                    Ok(replies) => {
+                        for r in replies {
+                            let name = r["expert_name"].as_str().unwrap_or("Expert").to_string();
+                            let content = r["content"].as_str().unwrap_or("").to_string();
+                            let _ = tx.send(WorkerMsg::AssistantEntry {
+                                title: format!("room:{name}"),
+                                body: content,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(WorkerMsg::Notice {
+                            is_error: true,
+                            text: format!("room error: {e}"),
+                        });
+                    }
                 }
+            });
+        } else {
+            match RoomRuntime::send_message_to(
+                &self.suite,
+                Arc::clone(&self.raw_caller),
+                route,
+                self.base_policy.clone(),
+                room_id,
+                message,
+                recipient,
+            ) {
+                Ok(replies) => {
+                    for r in replies {
+                        let name = r["expert_name"].as_str().unwrap_or("Expert");
+                        let content = r["content"].as_str().unwrap_or("");
+                        self.push_entry(TranscriptKind::Assistant, format!("room:{name}"), content);
+                    }
+                }
+                Err(e) => self.push_error(format!("room error: {e}")),
             }
-            Err(e) => self.push_error(format!("room error: {e}")),
         }
     }
 
@@ -3455,12 +3600,11 @@ impl TuiApp {
         out.queue(ResetColor)?;
 
         let avail = cols.saturating_sub(prompt_prefix.len() + 1).max(10);
-        let cursor_col_in_buf = str_display_width(&active_composer.buffer[..active_composer.cursor]);
+        let mut slice_start = 0usize;
         let visible_buf = if str_display_width(&active_composer.buffer) <= avail {
             active_composer.buffer.clone()
         } else {
             // Simple tail window keeping cursor visible
-            let mut slice_start = 0usize;
             while slice_start < active_composer.cursor
                 && str_display_width(&active_composer.buffer[slice_start..active_composer.cursor])
                     > avail.saturating_sub(2)
@@ -3476,7 +3620,9 @@ impl TuiApp {
         write!(out, "{visible_buf}")?;
 
         if !matches!(self.active_modal, Some(ActiveModal::Approval { .. })) {
-            let cursor_x = (prompt_prefix.len() + cursor_col_in_buf.min(avail)) as u16;
+            let cursor_col_in_view =
+                str_display_width(&active_composer.buffer[slice_start..active_composer.cursor]);
+            let cursor_x = (prompt_prefix.len() + cursor_col_in_view.min(avail)) as u16;
             out.queue(MoveTo(cursor_x, cursor_y))?;
             out.queue(Show)?;
         }
@@ -4498,7 +4644,7 @@ fn format_tui_help(locale: TuiLocale) -> String {
     /model [id]                            列出或实时切换模型
     /thinking [none|low|medium|high|auto]  查看或实时切换推理深度
     /guide <text>                          向运行中的轮次实时注入引导指令
-    /allow [cautious|accept_edits|allow_all] 切换权限模式
+    /allow [cautious|allow_all]            切换权限模式
     /plan [on|off|show|approve]            计划模式开关、查看或批准计划
   代码检查点与 Git：
     /checkpoint [label] | /checkpoints     创建/列出持久化工作区检查点
@@ -4528,7 +4674,7 @@ Slash commands (Tab-completable; live commands work mid-run):
     /model [id]                            List or live-switch active model
     /thinking [none|low|medium|high|auto]  View or live-switch reasoning effort
     /guide <text>                          Push steering guidance into active turn inbox
-    /allow [cautious|accept_edits|allow_all] Switch strict permission profile
+    /allow [cautious|allow_all]            Switch strict permission profile
     /plan [on|off|show|approve]            Toggle Plan Mode, view plan, or approve plan
   Checkpoints & Git:
     /checkpoint [label] | /checkpoints     Create or list persistent workspace checkpoints

@@ -165,6 +165,13 @@
 			);
 			target = 9A9F768B2EBD3711004F68FB /* Nola */;
 		};
+		B10000000000000000000010 /* Exceptions for "apps/macos" folder in "NolaMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B10000000000000000000003 /* NolaMac */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -188,6 +195,9 @@
 		};
 		B10000000000000000000002 /* apps/macos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B10000000000000000000010 /* Exceptions for "apps/macos" folder in "NolaMac" target */,
+			);
 			path = apps/macos;
 			sourceTree = "<group>";
 		};
@@ -1286,6 +1296,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = apps/macos/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Nola;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";
@@ -1332,6 +1343,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = apps/macos/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Nola;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";
@@ -1433,6 +1445,7 @@
 				ENABLE_PREVIEWS = NO;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = apps/macos/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Nola;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Nola controls other apps only when you run an approved automation tool.";

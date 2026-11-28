@@ -747,11 +747,8 @@ struct PersonalCapabilitiesLibraryView: View {
         .accessibilityIdentifier("intelligence.capabilities.screen")
         .navigationTitle(piText("personal.capabilities.title", "Capability library"))
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            if !libraryLoaded { reload() }
-        }
-        .task { reload() }
-        .refreshable { if selectedKind == .plugins { refreshPluginHosts() } else { reload() } }
+        .task { await reloadAsync() }
+        .refreshable { if selectedKind == .plugins { refreshPluginHosts() } else { await reloadAsync() } }
         .onChange(of: selectedKind) { _, kind in
             query = ""
             if kind == .plugins { refreshPluginHosts() }
@@ -1068,11 +1065,19 @@ struct PersonalCapabilitiesLibraryView: View {
                 guard index == nil || skillEditorSnapshot != nil else {
                     throw IOSApplicationRuntimeError.rejected("Reload the Skill before editing")
                 }
+                let store = try skillStore()
+                let expected = skillEditorSnapshot
                 let value = UserUploadedContextItem(id: original.id, name: name, content: primary, description: detail, enabled: original.enabled)
-                _ = try skillStore().saveSkill(value, expected: skillEditorSnapshot)
-                reload()
-                notice = piText("personal.capabilities.saved", "Changes saved")
-                activeSheet = nil
+                Task { @MainActor in
+                    do {
+                        _ = try await Task.detached(priority: .userInitiated) {
+                            try store.saveSkill(value, expected: expected)
+                        }.value
+                        await reloadAsync()
+                        notice = piText("personal.capabilities.saved", "Changes saved")
+                        activeSheet = nil
+                    } catch { errorMessage = error.localizedDescription }
+                }
             } catch { errorMessage = error.localizedDescription }
             return
         }
@@ -1081,11 +1086,19 @@ struct PersonalCapabilitiesLibraryView: View {
                 guard index == nil || mcpEditorSnapshot != nil else {
                     throw IOSApplicationRuntimeError.rejected("Reload the MCP server before editing")
                 }
+                let store = try mcpStore()
+                let expected = mcpEditorSnapshot
                 let value = UserMCPServer(id: original.id, name: name, endpoint: primary, description: detail, enabled: original.enabled)
-                _ = try mcpStore().saveMCP(value, expected: mcpEditorSnapshot)
-                reload()
-                notice = piText("personal.capabilities.saved", "Changes saved")
-                activeSheet = nil
+                Task { @MainActor in
+                    do {
+                        _ = try await Task.detached(priority: .userInitiated) {
+                            try store.saveMCP(value, expected: expected)
+                        }.value
+                        await reloadAsync()
+                        notice = piText("personal.capabilities.saved", "Changes saved")
+                        activeSheet = nil
+                    } catch { errorMessage = error.localizedDescription }
+                }
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -1100,30 +1113,53 @@ struct PersonalCapabilitiesLibraryView: View {
 
     private func openSkill(_ item: UserUploadedContextItem, index: Int) {
         do {
-            let snapshot = try skillStore().loadSkillEditor(id: item.id)
-            guard let current = snapshot.record.uploadedContextItem else {
-                throw IOSApplicationRuntimeError.invalidResponse
+            let store = try skillStore()
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    let snapshot = try await Task.detached(priority: .userInitiated) {
+                        try store.loadSkillEditor(id: itemID)
+                    }.value
+                    guard let current = snapshot.record.uploadedContextItem else {
+                        throw IOSApplicationRuntimeError.invalidResponse
+                    }
+                    errorMessage = nil
+                    skillEditorSnapshot = snapshot
+                    activeSheet = .editor(.skill(index, current))
+                } catch { errorMessage = error.localizedDescription }
             }
-            errorMessage = nil
-            skillEditorSnapshot = snapshot
-            activeSheet = .editor(.skill(index, current))
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func prepareSkillDeletion(_ item: UserUploadedContextItem) {
         do {
-            let snapshot = try skillStore().loadSkillEditor(id: item.id)
-            deleteTarget = .skill(snapshot, snapshot.record.displayName)
+            let store = try skillStore()
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    let snapshot = try await Task.detached(priority: .userInitiated) {
+                        try store.loadSkillEditor(id: itemID)
+                    }.value
+                    deleteTarget = .skill(snapshot, snapshot.record.displayName)
+                } catch { errorMessage = error.localizedDescription }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func toggleSkill(_ item: UserUploadedContextItem, enabled: Bool) {
         do {
             let store = try skillStore()
-            let snapshot = try store.loadSkillEditor(id: item.id)
-            _ = try store.setSkillEnabled(enabled, expected: snapshot)
-            reload()
-            notice = piText("personal.capabilities.saved", "Changes saved")
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    _ = try await Task.detached(priority: .userInitiated) {
+                        let snapshot = try store.loadSkillEditor(id: itemID)
+                        return try store.setSkillEnabled(enabled, expected: snapshot)
+                    }.value
+                    await reloadAsync()
+                    notice = piText("personal.capabilities.saved", "Changes saved")
+                } catch { errorMessage = error.localizedDescription }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -1137,61 +1173,107 @@ struct PersonalCapabilitiesLibraryView: View {
 
     private func openMCP(_ item: UserMCPServer, index: Int) {
         do {
-            let snapshot = try mcpStore().loadMCPEditor(id: item.id)
-            guard let current = snapshot.userMCPServer else { throw IOSApplicationRuntimeError.invalidResponse }
-            errorMessage = nil
-            mcpEditorSnapshot = snapshot
-            activeSheet = .editor(.mcp(index, current))
+            let store = try mcpStore()
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    let snapshot = try await Task.detached(priority: .userInitiated) {
+                        try store.loadMCPEditor(id: itemID)
+                    }.value
+                    guard let current = snapshot.userMCPServer else { throw IOSApplicationRuntimeError.invalidResponse }
+                    errorMessage = nil
+                    mcpEditorSnapshot = snapshot
+                    activeSheet = .editor(.mcp(index, current))
+                } catch { errorMessage = error.localizedDescription }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func prepareMCPDeletion(_ item: UserMCPServer) {
         do {
-            let snapshot = try mcpStore().loadMCPEditor(id: item.id)
-            deleteTarget = .mcp(snapshot, snapshot.displayName)
+            let store = try mcpStore()
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    let snapshot = try await Task.detached(priority: .userInitiated) {
+                        try store.loadMCPEditor(id: itemID)
+                    }.value
+                    deleteTarget = .mcp(snapshot, snapshot.displayName)
+                } catch { errorMessage = error.localizedDescription }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func toggleMCP(_ item: UserMCPServer, enabled: Bool) {
         do {
             let store = try mcpStore()
-            _ = try store.setMCPEnabled(enabled, expected: store.loadMCPEditor(id: item.id))
-            reload()
-            notice = piText("personal.capabilities.saved", "Changes saved")
+            let itemID = item.id
+            Task { @MainActor in
+                do {
+                    _ = try await Task.detached(priority: .userInitiated) {
+                        try store.setMCPEnabled(enabled, expected: store.loadMCPEditor(id: itemID))
+                    }.value
+                    await reloadAsync()
+                    notice = piText("personal.capabilities.saved", "Changes saved")
+                } catch { errorMessage = error.localizedDescription }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
     private func deletePendingCapability() {
-        guard let deleteTarget else { return }
-        if case .skill(let snapshot, _) = deleteTarget {
+        guard let target = deleteTarget else { return }
+        if case .skill(let snapshot, _) = target {
             do {
-                _ = try skillStore().deleteSkill(expected: snapshot)
-                self.deleteTarget = nil
-                reload()
-                notice = piText("personal.capabilities.saved", "Changes saved")
+                let store = try skillStore()
+                Task { @MainActor in
+                    do {
+                        _ = try await Task.detached(priority: .userInitiated) {
+                            try store.deleteSkill(expected: snapshot)
+                        }.value
+                        self.deleteTarget = nil
+                        await reloadAsync()
+                        notice = piText("personal.capabilities.saved", "Changes saved")
+                    } catch { errorMessage = error.localizedDescription }
+                }
             } catch { errorMessage = error.localizedDescription }
             return
         }
-        if case .mcp(let snapshot, _) = deleteTarget {
+        if case .mcp(let snapshot, _) = target {
             do {
-                _ = try mcpStore().deleteMCP(expected: snapshot)
-                self.deleteTarget = nil
-                reload()
-                notice = piText("personal.capabilities.saved", "Changes saved")
+                let store = try mcpStore()
+                Task { @MainActor in
+                    do {
+                        _ = try await Task.detached(priority: .userInitiated) {
+                            try store.deleteMCP(expected: snapshot)
+                        }.value
+                        self.deleteTarget = nil
+                        await reloadAsync()
+                        notice = piText("personal.capabilities.saved", "Changes saved")
+                    } catch { errorMessage = error.localizedDescription }
+                }
             } catch { errorMessage = error.localizedDescription }
         }
     }
 
     private func reload() {
+        Task { await reloadAsync() }
+    }
+
+    @MainActor
+    private func reloadAsync() async {
         do {
             guard let store = container.chatMemoryProfileStore as? any ChatCapabilityLibraryStore else {
                 throw IOSApplicationRuntimeError.applicationUnavailable
             }
-            let snapshot = try store.loadCapabilityLibrary()
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try store.loadCapabilityLibrary()
+            }.value
+            guard !Task.isCancelled else { return }
             profile = snapshot
             libraryLoaded = true
             libraryReadFailed = false
         } catch {
+            guard !Task.isCancelled else { return }
             libraryReadFailed = true
             notice = nil
         }

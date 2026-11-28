@@ -408,12 +408,7 @@ class AndroidAgentTurnService @Inject constructor(
         )
         if (frozen != null && requestedPermissionMode != AndroidAgentPermissionMode.Cautious) {
             val frozenDigest = frozen.getValue("host_invocation").jsonObject["execution_policy_sha256"]
-            val candidates = buildList {
-                add(AndroidAgentPermissionMode.Cautious)
-                if (requestedPermissionMode == AndroidAgentPermissionMode.AllowAll) {
-                    add(AndroidAgentPermissionMode.AcceptEdits)
-                }
-            }
+            val candidates = listOf(AndroidAgentPermissionMode.Cautious)
             for (candidateMode in candidates) {
                 val candidatePlan = toolPlan(request.sessionId, originalRequest.resultEgressAuthorized, candidateMode)
                 val candidateCoordinator = createCoordinator(candidatePlan)

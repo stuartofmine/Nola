@@ -43,7 +43,7 @@ export function canSelectProfile(profile: RemoteProfile): boolean {
 const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export function reasoningOptions(value: ReasoningConfiguration, protocol: string, outputLimit = value.outputLimit ?? 16384) {
-    if (value.control === 'effort' && ['responses', 'siwc_responses', 'chat_completions', 'anthropic'].includes(protocol)) {
+    if (value.control === 'effort' && ['responses', 'siwc_responses', 'chat_completions', 'anthropic', 'gemini'].includes(protocol)) {
         return efforts.filter(option => value.efforts?.includes(option));
     }
     return value.control === 'budget' && protocol === 'anthropic'
@@ -54,7 +54,7 @@ export function reasoningOptions(value: ReasoningConfiguration, protocol: string
 }
 
 export function reasoningValidationError(value: ReasoningConfiguration, protocol: string, outputLimit: number): ModelValidationIssue | null {
-    if (!['responses', 'siwc_responses', 'chat_completions', 'anthropic'].includes(protocol)) return { code: 'modelValidation.protocol' };
+    if (!['responses', 'siwc_responses', 'chat_completions', 'anthropic', 'gemini'].includes(protocol)) return { code: 'modelValidation.protocol' };
     if (value.efforts?.some(option => !efforts.includes(option))) return { code: 'modelValidation.efforts' };
     if (value.budgets?.some(budget => !Number.isSafeInteger(budget) || budget < 0)) return { code: 'modelValidation.budgets' };
     if (value.control === 'budget' && protocol !== 'anthropic') {

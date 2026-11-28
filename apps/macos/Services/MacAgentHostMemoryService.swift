@@ -71,24 +71,30 @@ nonisolated private struct MacMemoryMutationEnvelope: Decodable {
 }
 
 extension MacAgentHostRuntime {
-    func listMemoryRecords() async throws -> [MacAgentHostMemoryRecord] {
-        let data = try await runCapture(arguments: ["memory", "list", "--json"])
+    private func memoryArguments(_ tail: [String], databaseURL: URL?) -> [String] {
+        guard let databaseURL else { return tail }
+        return ["--database", databaseURL.path] + tail
+    }
+
+    func listMemoryRecords(databaseURL: URL? = nil) async throws -> [MacAgentHostMemoryRecord] {
+        let data = try await runCapture(arguments: memoryArguments(["memory", "list", "--json"], databaseURL: databaseURL))
         return try JSONDecoder().decode(MacMemoryListEnvelope.self, from: data).records
     }
 
-    func createMemory(_ draft: MacAgentHostMemoryDraft) async throws -> MacAgentHostMemoryRecord {
-        try await mutateMemory(arguments: ["memory", "create", "--json"], draft: draft)
+    func createMemory(_ draft: MacAgentHostMemoryDraft, databaseURL: URL? = nil) async throws -> MacAgentHostMemoryRecord {
+        try await mutateMemory(arguments: memoryArguments(["memory", "create", "--json"], databaseURL: databaseURL), draft: draft)
     }
 
     func reviseMemory(
         id: String,
-        draft: MacAgentHostMemoryDraft
+        draft: MacAgentHostMemoryDraft,
+        databaseURL: URL? = nil
     ) async throws -> MacAgentHostMemoryRecord {
-        try await mutateMemory(arguments: ["memory", "revise", id, "--json"], draft: draft)
+        try await mutateMemory(arguments: memoryArguments(["memory", "revise", id, "--json"], databaseURL: databaseURL), draft: draft)
     }
 
-    func deleteMemory(id: String) async throws {
-        _ = try await runCapture(arguments: ["memory", "delete", id, "--json"])
+    func deleteMemory(id: String, databaseURL: URL? = nil) async throws {
+        _ = try await runCapture(arguments: memoryArguments(["memory", "delete", id, "--json"], databaseURL: databaseURL))
     }
 
     private func mutateMemory(

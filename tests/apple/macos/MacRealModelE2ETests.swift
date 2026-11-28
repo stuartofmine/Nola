@@ -77,22 +77,48 @@ final class MacRealModelE2ETests: XCTestCase {
         let databaseURL = root.appendingPathComponent("nola-mac-e2e.db")
         let port = try MacApplicationPort(databaseURL: databaseURL)
         let configStore = MacAppleChatConfigurationStore(applicationPort: port)
-        try configStore.replaceEndpoints([
-            MacRemoteEndpointConfiguration(
-                id: "lan-real-endpoint",
-                name: "LAN Real Model",
-                baseURL: config.endpoint,
-                apiKey: config.apiKey,
-                models: [
-                    MacRemoteModelConfiguration(
-                        id: "lan-real-model",
-                        modelName: config.model,
-                        executionCapabilities: .init(toolCalls: true, reasoning: true, samplingParameters: false)
-                    )
-                ],
-                wireProtocol: config.wireProtocol
+
+        // Real user API connection flow: create -> discover (/v1/models) -> enable
+        let connectionService = MacModelConnectionService(application: port)
+        let createdConnection = try connectionService.create(
+            name: "LAN Real Model",
+            endpoint: config.endpoint,
+            wireProtocol: config.wireProtocol.rawValue,
+            secret: config.apiKey
+        )
+        let discoveredConnection = try await connectionService.discover(createdConnection)
+        let discoveredModels = try XCTUnwrap(
+            discoveredConnection.document.catalog?.models,
+            "Real LAN server discovery should populate connection catalog"
+        )
+        XCTAssertFalse(discoveredModels.isEmpty, "Discovered catalog from real LAN server must be non-empty")
+        let selectedCatalogModel = discoveredModels.first(where: { $0.model_id == config.model }) ?? discoveredModels[0]
+        let connectionForEnable: MacModelConnectionSnapshot
+        if selectedCatalogModel.execution_capabilities == nil {
+            let capabilities: MacCanonicalJSONValue = .object([
+                "toolCalls": .bool(true),
+                "imageInput": .bool(false),
+                "reasoning": .bool(true),
+                "samplingParameters": .bool(false),
+            ])
+            connectionForEnable = try connectionService.setCapabilityOverride(
+                discoveredConnection,
+                model: selectedCatalogModel,
+                capabilities: capabilities
             )
-        ])
+        } else {
+            connectionForEnable = discoveredConnection
+        }
+        let catalogKey = selectedCatalogModel.id
+        try connectionService.enable(connectionForEnable, modelIDs: [catalogKey])
+
+        let loadedCatalog = try MacChatModelCatalog.load(application: port)
+        XCTAssertTrue(
+            loadedCatalog.entries.contains(where: {
+                $0.option.source == .configured && $0.option.modelID == selectedCatalogModel.model_id
+            }),
+            "MacChatModelCatalog.load should expose newly enabled API model \(selectedCatalogModel.model_id)"
+        )
 
         let repository = MacCanonicalConversationRepository(store: port)
         let agentRuntime = MacAgentHostRuntime(credentialStore: configStore)
@@ -142,11 +168,17 @@ final class MacRealModelE2ETests: XCTestCase {
             )
         )
 
+        let bookmarkSuiteName = "com.gaojc.Nola.real-e2e-bookmarks.\(UUID().uuidString)"
+        let bookmarkDefaults = try XCTUnwrap(UserDefaults(suiteName: bookmarkSuiteName))
+        addTeardownBlock { UserDefaults.standard.removePersistentDomain(forName: bookmarkSuiteName) }
+        let bookmarkStore = MacSecurityScopedBookmarkStore(defaults: bookmarkDefaults)
+
         let workspaceModel = MacWorkspaceModel(
             canonicalRepository: repository,
             localAgentRuntime: agentRuntime,
             remoteHost: remoteHost,
             modelApplication: port,
+            bookmarkStore: bookmarkStore,
             activityStore: activityStore,
             completionNotifier: { _, _, _ in },
             readinessIssue: { _ in nil }
@@ -180,22 +212,57 @@ final class MacRealModelE2ETests: XCTestCase {
         workspaceModel.newConversation()
         await workspaceModel.loadSelectedConversationIfNeeded()
         try await workspaceModel.waitForModelConfigurationCommit()
-        if let configuredOption = workspaceModel.configuredModelOptions.first {
-            workspaceModel.selectModel(configuredOption)
-            try await workspaceModel.waitForModelConfigurationCommit()
-        }
+        let configuredOption = try XCTUnwrap(
+            workspaceModel.configuredModelOptions.first(where: { $0.modelID == selectedCatalogModel.model_id })
+                ?? workspaceModel.configuredModelOptions.first,
+            "workspaceModel.configuredModelOptions should include newly enabled API model \(selectedCatalogModel.model_id)"
+        )
+        XCTAssertEqual(configuredOption.modelID, selectedCatalogModel.model_id)
+        XCTAssertEqual(MacPermissionMode.allCases, [.cautious, .allowAll])
+        workspaceModel.selectModel(configuredOption)
+        try await workspaceModel.waitForModelConfigurationCommit()
+        await settle(chatHosting)
+        XCTAssertFalse(
+            workspaceModel.reasoningConfiguration.options.isEmpty,
+            "Composer should expose reasoning effort options for reasoning-capable model \(selectedCatalogModel.model_id)"
+        )
+
+        // Verify reasoning effort switching is optimistic with ZERO composer jump (no submissionBlockReason flash)
+        let convIDForSwitch = try XCTUnwrap(workspaceModel.selectedConversationID)
+        XCTAssertTrue(workspaceModel.selectComposerReasoningPreference("high", conversationID: convIDForSwitch))
+        XCTAssertEqual(workspaceModel.selectedComposerState.reasoningPreference, "high")
+        XCTAssertNil(
+            workspaceModel.selectedComposerState.submissionBlockReason,
+            "Switching reasoning effort must NOT flash a submissionBlockReason banner below the composer"
+        )
+        try await workspaceModel.waitForModelConfigurationCommit()
         await settle(chatHosting)
 
         let expectedMarker = "MAC_REAL_MODEL_OK"
-        workspaceModel.draft = "用简短的中文回复，用 Markdown 列出 2 条 Nola 本地优先架构的优点，结尾必须包含 \(expectedMarker)。不要调用任何工具。"
+        workspaceModel.draft = "用简短的中文回复，用 Markdown 列出 2 条 Nola 本地优先架构的优点，并包含一个行内公式 $p = n_s + n_t$ 和一个独立公式块：$$S_s = \\lambda S_t + UV^\\top,\\quad \\lambda = D_s/D_t$$，结尾必须包含 \(expectedMarker)。不要调用任何工具。"
         workspaceModel.send()
         XCTAssertTrue(workspaceModel.isRunning, "Real model send did not start: activity=\(workspaceModel.activity)")
 
+        var observedMidStreamJournal = false
+        var capturedMidStreamScreenshot = false
         let deadline = ContinuousClock.now + .seconds(120)
         while workspaceModel.isRunning && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(150))
+            if let lastAssistant = workspaceModel.selectedMessages.last(where: { $0.role == .assistant }),
+               lastAssistant.journalReference != nil {
+                observedMidStreamJournal = true
+                if !capturedMidStreamScreenshot {
+                    capturedMidStreamScreenshot = true
+                    await settle(chatHosting)
+                    try? capturePNG(chatHosting, to: evidenceDir.appendingPathComponent("mac-01a-mid-stream-thinking.png"))
+                }
+            }
+            try await Task.sleep(for: .milliseconds(100))
         }
         XCTAssertFalse(workspaceModel.isRunning, "Real LAN model turn timed out after 120s")
+        XCTAssertTrue(
+            observedMidStreamJournal,
+            "Live reasoning/text journal publications MUST stream to the UI while the turn is running, not only at turn completion"
+        )
         await workspaceModel.loadSelectedConversationIfNeeded()
         try await Task.sleep(for: .seconds(AppleStreamingRevealTiming.duration + 0.2))
         await settle(chatHosting)
@@ -241,6 +308,54 @@ final class MacRealModelE2ETests: XCTestCase {
 
         try capturePNG(chatHosting, to: evidenceDir.appendingPathComponent("mac-01-chat-real-model.png"))
 
+        // 1b. Real Permission Upgrade (Cautious -> AllowAll on resume) + Tool-Calling Turn:
+        // Turn 1 ran under Cautious; switching to AllowAll MUST allow bash execution with ZERO approval prompts!
+        let boundWorkspace = workspaceModel.switchWorkspace(to: workspaceDir)
+        XCTAssertNotNil(boundWorkspace, "switchWorkspace(to:) should bind workspaceDir for real tool execution")
+        workspaceModel.permissionMode = .allowAll
+        try await workspaceModel.waitForModelConfigurationCommit()
+        await settle(chatHosting)
+
+        let assistantCountBeforeToolTurn = workspaceModel.selectedMessages.filter { $0.role == .assistant }.count
+        workspaceModel.draft = "请使用 bash 工具执行 `cat report.md`，并原样输出其中的 Unique marker 值。不要猜测，必须通过 bash 命令读取。"
+        workspaceModel.send()
+        XCTAssertTrue(workspaceModel.isRunning, "Real tool-calling send did not start: activity=\(workspaceModel.activity)")
+
+        var unexpectedPermissionPromptCount = 0
+        let toolDeadline = ContinuousClock.now + .seconds(150)
+        while workspaceModel.isRunning && ContinuousClock.now < toolDeadline {
+            if let pending = workspaceModel.pendingRemotePermission, !workspaceModel.isResolvingPermission {
+                unexpectedPermissionPromptCount += 1
+                workspaceModel.resolvePermission(
+                    allow: true,
+                    scope: .conversation,
+                    requestID: pending.id,
+                    expectedRequest: pending
+                )
+            }
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(workspaceModel.isRunning, "Real tool-calling turn timed out after 150s")
+        XCTAssertEqual(
+            unexpectedPermissionPromptCount,
+            0,
+            "Switching conversation from Cautious to AllowAll must take effect immediately on resume with ZERO permission prompts"
+        )
+        await workspaceModel.loadSelectedConversationIfNeeded()
+        try await Task.sleep(for: .seconds(AppleStreamingRevealTiming.duration + 0.2))
+        await settle(chatHosting)
+
+        let allAssistantAfterToolTurn = workspaceModel.selectedMessages.filter { $0.role == .assistant }
+        let toolTurnReplies = Array(allAssistantAfterToolTurn.dropFirst(assistantCountBeforeToolTurn))
+        let toolReplyText = (toolTurnReplies.isEmpty ? allAssistantAfterToolTurn : toolTurnReplies)
+            .map(\.text)
+            .joined(separator: "\n")
+        XCTAssertTrue(
+            toolReplyText.contains(reportMarker),
+            "Expected real tool-calling reply to contain \(reportMarker) read from report.md, got: \(toolReplyText.prefix(400))"
+        )
+        try capturePNG(chatHosting, to: evidenceDir.appendingPathComponent("mac-09-chat-real-tool.png"))
+
         // 2. Real MacChatWorkspaceView with Inspector expanded
         let inspectorView = MacChatWorkspaceView(
             forcesInspectorVisible: true,
@@ -252,11 +367,106 @@ final class MacRealModelE2ETests: XCTestCase {
         )
         try await renderAndCapture(inspectorView, to: evidenceDir.appendingPathComponent("mac-02-inspector.png"))
 
-        // 3. Real MacModelCenterView showing the configured real LAN model
+        // 3. End-to-end Codex import bridge (preview -> commit with Keychain handshake) + MacModelCenterView
+        let importDir = root.appendingPathComponent("codex-import", isDirectory: true)
+        try FileManager.default.createDirectory(at: importDir, withIntermediateDirectories: true)
+        let codexConfigURL = importDir.appendingPathComponent("config.toml")
+        let codexAuthURL = importDir.appendingPathComponent("auth.json")
+        try """
+        model = "gpt-5.3-codex"
+        model_provider = "e2e_codex"
+
+        [model_providers.e2e_codex]
+        name = "Imported Codex Gateway"
+        base_url = "https://codex-gateway.example.invalid/v1"
+        wire_api = "responses"
+        env_key = "OPENAI_API_KEY"
+        """.write(to: codexConfigURL, atomically: true, encoding: .utf8)
+        try #"{"OPENAI_API_KEY": "sk-codex-e2e-test-key"}"#.write(
+            to: codexAuthURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let importBridge = try connectionService.makeImportBridge()
+        defer { importBridge.cancel() }
+        let importPlan = try await importBridge.preview(
+            source: "codex",
+            path: codexConfigURL.path,
+            credentialPath: codexAuthURL.path,
+            includeCredentials: true,
+            allowEnvironment: false
+        )
+        let importCandidate = try XCTUnwrap(
+            importPlan.candidates.first(where: { $0.issue == nil }),
+            "Expected a valid Codex import candidate from preview"
+        )
+        XCTAssertEqual(importCandidate.credential_status, "available")
+        let importResults = try await importBridge.commit(
+            planID: importPlan.plan_id,
+            selected: [importCandidate.id],
+            updateExisting: [],
+            enableModels: false
+        )
+        XCTAssertTrue(
+            importResults.contains(where: { $0.candidate_id == importCandidate.id && $0.error == nil }),
+            "Expected Codex import commit to succeed: \(importResults)"
+        )
+        let connectionsAfterImport = try connectionService.connections()
+        XCTAssertTrue(
+            connectionsAfterImport.contains(where: { $0.id == importCandidate.connection.id }),
+            "Imported Codex connection should appear in connectionService.connections()"
+        )
+
+        // 3b. Real Capability Probe (prepareProbe -> confirmProbe) against the real LAN server
+        let connectionBeforeProbe = try XCTUnwrap(
+            connectionsAfterImport.first(where: { $0.id == createdConnection.id }),
+            "LAN connection should exist before capability probe"
+        )
+        let probeBridge = try MacModelImportBridge(application: port)
+        defer { probeBridge.cancel() }
+        let probeConfirmation = try await probeBridge.prepareProbe(
+            snapshot: connectionBeforeProbe,
+            model: selectedCatalogModel
+        )
+        XCTAssertEqual(probeConfirmation.connection_id, connectionBeforeProbe.id)
+        XCTAssertEqual(probeConfirmation.model_id, selectedCatalogModel.model_id)
+        XCTAssertFalse(probeConfirmation.acknowledge_possible_charges)
+
+        let probedSnapshot = try await probeBridge.confirmProbe(
+            requestID: probeConfirmation.request_id,
+            acknowledgePossibleCharges: true
+        )
+        XCTAssertGreaterThan(
+            probedSnapshot.revision,
+            connectionBeforeProbe.revision,
+            "confirmProbe should increment connection revision"
+        )
+
+        let connectionsAfterProbe = try connectionService.connections()
+        let reloadedProbedConnection = try XCTUnwrap(
+            connectionsAfterProbe.first(where: { $0.id == createdConnection.id }),
+            "Reloaded connections should contain probed LAN connection"
+        )
+        XCTAssertGreaterThan(
+            reloadedProbedConnection.revision,
+            connectionBeforeProbe.revision,
+            "Reloaded connection revision should reflect persisted capability probe"
+        )
+        let matchingAssessment = reloadedProbedConnection.document.capability_assessments?.first(where: {
+            $0.model_id == selectedCatalogModel.model_id && $0.protocol == selectedCatalogModel.protocol
+        })
+        XCTAssertEqual(
+            matchingAssessment?.evidence?.text_generation,
+            true,
+            "Persisted capability_assessments should record evidence.text_generation == true for \(selectedCatalogModel.model_id)"
+        )
+
         let modelPreference = MacDefaultChatModelPresentation(store: .init(application: port))
+        modelPreference.reload()
         let modelNav = MacModelCenterNavigationState(selectedTab: .api)
         try await renderAndCapture(
             MacModelCenterView(remoteHost: remoteHost, navigation: modelNav, preference: modelPreference),
+            extraWait: .milliseconds(600),
             to: evidenceDir.appendingPathComponent("mac-03-models.png")
         )
 
@@ -368,7 +578,7 @@ final class MacRealModelE2ETests: XCTestCase {
 // MARK: - Minimal offline remote-host stub for local-mode E2E views
 
 @MainActor
-private final class E2ENoOpRemoteHost: MacRemoteAgentRunning {
+final class E2ENoOpRemoteHost: MacRemoteAgentRunning {
     private nonisolated static func unsupported(_ name: String) -> Error {
         NSError(domain: "MacRealModelE2ETests.RemoteHost", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unexpected remote call: \(name)"])
     }

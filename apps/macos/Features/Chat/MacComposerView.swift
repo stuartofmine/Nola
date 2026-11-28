@@ -1033,19 +1033,30 @@ struct MacComposerView: View {
                 }
             } label: {
                 Label {
-                    Text(verbatim: reasoningTitle(state.reasoningPreference))
+                    Text(verbatim: reasoningPillTitle(state.reasoningPreference))
+                        .lineLimit(1)
+                        .frame(minWidth: 32, alignment: .leading)
                 } icon: {
                     Image(systemName: "brain")
                 }
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(state.reasoningPreference == "automatic" ? Color.secondary : MacDesignColor.brand)
             }
             .menuStyle(MacPillMenuStyle(height: 28))
             .fixedSize(horizontal: true, vertical: false)
+            .help(reasoningTitle(state.reasoningPreference))
             .accessibilityLabel(String(localized: "Reasoning", table: "ModelCenter"))
             .accessibilityIdentifier("mac-composer-reasoning")
-            .disabled(state.isRunning || state.isSubmissionBlocked)
+            .disabled(state.isRunning)
         }
+    }
+
+    private func reasoningPillTitle(_ preference: String) -> String {
+        if preference == "automatic" {
+            let full = reasoningTitle(preference)
+            return full.count > 4 ? String(localized: "Auto", table: "Chat") : full
+        }
+        return reasoningTitle(preference)
     }
 
     private func reasoningTitle(_ preference: String) -> String {

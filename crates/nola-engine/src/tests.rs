@@ -252,7 +252,7 @@ fn gate5_security_trust_hooks_modify_input_recheck_and_resume_policy() {
         escape_target.display()
     );
     let mut policy = EffectivePolicy {
-        profile: PermissionProfile::AcceptEdits,
+        profile: PermissionProfile::AllowAll,
         workspace_trusted: true,
         network_allowed: true,
         rules: vec![PermissionRule {
@@ -444,7 +444,7 @@ fn audit_regressions_loop_guard_and_multi_path_workspace_escape() {
     let outside = tempfile::tempdir().unwrap();
     let ext_path = outside.path().join("escaped.txt");
     let policy = EffectivePolicy {
-        profile: PermissionProfile::AcceptEdits,
+        profile: PermissionProfile::Cautious,
         workspace_trusted: true,
         network_allowed: true,
         rules: vec![PermissionRule {
@@ -2432,4 +2432,1577 @@ fn subagent_watchdog_timeout_wait_any_and_modified_worktree_preserved() {
         std::path::Path::new(&wt_path).exists(),
         "modified worktree must be preserved on stop"
     );
+}
+
+#[test]
+fn list_experts_tool_and_nola_internal_state_bash_guard_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    store
+        .put_module_record(
+            "expert_peer",
+            "exp-leijun",
+            &json!({
+                "id": "exp-leijun",
+                "name": "雷军",
+                "role": "specialist",
+                "description": "小米创始人",
+                "system_prompt": "",
+                "availability": "active",
+                "allowed_tools": [],
+                "updated_at_ms": 1795794933650i64
+            }),
+        )
+        .unwrap();
+
+    // 1. list_experts tool exposes saved ExpertPeer personas without shell probing
+    let caller: Arc<dyn ModelCaller> = Arc::new(ScriptedCaller::new(vec![]));
+    let mgr = Arc::new(crate::SubagentManager::new(store.clone(), caller));
+    let mut registry = ToolRegistry::with_builtin_tools();
+    crate::register_subagent_tools(&mgr, &mut registry);
+    let list_tool = registry.get("list_experts").expect("list_experts registered");
+    let ctx = ToolContext::new(dir.path());
+    let res = list_tool.execute(&ctx, json!({}));
+    assert!(!res.is_error);
+    let payload_str = serde_json::to_string(&res.payload).unwrap();
+    assert!(payload_str.contains("雷军"), "expected 雷军 in list_experts payload: {payload_str}");
+
+    // 2. bash probing ~/.nola or Application Support/Nola/State/nola-v4.db is flagged sensitive
+    assert!(crate::policy::bash_command_sensitive_reason("ls ~/.nola").is_some());
+    assert!(crate::policy::bash_command_sensitive_reason(
+        r#"cd "/Users/me/Library/Application Support/Nola"; sqlite3 State/nola-v4.db ".tables""#
+    )
+    .is_some());
+    assert!(crate::policy::bash_command_sensitive_reason("cargo test --lib").is_none());
+
+    // 3. Approving a sensitive bash command does NOT persist a durable permission_grant
+    let mw = crate::ToolExecutionMiddleware::new(
+        EffectivePolicy::default(),
+        HookRunner::default(),
+        Some(Arc::new(|_, _, _| true)),
+    )
+    .with_persistence(store.clone(), "sess-sensitive");
+    let _ = mw.execute(
+        &registry,
+        &ctx,
+        "bash",
+        json!({"command": "echo sqlite3 State/nola-v4.db"}),
+    );
+    let grants = store
+        .list_module_records::<serde_json::Value>("permission_grant")
+        .unwrap_or_default();
+    assert!(
+        grants.is_empty(),
+        "sensitive bash commands must never persist durable permission_grant records"
+    );
+}
+
+#[test]
+fn resume_honors_permission_profile_upgrade_and_downgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let registry = Arc::new(ToolRegistry::with_builtin_tools());
+    let ctx = ToolContext::new(dir.path());
+    let sid = "sess-perm-switch";
+
+    let make_cfg = |resume: bool, profile: PermissionProfile| AgentRunConfig {
+        session_id: Some(sid.into()),
+        resume,
+        route: mock_route(ModelProtocol::OpenAiChat),
+        frozen_system_blocks: vec![],
+        host_capabilities: HostCapabilities {
+            interactive_user_input: false,
+            network_allowed: true,
+        },
+        policy: EffectivePolicy {
+            profile,
+            workspace_trusted: profile == PermissionProfile::AllowAll,
+            network_allowed: true,
+            rules: vec![],
+            plan_mode: false,
+        },
+        hooks: HookRunner::default(),
+        approval: None,
+        max_steps: 6,
+        force_tool_set: ForceToolSet::Auto,
+        stream: false,
+        json_schema: None,
+        cancel: Arc::new(AtomicBool::new(false)),
+        auto_recall_memory: false,
+        inbox: None,
+    };
+
+    // Turn 1: starts in Cautious (workspace_trusted = false), plain text reply.
+    let caller1 = Arc::new(ScriptedCaller::new(vec![NormalizedModelResponse {
+        response_id: Some("r1".into()),
+        response_model: Some("mock".into()),
+        content: "turn1 ok".into(),
+        reasoning: None,
+        tool_calls: vec![],
+        stop_reason: ModelStopReason::Stop,
+        usage: TokenUsage::default(),
+        continuation: None,
+    }]));
+    let eng1 = AgentEngine::new(store.clone(), Arc::clone(&registry), caller1);
+    eng1.run(&ctx, "hello", make_cfg(false, PermissionProfile::Cautious), |_| {})
+        .unwrap();
+
+    // Turn 2: resumes with AllowAll (workspace_trusted = true) and runs bash with approval=None.
+    // Must execute cleanly without being blocked by the stale Cautious policy from Turn 1!
+    let caller2 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("r2a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "tc-bash-allow".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "echo PERM_UPGRADE_OK"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("r2b".into()),
+            response_model: Some("mock".into()),
+            content: "done".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let eng2 = AgentEngine::new(store.clone(), Arc::clone(&registry), caller2);
+    let mut bash_errored_on_allow = None;
+    eng2.run(
+        &ctx,
+        "run bash",
+        make_cfg(true, PermissionProfile::AllowAll),
+        |ev| {
+            if let crate::AgentEvent::ToolFinished { name, is_error, .. } = ev {
+                if name == "bash" {
+                    bash_errored_on_allow = Some(is_error);
+                }
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        bash_errored_on_allow,
+        Some(false),
+        "upgrading session from Cautious to AllowAll on resume must execute bash without blocking"
+    );
+
+    // Turn 3: resumes switched back to Cautious with approval=None -> bash must be blocked again!
+    let caller3 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("r3a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "tc-bash-deny".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "echo SHOULD_ASK"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("r3b".into()),
+            response_model: Some("mock".into()),
+            content: "blocked".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let eng3 = AgentEngine::new(store.clone(), Arc::clone(&registry), caller3);
+    let mut bash_errored_on_cautious = None;
+    eng3.run(
+        &ctx,
+        "run bash cautious",
+        make_cfg(true, PermissionProfile::Cautious),
+        |ev| {
+            if let crate::AgentEvent::ToolFinished { name, is_error, .. } = ev {
+                if name == "bash" {
+                    bash_errored_on_cautious = Some(is_error);
+                }
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        bash_errored_on_cautious,
+        Some(true),
+        "downgrading session from AllowAll back to Cautious on resume must block unapproved bash"
+    );
+}
+
+#[test]
+fn real_scenario_oversized_read_file_spill_and_tool_output_recovery_on_uuid_session() {
+    // Regresses the real `unknown output_id` bug when `AgentRunConfig::session_id` is a UUID
+    // while `ToolContext` starts with default `"default"` session_id!
+    let dir = tempfile::tempdir().unwrap();
+    let mut big_content = String::new();
+    for i in 1..=900 {
+        let marker = match i {
+            1 => "MARKER_START_001",
+            450 => "MARKER_MIDDLE_450",
+            777 => "NEEDLE_SECRET_777",
+            900 => "MARKER_END_900",
+            _ => "telemetry_pad_payload",
+        };
+        big_content.push_str(&format!("line_{i:04}: {marker}\n"));
+    }
+    assert!(big_content.len() > 26 * 1024);
+    std::fs::write(dir.path().join("big_report.log"), &big_content).unwrap();
+
+    struct SpillRecoveryCaller {
+        captured: Mutex<Vec<StructuredModelRequest>>,
+        step: Mutex<usize>,
+    }
+    impl ModelCaller for SpillRecoveryCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            self.captured.lock().unwrap().push(req.clone());
+            let mut s = self.step.lock().unwrap();
+            *s += 1;
+            match *s {
+                1 => Ok(NormalizedModelResponse {
+                    response_id: Some("sp1".into()),
+                    response_model: Some("mock".into()),
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![ModelToolCall {
+                        call_id: "call_read_big".into(),
+                        name: "read_file".into(),
+                        arguments: json!({"path": "big_report.log", "start_line": 1, "end_line": 900}),
+                    }],
+                    stop_reason: ModelStopReason::ToolCalls,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+                2 => {
+                    // Extract real `output_id` from spilled read_file result in history!
+                    let output_id = req
+                        .history
+                        .iter()
+                        .rev()
+                        .find_map(|m| match m {
+                            HistoryMessage::Tool {
+                                tool_name, payload, ..
+                            } if tool_name == "read_file" => {
+                                let v = payload.to_model_value();
+                                assert_eq!(v["spilled"], json!(true));
+                                v["output_id"].as_str().map(ToString::to_string)
+                            }
+                            _ => None,
+                        })
+                        .expect("expected spilled read_file output_id in history");
+                    // `tool_output` must have been auto-activated into `prefix_stable_tools`!
+                    assert!(
+                        req.prefix_stable_tools.iter().any(|t| t.name == "tool_output"),
+                        "tool_output must be auto-activated after spill"
+                    );
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("sp2".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: None,
+                        tool_calls: vec![
+                            ModelToolCall {
+                                call_id: "call_to_read".into(),
+                                name: "tool_output".into(),
+                                arguments: json!({
+                                    "action": "read",
+                                    "output_id": output_id,
+                                    "start_line": 448,
+                                    "end_line": 456
+                                }),
+                            },
+                            ModelToolCall {
+                                call_id: "call_to_search".into(),
+                                name: "tool_output".into(),
+                                arguments: json!({
+                                    "action": "search",
+                                    "output_id": output_id,
+                                    "pattern": "NEEDLE_SECRET_777"
+                                }),
+                            },
+                        ],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                _ => Ok(NormalizedModelResponse {
+                    response_id: Some("sp3".into()),
+                    response_model: Some("mock".into()),
+                    content: "Recovered MARKER_MIDDLE_450 and NEEDLE_SECRET_777.".into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+            }
+        }
+    }
+
+    let caller = Arc::new(SpillRecoveryCaller {
+        captured: Mutex::new(Vec::new()),
+        step: Mutex::new(0),
+    });
+    let store = Store::open_in_memory().unwrap();
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller.clone(),
+    );
+
+    // Intentionally leave ctx.session_id as default ("default") while passing UUID in AgentRunConfig!
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.output_store = Arc::new(nola_tools::OutputStore::new(dir.path().join("spill_dir")));
+
+    let mut tool_outcomes: Vec<(String, String, bool)> = Vec::new();
+    let res = engine
+        .run(
+            &ctx,
+            "Read big_report.log and inspect middle & secret needle",
+            AgentRunConfig {
+                session_id: Some("80C7E14C-7A1B-4F32-9D2E-5566778899AA".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false,
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 6,
+                force_tool_set: ForceToolSet::Auto,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |ev| {
+                if let crate::AgentEvent::ToolFinished {
+                    call_id,
+                    name,
+                    is_error,
+                    ..
+                } = ev
+                {
+                    tool_outcomes.push((call_id, name, is_error));
+                }
+            },
+        )
+        .unwrap();
+
+    assert_eq!(res.final_text, "Recovered MARKER_MIDDLE_450 and NEEDLE_SECRET_777.");
+    assert_eq!(
+        tool_outcomes,
+        vec![
+            ("call_read_big".to_string(), "read_file".to_string(), false),
+            ("call_to_read".to_string(), "tool_output".to_string(), false),
+            ("call_to_search".to_string(), "tool_output".to_string(), false),
+        ],
+        "both tool_output calls must succeed with is_error == false under UUID session_id"
+    );
+
+    // Verify exact recovered payloads passed to step 3
+    let reqs = caller.captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    let read_res = reqs[2]
+        .history
+        .iter()
+        .find_map(|m| match m {
+            HistoryMessage::Tool {
+                call_id, payload, ..
+            } if call_id == "call_to_read" => Some(payload.to_model_value()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(read_res["content"]
+        .as_str()
+        .unwrap()
+        .contains("MARKER_MIDDLE_450"));
+
+    let search_res = reqs[2]
+        .history
+        .iter()
+        .find_map(|m| match m {
+            HistoryMessage::Tool {
+                call_id, payload, ..
+            } if call_id == "call_to_search" => Some(payload.to_model_value()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(search_res["count"], 1);
+    assert!(search_res["matches"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("NEEDLE_SECRET_777"));
+}
+
+#[test]
+fn real_scenario_five_turn_permission_matrix_on_same_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let registry = Arc::new(ToolRegistry::with_builtin_tools());
+    let mut ctx = ToolContext::new(dir.path());
+    ctx.sandbox_mode = SandboxMode::Disabled;
+    let sid = "sess-5turn-perm-matrix";
+
+    let make_cfg = |resume: bool,
+                    profile: PermissionProfile,
+                    plan_mode: bool,
+                    approval: Option<crate::ApprovalCallback>| AgentRunConfig {
+        session_id: Some(sid.into()),
+        resume,
+        route: mock_route(ModelProtocol::OpenAiChat),
+        frozen_system_blocks: vec![],
+        host_capabilities: HostCapabilities::default(),
+        policy: EffectivePolicy {
+            profile,
+            workspace_trusted: profile == PermissionProfile::AllowAll,
+            network_allowed: true,
+            rules: vec![],
+            plan_mode,
+        },
+        hooks: HookRunner::default(),
+        approval,
+        max_steps: 6,
+        force_tool_set: ForceToolSet::Auto,
+        stream: false,
+        json_schema: None,
+        cancel: Arc::new(AtomicBool::new(false)),
+        auto_recall_memory: false,
+        inbox: None,
+    };
+
+    // --- Turn 1: Cautious + approval=Deny -> bash denied ---
+    let deny_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deny_count_cb = Arc::clone(&deny_count);
+    let caller1 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("t1a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "t1_bash".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "echo turn1_should_deny"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("t1b".into()),
+            response_model: Some("mock".into()),
+            content: "Turn 1 denied.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let mut t1_events = Vec::new();
+    AgentEngine::new(store.clone(), Arc::clone(&registry), caller1)
+        .run(
+            &ctx,
+            "Run bash turn 1",
+            make_cfg(
+                false,
+                PermissionProfile::Cautious,
+                false,
+                Some(Arc::new(move |_, _, _| {
+                    deny_count_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    false
+                })),
+            ),
+            |ev| {
+                if let crate::AgentEvent::ToolFinished { call_id, is_error, .. } = ev {
+                    t1_events.push((call_id, is_error));
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(deny_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(t1_events, vec![("t1_bash".into(), true)]);
+
+    // --- Turn 2: Cautious + approval=Allow -> safe bash executes & persists durable grant;
+    //     sensitive bash (`ls ~/.nola`, `sqlite3 State/nola-v4.db`) STILL asks & NEVER persists durable grant! ---
+    let asked_cmds: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let asked_cmds_cb = Arc::clone(&asked_cmds);
+    let caller2 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("t2a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![
+                ModelToolCall {
+                    call_id: "t2_safe".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo safe_ok > safe.txt"}),
+                },
+                ModelToolCall {
+                    call_id: "t2_sens_1".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo ls ~/.nola"}),
+                },
+                ModelToolCall {
+                    call_id: "t2_sens_2".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo sqlite3 State/nola-v4.db"}),
+                },
+            ],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("t2b".into()),
+            response_model: Some("mock".into()),
+            content: "Turn 2 complete.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let mut t2_events = Vec::new();
+    AgentEngine::new(store.clone(), Arc::clone(&registry), caller2)
+        .run(
+            &ctx,
+            "Run safe and sensitive bash",
+            make_cfg(
+                true,
+                PermissionProfile::Cautious,
+                false,
+                Some(Arc::new(move |spec, args, _reason| {
+                    if spec.schema.name == "bash" {
+                        if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                            asked_cmds_cb.lock().unwrap().push(cmd.to_string());
+                        }
+                    }
+                    true
+                })),
+            ),
+            |ev| {
+                if let crate::AgentEvent::ToolFinished { call_id, is_error, .. } = ev {
+                    t2_events.push((call_id, is_error));
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        t2_events,
+        vec![
+            ("t2_safe".into(), false),
+            ("t2_sens_1".into(), false),
+            ("t2_sens_2".into(), false),
+        ]
+    );
+    assert!(dir.path().join("safe.txt").is_file());
+    let asked = asked_cmds.lock().unwrap();
+    assert_eq!(asked.len(), 3, "all 3 bash calls must ask in Turn 2: {asked:?}");
+    let grants = store
+        .list_module_records::<serde_json::Value>("permission_grant")
+        .unwrap_or_default();
+    assert_eq!(
+        grants.len(),
+        1,
+        "only safe bash may persist a durable permission_grant, sensitive commands must NOT: {grants:?}"
+    );
+    let grant_str = serde_json::to_string(&grants[0]).unwrap();
+    assert!(!grant_str.contains(".nola") && !grant_str.contains("nola-v4.db"));
+
+    // --- Turn 3: AllowAll + approval=None -> bash + write_file + edit_file ALL execute cleanly ---
+    let caller3 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("t3a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![
+                ModelToolCall {
+                    call_id: "t3_bash".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo allow_all_ok"}),
+                },
+                ModelToolCall {
+                    call_id: "t3_write".into(),
+                    name: "write_file".into(),
+                    arguments: json!({"path": "t3.txt", "content": "hello_v1\n"}),
+                },
+                ModelToolCall {
+                    call_id: "t3_edit".into(),
+                    name: "edit_file".into(),
+                    arguments: json!({"path": "t3.txt", "old_text": "hello_v1", "new_text": "hello_v2"}),
+                },
+            ],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("t3b".into()),
+            response_model: Some("mock".into()),
+            content: "Turn 3 done.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let mut t3_events = Vec::new();
+    AgentEngine::new(store.clone(), Arc::clone(&registry), caller3)
+        .run(
+            &ctx,
+            "Write and edit under AllowAll",
+            make_cfg(true, PermissionProfile::AllowAll, false, None),
+            |ev| {
+                if let crate::AgentEvent::ToolFinished { call_id, is_error, .. } = ev {
+                    t3_events.push((call_id, is_error));
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        t3_events,
+        vec![
+            ("t3_bash".into(), false),
+            ("t3_write".into(), false),
+            ("t3_edit".into(), false),
+        ]
+    );
+    assert_eq!(std::fs::read_to_string(dir.path().join("t3.txt")).unwrap(), "hello_v2\n");
+
+    // --- Turn 4: PlanMode=true (even under AllowAll!) -> write_file & bash BLOCKED, read_file/glob/grep ALLOWED ---
+    let caller4 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("t4a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![
+                ModelToolCall {
+                    call_id: "t4_read".into(),
+                    name: "read_file".into(),
+                    arguments: json!({"path": "t3.txt"}),
+                },
+                ModelToolCall {
+                    call_id: "t4_glob".into(),
+                    name: "glob".into(),
+                    arguments: json!({"pattern": "*.txt"}),
+                },
+                ModelToolCall {
+                    call_id: "t4_grep".into(),
+                    name: "grep".into(),
+                    arguments: json!({"pattern": "hello_v2"}),
+                },
+                ModelToolCall {
+                    call_id: "t4_write_blocked".into(),
+                    name: "write_file".into(),
+                    arguments: json!({"path": "blocked_in_plan.txt", "content": "nope"}),
+                },
+                ModelToolCall {
+                    call_id: "t4_bash_blocked".into(),
+                    name: "bash".into(),
+                    arguments: json!({"command": "echo should_be_blocked"}),
+                },
+            ],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("t4b".into()),
+            response_model: Some("mock".into()),
+            content: "Turn 4 plan mode enforced.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let mut t4_events = Vec::new();
+    AgentEngine::new(store.clone(), Arc::clone(&registry), caller4)
+        .run(
+            &ctx,
+            "Inspect in plan mode",
+            make_cfg(true, PermissionProfile::AllowAll, true, None),
+            |ev| {
+                if let crate::AgentEvent::ToolFinished { call_id, is_error, .. } = ev {
+                    t4_events.push((call_id, is_error));
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        t4_events,
+        vec![
+            ("t4_read".into(), false),
+            ("t4_glob".into(), false),
+            ("t4_grep".into(), false),
+            ("t4_write_blocked".into(), true),
+            ("t4_bash_blocked".into(), true),
+        ]
+    );
+    assert!(!dir.path().join("blocked_in_plan.txt").exists());
+
+    // --- Turn 5: Back to Cautious, PlanMode=false, approval=None -> fresh bash blocked again ---
+    let caller5 = Arc::new(ScriptedCaller::new(vec![
+        NormalizedModelResponse {
+            response_id: Some("t5a".into()),
+            response_model: Some("mock".into()),
+            content: String::new(),
+            reasoning: None,
+            tool_calls: vec![ModelToolCall {
+                call_id: "t5_bash_blocked".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "python3 -c 'print(123)'"}),
+            }],
+            stop_reason: ModelStopReason::ToolCalls,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+        NormalizedModelResponse {
+            response_id: Some("t5b".into()),
+            response_model: Some("mock".into()),
+            content: "Turn 5 blocked.".into(),
+            reasoning: None,
+            tool_calls: vec![],
+            stop_reason: ModelStopReason::Stop,
+            usage: TokenUsage::default(),
+            continuation: None,
+        },
+    ]));
+    let mut t5_events = Vec::new();
+    AgentEngine::new(store.clone(), Arc::clone(&registry), caller5)
+        .run(
+            &ctx,
+            "Run bash again in Cautious",
+            make_cfg(true, PermissionProfile::Cautious, false, None),
+            |ev| {
+                if let crate::AgentEvent::ToolFinished { call_id, is_error, .. } = ev {
+                    t5_events.push((call_id, is_error));
+                }
+            },
+        )
+        .unwrap();
+    assert_eq!(t5_events, vec![("t5_bash_blocked".into(), true)]);
+}
+
+#[test]
+fn real_scenario_checkpoint_undo_redo_across_multi_file_create_edit_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("keep.rs"), "pub fn ver() -> u32 { 1 }\n").unwrap();
+    std::fs::write(dir.path().join("obsolete.rs"), "pub fn old() {}\n").unwrap();
+
+    struct CheckpointCaller {
+        step: Mutex<usize>,
+        checkpoint_id: Mutex<String>,
+        disk_after_edit: Mutex<Option<(String, bool, bool)>>,
+        disk_after_restore: Mutex<Option<(String, bool)>>,
+        disk_after_undo: Mutex<Option<(String, bool)>>,
+        ws: std::path::PathBuf,
+    }
+    impl ModelCaller for CheckpointCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let mut s = self.step.lock().unwrap();
+            *s += 1;
+            match *s {
+                1 => Ok(NormalizedModelResponse {
+                    response_id: Some("cp1".into()),
+                    response_model: Some("mock".into()),
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![
+                        ModelToolCall {
+                            call_id: "c_ckpt".into(),
+                            name: "workspace_checkpoint".into(),
+                            arguments: json!({"action": "create", "label": "pre-refactor"}),
+                        },
+                        ModelToolCall {
+                            call_id: "c_read".into(),
+                            name: "read_file".into(),
+                            arguments: json!({"path": "keep.rs"}),
+                        },
+                    ],
+                    stop_reason: ModelStopReason::ToolCalls,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+                2 => {
+                    let cid = req
+                        .history
+                        .iter()
+                        .find_map(|m| match m {
+                            HistoryMessage::Tool {
+                                call_id, payload, ..
+                            } if call_id == "c_ckpt" => payload.to_model_value()["checkpoint_id"]
+                                .as_str()
+                                .map(ToString::to_string),
+                            _ => None,
+                        })
+                        .expect("expected checkpoint_id");
+                    *self.checkpoint_id.lock().unwrap() = cid;
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("cp2".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: None,
+                        tool_calls: vec![
+                            ModelToolCall {
+                                call_id: "c_edit".into(),
+                                name: "edit_file".into(),
+                                arguments: json!({
+                                    "path": "keep.rs",
+                                    "old_text": "1",
+                                    "new_text": "2"
+                                }),
+                            },
+                            ModelToolCall {
+                                call_id: "c_create".into(),
+                                name: "write_file".into(),
+                                arguments: json!({
+                                    "path": "added.rs",
+                                    "content": "pub fn new_mod() {}\n"
+                                }),
+                            },
+                            ModelToolCall {
+                                call_id: "c_del".into(),
+                                name: "delete_file".into(),
+                                arguments: json!({"path": "obsolete.rs"}),
+                            },
+                        ],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                3 => {
+                    *self.disk_after_edit.lock().unwrap() = Some((
+                        std::fs::read_to_string(self.ws.join("keep.rs")).unwrap(),
+                        self.ws.join("added.rs").is_file(),
+                        self.ws.join("obsolete.rs").exists(),
+                    ));
+                    let cid = self.checkpoint_id.lock().unwrap().clone();
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("cp3".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: None,
+                        tool_calls: vec![ModelToolCall {
+                            call_id: "c_restore".into(),
+                            name: "workspace_checkpoint".into(),
+                            arguments: json!({"action": "restore", "checkpoint_id": cid}),
+                        }],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                4 => {
+                    *self.disk_after_restore.lock().unwrap() = Some((
+                        std::fs::read_to_string(self.ws.join("keep.rs")).unwrap(),
+                        self.ws.join("obsolete.rs").is_file(),
+                    ));
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("cp4".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: None,
+                        tool_calls: vec![ModelToolCall {
+                            call_id: "c_undo".into(),
+                            name: "workspace_checkpoint".into(),
+                            arguments: json!({"action": "undo"}),
+                        }],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                5 => {
+                    *self.disk_after_undo.lock().unwrap() = Some((
+                        std::fs::read_to_string(self.ws.join("keep.rs")).unwrap(),
+                        self.ws.join("obsolete.rs").exists(),
+                    ));
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("cp5".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: None,
+                        tool_calls: vec![ModelToolCall {
+                            call_id: "c_redo".into(),
+                            name: "workspace_checkpoint".into(),
+                            arguments: json!({"action": "redo"}),
+                        }],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                _ => Ok(NormalizedModelResponse {
+                    response_id: Some("cp6".into()),
+                    response_model: Some("mock".into()),
+                    content: "Checkpoint restore/undo/redo verified.".into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+            }
+        }
+    }
+
+    let caller = Arc::new(CheckpointCaller {
+        step: Mutex::new(0),
+        checkpoint_id: Mutex::new(String::new()),
+        disk_after_edit: Mutex::new(None),
+        disk_after_restore: Mutex::new(None),
+        disk_after_undo: Mutex::new(None),
+        ws: dir.path().to_path_buf(),
+    });
+    let store = Store::open_in_memory().unwrap();
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        caller.clone(),
+    );
+    let ctx = ToolContext::new(dir.path());
+    let res = engine
+        .run(
+            &ctx,
+            "Checkpoint, refactor, restore, undo, redo",
+            AgentRunConfig {
+                session_id: Some("sess-ckpt-flow".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false,
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 10,
+                force_tool_set: ForceToolSet::All,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(res.final_text, "Checkpoint restore/undo/redo verified.");
+
+    assert_eq!(
+        caller.disk_after_edit.lock().unwrap().as_ref().unwrap(),
+        &("pub fn ver() -> u32 { 2 }\n".to_string(), true, false)
+    );
+    assert_eq!(
+        caller.disk_after_restore.lock().unwrap().as_ref().unwrap(),
+        &("pub fn ver() -> u32 { 1 }\n".to_string(), true)
+    );
+    assert_eq!(
+        caller.disk_after_undo.lock().unwrap().as_ref().unwrap(),
+        &("pub fn ver() -> u32 { 2 }\n".to_string(), false)
+    );
+    // Final disk state after redo == restored baseline
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("keep.rs")).unwrap(),
+        "pub fn ver() -> u32 { 1 }\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("obsolete.rs")).unwrap(),
+        "pub fn old() {}\n"
+    );
+}
+
+#[test]
+fn real_scenario_30_turn_compaction_preserves_facts_and_tool_call_pairing() {
+    let mut history: Vec<HistoryMessage> = Vec::new();
+    // Turn 1 establishes critical user facts
+    history.push(HistoryMessage::User {
+        content: "Remember: Project codename is APOLLO-9 and deployment port is 8443.".into(),
+        media: vec![],
+    });
+    history.push(HistoryMessage::Assistant {
+        content: "Recorded project APOLLO-9 on port 8443.".into(),
+        reasoning: Some("Storing key constraints APOLLO-9 / 8443.".into()),
+        tool_calls: vec![],
+        continuation: None,
+    });
+
+    // Turns 2..=30: interleaved user prompts, assistant tool calls, large tool outputs, and assistant answers
+    for turn in 2..=30 {
+        history.push(HistoryMessage::User {
+            content: format!("Turn {turn}: inspect service module_{turn}.rs for APOLLO-9 latency."),
+            media: vec![],
+        });
+        let call_id = format!("tc_turn_{turn}");
+        history.push(HistoryMessage::Assistant {
+            content: String::new(),
+            reasoning: Some(format!("Checking module_{turn}.rs {}", "analysis ".repeat(80))),
+            tool_calls: vec![ModelToolCall {
+                call_id: call_id.clone(),
+                name: "read_file".into(),
+                arguments: json!({"path": format!("src/module_{turn}.rs")}),
+            }],
+            continuation: None,
+        });
+        history.push(HistoryMessage::Tool {
+            call_id,
+            tool_name: "read_file".into(),
+            payload: ToolModelPayload::structured(
+                json!({
+                    "path": format!("src/module_{turn}.rs"),
+                    "content": format!("// module_{turn}\n{}", "fn work() {}\n".repeat(120))
+                }),
+                format!("Read src/module_{turn}.rs"),
+            ),
+            is_error: false,
+            media: vec![],
+        });
+        history.push(HistoryMessage::Assistant {
+            content: format!("Turn {turn} complete: module_{turn}.rs looks healthy."),
+            reasoning: None,
+            tool_calls: vec![],
+            continuation: None,
+        });
+    }
+
+    let before_len = history.len();
+    assert!(before_len > 100);
+
+    // Compact with an LLM summarizer closure that distills key facts
+    let summarizer = |msgs: &[HistoryMessage]| -> Option<String> {
+        let joined = serde_json::to_string(msgs).unwrap_or_default();
+        let mut summary = String::from("Compacted conversation summary:\n");
+        if joined.contains("APOLLO-9") {
+            summary.push_str("- Project codename: APOLLO-9\n");
+        }
+        if joined.contains("8443") {
+            summary.push_str("- Deployment port: 8443\n");
+        }
+        summary.push_str("- Inspected modules 2..28 cleanly.\n");
+        Some(summary)
+    };
+
+    let budget = ContextBudget::for_window(16_384, false);
+    let report = compact_history(&mut history, budget, 1_000, Some(&summarizer));
+    assert!(report.saved_tokens() > 0, "compaction must save tokens");
+    assert!(
+        history.len() < before_len,
+        "compacted message count ({}) must be < original ({before_len})",
+        history.len()
+    );
+    let hard_limit = budget.history_budget(1_000, budget.prompt_token_limit());
+    assert!(
+        report.tokens_after <= hard_limit,
+        "tokens_after ({}) must be <= hard_limit ({hard_limit})",
+        report.tokens_after
+    );
+
+    // Key user facts MUST survive compaction!
+    let full_serialized = serde_json::to_string(&history).unwrap();
+    assert!(
+        full_serialized.contains("APOLLO-9"),
+        "compacted history must preserve key user fact APOLLO-9"
+    );
+    assert!(
+        full_serialized.contains("8443"),
+        "compacted history must preserve key user fact 8443"
+    );
+
+    // Strict tool_call / tool_result pairing invariant across compaction boundaries:
+    // Every Assistant with tool_calls must be immediately followed by exact matching Tool results,
+    // and zero orphaned Tool messages may appear without their Assistant tool_call!
+    let mut i = 0;
+    while i < history.len() {
+        match &history[i] {
+            HistoryMessage::Tool { call_id, .. } => {
+                panic!("orphaned Tool message '{call_id}' at index {i} without preceding Assistant tool_call");
+            }
+            HistoryMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
+                let expected: Vec<&str> = tool_calls.iter().map(|tc| tc.call_id.as_str()).collect();
+                let mut seen: Vec<&str> = Vec::new();
+                let mut j = i + 1;
+                while j < history.len() {
+                    if let HistoryMessage::Tool { call_id, .. } = &history[j] {
+                        seen.push(call_id.as_str());
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    seen, expected,
+                    "tool_call/tool_result mismatch at assistant index {i}"
+                );
+                i = j;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Compacted history must build valid wire payloads for OpenAI Chat & Anthropic Messages
+    let req = StructuredModelRequest {
+        frozen_system_prefix: vec![FrozenSystemBlock {
+            id: "sys".into(),
+            text: "System".into(),
+        }],
+        prefix_stable_tools: vec![],
+        history,
+        ephemeral_tail_reminders: vec![],
+        max_output_tokens: 4096,
+        json_schema: None,
+    };
+    for proto in [ModelProtocol::OpenAiChat, ModelProtocol::AnthropicMessages] {
+        let built = adapter_for(proto)
+            .build_request(&mock_route(proto), &req, false)
+            .expect("compacted history must serialize cleanly");
+        assert!(built.body["messages"].as_array().is_some_and(|a| !a.is_empty()));
+    }
+}
+
+#[test]
+fn real_scenario_multistep_streaming_event_order_strict_chronology() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("readme.md"), "# Nola Engine\nStatus: GREEN\n").unwrap();
+
+    struct StreamingOrderCaller {
+        step: Mutex<usize>,
+    }
+    impl ModelCaller for StreamingOrderCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            _req: &StructuredModelRequest,
+            _stream: bool,
+            on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let mut s = self.step.lock().unwrap();
+            *s += 1;
+            match *s {
+                1 => {
+                    on_delta(ModelStreamDelta::Reasoning("Inspecting ".into()));
+                    on_delta(ModelStreamDelta::Reasoning("readme.md...".into()));
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("st1".into()),
+                        response_model: Some("mock".into()),
+                        content: String::new(),
+                        reasoning: Some("Inspecting readme.md...".into()),
+                        tool_calls: vec![ModelToolCall {
+                            call_id: "tc_readme".into(),
+                            name: "read_file".into(),
+                            arguments: json!({"path": "readme.md"}),
+                        }],
+                        stop_reason: ModelStopReason::ToolCalls,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+                _ => {
+                    on_delta(ModelStreamDelta::Reasoning("Checking status...".into()));
+                    on_delta(ModelStreamDelta::Text("Status is ".into()));
+                    on_delta(ModelStreamDelta::Text("GREEN.".into()));
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("st2".into()),
+                        response_model: Some("mock".into()),
+                        content: "Status is GREEN.".into(),
+                        reasoning: Some("Checking status...".into()),
+                        tool_calls: vec![],
+                        stop_reason: ModelStopReason::Stop,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+            }
+        }
+    }
+
+    let store = Store::open_in_memory().unwrap();
+    let engine = AgentEngine::new(
+        store,
+        Arc::new(ToolRegistry::with_builtin_tools()),
+        Arc::new(StreamingOrderCaller {
+            step: Mutex::new(0),
+        }),
+    );
+    let ctx = ToolContext::new(dir.path());
+    let mut tags: Vec<&'static str> = Vec::new();
+    let mut streamed_text = String::new();
+    let mut streamed_reasoning = String::new();
+
+    let res = engine
+        .run(
+            &ctx,
+            "Read readme.md and summarize status",
+            AgentRunConfig {
+                session_id: Some("sess-stream-order".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy: EffectivePolicy {
+                    profile: PermissionProfile::AllowAll,
+                    workspace_trusted: true,
+                    network_allowed: true,
+                    rules: vec![],
+                    plan_mode: false,
+                },
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 5,
+                force_tool_set: ForceToolSet::Auto,
+                stream: true,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |ev| match ev {
+                crate::AgentEvent::SessionStarted { .. } => tags.push("SessionStarted"),
+                crate::AgentEvent::ReasoningDelta { delta } => {
+                    streamed_reasoning.push_str(&delta);
+                    tags.push("ReasoningDelta");
+                }
+                crate::AgentEvent::ToolStarted { .. } => tags.push("ToolStarted"),
+                crate::AgentEvent::ToolFinished { .. } => tags.push("ToolFinished"),
+                crate::AgentEvent::TextDelta { delta } => {
+                    streamed_text.push_str(&delta);
+                    tags.push("TextDelta");
+                }
+                crate::AgentEvent::TurnCompleted { .. } => tags.push("TurnCompleted"),
+                _ => {}
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        tags,
+        vec![
+            "SessionStarted",
+            "ReasoningDelta",
+            "ReasoningDelta",
+            "ToolStarted",
+            "ToolFinished",
+            "ReasoningDelta",
+            "TextDelta",
+            "TextDelta",
+            "TurnCompleted",
+        ]
+    );
+    assert_eq!(streamed_text, "Status is GREEN.");
+    assert_eq!(res.final_text, "Status is GREEN.");
+    assert_eq!(streamed_reasoning, "Inspecting readme.md...Checking status...");
+}
+
+#[test]
+fn real_scenario_hook_pre_and_post_tool_use_and_rule_precedence_matrix() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = ToolRegistry::with_builtin_tools();
+    let ctx = ToolContext::new(dir.path());
+
+    // Safe PreToolUse modify_input inside workspace rewrites filename, AND PostToolUse injects reminder!
+    let pre_rewrite = r#"printf '%s' '{"decision":"modify_input","input":{"path":"rewritten.txt","content":"via_hook\n"}}'"#;
+    let post_remind = r#"printf '%s' '{"decision":"inject_context","text":"post-hook audited write"}'"#;
+    let mw = crate::ToolExecutionMiddleware::new(
+        EffectivePolicy {
+            profile: PermissionProfile::AllowAll,
+            workspace_trusted: true,
+            network_allowed: true,
+            rules: vec![
+                PermissionRule {
+                    scope: RuleScope::Project,
+                    action: PermissionAction::Allow,
+                    tool_pattern: "write_file".into(),
+                    resource_pattern: Some("*forbidden.txt*".into()),
+                },
+                PermissionRule {
+                    scope: RuleScope::User,
+                    action: PermissionAction::Deny,
+                    tool_pattern: "write_file".into(),
+                    resource_pattern: Some("*forbidden.txt*".into()),
+                },
+            ],
+            plan_mode: false,
+        },
+        HookRunner::from_configs(
+            dir.path().to_path_buf(),
+            vec![
+                CommandHookConfig {
+                    event: nola_types::HookEvent::PreToolUse,
+                    matcher: "write_file".into(),
+                    command: pre_rewrite.into(),
+                    timeout_ms: 10_000,
+                    fail_closed: true,
+                },
+                CommandHookConfig {
+                    event: nola_types::HookEvent::PostToolUse,
+                    matcher: "write_file".into(),
+                    command: post_remind.into(),
+                    timeout_ms: 10_000,
+                    fail_closed: false,
+                },
+            ],
+        ),
+        None,
+    );
+
+    // User Deny beats Project Allow for forbidden.txt BEFORE hook even runs
+    let denied = mw.execute(
+        &reg,
+        &ctx,
+        "write_file",
+        json!({"path": "forbidden.txt", "content": "nope"}),
+    );
+    assert!(denied.result.is_error);
+    assert!(!dir.path().join("forbidden.txt").exists());
+    assert!(!dir.path().join("rewritten.txt").exists());
+
+    // Allowed write_file passes through PreToolUse modify_input (in-workspace) and PostToolUse
+    let ok = mw.execute(
+        &reg,
+        &ctx,
+        "write_file",
+        json!({"path": "original.txt", "content": "orig"}),
+    );
+    assert!(!ok.result.is_error, "safe hook rewrite failed: {:?}", ok.result.payload);
+    assert!(!dir.path().join("original.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("rewritten.txt")).unwrap(),
+        "via_hook\n"
+    );
+    assert!(
+        ok.reminders
+            .iter()
+            .any(|r| r.text.contains("post-hook audited write")),
+        "expected PostToolUse reminder, got: {:?}",
+        ok.reminders
+    );
+}
+
+#[test]
+fn real_scenario_delegate_expert_and_list_experts_through_agent_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    store
+        .put_module_record(
+            "expert_peer",
+            "exp-leijun",
+            &json!({
+                "id": "exp-leijun",
+                "name": "雷军",
+                "role": "specialist",
+                "description": "硬件工程与极致性价比产品顾问",
+                "system_prompt": "",
+                "availability": "active",
+                "allowed_tools": [],
+                "updated_at_ms": 1_795_800_000_000i64
+            }),
+        )
+        .unwrap();
+    store
+        .put_module_record(
+            "expert_peer",
+            "exp-sec",
+            &json!({
+                "id": "exp-sec",
+                "name": "SecAuditor",
+                "role": "reviewer",
+                "description": "Security & sandbox auditor",
+                "system_prompt": "Always verify sandbox boundaries.",
+                "availability": "active",
+                "allowed_tools": [],
+                "updated_at_ms": 1_795_800_000_000i64
+            }),
+        )
+        .unwrap();
+
+    // Shared caller handles both parent steps AND child delegate_expert subagent!
+    struct ParentAndExpertCaller {
+        child_system_prompts: Mutex<Vec<String>>,
+        parent_step: Mutex<usize>,
+    }
+    impl ModelCaller for ParentAndExpertCaller {
+        fn call(
+            &self,
+            _route: &ModelRouteConfig,
+            req: &StructuredModelRequest,
+            _stream: bool,
+            _on_delta: &mut dyn FnMut(ModelStreamDelta),
+        ) -> Result<NormalizedModelResponse, LlmError> {
+            let sys_joined: String = req
+                .frozen_system_prefix
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if sys_joined.contains("硬件工程与极致性价比") {
+                self.child_system_prompts.lock().unwrap().push(sys_joined);
+                return Ok(NormalizedModelResponse {
+                    response_id: Some("exp_child".into()),
+                    response_model: Some("mock".into()),
+                    content: "雷军建议：先打磨核心体验，再控制 BOM 成本。".into(),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    stop_reason: ModelStopReason::Stop,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                });
+            }
+            let mut ps = self.parent_step.lock().unwrap();
+            *ps += 1;
+            match *ps {
+                1 => Ok(NormalizedModelResponse {
+                    response_id: Some("p1".into()),
+                    response_model: Some("mock".into()),
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![ModelToolCall {
+                        call_id: "c_list".into(),
+                        name: "list_experts".into(),
+                        arguments: json!({}),
+                    }],
+                    stop_reason: ModelStopReason::ToolCalls,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+                2 => Ok(NormalizedModelResponse {
+                    response_id: Some("p2".into()),
+                    response_model: Some("mock".into()),
+                    content: String::new(),
+                    reasoning: None,
+                    tool_calls: vec![ModelToolCall {
+                        call_id: "c_del".into(),
+                        name: "delegate_expert".into(),
+                        arguments: json!({
+                            "expert_name": "@雷军",
+                            "prompt": "评审新硬件方案",
+                            "background": false
+                        }),
+                    }],
+                    stop_reason: ModelStopReason::ToolCalls,
+                    usage: TokenUsage::default(),
+                    continuation: None,
+                }),
+                _ => {
+                    let delegated_out = req
+                        .history
+                        .iter()
+                        .find_map(|m| match m {
+                            HistoryMessage::Tool {
+                                call_id, payload, ..
+                            } if call_id == "c_del" => payload.to_model_value()["output"]
+                                .as_str()
+                                .map(ToString::to_string),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    Ok(NormalizedModelResponse {
+                        response_id: Some("p3".into()),
+                        response_model: Some("mock".into()),
+                        content: format!("综合专家意见：{delegated_out}"),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        stop_reason: ModelStopReason::Stop,
+                        usage: TokenUsage::default(),
+                        continuation: None,
+                    })
+                }
+            }
+        }
+    }
+
+    let caller = Arc::new(ParentAndExpertCaller {
+        child_system_prompts: Mutex::new(Vec::new()),
+        parent_step: Mutex::new(0),
+    });
+    let subagents = Arc::new(crate::SubagentManager::new(store.clone(), caller.clone()));
+    let policy = EffectivePolicy {
+        profile: PermissionProfile::AllowAll,
+        workspace_trusted: true,
+        network_allowed: true,
+        rules: vec![],
+        plan_mode: false,
+    };
+    subagents.configure_parent(mock_route(ModelProtocol::OpenAiChat), policy.clone());
+    let mut reg = ToolRegistry::with_builtin_tools();
+    crate::register_subagent_tools(&subagents, &mut reg);
+
+    let engine = AgentEngine::new(store, Arc::new(reg), caller.clone());
+    let ctx = ToolContext::new(dir.path());
+    let res = engine
+        .run(
+            &ctx,
+            "列出专家并咨询雷军",
+            AgentRunConfig {
+                session_id: Some("sess-delegate-exp".into()),
+                resume: false,
+                route: mock_route(ModelProtocol::OpenAiChat),
+                frozen_system_blocks: vec![],
+                host_capabilities: HostCapabilities::default(),
+                policy,
+                hooks: HookRunner::default(),
+                approval: None,
+                max_steps: 6,
+                force_tool_set: ForceToolSet::All,
+                stream: false,
+                json_schema: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+                auto_recall_memory: false,
+                inbox: None,
+            },
+            |_| {},
+        )
+        .unwrap();
+
+    assert!(res.final_text.contains("极致") || res.final_text.contains("核心体验"));
+    assert_eq!(caller.child_system_prompts.lock().unwrap().len(), 1);
 }

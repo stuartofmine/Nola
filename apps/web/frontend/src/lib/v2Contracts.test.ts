@@ -164,9 +164,9 @@ test('model profile reasoning validation handles effort, budget, unsupported con
     assert.ok(reasoningValidationError(budgetDraft, 'anthropic', 4096));
     assert.ok(reasoningValidationError(budgetDraft, 'responses', 8192));
 
-    // Effort control across protocols including siwc_responses
+    // Effort control across protocols including siwc_responses and gemini
     const effortDraft = reasoningDraft({ control: 'effort', efforts: ['none', 'low', 'high'], budgets: [], defaultPreference: 'high' });
-    for (const protocol of ['responses', 'siwc_responses', 'chat_completions', 'anthropic']) {
+    for (const protocol of ['responses', 'siwc_responses', 'chat_completions', 'anthropic', 'gemini']) {
         assert.equal(reasoningValidationError(effortDraft, protocol, 16384), null);
         assert.deepEqual(reasoningOptions(effortDraft, protocol), ['none', 'low', 'high']);
     }

@@ -1049,6 +1049,13 @@ impl Store {
         })
     }
 
+    pub fn delete_kv(&self, key: &str) -> Result<bool, StoreError> {
+        self.with_write_conn(|conn| {
+            let affected = conn.execute("DELETE FROM kv WHERE key = ?1", params![key])?;
+            Ok(affected > 0)
+        })
+    }
+
     // --- MCP Servers ---
 
     pub fn upsert_mcp_server(&self, cfg: &McpServerConfig) -> Result<(), StoreError> {

@@ -13,14 +13,98 @@ final class MacDefaultChatModelPresentation: ObservableObject {
     @Published private(set) var error: String?
     private var repairRevision: Int64?
     private var canRepair = false
+    private var coalescedReloadTask: Task<Void, Never>?
+    private var selectTask: Task<Void, Never>?
+    private var reloadGeneration: UInt64 = 0
     let store: MacDefaultChatModelStore
 
     init(store: MacDefaultChatModelStore = .init()) {
         self.store = store
-        reload()
+        scheduleReload()
+    }
+
+    func scheduleReload() {
+        coalescedReloadTask?.cancel()
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
+        let store = self.store
+        coalescedReloadTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled, self.reloadGeneration == generation else { return }
+            enum FetchedDefaultModel: Sendable {
+                case success([MacCanonicalModelProfile], MacDefaultChatModelSnapshot)
+                case failure(String, MacDefaultChatModelRawSnapshot?)
+            }
+            let fetched = await Task.detached(priority: .userInitiated) { () -> FetchedDefaultModel in
+                do {
+                    let profiles = try MacChatModelCatalog.fetchProfiles(application: store.application)
+                    let snapshot = try store.snapshot()
+                    return .success(profiles, snapshot)
+                } catch {
+                    let raw = try? store.rawSnapshot()
+                    return .failure(error.localizedDescription, raw)
+                }
+            }.value
+            guard !Task.isCancelled, self.reloadGeneration == generation else { return }
+            switch fetched {
+            case .failure(let message, let raw):
+                self.error = message
+                self.snapshot = nil
+                self.resolution = .invalidConfiguration
+                if let raw {
+                    self.repairRevision = raw.revision
+                    self.canRepair = true
+                } else {
+                    self.canRepair = false
+                }
+            case .success(let profiles, let snapshot):
+                let builtCatalog: MacChatModelCatalog
+                do {
+                    builtCatalog = try MacChatModelCatalog.build(from: profiles, application: store.application)
+                } catch {
+                    self.error = error.localizedDescription
+                    self.snapshot = nil
+                    self.resolution = .invalidConfiguration
+                    self.repairRevision = snapshot.revision
+                    self.canRepair = true
+                    return
+                }
+                let candidates = builtCatalog.candidates
+                let valueJSON = snapshot.valueJSON
+                let resolved = await Task.detached(priority: .userInitiated) {
+                    () -> Result<MacChatModelResolution, Error> in
+                    Result {
+                        try store.application.resolveChatModel(
+                            intent: .inherit,
+                            defaultValueJSON: valueJSON,
+                            candidates: candidates
+                        )
+                    }
+                }.value
+                guard !Task.isCancelled, self.reloadGeneration == generation else { return }
+                self.catalog = builtCatalog
+                switch resolved {
+                case .success(let resolution):
+                    self.snapshot = snapshot
+                    self.resolution = resolution
+                    self.canRepair = true
+                    self.repairRevision = snapshot.revision
+                    self.error = nil
+                case .failure(let err):
+                    self.error = err.localizedDescription
+                    self.snapshot = nil
+                    self.resolution = .invalidConfiguration
+                    self.repairRevision = snapshot.revision
+                    self.canRepair = true
+                }
+            }
+        }
     }
 
     func reload() {
+        coalescedReloadTask?.cancel()
+        coalescedReloadTask = nil
+        reloadGeneration &+= 1
         do {
             let catalog = try MacChatModelCatalog.load(application: store.application)
             self.catalog = catalog
@@ -52,12 +136,30 @@ final class MacDefaultChatModelPresentation: ObservableObject {
 
     func select(_ selection: MacDefaultChatModelSelection) {
         guard canRepair else { return }
-        do {
-            let currentCatalog = try MacChatModelCatalog.load(application: store.application)
-            self.snapshot = try store.set(selection, expectedRevision: snapshot?.revision ?? repairRevision,
-                                          candidates: currentCatalog.candidates)
-            reload()
-        } catch { self.error = error.localizedDescription }
+        let store = self.store
+        let expectedRevision = snapshot?.revision ?? repairRevision
+        selectTask?.cancel()
+        selectTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let profiles = try await Task.detached(priority: .userInitiated) {
+                    try MacChatModelCatalog.fetchProfiles(application: store.application)
+                }.value
+                guard !Task.isCancelled else { return }
+                let currentCatalog = try MacChatModelCatalog.build(from: profiles, application: store.application)
+                let candidates = currentCatalog.candidates
+                let saved = try await Task.detached(priority: .userInitiated) {
+                    try store.set(selection, expectedRevision: expectedRevision, candidates: candidates)
+                }.value
+                guard !Task.isCancelled else { return }
+                self.catalog = currentCatalog
+                self.snapshot = saved
+                self.scheduleReload()
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     var title: String {
@@ -182,35 +284,35 @@ struct MacModelCenterView: View {
             } actions: {
                 diagnostics
             }
-            HStack {
-                defaultModelControl
-                    .frame(maxWidth: 520, alignment: .leading)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
-            .padding(.vertical, MacDesignTokens.Spacing.sm)
-            if let error = preference.error {
-                HStack {
-                    Text(error).font(.callout).foregroundStyle(.red)
-                    Button(String(localized: "Reload")) { preference.reload() }
-                }.padding(.horizontal, 24).padding(.bottom, 12)
-            }
-
-            HStack {
-                Picker(String(localized: "Model source", table: "ModelCenter"), selection: $navigation.selectedTab) {
-                    Label(String(localized: "Local Models", table: "ModelCenter"), systemImage: "cpu.fill")
-                        .tag(MacModelCenterNavigationState.Tab.local)
-                    Label(String(localized: "API Models", table: "ModelCenter"), systemImage: "network")
-                        .tag(MacModelCenterNavigationState.Tab.api)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    sourceSegmentedControl
+                    Spacer(minLength: 12)
+                    defaultModelControl
+                        .frame(maxWidth: 420, alignment: .trailing)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 300, alignment: .leading)
-                .accessibilityIdentifier("model-center-source")
-                Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 10) {
+                    sourceSegmentedControl
+                    defaultModelControl
+                }
             }
             .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
+            .padding(.top, MacDesignTokens.Spacing.xs)
             .padding(.bottom, MacDesignTokens.Spacing.md)
+            if let error = preference.error {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(MacDesignColor.danger)
+                    Text(error).font(.callout).foregroundStyle(.red)
+                    Spacer(minLength: 0)
+                    Button(String(localized: "Reload")) { preference.scheduleReload() }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(MacDesignColor.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous))
+                .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
+                .padding(.bottom, MacDesignTokens.Spacing.sm)
+            }
 
             Divider().opacity(0.55)
 
@@ -243,9 +345,22 @@ struct MacModelCenterView: View {
         }
         .background(MacDesignColor.canvas)
         .tint(MacDesignColor.brand)
-        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in preference.reload() }
-        .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in preference.reload() }
-        .onReceive(NotificationCenter.default.publisher(for: .nolaMacLocalModelRuntimeDidChange)) { _ in preference.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in preference.scheduleReload() }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in preference.scheduleReload() }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacLocalModelRuntimeDidChange)) { _ in preference.scheduleReload() }
+    }
+
+    private var sourceSegmentedControl: some View {
+        Picker(String(localized: "Model source", table: "ModelCenter"), selection: $navigation.selectedTab) {
+            Label(String(localized: "Local Models", table: "ModelCenter"), systemImage: "cpu.fill")
+                .tag(MacModelCenterNavigationState.Tab.local)
+            Label(String(localized: "API Models", table: "ModelCenter"), systemImage: "network")
+                .tag(MacModelCenterNavigationState.Tab.api)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 260)
+        .accessibilityIdentifier("model-center-source")
     }
 
     private var diagnostics: some View {

@@ -4466,25 +4466,106 @@ pub unsafe extern "C" fn nola_mobile_github_skill_package_json(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    let download_if_missing = |pkg: &Value| {
+        let Some(dest_file) = pkg.get("dest_file").and_then(|v| v.as_str()).map(PathBuf::from)
+        else {
+            return;
+        };
+        if std::fs::symlink_metadata(&dest_file)
+            .map(|m| !m.file_type().is_symlink() && m.is_file() && m.len() > 0)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let Some(raw_url) = pkg
+            .get("raw_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| s.starts_with("https://"))
+        else {
+            return;
+        };
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent("Nola/2.0")
+            .build()
+        else {
+            return;
+        };
+        let Ok(resp) = client.get(raw_url).send() else {
+            return;
+        };
+        if !resp.status().is_success() {
+            return;
+        }
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        const MAX_BYTES: u64 = 2 * 1024 * 1024;
+        if resp.take(MAX_BYTES + 1).read_to_end(&mut buf).is_err()
+            || buf.is_empty()
+            || buf.len() as u64 > MAX_BYTES
+        {
+            return;
+        }
+        if let Some(parent) = dest_file.parent() {
+            if std::fs::symlink_metadata(parent)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return;
+            }
+            if std::fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        if std::fs::symlink_metadata(&dest_file)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let _ = std::fs::write(&dest_file, &buf);
+    };
+
     let format_prepared = |pkg: &Value| -> Value {
         let name = pkg
             .get("name")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or("skill");
+        let owner = pkg
+            .get("owner")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+        let repo = pkg
+            .get("repo")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
         let id = pkg
             .get("id")
             .and_then(|v| v.as_str())
             .map(ToString::to_string)
-            .unwrap_or_else(|| {
-                match (
-                    pkg.get("owner").and_then(|v| v.as_str()),
-                    pkg.get("repo").and_then(|v| v.as_str()),
-                ) {
-                    (Some(o), Some(r)) => format!("{o}/{r}"),
-                    _ => name.to_string(),
-                }
+            .unwrap_or_else(|| match (owner, repo) {
+                (Some(o), Some(r)) => format!("{o}/{r}"),
+                _ => name.to_string(),
             });
+        let source_url = pkg
+            .get("source_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| match (owner, repo) {
+                (Some(o), Some(r)) => format!("https://github.com/{o}/{r}"),
+                _ => pkg
+                    .get("raw_url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        let instructions_ref = match (owner, repo) {
+            (Some(o), Some(r)) => format!("nola://github-skills/{o}/{r}"),
+            _ => format!("nola://github-skills/{name}"),
+        };
         let dest_file = pkg
             .get("dest_file")
             .and_then(|v| v.as_str())
@@ -4511,10 +4592,8 @@ pub unsafe extern "C" fn nola_mobile_github_skill_package_json(
             obj.insert("name".into(), json!(name));
             obj.insert("description".into(), json!(description));
             obj.insert("version".into(), json!("1.0.0"));
-            obj.insert(
-                "instructions_ref".into(),
-                json!(format!("nola://github-skills/{name}")),
-            );
+            obj.insert("source_url".into(), json!(source_url));
+            obj.insert("instructions_ref".into(), json!(instructions_ref));
             obj.insert("content".into(), json!(content));
         }
         out
@@ -4522,8 +4601,15 @@ pub unsafe extern "C" fn nola_mobile_github_skill_package_json(
 
     match operation {
         "prepare" | "resolve" => {
-            match nola_modules::skills::prepare_github_skill_package(query_or_url, &skills_dir) {
+            let effective_ref = query_or_url
+                .trim()
+                .strip_prefix("nola://github-skills/")
+                .unwrap_or(query_or_url.trim());
+            match nola_modules::skills::prepare_github_skill_package(effective_ref, &skills_dir) {
                 Ok(pkg) => {
+                    if operation == "prepare" {
+                        download_if_missing(&pkg);
+                    }
                     let val = format_prepared(&pkg);
                     to_owned_c_string(json!({"ok": true, "value": val}).to_string())
                 }

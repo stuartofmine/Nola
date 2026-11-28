@@ -548,6 +548,16 @@ fn read_pdf(path: &Path, page: Option<usize>) -> ToolExecutionResult {
         }
     }
 
+    let page_summary = match (page_numbers.first(), page_numbers.last()) {
+        (Some(first), Some(last)) if first == last => {
+            format!("page {first} of {total_pages}")
+        }
+        (Some(first), Some(last)) => {
+            format!("pages {first}-{last} of {total_pages}")
+        }
+        _ => format!("{total_pages} pages"),
+    };
+
     ToolExecutionResult::ok_structured(
         json!({
             "path": path.display().to_string(),
@@ -556,7 +566,7 @@ fn read_pdf(path: &Path, page: Option<usize>) -> ToolExecutionResult {
             "extracted_pages": pages_text,
             "rendered_page_images": media.len()
         }),
-        format!("Read PDF {} ({total_pages} pages)", path.display()),
+        format!("Read PDF {} ({page_summary})", path.display()),
     )
     .with_media(media)
 }

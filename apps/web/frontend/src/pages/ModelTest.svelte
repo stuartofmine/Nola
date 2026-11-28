@@ -56,11 +56,29 @@
     const contextWindowTokens = $derived.by(() => {
         if (target === 'cloud') {
             const raw = activeRemote as unknown as Record<string, unknown> | undefined;
-            const win = Number(raw?.contextWindow ?? raw?.context_window ?? raw?.maxContextTokens ?? 0);
+            const params = raw?.parameters && typeof raw.parameters === 'object'
+                ? (raw.parameters as Record<string, unknown>)
+                : undefined;
+            const win = Number(
+                params?.maxContextLength ??
+                    raw?.contextWindow ??
+                    raw?.context_window ??
+                    raw?.maxContextTokens ??
+                    0,
+            );
             return Number.isFinite(win) && win > 0 ? win : null;
         }
         const raw = activeLocal as unknown as Record<string, unknown> | undefined;
-        const win = Number(raw?.contextWindow ?? raw?.context_window ?? 0);
+        const params = raw?.parameters && typeof raw.parameters === 'object'
+            ? (raw.parameters as Record<string, unknown>)
+            : undefined;
+        const win = Number(
+            params?.contextTokens ??
+                raw?.contextWindowTokens ??
+                raw?.contextWindow ??
+                raw?.context_window ??
+                0,
+        );
         return Number.isFinite(win) && win > 0 ? win : null;
     });
     const usedTokens = $derived(lastUsage ? lastUsage.input_tokens + lastUsage.output_tokens : null);

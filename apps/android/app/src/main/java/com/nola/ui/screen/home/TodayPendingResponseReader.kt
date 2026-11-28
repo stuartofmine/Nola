@@ -11,7 +11,13 @@ import javax.inject.Inject
 internal class TodayPendingResponseReader(private val query: (JsonObject) -> JsonElement) {
     @Inject constructor(runtime: AndroidApplicationRuntime) : this(runtime::executeQuery)
 
-    fun read(): TodayFactsSnapshot = Json.decodeFromJsonElement(query(buildJsonObject {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    fun read(): TodayFactsSnapshot = json.decodeFromJsonElement(query(buildJsonObject {
         put("type", "load_today_facts")
         put("input", buildJsonObject {
             put("conversation_offset", 0)

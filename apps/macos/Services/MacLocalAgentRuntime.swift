@@ -1311,6 +1311,7 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     private var pendingPermissionRequests: [String: [String: MacRemotePermissionRequest]] = [:]
     private var admittedCoreSessions: [String: (runID: String, sessionID: String, controlSessionID: String)] = [:]
     private var cancellationRequestedConversationIDs: Set<String> = []
+    private var pendingStartupCancellationConversationIDs: Set<String> = []
     private var continuations: [
         String: AsyncThrowingStream<MacLocalAgentEvent, Error>.Continuation
     ] = [:]
@@ -1352,7 +1353,10 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
             throw MacLocalAgentRuntimeError.executableUnavailable
         }
         startingConversations.insert(request.conversationID)
-        defer { startingConversations.remove(request.conversationID) }
+        defer {
+            startingConversations.remove(request.conversationID)
+            pendingStartupCancellationConversationIDs.remove(request.conversationID)
+        }
         try await MacCancellationDeliveryProcess.run(executable: executable,
             databaseURL: databaseURL, request: request)
     }
@@ -1408,7 +1412,13 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
     }
 
     func cancel(conversationID: String) {
-        guard let process = processes[conversationID] else { return }
+        guard let process = processes[conversationID] else {
+            if startingConversations.contains(conversationID) {
+                pendingStartupCancellationConversationIDs.insert(conversationID)
+            }
+            return
+        }
+        pendingStartupCancellationConversationIDs.remove(conversationID)
         if process.isRunning,
            cancellationRequestedConversationIDs.insert(conversationID).inserted {
             process.interrupt()
@@ -1756,7 +1766,10 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
               startingConversations.insert(request.conversationID).inserted else {
             throw MacLocalAgentRuntimeError.alreadyRunning
         }
-        defer { startingConversations.remove(request.conversationID) }
+        defer {
+            startingConversations.remove(request.conversationID)
+            pendingStartupCancellationConversationIDs.remove(request.conversationID)
+        }
         guard let executableURL = resumeSnapshot?.executableURL ?? locateExecutable() else {
             throw MacLocalAgentRuntimeError.executableUnavailable
         }
@@ -1980,6 +1993,9 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         let outputLines = Self.lineStream(from: outputHandle, processID: process.processIdentifier)
         do {
             try processSession.writeInitialRequest(initialRequestData)
+            if pendingStartupCancellationConversationIDs.remove(request.conversationID) != nil {
+                cancel(conversationID: request.conversationID)
+            }
             let processReadyAt = ContinuousClock.now
             if resumeSnapshot != nil { await transportReady?() }
             for try await line in outputLines {
@@ -1987,7 +2003,10 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
                 if request.goalExecutionID == nil, let decision = try MacHostSubmissionDecision.decode(line,
                     conversationID: request.conversationID, runID: request.submissionID,
                     assistantMessageID: request.assistantMessageID) {
-                    guard resumeSnapshot == nil else {
+                    if resumeSnapshot != nil {
+                        if decision.type == .admitted {
+                            continue
+                        }
                         throw MacLocalAgentRuntimeError.protocolViolation("A resume cannot decide a new submission.")
                     }
                     switch decision.type {
@@ -2643,6 +2662,15 @@ actor MacAgentHostRuntime: MacLocalAgentRuntime {
         // reasoning metadata must not silently switch a Chat endpoint to Responses.
         if usesNolaModel {
             payload["model_protocol"] = (request.wireProtocol ?? .chatCompletions).rawValue
+            if let profileID = request.modelProfileID, !profileID.isEmpty {
+                payload["model_profile_id"] = profileID
+                if profileID.hasPrefix("conn:") {
+                    let parts = profileID.split(separator: ":", maxSplits: 2)
+                    if parts.count >= 2, !parts[1].isEmpty {
+                        payload["connection_id"] = String(parts[1])
+                    }
+                }
+            }
             if request.wireProtocol == .siwcResponses {
                 guard let selected = request.siwcProfile, selected.profileID == request.modelProfileID,
                       selected.revision > 0, request.apiKey?.isEmpty != false, request.modelFallbacks.isEmpty else {

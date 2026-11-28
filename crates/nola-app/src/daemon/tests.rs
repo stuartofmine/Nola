@@ -1839,3 +1839,2064 @@ fn daemon_p0_p1_macos_ios_android_contracts_work() {
     .unwrap();
     assert!(no_ident.is_null());
 }
+
+#[test]
+fn model_connection_discover_enable_and_override_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // 1. Save account + connection (matching MacModelConnectionService.create)
+    let acct = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_account",
+                "input": {
+                    "id": "acct-openrouter",
+                    "display_name": "OpenRouter",
+                    "source": "manual",
+                    "credential_ref": "account:00000000-0000-4000-8000-000000000001",
+                    "state": "ready"
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(acct["revision"], 1);
+
+    let conn = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "input": {
+                    "id": "conn-openrouter",
+                    "display_name": "OpenRouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "protocols": ["chat_completions"],
+                    "account_id": "acct-openrouter",
+                    "source": "manual",
+                    "source_id": Value::Null,
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(conn["revision"], 1);
+    assert_eq!(conn["document"]["connection"]["id"], "conn-openrouter");
+
+    // 2. Refresh catalog with AppleModelCatalogDiscovery entries (keyed by `model_id`, not `id`)
+    let refreshed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "refresh_connection_catalog",
+                "connection_id": "conn-openrouter",
+                "expected_revision": 1,
+                "observed_at_ms": 1_795_782_200_000i64,
+                "models": [
+                    {
+                        "model_id": "openrouter/free",
+                        "display_name": "OpenRouter Free",
+                        "protocol": "chat_completions",
+                        "context_window": 128000,
+                        "output_limit": 8192,
+                        "modalities": ["text"],
+                        "reasoning_levels": [],
+                        "summary_supported": Value::Null,
+                        "execution_capabilities": {
+                            "toolCalls": true,
+                            "imageInput": false,
+                            "reasoning": false,
+                            "samplingParameters": true
+                        }
+                    },
+                    {
+                        "model_id": "qwen/qwen3-coder:free",
+                        "display_name": "Qwen3 Coder",
+                        "protocol": "chat_completions",
+                        "context_window": Value::Null,
+                        "output_limit": Value::Null,
+                        "modalities": ["text"],
+                        "reasoning_levels": [],
+                        "summary_supported": Value::Null,
+                        "execution_capabilities": Value::Null
+                    }
+                ]
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(refreshed["revision"], 2);
+    assert_eq!(
+        refreshed["document"]["catalog"]["models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        refreshed["document"]["catalog"]["models"][0]["model_id"],
+        "openrouter/free"
+    );
+
+    // 2b. Before any model is enabled (zero canonical `model` records), `list_profiles` must
+    // return an empty array and MUST NOT fall back to Web-UI camelCase profiles missing canonical fields.
+    let before_enable_profiles = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    assert!(
+        before_enable_profiles["profiles"].as_array().unwrap().is_empty(),
+        "list_profiles must return empty when no canonical model profiles are enabled, got: {}",
+        before_enable_profiles["profiles"]
+    );
+
+    // 3. Disconnect & reconnect preserves catalog
+    let disconnected = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "input": {
+                    "id": "conn-openrouter",
+                    "display_name": "OpenRouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "protocols": ["chat_completions"],
+                    "account_id": "acct-openrouter",
+                    "source": "manual",
+                    "source_id": Value::Null,
+                    "enabled": false
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        disconnected["document"]["catalog"]["models"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "input": {
+                    "id": "conn-openrouter",
+                    "display_name": "OpenRouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "protocols": ["chat_completions"],
+                    "account_id": "acct-openrouter",
+                    "source": "manual",
+                    "source_id": Value::Null,
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    // 4. Enable both models -> materializes canonical `model` profiles readable by macOS
+    let enabled = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "configure_connection_models",
+                "connection_id": "conn-openrouter",
+                "enabled_model_ids": [
+                    "chat_completions:openrouter/free",
+                    "chat_completions:qwen/qwen3-coder:free"
+                ],
+                "selected_model_id": Value::Null
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(enabled["ok"], true);
+
+    let listed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let profiles = listed["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 2);
+    for p in profiles {
+        assert_eq!(p["provider"], "openai-compatible");
+        assert_eq!(p["runtime"], "remote");
+        assert_eq!(p["enabled"], true);
+        let src: Value = serde_json::from_str(p["source_json"].as_str().unwrap()).unwrap();
+        assert_eq!(src["schemaVersion"], 1);
+        assert_eq!(src["connectionID"], "conn-openrouter");
+        assert_eq!(src["wireProtocol"], "chat_completions");
+        assert!(src["catalogKey"].as_str().unwrap().starts_with("chat_completions:"));
+        assert!(src["executionCapabilities"].is_object());
+    }
+
+    // 5. Override capability returns full snapshot and updates profile
+    let overridden = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "set_connection_capability_override",
+                "connection_id": "conn-openrouter",
+                "model_id": "qwen/qwen3-coder:free",
+                "protocol": "chat_completions",
+                "capabilities": {
+                    "toolCalls": false,
+                    "imageInput": false,
+                    "reasoning": true,
+                    "samplingParameters": false
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(overridden["document"]["connection"]["id"], "conn-openrouter");
+    assert_eq!(
+        overridden["document"]["capability_assessments"][0]["model_id"],
+        "qwen/qwen3-coder:free"
+    );
+
+    // 6. Uncheck one model -> soft-deletes it from active list_profiles
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "configure_connection_models",
+                "connection_id": "conn-openrouter",
+                "enabled_model_ids": ["chat_completions:openrouter/free"],
+                "selected_model_id": Value::Null
+            }
+        }),
+    )
+    .unwrap();
+    let listed_after = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    assert_eq!(listed_after["profiles"].as_array().unwrap().len(), 1);
+    assert_eq!(listed_after["profiles"][0]["model_name"], "openrouter/free");
+
+    // 7. Verify snapshot slimness (no duplicate catalog inside document.connection or top-level)
+    let fetched = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "get_connection", "id": "conn-openrouter"}}),
+    )
+    .unwrap();
+    assert!(
+        fetched["document"]["connection"].get("catalog").is_none(),
+        "document.connection must not duplicate catalog payload"
+    );
+    assert!(
+        fetched.get("catalog").is_none(),
+        "top-level snapshot must not duplicate catalog outside document"
+    );
+    assert_eq!(
+        fetched["document"]["catalog"]["models"].as_array().unwrap().len(),
+        2
+    );
+
+    // 8. Save connection with clear_catalog=true resets catalog on endpoint change
+    let edited = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "clear_catalog": true,
+                "input": {
+                    "id": "conn-openrouter",
+                    "display_name": "OpenRouter Renamed",
+                    "base_url": "https://new-gateway.example.invalid/v1",
+                    "protocols": ["responses"],
+                    "account_id": "acct-openrouter",
+                    "source": "manual",
+                    "source_id": Value::Null,
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(edited["document"]["connection"]["display_name"], "OpenRouter Renamed");
+    assert!(edited["document"]["catalog"].is_null());
+
+    // 9. delete_connection removes connection, soft-deletes linked profiles, cleans applied_config & unreferenced account
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_account",
+                "input": {
+                    "id": "acct-openrouter",
+                    "display_name": "OpenRouter",
+                    "source": "manual",
+                    "credential_ref": "account:test-ref",
+                    "state": "ready"
+                }
+            }
+        }),
+    )
+    .unwrap();
+    let deleted = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "delete_connection",
+                "id": "conn-openrouter",
+                "delete_account": true
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(deleted["ok"], true);
+    assert_eq!(deleted["deleted"], true);
+    assert_eq!(deleted["removed_profiles"], 1);
+    assert_eq!(deleted["deleted_account_id"], "acct-openrouter");
+
+    let conns_after_delete = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_connections"}}),
+    )
+    .unwrap();
+    assert!(
+        !conns_after_delete["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["document"]["connection"]["id"] == "conn-openrouter"),
+        "deleted connection must not reappear in list_connections"
+    );
+    let profiles_after_delete = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    assert!(
+        !profiles_after_delete["profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["model_name"] == "openrouter/free"),
+        "profiles belonging to deleted connection must be soft-deleted, got: {}",
+        profiles_after_delete["profiles"]
+    );
+    let accts_after_delete = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_accounts"}}),
+    )
+    .unwrap();
+    assert!(
+        accts_after_delete["accounts"].as_array().unwrap().is_empty(),
+        "unreferenced account must be deleted when delete_account=true"
+    );
+}
+
+#[test]
+fn list_activity_includes_waiting_and_automation_runs_and_filters_by_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let now = now_ms();
+    store
+        .upsert_session(&Session {
+            id: "conv-wait".into(),
+            title: "Waiting Chat".into(),
+            workspace_root: dir.path().display().to_string(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: now - 2_000,
+            updated_at_ms: now - 1_000,
+        })
+        .unwrap();
+    store
+        .set_kv("open_waits:conv-wait", &json!([{"wait_id": "w-1"}]))
+        .unwrap();
+    store
+        .upsert_session(&Session {
+            id: "conv-done".into(),
+            title: "Done Chat".into(),
+            workspace_root: dir.path().display().to_string(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: now - 3_000,
+            updated_at_ms: now - 2_000,
+        })
+        .unwrap();
+    suite
+        .upsert_record(
+            "automation_run",
+            "auto-run-1",
+            &json!({
+                "id": "auto-run-1",
+                "automation_id": "auto-daily",
+                "title": "Daily Digest",
+                "summary": "Generated digest",
+                "status": "completed",
+                "scheduled_for_ms": now,
+                "updated_at_ms": now
+            }),
+        )
+        .unwrap();
+
+    // Absent needs_response or false MUST NOT filter out waiting conversations, and MUST include automation_run
+    let all = dispatch_command(&store, &suite, "list_activity", &json!({"needs_response": false}))
+        .unwrap();
+    let entries = all["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    assert!(entries.iter().any(|e| e["id"] == "conv-wait" && e["needs_response"] == true));
+    assert!(entries.iter().any(|e| e["id"] == "conv-done" && e["needs_response"] == false));
+    assert!(entries.iter().any(|e| e["id"] == "auto-run-1" && e["source"] == "automation"));
+
+    // needs_response == true filters ONLY to waiting items
+    let waiting_only =
+        dispatch_command(&store, &suite, "list_activity", &json!({"needs_response": true}))
+            .unwrap();
+    let wait_entries = waiting_only["entries"].as_array().unwrap();
+    assert_eq!(wait_entries.len(), 1);
+    assert_eq!(wait_entries[0]["id"], "conv-wait");
+
+    // source == "automation" filters strictly to automation runs
+    let auto_only = dispatch_command(
+        &store,
+        &suite,
+        "list_activity",
+        &json!({"source": "automation"}),
+    )
+    .unwrap();
+    let auto_entries = auto_only["entries"].as_array().unwrap();
+    assert_eq!(auto_entries.len(), 1);
+    assert_eq!(auto_entries[0]["source"], "automation");
+}
+
+#[test]
+fn query_automation_occurrences_computes_real_scheduled_timestamps() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // 2026-06-01T08:00:00Z (Monday)
+    let after_ms = chrono::DateTime::parse_from_rfc3339("2026-06-01T08:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    let through_ms = after_ms + 65 * 86_400_000;
+
+    // Daily at 09:30 UTC
+    let daily = dispatch_command(
+        &store,
+        &suite,
+        "query_automation_occurrences",
+        &json!({
+            "input": {
+                "automation_id": "a-daily",
+                "frequency": "daily",
+                "time": "09:30",
+                "timezone": "UTC",
+                "after_ms": after_ms,
+                "through_ms": through_ms,
+                "limit": 2
+            }
+        }),
+    )
+    .unwrap();
+    let occs = daily["occurrences"].as_array().unwrap();
+    assert_eq!(occs.len(), 2);
+    let expected_first = chrono::DateTime::parse_from_rfc3339("2026-06-01T09:30:00Z")
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(occs[0]["scheduled_for_ms"].as_i64(), Some(expected_first));
+    assert_eq!(
+        occs[1]["scheduled_for_ms"].as_i64(),
+        Some(expected_first + 86_400_000)
+    );
+
+    // Weekly on Wednesday (ISO 3) at 10:00 UTC
+    let weekly = dispatch_command(
+        &store,
+        &suite,
+        "query_automation_occurrences",
+        &json!({
+            "input": {
+                "automation_id": "a-weekly",
+                "frequency": "weekly",
+                "time": "10:00",
+                "weekday": 3,
+                "timezone": "UTC",
+                "after_ms": after_ms,
+                "through_ms": through_ms,
+                "limit": 1
+            }
+        }),
+    )
+    .unwrap();
+    let expected_wed = chrono::DateTime::parse_from_rfc3339("2026-06-03T10:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(
+        weekly["occurrences"][0]["scheduled_for_ms"].as_i64(),
+        Some(expected_wed)
+    );
+
+    // Hourly, Monthly, Interval
+    for (freq, extra) in [
+        ("hourly", json!({"minute": 15})),
+        ("monthly", json!({"day_of_month": 15, "time": "12:00"})),
+        ("interval", json!({"interval_minutes": 30})),
+    ] {
+        let mut inp = json!({
+            "automation_id": format!("a-{freq}"),
+            "frequency": freq,
+            "timezone": "UTC",
+            "after_ms": after_ms,
+            "through_ms": through_ms,
+            "limit": 2
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            inp[k] = v.clone();
+        }
+        let res = dispatch_command(
+            &store,
+            &suite,
+            "query_automation_occurrences",
+            &json!({"input": inp}),
+        )
+        .unwrap();
+        let arr = res["occurrences"].as_array().unwrap();
+        assert_eq!(arr.len(), 2, "frequency {freq} should produce 2 occurrences");
+        assert!(arr[0]["scheduled_for_ms"].as_i64().unwrap() > after_ms);
+        assert!(
+            arr[1]["scheduled_for_ms"].as_i64().unwrap()
+                > arr[0]["scheduled_for_ms"].as_i64().unwrap()
+        );
+    }
+}
+
+#[test]
+fn load_today_facts_and_model_connections_and_draft_ds_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let now = now_ms();
+    store
+        .upsert_session(&Session {
+            id: "conv-today".into(),
+            title: "Morning Sync".into(),
+            workspace_root: dir.path().display().to_string(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+    let today = dispatch_command(&store, &suite, "load_today_facts", &json!({})).unwrap();
+    assert!(today["date"].is_string());
+    assert!(today["facts"].is_array());
+    let conv = &today["conversations"][0];
+    assert_eq!(conv["conversation_id"], "conv-today");
+    assert_eq!(conv["title"], "Morning Sync");
+    assert_eq!(conv["updated_at_ms"], now);
+    assert_eq!(conv["needs_response"], false);
+    assert!(conv["active_run"].is_null());
+    assert!(conv["permission_projection"].is_null());
+    assert!(conv["open_waits"].is_array());
+    assert!(conv["owned_task_waits"].is_array());
+    assert!(conv["owned_task_permissions"].is_array());
+    assert!(conv["expert_contexts"].is_array());
+
+    // Config-only connection is returned inside canonical document envelope
+    let mut cfg = crate::config::AppliedConfig::default();
+    cfg.llm.connections.push(crate::config::ConnectionConfig {
+        id: "cfg-only".into(),
+        endpoint: "https://api.example.invalid/v1".into(),
+        protocol: Some("responses".into()),
+        provider: None,
+        api_key: None,
+        api_key_env: None,
+        models: vec![crate::config::ModelEntry {
+            id: "gpt-5".into(),
+            context_window: None,
+            max_output_tokens: None,
+            temperature: None,
+            top_p: None,
+            reasoning_effort: None,
+            capabilities: None,
+        }],
+    });
+    crate::config::save_applied_config(&store, &cfg).unwrap();
+
+    let listed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_connections"}}),
+    )
+    .unwrap();
+    let conns = listed["connections"].as_array().unwrap();
+    let cfg_snap = conns
+        .iter()
+        .find(|c| c["document"]["connection"]["id"] == "cfg-only")
+        .expect("cfg-only connection should be wrapped in canonical snapshot");
+    assert_eq!(cfg_snap["document"]["format_version"], 1);
+    assert_eq!(
+        cfg_snap["document"]["connection"]["base_url"],
+        "https://api.example.invalid/v1"
+    );
+    assert_eq!(cfg_snap["document"]["connection"]["enabled"], true);
+
+    let got = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "get_connection", "id": "cfg-only"}}),
+    )
+    .unwrap();
+    assert_eq!(got["document"]["format_version"], 1);
+    assert_eq!(got["document"]["connection"]["id"], "cfg-only");
+
+    // import_connection also syncs cfg.llm.connections
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "import_connection",
+                "connection": {
+                    "id": "imp-conn",
+                    "display_name": "Imported",
+                    "base_url": "https://imp.example.invalid/v1",
+                    "protocols": ["chat_completions"],
+                    "source": "open_code",
+                    "enabled": true
+                },
+                "models": ["llama-3.3"]
+            }
+        }),
+    )
+    .unwrap();
+    let reloaded = crate::config::load_active_config(&store);
+    assert!(reloaded.llm.connections.iter().any(|c| c.id == "imp-conn"));
+
+    // Draft conversation data_source override succeeds without persisted session
+    let ds_ov = dispatch_command(
+        &store,
+        &suite,
+        "data_source",
+        &json!({
+            "command": {
+                "type": "set_conversation_override",
+                "conversation_id": "unsaved-draft-1",
+                "source_id": "ds-1",
+                "value": "enabled"
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(ds_ov, json!(true));
+}
+
+#[test]
+fn resend_expert_host_peer_and_missing_ffi_commands_and_goals_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // 1. prepare_in_place_resend normalizes experts with non-null participant_id & context_conversation_id
+    let in_place = dispatch_command(
+        &store,
+        &suite,
+        "prepare_in_place_resend",
+        &json!({
+            "input": {
+                "operation_id": "op-1",
+                "conversation_id": "conv-1",
+                "message_id": "m-1",
+                "edited_text": "hello",
+                "selected_experts": [{"agent_id": "analyst", "participant_id": Value::Null, "context_conversation_id": Value::Null}]
+            }
+        }),
+    )
+    .unwrap();
+    assert!(in_place["experts"][0]["participant_id"].is_string());
+    assert!(in_place["experts"][0]["context_conversation_id"].is_string());
+
+    // 2. prepare_edited_resend & load_prepared_edited_resend return ApplePreparedEditedResend directly
+    let edited = dispatch_command(
+        &store,
+        &suite,
+        "prepare_edited_resend",
+        &json!({
+            "input": {
+                "operation_id": "ed-1",
+                "source_conversation_id": "conv-src",
+                "source_message_id": "msg-1",
+                "expected_source_revision": 1,
+                "expected_source_message_revision": 1,
+                "edited_text": "revised prompt",
+                "target_conversation_id": "conv-tgt",
+                "title": "Branched",
+                "created_at_ms": 1000
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(edited["input"]["target_conversation_id"], "conv-tgt");
+    assert_eq!(edited["source"]["conversation_id"], "conv-src");
+    assert!(edited["user_message_id"].is_string());
+    assert!(edited["assistant_message_id"].is_string());
+    assert_eq!(edited["run_id"], "ed-1");
+    assert!(edited["admitted_run_id"].is_null());
+
+    let loaded_ed = dispatch_command(
+        &store,
+        &suite,
+        "load_prepared_edited_resend",
+        &json!({"conversation_id": "conv-tgt"}),
+    )
+    .unwrap();
+    assert_eq!(loaded_ed["run_id"], "ed-1");
+
+    // 3. host_expert_template_operation: readable_templates + peer ops
+    let readable = dispatch_command(
+        &store,
+        &suite,
+        "host_expert_template_operation",
+        &json!({"operation": {"kind": "readable_templates", "authority": {"actor": {"kind": "local_user", "id": "local"}, "request_host_id": Value::Null}}}),
+    )
+    .unwrap();
+    assert!(readable["revision"].as_i64().unwrap() >= 1);
+    assert!(readable["templates"].is_array());
+
+    for op_val in [
+        json!({"kind": "derive_peer_authority", "request": {"host_id": "h1"}}),
+        json!({"kind": "peer_directory", "source_context_id": "ctx-1", "source_run_id": "r-1"}),
+        json!({"kind": "prepare_peer_task", "exchange_id": "ex-1", "project_root": "/tmp"}),
+        json!({"kind": "admit_peer", "input": {"room_id": "room-1", "exchange_id": "ex-1"}}),
+        json!({"kind": "load_peer", "room_id": "room-1", "exchange_id": "ex-1"}),
+        json!({"kind": "load_peer_for_submission", "room_id": "room-1", "exchange_id": "ex-1"}),
+        json!({"kind": "load_peer_for_effect", "request": {"payload": {"input": {"exchange_id": "ex-1"}}}}),
+        json!({"kind": "peer_task_action", "request": {"payload": {"input": {"action": "read", "exchange_id": "ex-1"}}}}),
+        json!({"kind": "preview_peer", "input": {"target_participant_id": "p-1", "source_context_id": "ctx-1"}}),
+        json!({"kind": "clarify_peer", "exchange_id": "ex-1", "text": "clarification"}),
+        json!({"kind": "abort_peer_task_preparation", "exchange_id": "ex-1"}),
+        json!({"kind": "load_child_instructions", "conversation_id": "conv-1", "expected_run_id": "r-1"}),
+        json!({"kind": "load_prepared_resend", "conversation_id": "conv-tgt"}),
+    ] {
+        let res = dispatch_command(
+            &store,
+            &suite,
+            "host_expert_template_operation",
+            &json!({"operation": op_val}),
+        );
+        assert!(res.is_ok(), "expert host op {:?} failed: {:?}", op_val["kind"], res);
+    }
+
+    // 4. Goal execution contracts matching MacApplicationPort
+    let goal_prep = dispatch_command(
+        &store,
+        &suite,
+        "prepare_goal_execution",
+        &json!({"conversation_id": "conv-g1", "goal_id": "goal-1"}),
+    )
+    .unwrap();
+    assert_eq!(goal_prep["identity"]["conversation_id"], "conv-g1");
+    assert_eq!(goal_prep["identity"]["goal_id"], "goal-1");
+    assert_eq!(
+        goal_prep["template"]["core_config"]["turn_identity"]["host_invocation"]["primary"]["kind"],
+        "native"
+    );
+    let goal_run_id = goal_prep["identity"]["run_id"].as_str().unwrap();
+    let goal_owner = dispatch_command(
+        &store,
+        &suite,
+        "load_goal_execution_owner",
+        &json!({"conversation_id": "conv-g1", "goal_id": "goal-1", "run_id": goal_run_id}),
+    )
+    .unwrap();
+    assert_eq!(goal_owner["goal_id"], "goal-1");
+    assert_eq!(goal_owner["run_id"], goal_run_id);
+    assert!(!goal_owner["contract_id"].as_str().unwrap().is_empty());
+    assert!(!goal_owner["assistant_message_id"].as_str().unwrap().is_empty());
+    assert!(!goal_owner["control_token"].as_str().unwrap().is_empty());
+
+    // 5. Missing local FFI commands & interrupt submission
+    store
+        .set_kv(
+            "committed_run:run-int",
+            &json!({
+                "conversation_id": "conv-1",
+                "session_id": "conv-1",
+                "turn_id": "run-int",
+                "turn_status": "running",
+                "sequence": 1,
+                "pending_permissions": [],
+                "requests": []
+            }),
+        )
+        .unwrap();
+    let interrupted = dispatch_command(
+        &store,
+        &suite,
+        "reduce_and_commit_active_submission",
+        &json!({
+            "input": {
+                "conversation_id": "conv-1",
+                "run_id": "run-int",
+                "submission": {"type": "interrupt", "cancellation_id": "c-1", "reason": "user_stop"}
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(interrupted["control"]["turn_status"], "cancelled");
+
+    let trace_page = dispatch_command(
+        &store,
+        &suite,
+        "load_exact_run_trace_replay",
+        &json!({
+            "conversation_id": "conv-1",
+            "run_id": "run-int",
+            "assistant_message_id": "run-int:assistant",
+            "after_sequence": 0,
+            "limit": 256
+        }),
+    )
+    .unwrap();
+    let keys: HashSet<&str> = trace_page
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        HashSet::from(["trace_id", "through_sequence", "next_sequence", "events"])
+    );
+
+    let child_win = dispatch_command(
+        &store,
+        &suite,
+        "load_task_child_conversation_window",
+        &json!({
+            "destination": {
+                "task_id": "t-1",
+                "parent_conversation_id": "conv-1",
+                "parent_run_id": "r-1",
+                "child_conversation_id": "child-conv-1",
+                "child_run_id": "cr-1"
+            },
+            "limit": 30
+        }),
+    )
+    .unwrap();
+    assert_eq!(child_win["projection"]["conversation_id"], "child-conv-1");
+    assert_eq!(
+        child_win["projection"]["execution_ownership"]["kind"],
+        "task_child"
+    );
+
+    let orphan = dispatch_command(
+        &store,
+        &suite,
+        "recover_observed_orphaned_run",
+        &json!({"conversation_id": "conv-1", "expected_run_id": "run-int"}),
+    )
+    .unwrap();
+    assert_eq!(orphan["recovered"], true);
+
+    // Memory worker job lifecycle
+    store
+        .set_kv(
+            "memory_jobs:conv-1",
+            &json!([{"id": "mj-1", "conversation_id": "conv-1", "status": "pending"}]),
+        )
+        .unwrap();
+    let jobs = dispatch_command(
+        &store,
+        &suite,
+        "query_claimable_memory_jobs",
+        &json!({"input": {"conversation_id": "conv-1", "now_epoch_ms": now_ms()}}),
+    )
+    .unwrap();
+    assert_eq!(jobs.as_array().unwrap().len(), 1);
+    let plan = dispatch_command(
+        &store,
+        &suite,
+        "build_memory_worker_plan",
+        &json!({"input": {"conversation_id": "conv-1", "job_id": "mj-1"}}),
+    )
+    .unwrap();
+    assert!(plan["input_watermark"].is_string());
+
+    for sub in [
+        json!({"type": "claim_memory_worker", "job_id": "mj-1", "worker_id": "w1", "ownership_token": "tok-1"}),
+        json!({"type": "heartbeat_memory_worker", "job_id": "mj-1", "ownership_token": "tok-1"}),
+        json!({"type": "memory_worker_completed", "job_id": "mj-1", "ownership_token": "tok-1", "completion_watermark": "seq:0", "output": {"memories": []}}),
+    ] {
+        let res = dispatch_command(
+            &store,
+            &suite,
+            "reduce_and_commit_idle_submission",
+            &json!({"input": {"conversation_id": "conv-1", "submission": sub}}),
+        )
+        .unwrap();
+        assert_eq!(res["ok"], true);
+    }
+}
+
+#[test]
+fn list_profiles_overlays_fresher_connection_catalog_without_rediscover() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // Seed a connection whose catalog already has /props reasoning metadata (observed_at_ms = 2000),
+    // while the stored model profile is stale from an earlier sync (updated_at_ms = 1000, reasoning=false).
+    suite
+        .upsert_record(
+            "model_connection",
+            "conn-local",
+            &json!({
+                "id": "conn-local",
+                "display_name": "local",
+                "base_url": "http://192.168.31.18:8081/v1",
+                "protocols": ["chat_completions"],
+                "enabled": true,
+                "revision": 2,
+                "updated_at_ms": 2000,
+                "catalog": {
+                    "observed_at_ms": 2000,
+                    "source": "discovery",
+                    "models": [{
+                        "model_id": "qwen3.8-flash-next-iq3_s",
+                        "display_name": "qwen3.8-flash-next-iq3_s",
+                        "protocol": "chat_completions",
+                        "context_window": 262144,
+                        "output_limit": 16384,
+                        "reasoning_levels": ["none", "low", "medium", "high"],
+                        "execution_capabilities": {
+                            "toolCalls": true,
+                            "imageInput": true,
+                            "reasoning": true,
+                            "samplingParameters": false
+                        }
+                    }]
+                }
+            }),
+        )
+        .unwrap();
+    suite
+        .upsert_record(
+            "model",
+            "conn:conn-local:chat_completions:qwen3.8-flash-next-iq3_s",
+            &json!({
+                "id": "conn:conn-local:chat_completions:qwen3.8-flash-next-iq3_s",
+                "display_name": "qwen3.8-flash-next-iq3_s",
+                "provider": "openai-compatible",
+                "model_name": "qwen3.8-flash-next-iq3_s",
+                "runtime": "remote",
+                "source_json": serde_json::to_string(&json!({
+                    "connectionID": "conn-local",
+                    "catalogKey": "chat_completions:qwen3.8-flash-next-iq3_s",
+                    "endpointID": "conn-local",
+                    "endpointName": "local",
+                    "baseURL": "http://192.168.31.18:8081/v1",
+                    "endpointEnabled": true,
+                    "modelEnabled": true,
+                    "wireProtocol": "chat_completions",
+                    "executionCapabilities": {
+                        "toolCalls": true,
+                        "imageInput": false,
+                        "reasoning": false,
+                        "samplingParameters": true
+                    }
+                })).unwrap(),
+                "parameters_json": "{\"maxContextLength\":262144}",
+                "selected": true,
+                "enabled": true,
+                "revision": 1,
+                "created_at_ms": 1000,
+                "updated_at_ms": 1000,
+                "deleted_at_ms": null
+            }),
+        )
+        .unwrap();
+
+    let listed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let prof = &listed["items"][0];
+    let src: Value = serde_json::from_str(prof["source_json"].as_str().unwrap()).unwrap();
+    assert_eq!(src["executionCapabilities"]["reasoning"], true);
+    assert_eq!(src["executionCapabilities"]["imageInput"], true);
+    assert_eq!(src["reasoning"]["control"], "effort");
+    assert_eq!(src["reasoning"]["efforts"], json!(["none", "low", "medium", "high"]));
+    let params: Value = serde_json::from_str(prof["parameters_json"].as_str().unwrap()).unwrap();
+    assert_eq!(params["maxOutputTokens"], 16384);
+}
+
+#[test]
+fn real_scenario_model_connection_full_lifecycle_reasoning_discovery_override_clear_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    // Isolate from developer host ~/.nola/config.json so list_connections starts clean
+    crate::config::save_applied_config(&store, &crate::config::AppliedConfig::default()).unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // 1. Create account & connection
+    let acct = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_account",
+                "input": {
+                    "id": "acct-lifecycle",
+                    "display_name": "Local Llama",
+                    "source": "manual",
+                    "credential_ref": "account:local-llama",
+                    "state": "ready"
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(acct["ok"], true);
+
+    let saved_conn = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "input": {
+                    "id": "conn-lifecycle",
+                    "display_name": "Local Llama Server",
+                    "base_url": "http://127.0.0.1:8081/v1",
+                    "protocols": ["chat_completions"],
+                    "account_id": "acct-lifecycle",
+                    "source": "manual",
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(saved_conn["document"]["connection"]["id"], "conn-lifecycle");
+
+    // 2. Refresh catalog WITHOUT reasoning (reasoning=false, reasoning_levels=[])
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "refresh_connection_catalog",
+                "connection_id": "conn-lifecycle",
+                "observed_at_ms": 1_000_000i64,
+                "models": [{
+                    "model_id": "qwen3-32b-local",
+                    "display_name": "Qwen3 32B Local",
+                    "protocol": "chat_completions",
+                    "context_window": 131072,
+                    "output_limit": 8192,
+                    "reasoning_levels": [],
+                    "execution_capabilities": {
+                        "toolCalls": true,
+                        "imageInput": false,
+                        "reasoning": false,
+                        "samplingParameters": true
+                    }
+                }]
+            }
+        }),
+    )
+    .unwrap();
+
+    // 3. Enable model via configure_connection_models
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "configure_connection_models",
+                "connection_id": "conn-lifecycle",
+                "updated_at_ms": 1_000_001i64,
+                "enabled_model_ids": ["chat_completions:qwen3-32b-local"],
+                "selected_model_id": "chat_completions:qwen3-32b-local"
+            }
+        }),
+    )
+    .unwrap();
+
+    // 4. Verify list_profiles has NO reasoning control initially
+    let list_initial = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let p_init = &list_initial["profiles"][0];
+    let src_init: Value = serde_json::from_str(p_init["source_json"].as_str().unwrap()).unwrap();
+    assert_eq!(src_init["executionCapabilities"]["reasoning"], false);
+    assert!(src_init.get("reasoning").is_none_or(Value::is_null));
+
+    // 5. Refresh catalog with `/props` reasoning levels ["none","low","medium","high"] WITHOUT re-enabling!
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "refresh_connection_catalog",
+                "connection_id": "conn-lifecycle",
+                "observed_at_ms": 2_000_000i64,
+                "models": [{
+                    "model_id": "qwen3-32b-local",
+                    "display_name": "Qwen3 32B Local",
+                    "protocol": "chat_completions",
+                    "context_window": 131072,
+                    "output_limit": 16384,
+                    "reasoning_levels": ["none", "low", "medium", "high"],
+                    "execution_capabilities": {
+                        "toolCalls": true,
+                        "imageInput": true,
+                        "reasoning": true,
+                        "samplingParameters": false
+                    }
+                }]
+            }
+        }),
+    )
+    .unwrap();
+
+    // 6. Verify list_profiles IMMEDIATELY exposes reasoning effort control!
+    let list_after_refresh = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let src_refreshed: Value =
+        serde_json::from_str(list_after_refresh["profiles"][0]["source_json"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(src_refreshed["executionCapabilities"]["reasoning"], true);
+    assert_eq!(src_refreshed["reasoning"]["control"], "effort");
+    assert_eq!(
+        src_refreshed["reasoning"]["efforts"],
+        json!(["none", "low", "medium", "high"])
+    );
+
+    // 7. set_connection_capability_override toggling reasoning=false -> list_profiles removes reasoning!
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "set_connection_capability_override",
+                "connection_id": "conn-lifecycle",
+                "model_id": "qwen3-32b-local",
+                "protocol": "chat_completions",
+                "updated_at_ms": 3_000_000i64,
+                "capabilities": {
+                    "toolCalls": true,
+                    "imageInput": true,
+                    "reasoning": false,
+                    "samplingParameters": false
+                }
+            }
+        }),
+    )
+    .unwrap();
+    let list_disabled_r = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let src_disabled: Value =
+        serde_json::from_str(list_disabled_r["profiles"][0]["source_json"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(src_disabled["executionCapabilities"]["reasoning"], false);
+    assert!(
+        src_disabled.get("reasoning").is_none_or(Value::is_null),
+        "toggling reasoning override to false must remove reasoning object: {src_disabled}"
+    );
+
+    // 8. set_connection_capability_override toggling reasoning=true -> list_profiles restores reasoning!
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "set_connection_capability_override",
+                "connection_id": "conn-lifecycle",
+                "model_id": "qwen3-32b-local",
+                "protocol": "chat_completions",
+                "updated_at_ms": 4_000_000i64,
+                "capabilities": {
+                    "toolCalls": true,
+                    "imageInput": true,
+                    "reasoning": true,
+                    "samplingParameters": false
+                }
+            }
+        }),
+    )
+    .unwrap();
+    let list_restored_r = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    let src_restored: Value =
+        serde_json::from_str(list_restored_r["profiles"][0]["source_json"].as_str().unwrap())
+            .unwrap();
+    assert_eq!(src_restored["executionCapabilities"]["reasoning"], true);
+    assert_eq!(src_restored["reasoning"]["control"], "effort");
+    assert_eq!(
+        src_restored["reasoning"]["efforts"],
+        json!(["none", "low", "medium", "high"])
+    );
+
+    // 9. save_connection with clear_catalog=true clears stale catalog & capability_assessments
+    let cleared = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "clear_catalog": true,
+                "input": {
+                    "id": "conn-lifecycle",
+                    "display_name": "New Endpoint",
+                    "base_url": "https://new-gateway.example.invalid/v1",
+                    "protocols": ["chat_completions"],
+                    "account_id": "acct-lifecycle",
+                    "source": "manual",
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert!(cleared["document"]["catalog"].is_null());
+    assert!(cleared["document"]["capability_assessments"]
+        .as_array()
+        .is_none_or(|a| a.is_empty()));
+
+    // 10. delete_connection removes connection + enabled profiles + unreferenced account cleanly
+    let del = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "delete_connection",
+                "id": "conn-lifecycle",
+                "delete_account": true
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(del["deleted"], true);
+    assert_eq!(del["removed_profiles"], 1);
+    assert_eq!(del["deleted_account_id"], "acct-lifecycle");
+
+    let conns_after = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_connections"}}),
+    )
+    .unwrap();
+    assert!(conns_after["connections"].as_array().unwrap().is_empty());
+    let profs_after = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    assert!(profs_after["profiles"].as_array().unwrap().is_empty());
+    let accts_after = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_accounts"}}),
+    )
+    .unwrap();
+    assert!(accts_after["accounts"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn real_scenario_500_model_openrouter_catalog_stress_test_latency_and_json_slimness() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    crate::config::save_applied_config(&store, &crate::config::AppliedConfig::default()).unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_connection",
+                "input": {
+                    "id": "conn-or-500",
+                    "display_name": "OpenRouter 500",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "protocols": ["chat_completions"],
+                    "source": "manual",
+                    "enabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    // Build 500 unique models + 10 intentional duplicates to exercise dedup & throughput
+    let mut models: Vec<Value> = (0..500)
+        .map(|i| {
+            json!({
+                "model_id": format!("provider-{i:03}/model-{i:03}"),
+                "display_name": format!("Provider {i} Model {i}"),
+                "protocol": "chat_completions",
+                "context_window": 128_000,
+                "output_limit": 8_192,
+                "modalities": ["text"],
+                "reasoning_levels": if i % 5 == 0 { json!(["low", "medium", "high"]) } else { json!([]) },
+                "execution_capabilities": {
+                    "toolCalls": true,
+                    "imageInput": i % 3 == 0,
+                    "reasoning": i % 5 == 0,
+                    "samplingParameters": true
+                }
+            })
+        })
+        .collect();
+    for dup in 0..10 {
+        models.push(models[dup].clone());
+    }
+
+    let start = std::time::Instant::now();
+    let refreshed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "refresh_connection_catalog",
+                "connection_id": "conn-or-500",
+                "models": models
+            }
+        }),
+    )
+    .unwrap();
+    let listed = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_connections"}}),
+    )
+    .unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(1000),
+        "500-model refresh + list_connections took {:?}, expected <1000ms",
+        elapsed
+    );
+    assert_eq!(
+        refreshed["document"]["catalog"]["models"].as_array().unwrap().len(),
+        500
+    );
+
+    let conn_snap = listed["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["document"]["connection"]["id"] == "conn-or-500")
+        .unwrap();
+    assert!(conn_snap.get("catalog").is_none());
+    assert!(conn_snap["document"]["connection"].get("catalog").is_none());
+    assert_eq!(
+        conn_snap["document"]["catalog"]["models"].as_array().unwrap().len(),
+        500
+    );
+
+    // Ensure no duplicate model keys bloated the list_connections JSON!
+    let listed_json = serde_json::to_string(&listed).unwrap();
+    assert_eq!(
+        listed_json.matches("provider-499/model-499").count(),
+        1,
+        "list_connections must not duplicate catalog entries"
+    );
+}
+
+#[test]
+fn real_scenario_strict_two_mode_permission_enforcement_across_daemon_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let conv_id = "conv-perm-2mode";
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "create_conversation",
+        &json!({"id": conv_id, "title": "Strict 2-Mode"}),
+    )
+    .unwrap();
+
+    // 1. set_conversation_permission accepts strictly "cautious" and "allow_all"
+    let r_allow = dispatch_command(
+        &store,
+        &suite,
+        "set_conversation_permission",
+        &json!({"conversation_id": conv_id, "permission_profile": "allow_all"}),
+    )
+    .unwrap();
+    assert_eq!(r_allow["status"], "committed");
+    assert_eq!(r_allow["permission_profile"], "allow_all");
+
+    let r_cautious = dispatch_command(
+        &store,
+        &suite,
+        "set_conversation_permission",
+        &json!({"conversation_id": conv_id, "permission_profile": "cautious"}),
+    )
+    .unwrap();
+    assert_eq!(r_cautious["status"], "committed");
+    assert_eq!(r_cautious["permission_profile"], "cautious");
+
+    // Rejected non-canonical / removed modes (including accept_edits!)
+    for bad in ["accept_edits", "accept-edits", "yolo", "auto", "ask", ""] {
+        let err = dispatch_command(
+            &store,
+            &suite,
+            "set_conversation_permission",
+            &json!({"conversation_id": conv_id, "permission_profile": bad}),
+        );
+        assert!(
+            err.is_err(),
+            "set_conversation_permission must reject invalid mode '{bad}'"
+        );
+    }
+
+    // 2. patch_conversation_configuration accepts cautious/allow_all/null and rejects accept_edits
+    let p_ok = dispatch_command(
+        &store,
+        &suite,
+        "patch_conversation_configuration",
+        &json!({"conversation_id": conv_id, "permissionProfile": "allow_all"}),
+    )
+    .unwrap();
+    assert!(p_ok.is_object());
+    let p_bad = dispatch_command(
+        &store,
+        &suite,
+        "patch_conversation_configuration",
+        &json!({"conversation_id": conv_id, "permissionProfile": "accept_edits"}),
+    );
+    assert!(
+        p_bad.is_err(),
+        "patch_conversation_configuration must reject 'accept_edits'"
+    );
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "patch_conversation_configuration",
+        &json!({"conversation_id": conv_id, "permissionProfile": Value::Null}),
+    )
+    .unwrap();
+
+    // 3. Stale/corrupted KV value `"accept_edits"` normalizes strictly to `"cautious"` on read!
+    store
+        .set_kv(&format!("conv_perm:{conv_id}"), &json!("accept_edits"))
+        .unwrap();
+    let proj = dispatch_command(
+        &store,
+        &suite,
+        "load_conversation_permission_projection_v1",
+        &json!({"conversation_id": conv_id}),
+    )
+    .unwrap();
+    assert_eq!(proj["permission_profile"], "cautious");
+
+    // 4. begin_assistant_turn + execute_tool dispatch normalizes non-canonical `accept_edits` to `cautious`
+    for (cfg_profile, expected_wire) in [
+        ("allow_all", "allow_all"),
+        ("cautious", "cautious"),
+        ("accept_edits", "cautious"),
+    ] {
+        let run_id = format!("run-perm-{cfg_profile}");
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "begin_assistant_turn",
+            &json!({
+                "input": {
+                    "conversation_id": conv_id,
+                    "core_config": {
+                        "session_id": conv_id,
+                        "model": "m1",
+                        "permission_profile": cfg_profile
+                    },
+                    "submission": {"type": "user_input", "submission_id": run_id}
+                }
+            }),
+        )
+        .unwrap();
+        let reqs0 = dispatch_command(
+            &store,
+            &suite,
+            "claim_committed_host_requests",
+            &json!({"input": {"run_id": run_id}}),
+        )
+        .unwrap();
+        let m0_id = reqs0["requests"][0]["request_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "reduce_and_accept_host_response",
+            &json!({
+                "input": {
+                    "conversation_id": conv_id,
+                    "run_id": run_id,
+                    "response": {
+                        "request_id": m0_id,
+                        "payload": {
+                            "type": "model_completed",
+                            "items": [],
+                            "tool_calls": [{"call_id": "tc1", "name": "read_file", "arguments": {"path": "a.txt"}}]
+                        }
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        let treqs = dispatch_command(
+            &store,
+            &suite,
+            "claim_committed_host_requests",
+            &json!({"input": {"run_id": run_id}}),
+        )
+        .unwrap();
+        assert_eq!(treqs["requests"][0]["payload"]["type"], "execute_tool");
+        assert_eq!(
+            treqs["requests"][0]["payload"]["permission_profile"], expected_wire,
+            "core_config.permission_profile={cfg_profile} must emit {expected_wire}"
+        );
+    }
+}
+
+#[test]
+fn real_scenario_multi_connection_model_isolation_and_shared_account_retention_on_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    crate::config::save_applied_config(&store, &crate::config::AppliedConfig::default()).unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    // 1 shared account referenced by 2 connections
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({
+            "command": {
+                "type": "save_account",
+                "input": {
+                    "id": "acct-shared",
+                    "display_name": "Shared Key",
+                    "source": "manual",
+                    "credential_ref": "account:shared",
+                    "state": "ready"
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    for (cid, model_id) in [("conn-a", "model-a"), ("conn-b", "model-b")] {
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "command": {
+                    "type": "save_connection",
+                    "input": {
+                        "id": cid,
+                        "display_name": cid,
+                        "base_url": format!("https://{cid}.example.invalid/v1"),
+                        "protocols": ["chat_completions"],
+                        "account_id": "acct-shared",
+                        "source": "manual",
+                        "enabled": true
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "command": {
+                    "type": "refresh_connection_catalog",
+                    "connection_id": cid,
+                    "models": [{"model_id": model_id, "protocol": "chat_completions"}]
+                }
+            }),
+        )
+        .unwrap();
+        let _ = dispatch_command(
+            &store,
+            &suite,
+            "model",
+            &json!({
+                "command": {
+                    "type": "configure_connection_models",
+                    "connection_id": cid,
+                    "enabled_model_ids": [format!("chat_completions:{model_id}")]
+                }
+            }),
+        )
+        .unwrap();
+    }
+
+    // Deleting conn-a removes conn-a + model-a, keeps conn-b + model-b AND retains acct-shared!
+    let del_a = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "delete_connection", "id": "conn-a", "delete_account": true}}),
+    )
+    .unwrap();
+    assert_eq!(del_a["removed_profiles"], 1);
+    assert!(del_a["deleted_account_id"].is_null());
+
+    let profs_mid = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_profiles"}}),
+    )
+    .unwrap();
+    assert_eq!(profs_mid["profiles"].as_array().unwrap().len(), 1);
+    assert_eq!(profs_mid["profiles"][0]["model_name"], "model-b");
+
+    let accts_mid = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "list_accounts"}}),
+    )
+    .unwrap();
+    assert_eq!(accts_mid["accounts"].as_array().unwrap().len(), 1);
+
+    // Deleting conn-b now deletes the unreferenced acct-shared cleanly!
+    let del_b = dispatch_command(
+        &store,
+        &suite,
+        "model",
+        &json!({"command": {"type": "delete_connection", "id": "conn-b", "delete_account": true}}),
+    )
+    .unwrap();
+    assert_eq!(del_b["removed_profiles"], 1);
+    assert_eq!(del_b["deleted_account_id"], "acct-shared");
+}
+
+#[test]
+fn real_scenario_conversation_lifecycle_projection_and_cas_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let conv_id = "conv-cas-proj";
+    let _ = dispatch_command(
+        &store,
+        &suite,
+        "create_conversation",
+        &json!({"id": conv_id, "title": "CAS Test"}),
+    )
+    .unwrap();
+
+    // First permission change with expected_revision=1 succeeds -> revision=2
+    let ok1 = dispatch_command(
+        &store,
+        &suite,
+        "set_conversation_permission",
+        &json!({
+            "conversation_id": conv_id,
+            "permission_profile": "allow_all",
+            "expected_revision": 1
+        }),
+    )
+    .unwrap();
+    assert_eq!(ok1["status"], "committed");
+    assert_eq!(ok1["configuration_revision"], 2);
+
+    // Stale expected_revision=1 returns structured conflict without overwriting!
+    let conflict = dispatch_command(
+        &store,
+        &suite,
+        "set_conversation_permission",
+        &json!({
+            "conversation_id": conv_id,
+            "permission_profile": "cautious",
+            "expected_revision": 1
+        }),
+    )
+    .unwrap();
+    assert_eq!(conflict["status"], "conflict");
+    assert_eq!(conflict["actual_revision"], 2);
+
+    // Verify stored permission is still allow_all
+    let perm = dispatch_command(
+        &store,
+        &suite,
+        "load_conversation_permission_projection_v1",
+        &json!({"conversation_id": conv_id}),
+    )
+    .unwrap();
+    assert_eq!(perm["permission_profile"], "allow_all");
+
+    // Matching expected_revision=2 succeeds -> revision=3
+    let ok2 = dispatch_command(
+        &store,
+        &suite,
+        "set_conversation_permission",
+        &json!({
+            "conversation_id": conv_id,
+            "permission_profile": "cautious",
+            "expected_revision": 2
+        }),
+    )
+    .unwrap();
+    assert_eq!(ok2["status"], "committed");
+    assert_eq!(ok2["configuration_revision"], 3);
+}
+
+#[test]
+fn real_scenario_agent_room_multi_expert_submission_routing_and_reconciliation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    for (id, name, role, desc) in [
+        ("exp-arch", "Architect", "architect", "System design specialist"),
+        ("exp-qa", "Tester", "qa", "Regression & integration test specialist"),
+    ] {
+        let _ = dispatch_agent_room_command(
+            &store,
+            &suite,
+            &json!({
+                "command": {
+                    "type": "configure_agent",
+                    "input": {"id": id, "name": name, "role": role, "description": desc}
+                }
+            }),
+        )
+        .unwrap();
+    }
+
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "create_room", "input": {"id": "room-release", "name": "Release War Room"}}}),
+    )
+    .unwrap();
+
+    // Submit 3 tasks: #1 completed, #2 failed, #3 cancelled via cancel_pending
+    let s1 = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "submit", "room_id": "room-release", "content": "Audit schema"}}),
+    )
+    .unwrap()["submission_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let s2 = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "submit", "room_id": "room-release", "content": "Run stress suite"}}),
+    )
+    .unwrap()["submission_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let s3 = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "submit", "room_id": "room-release", "content": "Pending low-priority item"}}),
+    )
+    .unwrap()["submission_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "select_recipient", "room_id": "room-release", "submission_id": s1, "recipient_id": "exp-arch"}}),
+    )
+    .unwrap();
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "prepare_execution", "room_id": "room-release", "submission_id": s1}}),
+    )
+    .unwrap();
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "claim_execution", "room_id": "room-release", "submission_id": s1}}),
+    )
+    .unwrap();
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "reconcile_execution", "submission_id": s1, "status": "completed"}}),
+    )
+    .unwrap();
+
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "select_recipient", "room_id": "room-release", "submission_id": s2, "recipient_id": "exp-qa"}}),
+    )
+    .unwrap();
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "claim_execution", "room_id": "room-release", "submission_id": s2}}),
+    )
+    .unwrap();
+    let _ = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "fail_submission", "submission_id": s2, "error": "timeout"}}),
+    )
+    .unwrap();
+
+    let cancelled = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "cancel_pending", "room_id": "room-release"}}),
+    )
+    .unwrap();
+    assert_eq!(cancelled["cancelled_count"], 1);
+
+    let all_subs = dispatch_agent_room_command(
+        &store,
+        &suite,
+        &json!({"command": {"type": "submissions", "room_id": "room-release"}}),
+    )
+    .unwrap();
+    let arr = all_subs.as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    assert!(arr.iter().any(|s| s["submission_id"] == s1 && s["status"] == "completed"));
+    assert!(arr.iter().any(|s| s["submission_id"] == s2 && s["status"] == "failed"));
+    assert!(arr.iter().any(|s| s["submission_id"] == s3 && s["status"] == "cancelled"));
+}
+
+#[test]
+fn real_scenario_assistant_journal_multi_part_streaming_revision_diff_and_utf8_range_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let conv_id = "conv-j-utf8";
+    let run_id = "run-j-utf8";
+    let asst_id = "asst-j-utf8";
+    let mut run_state = json!({
+        "conversation_id": conv_id,
+        "run_id": run_id,
+        "assistant_message_id": asst_id,
+        "session_id": conv_id,
+        "created_at_ms": now_ms(),
+        "journal_identity": journal_identity_value(&store, conv_id, run_id, asst_id),
+        "journal_seq": 0u64,
+        "sequence": 1u64,
+        "status": "running"
+    });
+
+    // Publish reasoning:0 -> tool:c1 -> reasoning:1 -> text with CJK + emoji UTF-8 markdown
+    let c1 = publish_journal_part(
+        &store,
+        &mut run_state,
+        &format!("{asst_id}:reasoning:0"),
+        0,
+        "reasoning",
+        json!({"state": "completed", "title": {"kind": "inline", "value": "Thinking"}}),
+        &[("reasoning_summary", "分析需求中…".into())],
+    );
+    let _c2 = publish_journal_part(
+        &store,
+        &mut run_state,
+        "tool:c1",
+        1,
+        "tool",
+        json!({"tool_call_id": "c1", "capability_id": "read_file", "state": "completed"}),
+        &[("tool_output_text", "Read spec.md".into())],
+    );
+    let _c3 = publish_journal_part(
+        &store,
+        &mut run_state,
+        &format!("{asst_id}:reasoning:1"),
+        2,
+        "reasoning",
+        json!({"state": "completed", "title": {"kind": "inline", "value": "Thinking"}}),
+        &[("reasoning_summary", "汇总结果。".into())],
+    );
+    let utf8_markdown = "结论：架构升级完成🚀，所有检查项均通过✅。";
+    let c4 = publish_journal_part(
+        &store,
+        &mut run_state,
+        &format!("{asst_id}:text"),
+        3,
+        "text",
+        json!({"visibility": "public", "is_final": true}),
+        &[("markdown", utf8_markdown.into())],
+    );
+
+    run_state["status"] = json!("completed");
+    let _seal = build_and_store_terminal_seal(&store, &run_state, &format!("{asst_id}:text"));
+
+    // Open snapshot at latest cursor (c4) and diff against base cursor (c1)
+    let snap_final = dispatch_command(
+        &store,
+        &suite,
+        "open_assistant_journal_snapshot",
+        &json!({"at": c4}),
+    )
+    .unwrap();
+    let changes = dispatch_command(
+        &store,
+        &suite,
+        "read_assistant_journal_part_changes",
+        &json!({"snapshot": snap_final, "base": c1}),
+    )
+    .unwrap();
+    assert!(
+        changes["changes"].as_array().unwrap().len() >= 3,
+        "diff from seq 1 -> seq 4 must include tool, reasoning:1, and text parts"
+    );
+
+    // Reassemble multi-byte UTF-8 text via small 9-byte range slices!
+    let parts = dispatch_command(
+        &store,
+        &suite,
+        "read_assistant_journal_parts",
+        &json!({"snapshot": snap_final, "max_records": 32}),
+    )
+    .unwrap();
+    let text_part = parts["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["part_id"] == format!("{asst_id}:text"))
+        .unwrap();
+
+    let mut offset: u64 = 0;
+    let mut reconstructed = String::new();
+    loop {
+        let r = dispatch_command(
+            &store,
+            &suite,
+            "read_assistant_journal_range",
+            &json!({
+                "snapshot": snap_final,
+                "part_id": text_part["part_id"],
+                "content": text_part["bodies"][0],
+                "offset_bytes": offset.to_string(),
+                "limit_bytes": 9
+            }),
+        )
+        .unwrap();
+        let chunk = r["text"].as_str().unwrap();
+        reconstructed.push_str(chunk);
+        if r["end_of_content"].as_bool().unwrap() {
+            break;
+        }
+        offset += chunk.len() as u64;
+    }
+    assert_eq!(reconstructed, utf8_markdown);
+
+    let seal = dispatch_command(
+        &store,
+        &suite,
+        "local_assistant_run_terminal_seal",
+        &json!({"conversation_id": conv_id, "run_id": run_id}),
+    )
+    .unwrap();
+    assert_eq!(seal["result"]["value"]["kind"], "answered");
+}

@@ -136,8 +136,10 @@ struct MacAutomationCenterView: View {
         .background(MacPageBackground())
         .sheet(isPresented: $presentsEditor) {
             MacAutomationEditor(automation: editingAutomation, saveError: store.errorMessage) { automation in
-                if store.upsert(automation) {
-                    presentsEditor = false
+                Task {
+                    if await store.upsertAsync(automation) {
+                        presentsEditor = false
+                    }
                 }
             } cancel: {
                 presentsEditor = false
@@ -152,8 +154,8 @@ struct MacAutomationCenterView: View {
             titleVisibility: .visible
         ) {
             Button(String(localized: "Delete", table: "AutomationCenter"), role: .destructive) {
-                if let pendingDeletion {
-                    store.delete(pendingDeletion)
+                if let target = pendingDeletion {
+                    Task { await store.deleteAsync(target) }
                 }
                 pendingDeletion = nil
             }
@@ -275,7 +277,7 @@ struct MacAutomationCenterView: View {
                         String(localized: "Enabled", table: "AutomationCenter"),
                         isOn: Binding(
                             get: { automation.isEnabled },
-                            set: { store.setEnabled($0, for: automation) }
+                            set: { enabled in Task { await store.setEnabledAsync(enabled, for: automation) } }
                         )
                     )
                     .toggleStyle(.macSwitchControl)
@@ -479,7 +481,7 @@ struct MacAutomationCenterView: View {
     }
 
     private func runNowButton(_ automation: MacAutomation, isRunning: Bool) -> some View {
-        Button { store.runNow(automation) } label: {
+        Button { Task { await store.runNowAsync(automation) } } label: {
             Label(String(localized: "Run Now", table: "AutomationCenter"), systemImage: "play.fill")
         }
         .buttonStyle(.nolaProminent)
@@ -882,7 +884,9 @@ private struct MacAutomationEditor: View {
         .task {
             if initialEditorValues == nil { initialEditorValues = editorValues }
             do {
-                activeSkills = try MacBuiltInSkillRegistry.activeDescriptors()
+                activeSkills = try await Task.detached(priority: .userInitiated) {
+                    try MacBuiltInSkillRegistry.activeDescriptors()
+                }.value
                 skillLoadError = nil
             } catch {
                 skillLoadError = error.localizedDescription

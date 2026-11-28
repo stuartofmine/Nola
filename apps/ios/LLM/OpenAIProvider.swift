@@ -191,7 +191,9 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         return (try? encoder.encode(config)) ?? Data()
     }
     public var agentCapabilities: LLMAgentCapabilities {
-        guard config.wireProtocol == .chatCompletions || config.wireProtocol == .responses else {
+        guard config.wireProtocol == .chatCompletions
+            || config.wireProtocol == .responses
+            || config.wireProtocol == .anthropic else {
             return .init()
         }
         return .init(visionInput: config.executionCapabilities.imageInput,
@@ -256,15 +258,25 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         try await generateSummaryReceipt(input: input, timeout: timeout).output
     }
 
+    private func generateStructuredEventStream(
+        input: ModelInput,
+        producer: LLMStreamProducerControl? = nil
+    ) -> AsyncThrowingStream<LLMStreamEvent, Error> {
+        if config.wireProtocol == .anthropic {
+            return generateAnthropicEventStream(input: input, producer: producer)
+        }
+        return generateResponsesEventStream(input: input, producer: producer)
+    }
+
     func generateRoomRouting(inputJSON: String, system: String) async throws -> (AgentCoreJSONValue, AgentCoreJSONValue) {
         var usage: AgentCoreJSONValue = .object(["coverage": .string("unknown"), "provider_raw": .null, "normalized": .null])
         do {
             let content: String
-            if config.wireProtocol == .responses {
+            if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
                 let input = ModelInput(dateRange: .init(start: "", end: ""), candidates: [],
                     userPrefs: ["message": inputJSON, "custom_system_prompt": system])
                 var collected = ""
-                for try await event in generateResponsesEventStream(input: input) {
+                for try await event in generateStructuredEventStream(input: input) {
                     if case .textDelta(let delta) = event { collected += delta }
                     if case .usage(let value) = event, let raw = value.providerRawUsage { usage = Self.auxiliaryUsage(raw) }
                 }
@@ -286,9 +298,9 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         var finishReason: String?
         var hasToolCalls = false
         do {
-            if config.wireProtocol == .responses {
+            if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
                 var content = ""
-                for try await event in generateResponsesEventStream(input: input) {
+                for try await event in generateStructuredEventStream(input: input) {
                     if case .toolCallDelta = event { hasToolCalls = true }
                     if case .completed(let reason) = event { finishReason = reason }
                     if case .textDelta(let delta) = event { content += delta }
@@ -302,7 +314,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
                    let data = substring.data(using: .utf8), let output = try? JSONDecoder().decode(ModelOutput.self, from: data) {
                     return LLMSummaryPhysicalReceipt(output: output, finishReason: finishReason, hasToolCalls: hasToolCalls, usage: usage)
                 }
-                throw NolaError.llm(.invalidResponse(reason: "Responses summary is not a valid ModelOutput"))
+                throw NolaError.llm(.invalidResponse(reason: "Summary response is not a valid ModelOutput"))
             }
             let requestId = Self.makeRequestId(prefix: "summarize")
             let prompt: (system: String, userContent: String, attachments: [ModelInput.Attachment])
@@ -383,9 +395,9 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
     }
 
     public func chat(message: String, systemPrompt: String?, enableThinking: Bool, timeout: TimeInterval?) async throws -> String {
-        if config.wireProtocol == .responses {
+        if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
             var content = ""
-            for try await event in generateResponsesEventStream(input: try responsesChatInput(
+            for try await event in generateStructuredEventStream(input: try responsesChatInput(
                 message: message, systemPrompt: systemPrompt ?? PromptTemplates.chatSystem
             )) {
                 if case .textDelta(let delta) = event { content += delta }
@@ -420,9 +432,9 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         enableThinking: Bool,
         stablePrefixSHA256: String
     ) async throws -> String {
-        if config.wireProtocol == .responses {
+        if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
             var content = ""
-            for try await event in generateResponsesEventStream(input: try responsesChatInput(
+            for try await event in generateStructuredEventStream(input: try responsesChatInput(
                 message: message, systemPrompt: systemPrompt
             )) {
                 if case .textDelta(let delta) = event { content += delta }
@@ -458,12 +470,12 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         systemPrompt: String?,
         enableThinking: Bool
     ) -> AsyncThrowingStream<String, Error> {
-        if config.wireProtocol == .responses {
+        if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     do {
                         let input = try responsesChatInput(message: message, systemPrompt: systemPrompt ?? PromptTemplates.chatSystem)
-                        for try await event in generateResponsesEventStream(input: input) {
+                        for try await event in generateStructuredEventStream(input: input) {
                             if case .textDelta(let delta) = event { continuation.yield(delta) }
                         }
                         continuation.finish()
@@ -495,11 +507,11 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
     }
 
     public func generateSummaryStream(input: ModelInput) -> AsyncThrowingStream<String, Error> {
-        if config.wireProtocol == .responses {
+        if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     do {
-                        for try await event in generateResponsesEventStream(input: input) {
+                        for try await event in generateStructuredEventStream(input: input) {
                             if case .textDelta(let delta) = event { continuation.yield(delta) }
                         }
                         continuation.finish()
@@ -921,7 +933,9 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
 
     /// Match the shared generation schema without rewriting admitted values.
     static func validateGenerationConfiguration(_ config: Config) throws {
-        guard config.wireProtocol == .chatCompletions || config.wireProtocol == .responses else {
+        guard config.wireProtocol == .chatCompletions
+            || config.wireProtocol == .responses
+            || config.wireProtocol == .anthropic else {
             throw NolaError.llm(.invalidInput(reason: "This provider does not implement the selected wire protocol"))
         }
         guard ModelParameterLimits.outputTokens.contains(config.maxCompletionTokens),
@@ -949,6 +963,11 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
             config.seed != nil || !config.stopSequences.isEmpty
         ) {
             throw NolaError.llm(.invalidInput(reason: "Unsupported Responses model parameters"))
+        }
+        if config.wireProtocol == .anthropic && (
+            config.presencePenalty != 0 || config.frequencyPenalty != 0 || config.seed != nil
+        ) {
+            throw NolaError.llm(.invalidInput(reason: "Unsupported Anthropic model parameters"))
         }
     }
 
@@ -1672,8 +1691,8 @@ extension OpenAIProvider: LLMControlledEventStreamingClient {
     }
 
     private func generateEventStream(input: ModelInput, producer: LLMStreamProducerControl?) -> AsyncThrowingStream<LLMStreamEvent, Error> {
-        if config.wireProtocol == .responses {
-            return generateResponsesEventStream(input: input, producer: producer)
+        if config.wireProtocol == .responses || config.wireProtocol == .anthropic {
+            return generateStructuredEventStream(input: input, producer: producer)
         }
         let requestId = Self.makeRequestId(prefix: "agent-stream")
         let promptResult = Result { try buildPrompt(for: input) }
@@ -2225,5 +2244,489 @@ struct ResponsesReasoningProgress {
             if !suffix.isEmpty { deltas.append(suffix) }
         }
         return deltas
+    }
+}
+
+// MARK: - Anthropic Messages Adapter
+
+extension OpenAIProvider {
+    private var anthropicRouteIdentity: String {
+        let route = "anthropic\n\(config.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")))\n\(effectiveModel)\n\(config.apiKey)"
+        return SHA256.hash(data: Data(route.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func anthropicURL() throws -> URL {
+        guard var components = URLComponents(url: config.baseURL, resolvingAgainstBaseURL: false) else {
+            throw NolaError.llm(.invalidInput(reason: "Invalid Anthropic endpoint"))
+        }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let lower = path.lowercased()
+        if lower == "chat/completions" || lower.hasSuffix("/chat/completions") {
+            let prefix = lower == "chat/completions" ? "" : String(path.dropLast("/chat/completions".count))
+            components.path = prefix.isEmpty ? "/messages" : "/\(prefix)/messages"
+        } else if lower == "responses" || lower.hasSuffix("/responses") {
+            let prefix = lower == "responses" ? "" : String(path.dropLast("/responses".count))
+            components.path = prefix.isEmpty ? "/messages" : "/\(prefix)/messages"
+        } else if lower == "messages" || lower.hasSuffix("/messages") {
+            components.path = "/\(path)"
+        } else if lower == "v1" || lower.hasSuffix("/v1") {
+            components.path = "/\(path)/messages"
+        } else {
+            components.path = path.isEmpty ? "/v1/messages" : "/\(path)/v1/messages"
+        }
+        guard let url = components.url else {
+            throw NolaError.llm(.invalidInput(reason: "Invalid Anthropic endpoint"))
+        }
+        return url
+    }
+
+    func anthropicRequest(input: ModelInput) throws -> URLRequest {
+        try Self.validateGenerationConfiguration(config)
+        let prompt = try buildPrompt(for: input)
+        var systemText = ""
+        var rawMessages: [[String: Any]]
+        var tools: [[String: Any]] = []
+        var toolChoice: Any?
+        if prompt.system == "__NOLA_CORE_CONTEXT_V1__" {
+            guard let data = prompt.userContent.data(using: .utf8),
+                  let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let system = envelope["system_prompt"] as? String,
+                  let prepared = envelope["messages"] as? [[String: Any]] else {
+                throw NolaError.llm(.invalidInput(reason: "Core prepared an invalid model payload"))
+            }
+            systemText = system
+            rawMessages = prepared
+            tools = envelope["tools"] as? [[String: Any]] ?? []
+            toolChoice = envelope["tool_choice"]
+        } else {
+            systemText = prompt.system
+            rawMessages = [["role": "user", "content": prompt.userContent]]
+        }
+
+        let capabilities = config.executionCapabilities
+        guard capabilities.imageInput || prompt.attachments.isEmpty,
+              capabilities.toolCalls || (tools.isEmpty && !rawMessages.contains(where: {
+                  ($0["role"] as? String) == "tool" || $0["tool_calls"] != nil
+              })) else {
+            throw NolaError.llm(.invalidInput(reason: "Unsupported Anthropic model parameters or capabilities"))
+        }
+
+        var replayBlocks: [[String: Any]] = []
+        if let encoded = input.providerContinuationJSON,
+           let data = encoded.data(using: .utf8),
+           let continuation = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           continuation["provider_namespace"] as? String == "anthropic.messages",
+           continuation["model_id"] as? String == effectiveModel,
+           let state = continuation["state"] as? [String: Any],
+           state["route_identity"] as? String == anthropicRouteIdentity,
+           let items = state["content_blocks"] as? [[String: Any]] {
+            replayBlocks = items
+        }
+        let replayIndex = replayBlocks.isEmpty ? nil : rawMessages.lastIndex(where: { ($0["role"] as? String) == "assistant" })
+        let lastUserIndex = rawMessages.lastIndex(where: { ($0["role"] as? String) == "user" })
+
+        var converted: [[String: Any]] = []
+        func appendBlocks(_ blocks: [[String: Any]], role: String) {
+            guard !blocks.isEmpty else { return }
+            if var last = converted.last, last["role"] as? String == role,
+               var existing = last["content"] as? [[String: Any]] {
+                existing.append(contentsOf: blocks)
+                last["content"] = existing
+                converted[converted.count - 1] = last
+            } else {
+                converted.append(["role": role, "content": blocks])
+            }
+        }
+
+        for (index, message) in rawMessages.enumerated() {
+            guard let role = message["role"] as? String else { continue }
+            if role == "system" || role == "developer" {
+                if let text = message["content"] as? String, !text.isEmpty {
+                    systemText = systemText.isEmpty ? text : "\(systemText)\n\n\(text)"
+                }
+                continue
+            }
+            if index == replayIndex {
+                appendBlocks(replayBlocks, role: "assistant")
+                continue
+            }
+            if role == "tool" {
+                guard let callID = message["tool_call_id"] as? String else {
+                    throw NolaError.llm(.invalidInput(reason: "Tool result has no call ID"))
+                }
+                let text = Self.extractText(from: message["content"]) ?? ""
+                appendBlocks([[
+                    "type": "tool_result",
+                    "tool_use_id": callID,
+                    "content": text,
+                ]], role: "user")
+                continue
+            }
+            guard role == "user" || role == "assistant" else { continue }
+            var blocks: [[String: Any]] = []
+            if let text = message["content"] as? String, !text.isEmpty {
+                blocks.append(["type": "text", "text": text])
+            } else if let parts = message["content"] as? [[String: Any]] {
+                for part in parts {
+                    switch part["type"] as? String {
+                    case "text":
+                        if let text = part["text"] as? String, !text.isEmpty {
+                            blocks.append(["type": "text", "text": text])
+                        }
+                    case "image_url":
+                        if let image = part["image_url"] as? [String: Any],
+                           let urlString = image["url"] as? String,
+                           urlString.hasPrefix("data:"),
+                           let comma = urlString.firstIndex(of: ",") {
+                            let header = String(urlString[urlString.index(urlString.startIndex, offsetBy: 5)..<comma])
+                            let mediaType = header.split(separator: ";").first.map(String.init) ?? "image/png"
+                            let normalizedMime = mediaType.lowercased() == "image/jpg" ? "image/jpeg" : mediaType
+                            let b64 = String(urlString[urlString.index(after: comma)...])
+                            blocks.append([
+                                "type": "image",
+                                "source": ["type": "base64", "media_type": normalizedMime, "data": b64]
+                            ])
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+            if index == lastUserIndex && !prompt.attachments.isEmpty {
+                for attachment in prompt.attachments {
+                    let rawMime = attachment.mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    let mime = rawMime == "image/jpg" ? "image/jpeg" : rawMime
+                    let blockType = mime == "application/pdf" ? "document" : "image"
+                    blocks.append([
+                        "type": blockType,
+                        "source": ["type": "base64", "media_type": mime, "data": attachment.base64Data]
+                    ])
+                }
+            }
+            if role == "assistant", let calls = message["tool_calls"] as? [[String: Any]] {
+                for call in calls {
+                    let function = call["function"] as? [String: Any] ?? call
+                    guard let id = (call["id"] ?? call["call_id"]) as? String,
+                          let name = function["name"] as? String else { continue }
+                    let parsedInput: Any
+                    if let argStr = function["arguments"] as? String,
+                       let argData = argStr.data(using: .utf8),
+                       let obj = try? JSONSerialization.jsonObject(with: argData) as? [String: Any] {
+                        parsedInput = obj
+                    } else if let obj = function["arguments"] as? [String: Any] {
+                        parsedInput = obj
+                    } else {
+                        parsedInput = [String: Any]()
+                    }
+                    blocks.append(["type": "tool_use", "id": id, "name": name, "input": parsedInput])
+                }
+            }
+            appendBlocks(blocks, role: role)
+        }
+
+        if converted.isEmpty || converted.first?["role"] as? String != "user" {
+            converted.insert(["role": "user", "content": [["type": "text", "text": "Continue."]]], at: 0)
+        }
+
+        var effectiveMaxTokens = max(1, config.maxCompletionTokens)
+        var body: [String: Any] = [
+            "model": effectiveModel,
+            "max_tokens": effectiveMaxTokens,
+            "messages": converted,
+            "stream": true,
+        ]
+        if !systemText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["system"] = systemText
+        }
+
+        var explicitThinkingEnabled = false
+        if let selection = config.reasoningSelection, selection != .null {
+            if selection.objectFields?["kind"] == .string("effort"),
+               let effort = selection.objectFields?["value"]?.stringScalar?.lowercased() {
+                if effort == "none" {
+                    body["thinking"] = ["type": "disabled"]
+                } else if capabilities.reasoning && ["low", "medium", "high", "max"].contains(effort) {
+                    body["output_config"] = ["effort": effort]
+                }
+            } else if selection.objectFields?["kind"] == .string("budget"),
+                      let tokensValue = selection.objectFields?["tokens"] {
+                let rawBudget: Int? = {
+                    switch tokensValue {
+                    case .signedInteger(let n): return Int(n)
+                    case .unsignedInteger(let n): return Int(n)
+                    case .number(let n): return Int(n)
+                    default: return nil
+                    }
+                }()
+                if capabilities.reasoning, let budget = rawBudget, budget > 0 {
+                    let clamped = max(1024, budget)
+                    if effectiveMaxTokens <= clamped {
+                        effectiveMaxTokens = clamped + 1024
+                        body["max_tokens"] = effectiveMaxTokens
+                    }
+                    body["thinking"] = ["type": "enabled", "budget_tokens": clamped]
+                    explicitThinkingEnabled = true
+                }
+            }
+        }
+
+        if !explicitThinkingEnabled && capabilities.samplingParameters {
+            // Claude 4.x rejects requests specifying both temperature and top_p.
+            body["temperature"] = config.temperature
+        }
+        if !config.stopSequences.isEmpty {
+            body["stop_sequences"] = config.stopSequences
+        }
+        if !tools.isEmpty {
+            body["tools"] = try tools.map { tool -> [String: Any] in
+                let function = tool["function"] as? [String: Any] ?? tool
+                guard let name = function["name"] as? String, !name.isEmpty else {
+                    throw NolaError.llm(.invalidInput(reason: "Anthropic tool has no name"))
+                }
+                var entry: [String: Any] = [
+                    "name": name,
+                    "input_schema": function["parameters"] ?? ["type": "object", "properties": [String: Any]()]
+                ]
+                if let description = function["description"] as? String {
+                    entry["description"] = description
+                }
+                return entry
+            }
+            if let choiceStr = toolChoice as? String {
+                switch choiceStr {
+                case "none": body["tool_choice"] = ["type": "none"]
+                case "required": body["tool_choice"] = ["type": "any"]
+                case "auto": body["tool_choice"] = ["type": "auto"]
+                default: break
+                }
+            } else if let choiceObj = toolChoice as? [String: Any],
+                      choiceObj["type"] as? String == "function",
+                      let fn = choiceObj["function"] as? [String: Any],
+                      let name = fn["name"] as? String {
+                body["tool_choice"] = ["type": "tool", "name": name]
+            }
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: body)
+        var request = URLRequest(url: try anthropicURL())
+        request.httpMethod = "POST"
+        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        if !config.apiKey.isEmpty {
+            request.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
+        }
+        return request
+    }
+
+    func generateAnthropicEventStream(input: ModelInput, producer: LLMStreamProducerControl? = nil) -> AsyncThrowingStream<LLMStreamEvent, Error> {
+        let requestId = Self.makeRequestId(prefix: "anthropic")
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let request = try anthropicRequest(input: input)
+                    let (bytes, response) = try await streamSession.bytes(for: request)
+                    if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                        var body = Data()
+                        let maxErrorBytes = 64 * 1024
+                        for try await byte in bytes {
+                            if body.count < maxErrorBytes { body.append(byte) } else { break }
+                        }
+                        try validateHTTP(response: http, data: body, requestId: requestId)
+                    }
+
+                    struct BlockState {
+                        var kind: String
+                        var idOrSignature: String
+                        var name: String
+                        var buffer: String
+                        var emittedToolArgs: Bool = false
+                    }
+                    var blocks: [Int: BlockState] = [:]
+                    var responseID: String?
+                    var finishReason = "stop"
+                    var completed = false
+                    var inputTokens: Int?
+                    var outputTokens: Int?
+                    var cachedInputTokens: Int?
+                    var cacheWriteInputTokens: Int?
+                    var rawUsage: [String: Any] = [:]
+
+                    for try await line in bytes.lines {
+                        if Task.isCancelled { throw CancellationError() }
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard trimmed.hasPrefix("data:") else { continue }
+                        let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        guard !payload.isEmpty,
+                              let data = payload.data(using: .utf8),
+                              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              let type = event["type"] as? String else { continue }
+
+                        switch type {
+                        case "error":
+                            if let errorEnvelope = Self.providerErrorEnvelope(from: event) {
+                                throw makeEnvelopeError(from: errorEnvelope, statusCode: nil, requestId: requestId)
+                            }
+                            throw NolaError.llm(.invalidResponse(reason: "Anthropic provider reported failure"))
+                        case "message_start":
+                            if let msg = event["message"] as? [String: Any] {
+                                responseID = msg["id"] as? String
+                                if let usage = msg["usage"] as? [String: Any] {
+                                    for (k, v) in usage { rawUsage[k] = v }
+                                    inputTokens = (usage["input_tokens"] as? NSNumber)?.intValue
+                                    cachedInputTokens = (usage["cache_read_input_tokens"] as? NSNumber)?.intValue
+                                    cacheWriteInputTokens = (usage["cache_creation_input_tokens"] as? NSNumber)?.intValue
+                                }
+                            }
+                        case "content_block_start":
+                            let idx = (event["index"] as? NSNumber)?.intValue ?? 0
+                            if let cb = event["content_block"] as? [String: Any] {
+                                let kind = cb["type"] as? String ?? ""
+                                let id = cb["id"] as? String ?? ""
+                                let name = cb["name"] as? String ?? ""
+                                let initial = cb["data"] as? String ?? ""
+                                blocks[idx] = BlockState(kind: kind, idOrSignature: id, name: name, buffer: initial)
+                            }
+                        case "content_block_delta":
+                            let idx = (event["index"] as? NSNumber)?.intValue ?? 0
+                            guard let delta = event["delta"] as? [String: Any],
+                                  let deltaType = delta["type"] as? String else { continue }
+                            switch deltaType {
+                            case "text_delta":
+                                if let text = delta["text"] as? String, !text.isEmpty {
+                                    blocks[idx]?.buffer += text
+                                    continuation.yield(.textDelta(text))
+                                }
+                            case "thinking_delta":
+                                if let thinking = delta["thinking"] as? String, !thinking.isEmpty {
+                                    blocks[idx]?.buffer += thinking
+                                    continuation.yield(.reasoningDelta(thinking))
+                                }
+                            case "signature_delta":
+                                if let sig = delta["signature"] as? String {
+                                    blocks[idx]?.idOrSignature += sig
+                                }
+                            case "input_json_delta":
+                                if let partial = delta["partial_json"] as? String, !partial.isEmpty,
+                                   var state = blocks[idx], state.kind == "tool_use", !state.name.isEmpty {
+                                    state.buffer += partial
+                                    state.emittedToolArgs = true
+                                    blocks[idx] = state
+                                    continuation.yield(.toolCallDelta(.init(
+                                        index: idx,
+                                        callId: state.idOrSignature.isEmpty ? "\(requestId)-tool-\(idx)" : state.idOrSignature,
+                                        capabilityId: state.name,
+                                        argumentsDelta: partial
+                                    )))
+                                }
+                            default:
+                                break
+                            }
+                        case "message_delta":
+                            if let delta = event["delta"] as? [String: Any],
+                               let sr = delta["stop_reason"] as? String {
+                                switch sr {
+                                case "max_tokens": finishReason = "length"
+                                case "tool_use": finishReason = "tool_calls"
+                                case "refusal": finishReason = "content_filter"
+                                default: finishReason = "stop"
+                                }
+                            }
+                            if let usage = event["usage"] as? [String: Any] {
+                                for (k, v) in usage { rawUsage[k] = v }
+                                if let out = (usage["output_tokens"] as? NSNumber)?.intValue {
+                                    outputTokens = out
+                                }
+                            }
+                        case "message_stop":
+                            completed = true
+                        default:
+                            break
+                        }
+                    }
+
+                    guard completed else {
+                        throw NolaError.llm(.invalidResponse(reason: "Anthropic stream ended before completion"))
+                    }
+
+                    let allowToolCalls = finishReason != "length" && finishReason != "content_filter"
+                    var continuationBlocks: [[String: Any]] = []
+                    for (idx, state) in blocks.sorted(by: { $0.key < $1.key }) {
+                        switch state.kind {
+                        case "text" where !state.buffer.isEmpty:
+                            continuationBlocks.append(["type": "text", "text": state.buffer])
+                        case "thinking":
+                            if !state.idOrSignature.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                continuationBlocks.append([
+                                    "type": "thinking",
+                                    "thinking": state.buffer,
+                                    "signature": state.idOrSignature,
+                                ])
+                            }
+                        case "redacted_thinking" where !state.buffer.isEmpty:
+                            continuationBlocks.append(["type": "redacted_thinking", "data": state.buffer])
+                        case "tool_use" where allowToolCalls && !state.name.isEmpty:
+                            let callID = state.idOrSignature.isEmpty ? "\(requestId)-tool-\(idx)" : state.idOrSignature
+                            if !state.emittedToolArgs {
+                                continuation.yield(.toolCallDelta(.init(
+                                    index: idx,
+                                    callId: callID,
+                                    capabilityId: state.name,
+                                    argumentsDelta: state.buffer.isEmpty ? "{}" : state.buffer
+                                )))
+                            }
+                            let parsedInput: Any = (state.buffer.data(using: .utf8)
+                                .flatMap { try? JSONSerialization.jsonObject(with: $0) }) ?? [String: Any]()
+                            continuationBlocks.append([
+                                "type": "tool_use",
+                                "id": callID,
+                                "name": state.name,
+                                "input": parsedInput,
+                            ])
+                        default:
+                            break
+                        }
+                    }
+
+                    if !rawUsage.isEmpty {
+                        let total = (inputTokens ?? 0) + (outputTokens ?? 0)
+                        continuation.yield(.usage(.init(
+                            promptTokens: inputTokens,
+                            cachedInputTokens: cachedInputTokens,
+                            cacheWriteInputTokens: cacheWriteInputTokens,
+                            completionTokens: outputTokens,
+                            totalTokens: total > 0 ? total : nil,
+                            reasoningTokens: nil,
+                            providerRawUsage: Self.usageJSON(rawUsage)
+                        )))
+                    }
+
+                    if allowToolCalls && !continuationBlocks.isEmpty {
+                        var continuationState: [String: Any] = [
+                            "provider_namespace": "anthropic.messages",
+                            "model_id": effectiveModel,
+                            "state": [
+                                "content_blocks": continuationBlocks,
+                                "route_identity": anthropicRouteIdentity,
+                            ],
+                            "integrity_kind": "signed",
+                            "compaction_policy": "clear_on_compaction",
+                        ]
+                        if let responseID { continuationState["response_id"] = responseID }
+                        if let continuationData = try? JSONSerialization.data(withJSONObject: continuationState) {
+                            continuation.yield(.continuation(String(decoding: continuationData, as: UTF8.self)))
+                        }
+                    }
+
+                    continuation.yield(.completed(finishReason: finishReason))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: self.mapError(error))
+                }
+            }
+            producer?.install(task)
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
     }
 }

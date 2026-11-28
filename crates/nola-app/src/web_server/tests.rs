@@ -1235,8 +1235,9 @@ fn second_pass_security_and_cross_client_contracts_hold() {
         &json!({"request_id": "oc-req-1", "account_id": "oc-1", "provider": "opencode", "method": 0}),
     );
     assert_eq!(oc_st, 200);
-    assert_eq!(oc_auth["state"], "awaiting_authorization");
-    let full_state = flows.lock().unwrap().get("oc-req-1").unwrap().csrf_state.clone();
+    assert_eq!(oc_auth["state"], "pending");
+    let full_state = oc_auth["oauth_state"].as_str().unwrap().to_string();
+    assert_eq!(full_state, flows.lock().unwrap().get("oc-req-1").unwrap().csrf_state);
     // Prefix state MUST be rejected even when request_id matches!
     let (prefix_st, _) = handle_source_oauth_route(
         &store,
@@ -1534,4 +1535,588 @@ fn web_server_pdf_resources_and_remote_host_contracts_work() {
     assert_eq!(rec["phase"], "prepared");
     assert!(rec["admission"].is_null());
     assert!(rec["rejection_code"].is_null());
+}
+
+#[test]
+fn web_workstream_b_inventory_import_discovery_oauth_and_llama_args_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    crate::config::bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+    crate::config::save_applied_config(&store, &crate::config::AppliedConfig::default()).unwrap();
+    let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+
+    // 1. build_model_connections_inventory reads real catalog.models, capability_assessments, revision, account_id, and model_account
+    suite
+        .upsert_record(
+            "model_account",
+            "acct-1",
+            &json!({
+                "id": "acct-1",
+                "display_name": "Primary Account",
+                "source": "anthropic",
+                "revision": 3,
+                "state": "connected"
+            }),
+        )
+        .unwrap();
+    suite
+        .upsert_record(
+            "model_connection",
+            "managed-1",
+            &json!({
+                "id": "managed-1",
+                "display_name": "Managed Claude",
+                "base_url": "https://api.anthropic.com",
+                "protocols": ["anthropic"],
+                "source": "import",
+                "account_id": "acct-1",
+                "revision": 4,
+                "enabled": true,
+                "catalog": {
+                    "observed_at_ms": 1700000000000i64,
+                    "models": [{
+                        "model_id": "claude-sonnet-4",
+                        "display_name": "Claude Sonnet 4",
+                        "protocol": "anthropic",
+                        "context_window": 200000
+                    }]
+                },
+                "capability_assessments": [{
+                    "model_id": "claude-sonnet-4",
+                    "protocol": "anthropic",
+                    "evidence": null,
+                    "user_override": { "toolCalls": true, "imageInput": true, "reasoning": true, "samplingParameters": true, "samplingRequiresNoReasoning": false, "chatOutputTokenField": "auto" }
+                }]
+            }),
+        )
+        .unwrap();
+    let inv = build_model_connections_inventory(&store, &suite);
+    let conns = inv["connections"].as_array().unwrap();
+    let m1 = conns
+        .iter()
+        .find(|c| c["document"]["connection"]["id"] == "managed-1")
+        .unwrap();
+    assert_eq!(m1["revision"], 4);
+    assert_eq!(m1["document"]["connection"]["account_id"], "acct-1");
+    assert_eq!(m1["document"]["catalog"]["models"].as_array().unwrap().len(), 1);
+    assert_eq!(m1["document"]["catalog"]["models"][0]["model_id"], "claude-sonnet-4");
+    assert_eq!(m1["document"]["capability_assessments"].as_array().unwrap().len(), 1);
+    assert!(inv["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|a| a["account"]["id"] == "acct-1" && a["revision"] == 3));
+
+    // 2. parse_model_import_candidates supports OpenCode JSONC, Codex TOML, Kimi Code CLI TOML, and Nola JSON
+    let opencode_jsonc = r#"{
+        // OpenCode config with comments and trailing comma
+        "provider": {
+            "anthropic-oc": {
+                "name": "Anthropic OC",
+                "npm": "@ai-sdk/anthropic",
+                "options": { "baseURL": "https://api.anthropic.com", "apiKey": "sk-ant-123", },
+                "models": { "claude-sonnet-4": { "name": "Claude 4", "limit": { "context": 200000 } }, },
+            },
+        },
+    }"#;
+    let oc_cands =
+        parse_model_import_candidates("open_code", "opencode.jsonc", opencode_jsonc, None, true, false)
+            .unwrap();
+    assert_eq!(oc_cands.len(), 1);
+    assert_eq!(oc_cands[0].protocol, "anthropic");
+    assert_eq!(oc_cands[0].api_key.as_deref(), Some("sk-ant-123"));
+    assert_eq!(oc_cands[0].models[0].context_window, Some(200_000));
+
+    let codex_toml = r#"
+model = "o3"
+model_provider = "openai"
+
+[model_providers.openai]
+name = "OpenAI Codex"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+"#;
+    let cred_json = r#"{"OPENAI_API_KEY": "sk-codex-cred"}"#;
+    let codex_cands =
+        parse_model_import_candidates("codex", "config.toml", codex_toml, Some(cred_json), true, false)
+            .unwrap();
+    assert_eq!(codex_cands.len(), 1);
+    assert_eq!(codex_cands[0].protocol, "responses");
+    assert_eq!(codex_cands[0].api_key.as_deref(), Some("sk-codex-cred"));
+    assert_eq!(codex_cands[0].models[0].model_id, "o3");
+
+    let kimi_toml = r#"
+[providers.moonshot]
+type = "kimi"
+base_url = "https://api.moonshot.cn/v1"
+api_key = "sk-kimi-1"
+
+[models.kimi-default]
+provider = "moonshot"
+model = "kimi-k2"
+max_context_size = 131072
+"#;
+    let kimi_cands =
+        parse_model_import_candidates("kimi_code", "config.toml", kimi_toml, None, true, false)
+            .unwrap();
+    assert_eq!(kimi_cands.len(), 1);
+    assert_eq!(kimi_cands[0].models[0].model_id, "kimi-k2");
+    assert_eq!(kimi_cands[0].models[0].context_window, Some(131_072));
+
+    let nola_json = r#"{"llm": {"connections": [{"id": "nola-gem", "endpoint": "https://generativelanguage.googleapis.com", "protocol": "gemini", "models": [{"id": "gemini-2.5-flash"}]}]}}"#;
+    let nola_cands =
+        parse_model_import_candidates("nola", "config.json", nola_json, None, false, false).unwrap();
+    assert_eq!(nola_cands.len(), 1);
+    assert_eq!(nola_cands[0].protocol, "gemini");
+    assert_eq!(nola_cands[0].models[0].model_id, "gemini-2.5-flash");
+
+    // 3. discover_endpoint_models supports Anthropic, Gemini, OpenAI and propagates HTTP errors
+    let mock_server = Server::http("127.0.0.1:0").unwrap();
+    let port = mock_server.server_addr().to_ip().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..4 {
+            let req = mock_server.recv().unwrap();
+            let url = req.url().to_string();
+            let has_ant = req
+                .headers()
+                .iter()
+                .any(|h| h.field.as_str().as_str().eq_ignore_ascii_case("x-api-key") && h.value.as_str() == "ant-key");
+            let has_gem = req
+                .headers()
+                .iter()
+                .any(|h| h.field.as_str().as_str().eq_ignore_ascii_case("x-goog-api-key") && h.value.as_str() == "gem-key");
+            let resp = if url == "/v1/models" && has_ant {
+                Response::from_string(r#"{"data":[{"id":"claude-sonnet-4"}]}"#).with_status_code(200)
+            } else if url == "/v1beta/models" && has_gem {
+                Response::from_string(r#"{"models":[{"name":"models/gemini-2.5-pro"}]}"#).with_status_code(200)
+            } else if url == "/fail/models" {
+                Response::from_string(r#"{"error":"unauthorized"}"#).with_status_code(401)
+            } else {
+                Response::from_string(r#"{"data":[{"id":"gpt-4o"}]}"#).with_status_code(200)
+            };
+            let _ = req.respond(resp);
+        }
+    });
+
+    let ant_conn = ConnectionConfig {
+        id: "ant".into(),
+        endpoint: format!("http://127.0.0.1:{port}"),
+        protocol: Some("anthropic".into()),
+        provider: None,
+        api_key: Some("ant-key".into()),
+        api_key_env: None,
+        models: vec![],
+    };
+    assert_eq!(discover_endpoint_models(&ant_conn).unwrap(), vec!["claude-sonnet-4"]);
+
+    let gem_conn = ConnectionConfig {
+        id: "gem".into(),
+        endpoint: format!("http://127.0.0.1:{port}"),
+        protocol: Some("gemini".into()),
+        provider: None,
+        api_key: Some("gem-key".into()),
+        api_key_env: None,
+        models: vec![],
+    };
+    assert_eq!(discover_endpoint_models(&gem_conn).unwrap(), vec!["gemini-2.5-pro"]);
+
+    let fail_conn = ConnectionConfig {
+        id: "fail".into(),
+        endpoint: format!("http://127.0.0.1:{port}/fail"),
+        protocol: Some("openai_chat".into()),
+        provider: None,
+        api_key: None,
+        api_key_env: None,
+        models: vec![],
+    };
+    let err = discover_endpoint_models(&fail_conn).unwrap_err();
+    assert!(err.contains("401"), "expected 401 error, got {err}");
+
+    let oai_conn = ConnectionConfig {
+        id: "oai".into(),
+        endpoint: format!("http://127.0.0.1:{port}/oai"),
+        protocol: Some("openai_chat".into()),
+        provider: None,
+        api_key: None,
+        api_key_env: None,
+        models: vec![],
+    };
+    assert_eq!(discover_endpoint_models(&oai_conn).unwrap(), vec!["gpt-4o"]);
+    handle.join().unwrap();
+
+    // 4. Kimi OAuth returns "pending", expires cleanly on timeout, and cancels cleanly
+    let flows = Mutex::new(BTreeMap::new());
+    let (ks, kstart) = handle_source_oauth_route(
+        &store,
+        &suite,
+        &flows,
+        "/api/model-connections/kimi-login/start",
+        "",
+        &json!({"account_id": "kimi-1"}),
+    );
+    assert_eq!(ks, 200);
+    assert_eq!(kstart["state"], "pending");
+    let fid = kstart["flow_id"].as_str().unwrap().to_string();
+    // Simulate expiration
+    flows.lock().unwrap().get_mut(&fid).unwrap().expires_at_ms = 1;
+    let (kst, kstatus) = handle_source_oauth_route(
+        &store,
+        &suite,
+        &flows,
+        "/api/model-connections/kimi-login/status",
+        "",
+        &json!({"account_id": "kimi-1", "flow_id": fid}),
+    );
+    assert_eq!(kst, 200);
+    assert_eq!(kstatus["state"], "expired");
+    assert!(kstatus["poll_interval_seconds"].is_null());
+
+    // 5. llama_server_args_from_parameters maps all 5 parameters cleanly without duplicates
+    let args = LocalModelProcessManager::llama_server_args_from_parameters(
+        &json!({
+            "contextTokens": 32768,
+            "gpuLayers": 99,
+            "threads": 8,
+            "batchSize": 512,
+            "flashAttention": true
+        }),
+        &["--threads".to_string(), "4".to_string()],
+    );
+    assert_eq!(
+        args,
+        vec![
+            "--ctx-size",
+            "32768",
+            "--n-gpu-layers",
+            "99",
+            "--batch-size",
+            "512",
+            "--flash-attn"
+        ]
+    );
+
+    // 6. Auxiliary admit echoes provider, configuration_revision, maximum_duration_ms
+    let aux_ops = Mutex::new(BTreeMap::new());
+    let (admit_st, admit_env) = handle_auxiliary_dispatch(
+        &store,
+        &suite,
+        &aux_ops,
+        "host-1",
+        "admit",
+        &json!({
+            "expected_host_id": "host-1",
+            "operation_id": "op-1",
+            "attempt_id": "op-1:physical",
+            "profile_id": "openai:gpt-4o",
+            "expected_profile_revision": 7,
+            "scenario": "completion",
+            "input_json": "{}",
+            "maximum_duration_ms": 45000
+        }),
+    );
+    assert_eq!(admit_st, 200);
+    let aux_cfg = &admit_env["receipt"]["operation"]["configuration"];
+    assert_eq!(aux_cfg["provider"], "configured:openai:gpt-4o");
+    assert_eq!(aux_cfg["configuration_revision"], 7);
+    assert_eq!(aux_cfg["maximum_duration_ms"], 45000);
+}
+
+#[test]
+fn web_workstream_b_paired_host_and_catalog_replace_http_contracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let vault_path = dir.path().join("vault.json");
+    crate::config::bind_store_vault_path(&store, &vault_path).unwrap();
+    let suite = Arc::new(ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None));
+
+    // Seed one legacy editable connection + one managed imported connection + one local connection
+    let init_cfg = crate::config::AppliedConfig {
+        llm: crate::config::LlmSection {
+            default_model: Some(DefaultModelSelection {
+                connection: "managed-imp".into(),
+                model: "claude-sonnet-4".into(),
+            }),
+            connections: vec![
+                ConnectionConfig {
+                    id: "legacy-ep".into(),
+                    endpoint: "https://legacy.invalid/v1".into(),
+                    protocol: Some("openai_chat".into()),
+                    provider: None,
+                    api_key: Some("legacy-secret".into()),
+                    api_key_env: None,
+                    models: vec![ModelEntry {
+                        id: "gpt-4o".into(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        temperature: None,
+                        top_p: None,
+                        reasoning_effort: None,
+                        capabilities: None,
+                    }],
+                },
+                ConnectionConfig {
+                    id: "managed-imp".into(),
+                    endpoint: "https://api.anthropic.com".into(),
+                    protocol: Some("anthropic".into()),
+                    provider: Some("open_code".into()),
+                    api_key: Some("managed-secret".into()),
+                    api_key_env: None,
+                    models: vec![ModelEntry {
+                        id: "claude-sonnet-4".into(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        temperature: None,
+                        top_p: None,
+                        reasoning_effort: None,
+                        capabilities: None,
+                    }],
+                },
+                ConnectionConfig {
+                    id: "local:qwen3".into(),
+                    endpoint: "http://127.0.0.1:8081/v1".into(),
+                    protocol: Some("chat_completions".into()),
+                    provider: Some("local".into()),
+                    api_key: None,
+                    api_key_env: None,
+                    models: vec![ModelEntry {
+                        id: "qwen3".into(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        temperature: None,
+                        top_p: None,
+                        reasoning_effort: None,
+                        capabilities: None,
+                    }],
+                },
+            ],
+        },
+        ..Default::default()
+    };
+    save_applied_config(&store, &init_cfg).unwrap();
+
+    let conv_id = "conv-paired-b";
+    let ts = now_ms();
+    store
+        .upsert_session(&Session {
+            id: conv_id.into(),
+            title: "Paired B".into(),
+            workspace_root: dir.path().display().to_string(),
+            model_connection: None,
+            model_id: None,
+            created_at_ms: ts,
+            updated_at_ms: ts,
+        })
+        .unwrap();
+
+    let server = Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().to_ip().unwrap().port();
+    let host_id = "nola-host-workstream-b".to_string();
+    let state = Arc::new(WebServerState {
+        store: store.clone(),
+        suite: Arc::clone(&suite),
+        ui_dir: dir.path().to_path_buf(),
+        static_dir: dir.path().to_path_buf(),
+        loopback: true,
+        env_token_override: false,
+        host_id: host_id.clone(),
+        access_token: "test-access-token".into(),
+        sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        handoffs: Arc::new(Mutex::new(HashMap::new())),
+        nonces: Arc::new(Mutex::new(BoundedNonceCache::default())),
+        active_cancels: Arc::new(Mutex::new(BTreeMap::new())),
+        pending_interactions: Arc::new(PendingInteractions::default()),
+        native_browser: Arc::new(NativeBrowserBridge::default()),
+        tool_plans: Arc::new(Mutex::new(BTreeMap::new())),
+        mcp_manager: Arc::new(McpManager::new(None)),
+        tailcat: TailcatConfig {
+            ingress: false,
+            helper_path: None,
+            helper_sha256: None,
+            web_port: port,
+        },
+        tailcat_leases: Arc::new(TailcatLeaseManager::default()),
+        messaging_worker: Arc::new(Mutex::new(None)),
+        oauth_flows: Arc::new(Mutex::new(BTreeMap::new())),
+        auxiliary_ops: Arc::new(Mutex::new(BTreeMap::new())),
+    });
+
+    let srv_handle = std::thread::spawn(move || {
+        for _ in 0..8 {
+            if let Ok(req) = server.recv() {
+                handle_http_request(req, Arc::clone(&state));
+            }
+        }
+    });
+
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    let post_json = |path: &str, payload: Value| -> Value {
+        let resp = client
+            .post(format!("{base}{path}"))
+            .header("Authorization", "Bearer test-access-token")
+            .header("Origin", &base)
+            .json(&payload)
+            .send()
+            .unwrap();
+        let status = resp.status();
+        let val: Value = resp.json().unwrap();
+        assert_eq!(status, 200, "POST {path} returned {status}: {val}");
+        val
+    };
+    let get_json = |path: &str| -> Value {
+        let resp = client
+            .get(format!("{base}{path}"))
+            .header("Authorization", "Bearer test-access-token")
+            .send()
+            .unwrap();
+        let status = resp.status();
+        let val: Value = resp.json().unwrap();
+        assert_eq!(status, 200, "GET {path} returned {status}: {val}");
+        val
+    };
+
+    // 1. catalog/replace with ONLY legacy endpoint preserves managed-imp, local:qwen3, and managed Vault secret!
+    let rep_resp = post_json(
+        "/api/model-profiles/catalog/replace",
+        json!({
+            "endpoints": [{
+                "id": "legacy-ep",
+                "name": "Legacy",
+                "baseURL": "https://legacy.invalid/v1",
+                "wireProtocol": "chat_completions",
+                "enabled": true,
+                "models": [{"id": "legacy-ep:gpt-4o", "modelName": "gpt-4o", "enabled": true, "priority": 50, "capabilities": ["chat"]}]
+            }]
+        }),
+    );
+    let cfg_after = load_active_config(&store);
+    assert!(cfg_after.llm.connections.iter().any(|c| c.id == "managed-imp"));
+    assert!(cfg_after.llm.connections.iter().any(|c| c.id == "local:qwen3"));
+    let vault = Vault::open(vault_path).unwrap();
+    assert_eq!(
+        vault.get_secret(&vault_secret_key("managed-imp")).unwrap().as_deref(),
+        Some("managed-secret")
+    );
+    assert!(rep_resp["profiles"].as_array().unwrap().len() >= 3);
+
+    // 2. POST /api/chat/conversations/{id} with operation:"prepare" (no request_digest)
+    let prep = post_json(
+        &format!("/api/chat/conversations/{conv_id}"),
+        json!({
+            "operation": "prepare",
+            "identity": {
+                "source_host_id": host_id,
+                "client_id": "ios-1",
+                "conversation_id": conv_id,
+                "submission_id": "sub-prep-1",
+                "user_message_id": "u-prep-1",
+                "assistant_message_id": "sub-prep-1:assistant"
+            },
+            "request": {"content": "hello"}
+        }),
+    );
+    assert_eq!(prep["source_host_id"], host_id);
+    assert_eq!(prep["result"]["identity"]["submission_id"], "sub-prep-1");
+    let digest = prep["result"]["request_digest"].as_str().unwrap().to_string();
+    assert_eq!(digest.len(), 64);
+
+    // 3. POST /api/chat/conversations/{id} with operation:"observe" wraps with wrap_paired_envelope
+    let obs_sub = post_json(
+        &format!("/api/chat/conversations/{conv_id}"),
+        json!({
+            "operation": "observe",
+            "identity": {
+                "source_host_id": host_id,
+                "client_id": "ios-1",
+                "conversation_id": conv_id,
+                "submission_id": "sub-prep-1",
+                "user_message_id": "u-prep-1",
+                "assistant_message_id": "sub-prep-1:assistant"
+            },
+            "request_digest": digest
+        }),
+    );
+    assert_eq!(obs_sub["source_host_id"], host_id);
+    assert_eq!(obs_sub["result"]["phase"], "prepared");
+
+    // 4. GET /api/chat/conversations/{id}/observe returns non-null admission + 16-field terminal_seal + 10-field result
+    let obs = get_json(&format!(
+        "/api/chat/conversations/{conv_id}/observe?expected_host_id={host_id}&client_id=ios-1&expected_run_id=run-1&assistant_message_id=asst-1"
+    ));
+    assert_eq!(obs["source_host_id"], host_id);
+    assert!(obs["result"]["admission"].is_object());
+    assert_eq!(obs["result"]["admission"]["sequence"], "1");
+    let seal = obs["result"]["terminal_seal"].as_object().unwrap();
+    assert_eq!(seal.len(), 16);
+    let run_res = seal["result"].as_object().unwrap();
+    assert_eq!(run_res.len(), 10);
+    assert_eq!(
+        run_res["input"]["applications_digest"],
+        "e0aeaeba0c6a61c02edcc186902f9b41dd82835d01b780eb0e479cc513ea66dd"
+    );
+    assert_eq!(run_res["value"]["kind"], "answered");
+
+    // 5. POST /api/chat/conversations/{id}/compact includes compacted, checkpoint_revision, committed_at_ms, context
+    let compact = post_json(
+        &format!("/api/chat/conversations/{conv_id}/compact"),
+        json!({ "expected_host_id": host_id, "conversation_id": conv_id }),
+    );
+    assert_eq!(compact["source_host_id"], host_id);
+    assert_eq!(compact["result"]["conversation_id"], conv_id);
+    assert!(compact["result"]["checkpoint_revision"].as_u64().unwrap() >= 1);
+    assert!(compact["result"]["committed_at_ms"].as_i64().unwrap() > 0);
+    assert!(compact["result"]["context"]["context_window_tokens"].as_u64().unwrap() > 0);
+    assert_eq!(
+        compact["result"]["compacted"].as_bool().unwrap(),
+        compact["result"]["context"]["replaced_item_count"].as_u64().unwrap() > 0
+    );
+
+    // 6. POST /api/chat/conversations/{id}/events includes head and dispatch
+    let ev = post_json(
+        &format!("/api/chat/conversations/{conv_id}/events"),
+        json!({
+            "expected_host_id": host_id,
+            "expected_source_store_epoch": "ep-1",
+            "conversation_id": conv_id,
+            "client_id": "ios-1"
+        }),
+    );
+    assert_eq!(ev["source_host_id"], host_id);
+    assert!(ev["result"].as_object().unwrap().contains_key("head"));
+    assert!(ev["result"].as_object().unwrap().contains_key("dispatch"));
+
+    // 7. POST /api/chat/conversations/{id}/cancel with command_id returns {source_host_id, result: {cancelled: true, command_id}}
+    let cancel_cmd = post_json(
+        &format!("/api/chat/conversations/{conv_id}/cancel"),
+        json!({
+            "expected_host_id": host_id,
+            "expected_source_store_epoch": "ep-1",
+            "conversation_id": conv_id,
+            "client_id": "ios-1",
+            "command_id": "cmd-ui-1",
+            "request_digest": "0".repeat(64)
+        }),
+    );
+    assert_eq!(cancel_cmd["source_host_id"], host_id);
+    assert_eq!(cancel_cmd["result"]["cancelled"], true);
+    assert_eq!(cancel_cmd["result"]["command_id"], "cmd-ui-1");
+
+    // 8. POST /api/chat/conversations/{id}/messages with task_child_window wraps in paired envelope
+    let tcw = post_json(
+        &format!("/api/chat/conversations/{conv_id}/messages"),
+        json!({
+            "operation": "task_child_window",
+            "destination": { "child_conversation_id": conv_id },
+            "limit": 20
+        }),
+    );
+    assert_eq!(tcw["source_host_id"], host_id);
+    assert!(tcw.get("result").is_some());
+
+    srv_handle.join().unwrap();
 }

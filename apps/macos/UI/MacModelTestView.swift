@@ -115,6 +115,13 @@ struct MacModelTestView: View {
         }
     }
 
+    private nonisolated struct ProviderSummary: Equatable, Sendable {
+        var isConfigured = false
+        var profileID: String?
+        var modelName = ""
+        var displayModel = ""
+    }
+
     @State private var target = Target.local
     @State private var prompt = macModelTestText("mac.model_test.default_prompt", "Explain what Nola can do in three concise bullet points.")
     @State private var response = ""
@@ -127,6 +134,9 @@ struct MacModelTestView: View {
     @State private var runTask: Task<Void, Never>?
     @State private var runGeneration = UUID()
     @State private var compactPane = CompactPane.setup
+    @State private var providerSummary = ProviderSummary()
+    @State private var providerRefreshTask: Task<Void, Never>?
+    @State private var providerRefreshGeneration = 0
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -147,7 +157,18 @@ struct MacModelTestView: View {
             }
         }
         .background(MacPageBackground())
-        .onDisappear { stop() }
+        .task { await refreshProviderSummary() }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in
+            scheduleProviderSummaryRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in
+            scheduleProviderSummaryRefresh()
+        }
+        .onDisappear {
+            providerRefreshTask?.cancel()
+            providerRefreshTask = nil
+            stop()
+        }
     }
 
     private var compactContent: some View {
@@ -184,7 +205,7 @@ struct MacModelTestView: View {
             Text(macModelTestText("mac.model_test.subtitle", "Run the production inference path and inspect timing and output"))
         } actions: {
             Button(macModelTestText("mac.model_test.parameters", "Parameters…"), action: openParameters)
-                .disabled(target == .provider && MacAppleChatConfigurationStore.shared.load()?.profileID == nil)
+                .disabled(target == .provider && providerSummary.profileID == nil)
             Button(isRunning ? macModelTestText("mac.model_test.stop", "Stop") : macModelTestText("mac.model_test.run", "Run")) {
                 isRunning ? stop() : run()
             }
@@ -320,7 +341,7 @@ struct MacModelTestView: View {
         case .local:
             return MacLocalModelConfigurationStore.shared.isSelectedModelReady
         case .provider:
-            return MacAppleChatConfigurationStore.shared.load() != nil
+            return providerSummary.isConfigured
         }
     }
 
@@ -330,10 +351,35 @@ struct MacModelTestView: View {
             let store = MacLocalModelConfigurationStore.shared
             return store.isSelectedModelReady ? store.selectedProfile.displayName : macModelTestText("mac.model_test.no_local_model", "No local model downloaded")
         case .provider:
-            return MacAppleChatConfigurationStore.shared.displayValues().model.isEmpty
+            return providerSummary.displayModel.isEmpty
                 ? macModelTestText("mac.model_test.not_configured", "Not configured")
-                : MacAppleChatConfigurationStore.shared.displayValues().model
+                : providerSummary.displayModel
         }
+    }
+
+    private func scheduleProviderSummaryRefresh() {
+        providerRefreshTask?.cancel()
+        providerRefreshTask = Task { @MainActor in
+            await refreshProviderSummary()
+        }
+    }
+
+    private func refreshProviderSummary() async {
+        providerRefreshGeneration &+= 1
+        let generation = providerRefreshGeneration
+        let summary = await Task.detached(priority: .userInitiated) { () -> ProviderSummary in
+            let store = MacAppleChatConfigurationStore.shared
+            let loaded = store.load()
+            let displayModel = loaded?.model ?? store.displayValues().model
+            return ProviderSummary(
+                isConfigured: loaded != nil,
+                profileID: loaded?.profileID,
+                modelName: loaded?.model ?? "",
+                displayModel: displayModel
+            )
+        }.value
+        guard !Task.isCancelled, providerRefreshGeneration == generation else { return }
+        providerSummary = summary
     }
 
     private func run() {
@@ -367,7 +413,11 @@ struct MacModelTestView: View {
                         parameters: store.parameters(for: profile)
                     )
                 case .provider:
-                    guard let configuration = try MacAppleChatConfigurationStore.shared.loadThrowing() else {
+                    let loadedConfiguration = try await Task.detached(priority: .userInitiated) {
+                        try MacAppleChatConfigurationStore.shared.loadThrowing()
+                    }.value
+                    try Task.checkCancellation()
+                    guard let configuration = loadedConfiguration else {
                         throw NSError(
                             domain: "MacModelTestView",
                             code: 1,
@@ -434,10 +484,10 @@ struct MacModelTestView: View {
                 isLocal: true
             ))
         case .provider:
-            guard let configuration = MacAppleChatConfigurationStore.shared.load(),
-                  let profileID = configuration.profileID else { return }
+            guard let profileID = providerSummary.profileID else { return }
+            let modelName = providerSummary.modelName.isEmpty ? profileID : providerSummary.modelName
             openWindow(value: MacModelParametersRoute(
-                modelName: profileID, isLocal: false, displayName: configuration.model
+                modelName: profileID, isLocal: false, displayName: modelName
             ))
         }
     }

@@ -3045,19 +3045,40 @@ private struct HostToolScreenshotView: View {
     @MainActor
     private func loadImageIfNeeded() async {
         guard imageData == nil else { return }
+        let url = screenshotURL
+        let boundPin = boundPinnedSHA256
         do {
-            let pin: String? = {
-                if let boundPinnedSHA256 { return boundPinnedSHA256 }
-                guard let host = screenshotURL.host?.lowercased() else { return nil }
-                return ModelSelectionManager.getAvailableModels().first(where: { model in
+            let resolved: (pin: String?, token: String?) = await Task.detached(priority: .userInitiated) {
+                guard let scheme = url.scheme?.lowercased(),
+                      let host = url.host?.lowercased() else {
+                    return (boundPin, nil)
+                }
+                let matched = ModelSelectionManager.getAvailableModels().first(where: { model in
                     guard model.isWebBackend,
                           let base = model.baseURL.flatMap(URL.init(string:)) else { return false }
-                    return base.host?.lowercased() == host && base.port == screenshotURL.port
-                })?.tlsCertificateSHA256
-            }()
+                    return base.scheme?.lowercased() == scheme
+                        && base.host?.lowercased() == host
+                        && base.port == url.port
+                })
+                let pin = boundPin ?? matched?.tlsCertificateSHA256
+                var token = matched?.resolvedAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if token?.isEmpty != false {
+                    var originComponents = URLComponents()
+                    originComponents.scheme = scheme
+                    originComponents.host = host
+                    originComponents.port = url.port
+                    if let originURL = originComponents.url,
+                       ModelSelectionManager.pairedWebHostIdentity(for: originURL) != nil {
+                        token = ModelSelectionManager.webHostToken(for: originURL.absoluteString)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                return (pin, token?.isEmpty == false ? token : nil)
+            }.value
             imageData = try await WebAgentProvider.fetchHostResource(
-                from: screenshotURL,
-                pinnedCertificateSHA256: pin
+                from: url,
+                token: resolved.token,
+                pinnedCertificateSHA256: resolved.pin
             )
             loadFailed = false
         } catch {

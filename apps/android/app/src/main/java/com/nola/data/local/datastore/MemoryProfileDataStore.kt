@@ -267,9 +267,10 @@ class MemoryProfileDataStore @Inject constructor(
         try { applicationRuntime.saveDataSource(source) } finally { revision.update { it + 1 } }
     }
 
-    suspend fun refreshDataSource(source: CustomDataSourceConfig, read: suspend () -> CustomDataSourceConfig): CustomDataSourceConfig {
-        return try { applicationRuntime.refreshDataSource(source, read) } finally { revision.update { it + 1 } }
-    }
+    suspend fun refreshDataSource(source: CustomDataSourceConfig, read: suspend () -> CustomDataSourceConfig): CustomDataSourceConfig =
+        withContext(Dispatchers.IO) {
+            try { applicationRuntime.refreshDataSource(source, read) } finally { revision.update { it + 1 } }
+        }
 
     fun deleteDataSource(id: String) {
         applicationRuntime.deleteDataSource(id)
@@ -300,44 +301,46 @@ class MemoryProfileDataStore @Inject constructor(
         revision.update { it + 1 }
     }
 
-    suspend fun addAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") {
-        modelConfiguration.validateInput(endpoint, model)
-        val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
-        if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
-            "Unable to store model account credential"
+    suspend fun addAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") =
+        withContext(Dispatchers.IO) {
+            modelConfiguration.validateInput(endpoint, model)
+            val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
+            if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
+                "Unable to store model account credential"
+            }
+            try {
+                modelConfiguration.add(endpoint, model, wireProtocol, reference)
+            } catch (error: Throwable) {
+                if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
+                throw error
+            }
+            pruneOrphanedModelSecrets()
+            revision.update { it + 1 }
         }
-        try {
-            modelConfiguration.add(endpoint, model, wireProtocol, reference)
-        } catch (error: Throwable) {
-            if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
-            throw error
-        }
-        pruneOrphanedModelSecrets()
-        revision.update { it + 1 }
-    }
 
-    suspend fun saveAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") {
-        modelConfiguration.validateInput(endpoint, model)
-        val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
-        if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
-            "Unable to store model account credential"
+    suspend fun saveAgentLlmConfig(endpoint: String, apiKey: String, model: String, wireProtocol: String = "chat_completions") =
+        withContext(Dispatchers.IO) {
+            modelConfiguration.validateInput(endpoint, model)
+            val reference = apiKey.trim().takeIf { it.isNotEmpty() }?.let { "android-model:" + java.util.UUID.randomUUID() }
+            if (reference != null) check(secureTokenStore.saveModelAccountSecret(reference, apiKey.trim())) {
+                "Unable to store model account credential"
+            }
+            try {
+                modelConfiguration.save(endpoint, model, wireProtocol, reference)
+            } catch (error: Throwable) {
+                if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
+                throw error
+            }
+            pruneOrphanedModelSecrets()
+            revision.update { it + 1 }
         }
-        try {
-            modelConfiguration.save(endpoint, model, wireProtocol, reference)
-        } catch (error: Throwable) {
-            if (reference != null) secureTokenStore.deleteModelAccountSecret(reference)
-            throw error
-        }
-        pruneOrphanedModelSecrets()
-        revision.update { it + 1 }
-    }
 
-    suspend fun saveResponseStyle(style: String) {
+    suspend fun saveResponseStyle(style: String) = withContext(Dispatchers.IO) {
         putProductSetting(RESPONSE_STYLE_SETTING_KEY, style)
         revision.update { it + 1 }
     }
 
-    suspend fun saveMemoryEnabled(enabled: Boolean) {
+    suspend fun saveMemoryEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
         applicationRuntime.putProductSetting(
             MEMORY_ENABLED_SETTING_KEY,
             json.encodeToString(Setting(schemaVersion = 1, value = enabled)),
@@ -346,7 +349,7 @@ class MemoryProfileDataStore @Inject constructor(
         revision.update { it + 1 }
     }
 
-    suspend fun saveAutoCompactTriggerPercent(percent: Int) {
+    suspend fun saveAutoCompactTriggerPercent(percent: Int) = withContext(Dispatchers.IO) {
         require(percent in 50..95) { "Invalid auto-compact trigger percentage: $percent" }
         applicationRuntime.putProductSetting(
             CHAT_PREFERENCES_SETTING_KEY,
@@ -356,7 +359,7 @@ class MemoryProfileDataStore @Inject constructor(
         revision.update { it + 1 }
     }
 
-    suspend fun clearAll() {
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
         modelConfiguration.clearAll()
         secureTokenStore.clearModelAccountSecrets()
         secureTokenStore.deleteLocalModelApiKey()
@@ -406,13 +409,13 @@ class MemoryProfileDataStore @Inject constructor(
         return untouched + byLogicalKey.values.toList()
     }
 
-    suspend fun getOrCreateResourcePrincipalId(): String {
+    suspend fun getOrCreateResourcePrincipalId(): String = withContext(Dispatchers.IO) {
         val existing: String = productSetting(RESOURCE_PRINCIPAL_SETTING_KEY, "")
-        if (existing.isNotBlank()) return existing
+        if (existing.isNotBlank()) return@withContext existing
         val principalId = UUID.randomUUID().toString().lowercase()
         putProductSetting(RESOURCE_PRINCIPAL_SETTING_KEY, principalId)
         revision.update { it + 1 }
-        return principalId
+        principalId
     }
 
     private inline fun <reified T> productSetting(key: String, default: T): T {

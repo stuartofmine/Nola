@@ -28,10 +28,10 @@ public final class LocalJSONStorage: @unchecked Sendable {
     private let applicationRuntime: IOSApplicationRuntime
     
     // File paths
-    private var remindersPath: URL { storageDir.appendingPathComponent("reminders.json") }
-    private var journalsPath: URL { storageDir.appendingPathComponent("journals.json") }
-    private var metadataPath: URL { storageDir.appendingPathComponent("metadata.json") }
-    private var scheduledActionRunsPath: URL { storageDir.appendingPathComponent("scheduled_action_runs.json") }
+    nonisolated private var remindersPath: URL { storageDir.appendingPathComponent("reminders.json") }
+    nonisolated private var journalsPath: URL { storageDir.appendingPathComponent("journals.json") }
+    nonisolated private var metadataPath: URL { storageDir.appendingPathComponent("metadata.json") }
+    nonisolated private var scheduledActionRunsPath: URL { storageDir.appendingPathComponent("scheduled_action_runs.json") }
     
     public convenience init() throws {
         try self.init(applicationRuntime: IOSApplicationRuntime.shared)
@@ -204,7 +204,7 @@ public final class LocalJSONStorage: @unchecked Sendable {
         }
     }
     
-    public func clearAll() throws {
+    nonisolated public func clearAll() throws {
         queue.sync {
             let fm = FileManager.default
             try? fm.removeItem(at: remindersPath)
@@ -507,11 +507,11 @@ public final class LocalJSONStorage: @unchecked Sendable {
         }
     }
     
-    public func getAllUserTasks() throws -> [UserTask] {
+    nonisolated public func getAllUserTasks() throws -> [UserTask] {
         try queue.sync { try canonicalUserTasks().sorted { $0.updatedAt > $1.updatedAt } }
     }
     
-    public func deleteUserTask(id: UUID) throws {
+    nonisolated public func deleteUserTask(id: UUID) throws {
         try queue.sync {
             _ = try applicationRuntime.deleteAutomationDefinition(
                 id: id.uuidString,
@@ -520,7 +520,7 @@ public final class LocalJSONStorage: @unchecked Sendable {
         }
     }
 
-    private func canonicalUserTasks() throws -> [UserTask] {
+    nonisolated private func canonicalUserTasks() throws -> [UserTask] {
         try applicationRuntime.listAutomationDefinitions().compactMap { definition in
             guard definition.deletedAtMs == nil, case .userTask(let task) = definition.executionSpec else { return nil }
             return try task.task(definition: definition)
@@ -538,6 +538,6 @@ public final class LocalJSONStorage: @unchecked Sendable {
     }
 }
 
-private extension Date {
+nonisolated private extension Date {
     var millisecondsSince1970: Int64 { Int64((timeIntervalSince1970 * 1_000).rounded()) }
 }

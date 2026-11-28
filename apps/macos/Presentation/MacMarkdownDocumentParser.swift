@@ -73,7 +73,7 @@ nonisolated enum MacMarkdownTextParser {
                 let label = String(text.dropFirst(3).prefix { $0 != "]" })
                 return [.footnote(label: label, text: String(text[end.upperBound...]).trimmingCharacters(in: .whitespaces))]
             }
-            return [.paragraph(text)]
+            return splitDisplayMathBlocks(from: text)
         case let list as OrderedList:
             return list.children.enumerated().map { index, child in
                 .listItem(marker: "\(list.startIndex + UInt(index)).", children: child.children.flatMap { blocks($0, source: source) })
@@ -100,6 +100,45 @@ nonisolated enum MacMarkdownTextParser {
             // HTML is inert text, never executable content in a native answer.
             return [.paragraph(source.raw(node.range))]
         }
+    }
+
+    /// Promote standalone `$$...$$` / `\[...\]` display equations to dedicated centered math blocks
+    /// instead of crowding them inline into prose paragraphs.
+    private static func splitDisplayMathBlocks(from text: String) -> [MacMarkdownTextBlock] {
+        let segments = MacMarkdownMath.segments(text)
+        guard segments.contains(where: {
+            if case .math(_, let display, _) = $0 { return display }
+            return false
+        }) else {
+            return [.paragraph(text)]
+        }
+        var blocks: [MacMarkdownTextBlock] = []
+        var pendingProse = ""
+        func flushProse() {
+            let trimmed = pendingProse.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                blocks.append(.paragraph(trimmed))
+            }
+            pendingProse = ""
+        }
+        for segment in segments {
+            switch segment {
+            case .text(let value):
+                pendingProse += value
+            case .math(let latex, let display, let original):
+                if display {
+                    flushProse()
+                    let cleaned = latex.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleaned.isEmpty {
+                        blocks.append(.mathBlock(cleaned))
+                    }
+                } else {
+                    pendingProse += original
+                }
+            }
+        }
+        flushProse()
+        return blocks.isEmpty ? [.paragraph(text)] : blocks
     }
 
     nonisolated private struct Source {
@@ -171,7 +210,7 @@ nonisolated enum MacMarkdownTextParser {
                 case .heading(_, let text), .paragraph(let text): return inline(text)
                 case .listItem(let marker, let children): return marker + " " + render(children).replacingOccurrences(of: "\n", with: "\n  ")
                 case .quote(let children): return render(children)
-                case .code(_, let text), .mermaid(let text): return text
+                case .code(_, let text), .mermaid(let text), .mathBlock(let text): return text
                 case .footnote(let label, let text): return "[\(label)] " + inline(text)
                 case .divider: return "———"
                 case .table(let headers, let rows): return ([headers] + rows).map { $0.map(inline).joined(separator: "\t") }.joined(separator: "\n")

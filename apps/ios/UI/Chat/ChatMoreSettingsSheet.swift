@@ -299,26 +299,28 @@ struct ChatMoreSettingsSheet: View {
                     }
                     .accessibilityIdentifier("chat-conversation-model-limits")
                 }
-                NavigationLink {
-                    ModelParametersView(
-                        modelID: selectedModel.id,
-                        displayName: selectedModel.name,
-                        isLocal: selectedModel.isLocal
-                    )
-                    .id(selectedModel.id)
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(tr("chat.more_settings.model_output.advanced", "Advanced model defaults", comment: "Advanced model defaults entry"))
-                            Text(selectedModel.name)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                if !selectedModel.isWebBackend {
+                    NavigationLink {
+                        ModelParametersView(
+                            modelID: selectedModel.id,
+                            displayName: selectedModel.name,
+                            isLocal: selectedModel.isLocal
+                        )
+                        .id(selectedModel.id)
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(tr("chat.more_settings.model_output.advanced", "Advanced model defaults", comment: "Advanced model defaults entry"))
+                                Text(selectedModel.name)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "slider.horizontal.3")
                         }
-                    } icon: {
-                        Image(systemName: "slider.horizontal.3")
                     }
+                    .accessibilityIdentifier("chat-model-defaults")
                 }
-                .accessibilityIdentifier("chat-model-defaults")
             } else {
                 Text(tr("chat.more_settings.model.not_selected", "No model selected", comment: "Fallback label when no model is selected"))
                     .foregroundStyle(.secondary)
@@ -328,7 +330,7 @@ struct ChatMoreSettingsSheet: View {
         } footer: {
             if let selectedModel, !selectedModel.isLocal && !selectedModel.isWebBackend {
                 Text(tr("chat.more_settings.model_output.scoped_footer", "Conversation limits affect only this conversation; advanced defaults apply to every conversation using the model.", comment: "Distinguishes session overrides from global model defaults"))
-            } else {
+            } else if selectedModel?.isWebBackend != true {
                 Text(tr("chat.more_settings.model_output.footer", "Advanced defaults are saved for the selected model and apply to every conversation using it.", comment: "Section footer for model and output settings"))
             }
         }
@@ -592,6 +594,7 @@ nonisolated struct IOSConversationGenerationDraft: Equatable {
 private struct IOSConversationGenerationSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     let model: ModelInfo
+    let initialOverride: IOSConversationGenerationOverride
     let onSave: (IOSConversationGenerationOverride) throws -> Void
     @Binding private var preventsSheetDismiss: Bool
     @Binding private var editorActive: Bool
@@ -612,10 +615,11 @@ private struct IOSConversationGenerationSettingsView: View {
         onSave: @escaping (IOSConversationGenerationOverride) throws -> Void
     ) {
         self.model = model
+        self.initialOverride = initialOverride
         self.onSave = onSave
         _preventsSheetDismiss = preventsSheetDismiss
         _editorActive = editorActive
-        let defaults = ModelParametersStore.shared.loadParameters(for: model.id, isLocal: false)
+        let defaults = ModelParameters.defaults(isLocal: false)
         let initial = IOSConversationGenerationDraft(
             contextEnabled: initialOverride.maxContextLength != nil,
             outputEnabled: initialOverride.maxOutputTokens != nil,
@@ -670,6 +674,22 @@ private struct IOSConversationGenerationSettingsView: View {
             preventsSheetDismiss = changed
         }
         .onAppear { editorActive = true }
+        .task(id: model.id) {
+            let modelID = model.id
+            let store = ModelParametersStore.shared
+            let defaults = await Task.detached(priority: .userInitiated) {
+                store.loadParameters(for: modelID, isLocal: false)
+            }.value
+            guard !Task.isCancelled, !hasChanges else { return }
+            let loaded = IOSConversationGenerationDraft(
+                contextEnabled: initialOverride.maxContextLength != nil,
+                outputEnabled: initialOverride.maxOutputTokens != nil,
+                contextText: String(initialOverride.maxContextLength ?? defaults.maxContextLength),
+                outputText: String(initialOverride.maxOutputTokens ?? defaults.maxOutputTokens)
+            )
+            initialDraft = loaded
+            editor = loaded
+        }
         .onDisappear {
             editorActive = false
             preventsSheetDismiss = false

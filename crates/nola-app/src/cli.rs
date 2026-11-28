@@ -431,7 +431,7 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
             "config" => return handle_config_cmd(&store, &workspace, &opts.positional[1..]),
             "model" => return handle_model_cmd(&store, &workspace, &opts.positional[1..]),
             "model-import-bridge" => {
-                return handle_model_import_bridge_cmd(&store, &opts.positional[1..])
+                return handle_model_import_bridge_cmd(&store, &suite, &opts.positional[1..])
             }
             "model-siwc-bridge" => {
                 return handle_model_siwc_bridge_cmd(&store, &db_path, &opts.positional[1..])
@@ -538,12 +538,14 @@ pub fn run_with_args(args: &[String]) -> Result<u8, String> {
     )
 }
 
+#[derive(Default)]
 struct HostRunOverrides {
     session_id: Option<String>,
     submission_id: Option<String>,
     user_message_id: Option<String>,
     assistant_message_id: Option<String>,
     resume: Option<bool>,
+    connection_id: Option<String>,
     model_id: Option<String>,
     endpoint: Option<String>,
     api_key: Option<String>,
@@ -555,6 +557,10 @@ struct HostRunOverrides {
     max_output_tokens: Option<usize>,
     max_iterations: Option<usize>,
     context_window_tokens: Option<usize>,
+    selected_experts: Vec<Value>,
+    expert_mentions: Vec<Value>,
+    context_components: Vec<Value>,
+    attachments: Vec<Value>,
 }
 
 fn extract_reasoning_effort_from_req(req: &Value) -> Option<String> {
@@ -724,6 +730,7 @@ fn handle_run_subcommand(
 
         if req
             .get("operation")
+            .or_else(|| req.get("type"))
             .and_then(|v| v.as_str())
             .is_some_and(|op| op.eq_ignore_ascii_case("cancel"))
         {
@@ -745,6 +752,18 @@ fn handle_run_subcommand(
                 "{}",
                 json!({"ok": true, "cancelled": true, "session_id": sid})
             );
+            let _ = io::stdout().flush();
+            return Ok(0);
+        }
+
+        if req
+            .get("operation")
+            .or_else(|| req.get("type"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|op| op.eq_ignore_ascii_case("goal_control"))
+        {
+            let receipt = handle_host_goal_control_request(store, suite, &req)?;
+            println!("{receipt}");
             let _ = io::stdout().flush();
             return Ok(0);
         }
@@ -850,12 +869,52 @@ fn handle_run_subcommand(
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(ToString::to_string);
+        let connection_id = req
+            .get("connection_id")
+            .or_else(|| req.get("connectionId"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                req.get("model_profile_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|pid| pid.strip_prefix("conn:"))
+                    .and_then(|rest| rest.split(':').next())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            });
+        let selected_experts = req
+            .get("selected_experts")
+            .or_else(|| req.get("selectedExperts"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let expert_mentions = req
+            .get("expert_mentions")
+            .or_else(|| req.get("expertMentions"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let context_components = req
+            .get("context_components")
+            .or_else(|| req.get("contextComponents"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let attachments = req
+            .get("attachments")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
         let overrides = HostRunOverrides {
             session_id,
             submission_id,
             user_message_id,
             assistant_message_id,
             resume,
+            connection_id,
             model_id,
             endpoint,
             api_key,
@@ -867,6 +926,10 @@ fn handle_run_subcommand(
             max_output_tokens,
             max_iterations,
             context_window_tokens,
+            selected_experts,
+            expert_mentions,
+            context_components,
+            attachments,
         };
         return execute_agent_turn(
             store,
@@ -954,6 +1017,9 @@ fn execute_agent_turn(
             route.context_window = cw;
         }
     }
+    if nola_llm::normalized_wire_reasoning_effort(route.reasoning_effort.as_deref()).is_some() {
+        route.capabilities.reasoning = true;
+    }
     if opts.no_tools {
         route.capabilities.tool_calls = false;
     }
@@ -967,13 +1033,25 @@ fn execute_agent_turn(
     let caller: Arc<dyn ModelCaller> =
         Arc::new(HttpModelCaller::new(300).map_err(|e| e.to_string())?);
     let workspace_trusted = profile == PermissionProfile::AllowAll;
-    let policy = EffectivePolicy::load(
+    let mut policy = EffectivePolicy::load(
         workspace,
         home.as_deref(),
         workspace_trusted,
         Some(profile),
         network_allowed,
     );
+    if overrides.as_ref().is_some_and(|ov| {
+        ov.context_components.iter().any(|c| {
+            c.get("kind")
+                .and_then(|v| v.as_str())
+                .is_some_and(|k| k.eq_ignore_ascii_case("plan_mode"))
+                || c.get("id")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|id| id.contains("plan-mode") || id.contains("plan_mode"))
+        })
+    }) {
+        policy = policy.with_plan_mode(true);
+    }
 
     let mut registry = if opts.no_tools {
         ToolRegistry::default()
@@ -985,6 +1063,7 @@ fn execute_agent_turn(
 
     let cancel = Arc::new(AtomicBool::new(false));
     let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancel));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&cancel));
     let hooks = HookRunner::load(workspace, home.as_deref(), workspace_trusted);
 
     let mut session_id = overrides
@@ -1056,6 +1135,9 @@ fn execute_agent_turn(
         let pu_reader = Arc::clone(&pending_user_inputs);
         let closed_reader = Arc::clone(&stdin_closed);
         let cancel_reader = Arc::clone(&cancel);
+        let store_reader = store.clone();
+        let suite_reader = Arc::clone(suite);
+        let stdout_lock_reader = Arc::clone(&stdout_lock);
         std::thread::spawn(move || {
             let stdin = io::stdin();
             for line_res in stdin.lock().lines() {
@@ -1126,6 +1208,41 @@ fn execute_agent_turn(
                     "cancel" => {
                         cancel_reader.store(true, Ordering::SeqCst);
                     }
+                    "goal_control" => {
+                        let action = msg
+                            .get("action")
+                            .or_else(|| msg.pointer("/payload/action"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_ascii_lowercase();
+                        if matches!(action.as_str(), "pause" | "cancel") {
+                            cancel_reader.store(true, Ordering::SeqCst);
+                        }
+                        let resp = match handle_host_goal_control_request(
+                            &store_reader,
+                            &suite_reader,
+                            &msg,
+                        ) {
+                            Ok(mut v) => {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("type".into(), json!("goal_control_result"));
+                                    if let Some(ref rid) = req_id {
+                                        obj.insert("request_id".into(), json!(rid));
+                                    }
+                                }
+                                v
+                            }
+                            Err(err) => json!({
+                                "type": "goal_control_result",
+                                "ok": false,
+                                "request_id": req_id,
+                                "error": err
+                            }),
+                        };
+                        let _g = stdout_lock_reader.lock().unwrap();
+                        emit_compact_json_line(&resp);
+                    }
                     _ => {
                         // Accept macOS legacy / untyped control frames (e.g. `decision` / `resolution` or `answer`)
                         if let Some(allow) = parse_permission_allow(&msg) {
@@ -1174,11 +1291,18 @@ fn execute_agent_turn(
         let cancel_ap = Arc::clone(&cancel);
         let out_lock_ap = Arc::clone(&stdout_lock);
         let sid_ap = effective_session_id.clone().unwrap_or_default();
+        let ws_ap = workspace.to_path_buf();
         let approval: ApprovalCallback = Arc::new(move |spec, args, reason| {
             if closed_ap.load(Ordering::SeqCst) || cancel_ap.load(Ordering::SeqCst) {
                 return false;
             }
             let req_id = new_id();
+            let resource = nola_engine::policy::primary_resource_pattern(
+                &spec.schema.name,
+                args,
+                &ws_ap,
+            )
+            .unwrap_or_else(|| spec.schema.name.clone());
             let (tx, rx) = mpsc::channel::<bool>();
             pa_cb.lock().unwrap().insert(req_id.clone(), tx);
             {
@@ -1191,6 +1315,7 @@ fn execute_agent_turn(
                         "call_id": req_id,
                         "tool": spec.schema.name,
                         "tool_name": spec.schema.name,
+                        "resource": resource,
                         "reason": reason,
                         "arguments": args,
                         "session_id": sid_ap
@@ -1320,6 +1445,9 @@ fn execute_agent_turn(
             text: format!("Preferred response language/locale: {lang}"),
         });
     }
+    // Inject saved ExpertPeer directory and resolve any @expert mentions or selected_experts
+    // so Nola immediately recognizes user-created experts without probing SQLite or files.
+    append_expert_and_host_context_blocks(store, prompt, overrides.as_ref(), &mut frozen_blocks);
     if !opts.allowed_dirs.is_empty()
         || !opts.skill_dirs.is_empty()
         || opts.no_skills
@@ -1367,6 +1495,7 @@ fn execute_agent_turn(
     let is_eval = std::env::var("NOLA_BENCHMARK_TOKEN").is_ok();
     let json_mode = opts.json_mode || opts.host_request_stdin;
 
+    let route_endpoint = route.endpoint.clone();
     let run_cfg = AgentRunConfig {
         session_id: effective_session_id.clone(),
         resume,
@@ -1461,6 +1590,14 @@ fn execute_agent_turn(
                 let _ = io::stdout().flush();
             }
         };
+        // Immediately notify MacLocalAgentRuntime that this canonical Run has been admitted
+        // so mid-stream cancellation (Stop button) and session recovery are live from token 0.
+        emit_line(&json!({
+            "type": "submission_admitted",
+            "conversation_id": conv_id,
+            "run_id": run_id,
+            "assistant_message_id": assistant_msg_id
+        }));
         let emit_trace = |kind: &str,
                           status: &str,
                           span_id: Option<&str>,
@@ -1526,7 +1663,25 @@ fn execute_agent_turn(
                 now_ms(),
             );
         }
-        let run_res = engine.run(&ctx, prompt, run_cfg, |ev| match ev {
+        let effective_prompt = format_turn_prompt_with_attachments(prompt, overrides.as_ref());
+        let mut next_part_ordinal: u64 = 0;
+        let mut alloc_ordinal = || {
+            let v = next_part_ordinal;
+            next_part_ordinal += 1;
+            v
+        };
+        let mut reasoning_seq: usize = 0;
+        let mut active_reasoning_part: Option<(String, u64, String)> = None;
+        let mut active_text_part: Option<(String, u64)> = None;
+        let mut last_reasoning_publish =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut last_text_publish =
+            std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut tool_part_meta: std::collections::HashMap<String, (u64, String, Value)> =
+            std::collections::HashMap::new();
+        let mut published_any_reasoning_part = false;
+
+        let run_res = engine.run(&ctx, &effective_prompt, run_cfg, |ev| match ev {
             AgentEvent::SessionStarted { ref session_id, .. } => {
                 if !session_id.trim().is_empty() {
                     live_session_id = session_id.clone();
@@ -1534,10 +1689,103 @@ fn execute_agent_turn(
                 emit_trace("run.started", "running", None, json!({}));
             }
             AgentEvent::TextDelta { ref delta } => {
+                if let Some((r_pid, r_ord, r_text)) = active_reasoning_part.take() {
+                    let cursor = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &r_pid,
+                        r_ord,
+                        "reasoning",
+                        json!({
+                            "state": "completed",
+                            "title": {"kind": "inline", "value": "Thinking"}
+                        }),
+                        &[("reasoning_summary", r_text)],
+                    );
+                    emit_line(&json!({
+                        "type": "assistant_journal_committed_v1",
+                        "session_id": conv_id,
+                        "source_host_id": source_host_id,
+                        "through": cursor
+                    }));
+                }
                 acc_text.push_str(delta);
+                if !delta.is_empty() {
+                    let is_first = active_text_part.is_none();
+                    let (t_pid, t_ord) = active_text_part.get_or_insert_with(|| {
+                        (format!("{assistant_msg_id}:text"), alloc_ordinal())
+                    });
+                    if is_first
+                        || last_text_publish.elapsed() >= std::time::Duration::from_millis(100)
+                    {
+                        last_text_publish = std::time::Instant::now();
+                        let cursor = crate::daemon::publish_journal_part(
+                            store,
+                            &mut run_state,
+                            t_pid,
+                            *t_ord,
+                            "text",
+                            json!({
+                                "visibility": "public",
+                                "is_final": false
+                            }),
+                            &[("markdown", acc_text.clone())],
+                        );
+                        emit_line(&json!({
+                            "type": "assistant_journal_committed_v1",
+                            "session_id": conv_id,
+                            "source_host_id": source_host_id,
+                            "through": cursor
+                        }));
+                    }
+                    emit_line(&json!({
+                        "type": "text_delta",
+                        "delta": delta,
+                        "session_id": conv_id
+                    }));
+                }
             }
             AgentEvent::ReasoningDelta { ref delta } => {
                 acc_reasoning.push_str(delta);
+                if !delta.is_empty() {
+                    let is_first = active_reasoning_part.is_none();
+                    let (r_pid, r_ord, r_text) = active_reasoning_part.get_or_insert_with(|| {
+                        let pid = format!("{assistant_msg_id}:reasoning:{reasoning_seq}");
+                        reasoning_seq += 1;
+                        (pid, alloc_ordinal(), String::new())
+                    });
+                    r_text.push_str(delta);
+                    published_any_reasoning_part = true;
+                    if is_first
+                        || last_reasoning_publish.elapsed()
+                            >= std::time::Duration::from_millis(120)
+                    {
+                        last_reasoning_publish = std::time::Instant::now();
+                        let cursor = crate::daemon::publish_journal_part(
+                            store,
+                            &mut run_state,
+                            r_pid,
+                            *r_ord,
+                            "reasoning",
+                            json!({
+                                "state": "running",
+                                "title": {"kind": "inline", "value": "Thinking"}
+                            }),
+                            &[("reasoning_summary", r_text.clone())],
+                        );
+                        emit_line(&json!({
+                            "type": "assistant_journal_committed_v1",
+                            "session_id": conv_id,
+                            "source_host_id": source_host_id,
+                            "through": cursor
+                        }));
+                    }
+                    emit_line(&json!({
+                        "type": "reasoning_delta",
+                        "delta": delta,
+                        "session_id": conv_id
+                    }));
+                }
             }
             AgentEvent::ToolStarted {
                 ref call_id,
@@ -1545,6 +1793,54 @@ fn execute_agent_turn(
                 ref arguments,
                 ..
             } => {
+                if let Some((r_pid, r_ord, r_text)) = active_reasoning_part.take() {
+                    let cursor = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &r_pid,
+                        r_ord,
+                        "reasoning",
+                        json!({
+                            "state": "completed",
+                            "title": {"kind": "inline", "value": "Thinking"}
+                        }),
+                        &[("reasoning_summary", r_text)],
+                    );
+                    emit_line(&json!({
+                        "type": "assistant_journal_committed_v1",
+                        "session_id": conv_id,
+                        "source_host_id": source_host_id,
+                        "through": cursor
+                    }));
+                }
+                let ord = alloc_ordinal();
+                tool_part_meta.insert(call_id.clone(), (ord, name.clone(), arguments.clone()));
+                let input_body = json!({"protocol_version": 1, "value": arguments}).to_string();
+                let artifacts_body = json!({"protocol_version": 1, "artifacts": []}).to_string();
+                let cursor = crate::daemon::publish_journal_part(
+                    store,
+                    &mut run_state,
+                    &format!("tool:{call_id}"),
+                    ord,
+                    "tool",
+                    json!({
+                        "tool_call_id": call_id,
+                        "capability_id": name,
+                        "state": "running",
+                        "execution_source": {"kind": "model"},
+                        "title": {"kind": "inline", "value": name},
+                        "origin": {"kind": "builtin"},
+                        "artifacts": "tool_artifacts",
+                        "affected_resources": {"kind": "inline", "value": []}
+                    }),
+                    &[("tool_input", input_body), ("tool_artifacts", artifacts_body)],
+                );
+                emit_line(&json!({
+                    "type": "assistant_journal_committed_v1",
+                    "session_id": conv_id,
+                    "source_host_id": source_host_id,
+                    "through": cursor
+                }));
                 recorded_tools.push(json!({
                     "id": call_id,
                     "call_id": call_id,
@@ -1571,6 +1867,51 @@ fn execute_agent_turn(
                 ref summary,
                 ..
             } => {
+                let (ord, stored_name, stored_args) = tool_part_meta
+                    .get(call_id)
+                    .cloned()
+                    .unwrap_or_else(|| (alloc_ordinal(), name.clone(), json!({})));
+                let input_body =
+                    json!({"protocol_version": 1, "value": stored_args}).to_string();
+                let output_body = json!({
+                    "protocol_version": 1,
+                    "value": {"summary": summary, "is_error": is_error}
+                })
+                .to_string();
+                let artifacts_body = json!({"protocol_version": 1, "artifacts": []}).to_string();
+                let mut tool_data = json!({
+                    "tool_call_id": call_id,
+                    "capability_id": stored_name,
+                    "state": if is_error { "failed" } else { "completed" },
+                    "execution_source": {"kind": "model"},
+                    "title": {"kind": "inline", "value": stored_name},
+                    "origin": {"kind": "builtin"},
+                    "artifacts": "tool_artifacts",
+                    "affected_resources": {"kind": "inline", "value": []}
+                });
+                if !summary.is_empty() {
+                    tool_data["summary"] = json!({"kind": "inline", "value": summary});
+                }
+                let cursor = crate::daemon::publish_journal_part(
+                    store,
+                    &mut run_state,
+                    &format!("tool:{call_id}"),
+                    ord,
+                    "tool",
+                    tool_data,
+                    &[
+                        ("tool_input", input_body),
+                        ("tool_output", output_body),
+                        ("tool_output_text", summary.clone()),
+                        ("tool_artifacts", artifacts_body),
+                    ],
+                );
+                emit_line(&json!({
+                    "type": "assistant_journal_committed_v1",
+                    "session_id": conv_id,
+                    "source_host_id": source_host_id,
+                    "through": cursor
+                }));
                 if let Some(entry) = recorded_tools
                     .iter_mut()
                     .rev()
@@ -1620,12 +1961,27 @@ fn execute_agent_turn(
         ctx.pty.close_all();
         match run_res {
             Ok(res) => {
+                let was_cancelled = res.cancelled || cancel.load(Ordering::Relaxed);
+                let terminal_status = if was_cancelled { "cancelled" } else { "completed" };
                 let final_text = if !res.final_text.is_empty() {
                     res.final_text.clone()
                 } else {
                     acc_text
                 };
-                if !acc_reasoning.is_empty() {
+                if let Some((r_pid, r_ord, r_text)) = active_reasoning_part.take() {
+                    let _ = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &r_pid,
+                        r_ord,
+                        "reasoning",
+                        json!({
+                            "state": terminal_status,
+                            "title": {"kind": "inline", "value": "Thinking"}
+                        }),
+                        &[("reasoning_summary", r_text)],
+                    );
+                } else if !published_any_reasoning_part && !acc_reasoning.is_empty() {
                     let r_part_id = format!("{assistant_msg_id}:reasoning");
                     let _ = crate::daemon::publish_journal_part(
                         store,
@@ -1634,18 +1990,19 @@ fn execute_agent_turn(
                         0,
                         "reasoning",
                         json!({
-                            "state": "completed",
+                            "state": terminal_status,
                             "title": {"kind": "inline", "value": "Thinking"}
                         }),
                         &[("reasoning_summary", acc_reasoning.clone())],
                     );
                 }
-                let text_part_id = format!("{assistant_msg_id}:text");
+                let (text_part_id, text_ord) = active_text_part
+                    .unwrap_or_else(|| (format!("{assistant_msg_id}:text"), alloc_ordinal()));
                 let cursor = crate::daemon::publish_journal_part(
                     store,
                     &mut run_state,
                     &text_part_id,
-                    2,
+                    text_ord,
                     "text",
                     json!({
                         "visibility": "public",
@@ -1653,26 +2010,33 @@ fn execute_agent_turn(
                     }),
                     &[("markdown", final_text.clone())],
                 );
-                let _ = store.append_event(
-                    &conv_id,
-                    "chat_assistant",
-                    json!({
-                        "id": assistant_msg_id,
-                        "message_id": assistant_msg_id,
-                        "content": final_text,
-                        "reasoning": acc_reasoning,
-                        "toolCalls": recorded_tools
-                    }),
-                    now_ms(),
-                );
+                if !was_cancelled || !final_text.is_empty() || !acc_reasoning.is_empty() {
+                    let _ = store.append_event(
+                        &conv_id,
+                        "chat_assistant",
+                        json!({
+                            "id": assistant_msg_id,
+                            "message_id": assistant_msg_id,
+                            "content": final_text,
+                            "reasoning": acc_reasoning,
+                            "toolCalls": recorded_tools
+                        }),
+                        now_ms(),
+                    );
+                }
                 emit_line(&json!({
                     "type": "assistant_journal_committed_v1",
                     "session_id": conv_id,
                     "source_host_id": source_host_id,
                     "through": cursor
                 }));
-                let seq = emit_trace("run.completed", "completed", None, json!({}));
-                run_state["status"] = json!("completed");
+                let seq = emit_trace(
+                    if was_cancelled { "run.cancelled" } else { "run.completed" },
+                    terminal_status,
+                    None,
+                    json!({}),
+                );
+                run_state["status"] = json!(terminal_status);
                 run_state["sequence"] = json!(seq);
                 let seal =
                     crate::daemon::build_and_store_terminal_seal(store, &run_state, &text_part_id);
@@ -1683,6 +2047,19 @@ fn execute_agent_turn(
                     "run_id": run_id,
                     "seal_digest": seal["seal_digest"]
                 }));
+                if was_cancelled {
+                    emit_line(&json!({
+                        "type": "turn_cancelled",
+                        "protocol_version": 1,
+                        "session_id": core_session_id,
+                        "turn_id": run_id,
+                        "canonical_run_id": run_id,
+                        "cursor": seq,
+                        "revision": seq,
+                        "reason": "cancelled_by_user"
+                    }));
+                    return Ok(0);
+                }
                 emit_line(&json!({
                     "type": "turn_completed",
                     "protocol_version": 1,
@@ -1705,9 +2082,24 @@ fn execute_agent_turn(
                 return Ok(0);
             }
             Err(e) => {
-                let err_msg = e.to_string();
+                let raw_err = e.to_string();
+                let err_msg = format_user_facing_run_error(&raw_err, &route_endpoint);
                 let was_cancelled = cancel.load(Ordering::Relaxed);
                 let status = if was_cancelled { "cancelled" } else { "failed" };
+                if let Some((r_pid, r_ord, r_text)) = active_reasoning_part.take() {
+                    let _ = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &r_pid,
+                        r_ord,
+                        "reasoning",
+                        json!({
+                            "state": status,
+                            "title": {"kind": "inline", "value": "Thinking"}
+                        }),
+                        &[("reasoning_summary", r_text)],
+                    );
+                }
                 let _ = store.append_event(
                     &conv_id,
                     "run_error",
@@ -1743,8 +2135,9 @@ fn execute_agent_turn(
         }
     }
 
+    let effective_prompt = format_turn_prompt_with_attachments(prompt, overrides.as_ref());
     let res = engine
-        .run(&ctx, prompt, run_cfg, |ev| {
+        .run(&ctx, &effective_prompt, run_cfg, |ev| {
             if let AgentEvent::SessionStarted { ref session_id, .. } = ev {
                 if !session_id.trim().is_empty() {
                     live_session_id = session_id.clone();
@@ -1825,11 +2218,255 @@ fn collect_a2ui_surface_frames(
     frames
 }
 
+fn append_expert_and_host_context_blocks(
+    store: &Store,
+    prompt: &str,
+    overrides: Option<&HostRunOverrides>,
+    frozen_blocks: &mut Vec<nola_types::FrozenSystemBlock>,
+) {
+    let raw_experts: Vec<Value> = store
+        .list_module_records::<Value>("expert_peer")
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|v| {
+            v.get("availability")
+                .and_then(|a| a.as_str())
+                .is_none_or(|a| !a.eq_ignore_ascii_case("disabled"))
+        })
+        .collect();
+
+    if !raw_experts.is_empty() {
+        let mut lines = vec![
+            "Saved ExpertPeer personas in Nola (use list_experts / delegate_expert — never probe SQLite or ~/.nola with bash):".to_string(),
+        ];
+        for rec in raw_experts.iter().take(32) {
+            let name = rec.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let id = rec.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let role = rec
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("specialist");
+            let desc = rec
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .unwrap_or("");
+            if !name.is_empty() {
+                if desc.is_empty() {
+                    lines.push(format!("- {name} (id={id}, role={role})"));
+                } else {
+                    lines.push(format!("- {name} (id={id}, role={role}): {desc}"));
+                }
+            }
+        }
+        frozen_blocks.push(nola_types::FrozenSystemBlock {
+            id: "saved_experts_directory".into(),
+            text: lines.join("\n"),
+        });
+
+        // Resolve explicitly selected experts (from macOS composer) AND @mentions in prompt text.
+        let mut target_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut target_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Some(ov) = overrides {
+            for sel in &ov.selected_experts {
+                if let Some(id) = sel
+                    .get("agent_id")
+                    .or_else(|| sel.get("agentId"))
+                    .or_else(|| sel.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    target_ids.insert(id.to_string());
+                }
+                if let Some(n) = sel
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    target_names.insert(n.to_lowercase());
+                }
+            }
+            for m in &ov.expert_mentions {
+                if let Some(id) = m
+                    .get("agent_id")
+                    .or_else(|| m.get("agentId"))
+                    .or_else(|| m.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    target_ids.insert(id.to_string());
+                }
+                if let Some(n) = m
+                    .get("name")
+                    .or_else(|| m.get("display_name"))
+                    .or_else(|| m.get("label"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().trim_start_matches('@'))
+                    .filter(|s| !s.is_empty())
+                {
+                    target_names.insert(n.to_lowercase());
+                }
+            }
+        }
+        for mention in nola_modules::parse_expert_mentions(prompt) {
+            let clean = mention.trim().trim_start_matches('@');
+            if !clean.is_empty() {
+                target_names.insert(clean.to_lowercase());
+            }
+        }
+
+        let matched: Vec<&Value> = raw_experts
+            .iter()
+            .filter(|rec| {
+                let id = rec.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = rec.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                (!id.is_empty() && target_ids.contains(id))
+                    || (!name.is_empty() && target_names.contains(&name.to_lowercase()))
+            })
+            .collect();
+
+        if !matched.is_empty() {
+            let mut active_lines = vec![
+                "The user explicitly addressed the following saved Nola expert(s) in this message. Respond directly as the addressed expert persona (or delegate to them with delegate_expert if specialized multi-step work is needed). Do NOT claim the expert does not exist and do NOT run bash/sqlite3 to look them up:".to_string(),
+            ];
+            for rec in matched {
+                let name = rec.get("name").and_then(|v| v.as_str()).unwrap_or("Expert");
+                let id = rec.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let role = rec
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("specialist");
+                let desc = rec
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .unwrap_or("");
+                let sys = rec
+                    .get("system_prompt")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .unwrap_or("");
+                let mut entry = format!("### Expert: {name} (id={id}, role={role})");
+                if !desc.is_empty() {
+                    entry.push_str(&format!("\nResponsibilities: {desc}"));
+                }
+                if !sys.is_empty() && sys != desc {
+                    entry.push_str(&format!("\nPersona instructions: {sys}"));
+                }
+                active_lines.push(entry);
+            }
+            frozen_blocks.push(nola_types::FrozenSystemBlock {
+                id: "active_expert_mentions".into(),
+                text: active_lines.join("\n"),
+            });
+        }
+    }
+
+    let Some(ov) = overrides else {
+        return;
+    };
+
+    if !ov.context_components.is_empty() {
+        let mut ctx_parts: Vec<String> = Vec::new();
+        for comp in &ov.context_components {
+            let kind = comp
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("context");
+            let id = comp.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if kind == "main_expert_selection" || id == "nola.main-expert-selection" {
+                continue;
+            }
+            let title = comp
+                .pointer("/source/title")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(kind);
+            let content_text = match comp.get("content") {
+                Some(Value::String(s)) => s.trim().to_string(),
+                Some(other) if !other.is_null() => other.to_string(),
+                _ => String::new(),
+            };
+            if !content_text.is_empty() {
+                let clipped: String = content_text.chars().take(4000).collect();
+                ctx_parts.push(format!("[{title}]\n{clipped}"));
+            }
+        }
+        if !ctx_parts.is_empty() {
+            frozen_blocks.push(nola_types::FrozenSystemBlock {
+                id: "host_context_components".into(),
+                text: ctx_parts.join("\n\n"),
+            });
+        }
+    }
+}
+
+fn format_turn_prompt_with_attachments(prompt: &str, overrides: Option<&HostRunOverrides>) -> String {
+    let Some(ov) = overrides else {
+        return prompt.to_string();
+    };
+    if ov.attachments.is_empty() {
+        return prompt.to_string();
+    }
+    let mut lines = Vec::new();
+    for att in &ov.attachments {
+        let name = att.get("name").and_then(|v| v.as_str()).unwrap_or("file");
+        let path = att.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        let mime = att
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("application/octet-stream");
+        if !path.is_empty() {
+            lines.push(format!("- {name} ({mime}): {path}"));
+        }
+    }
+    if lines.is_empty() {
+        return prompt.to_string();
+    }
+    let trimmed = prompt.trim_end();
+    if trimmed.is_empty() {
+        format!(
+            "[Attached files — inspect directly with read_file]\n{}",
+            lines.join("\n")
+        )
+    } else {
+        format!(
+            "{trimmed}\n\n[Attached files — inspect directly with read_file]\n{}",
+            lines.join("\n")
+        )
+    }
+}
+
+fn format_user_facing_run_error(raw: &str, endpoint: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    let is_local_route_block = lower.contains("no route to host")
+        || lower.contains("os error 65")
+        || lower.contains("ehostunreach")
+        || lower.contains("local network prohibited");
+    let ep_lower = endpoint.to_ascii_lowercase();
+    let is_lan_endpoint = ep_lower.contains("://192.168.")
+        || ep_lower.contains("://10.")
+        || ep_lower.contains("://172.")
+        || ep_lower.contains(".local");
+    if is_local_route_block && is_lan_endpoint {
+        return format!(
+            "无法连接到局域网模型服务（{endpoint}）：macOS 阻止了本地网络访问（No route to host / os error 65）。请在「系统设置 → 隐私与安全性 → 本地网络」中允许 Nola，或确认局域网服务已启动后重试。\n\n原始错误：{raw}"
+        );
+    }
+    raw.to_string()
+}
+
 fn resolve_route_with_overrides(
     cfg: &AppliedConfig,
     opts: &CliOptions,
     overrides: Option<&HostRunOverrides>,
 ) -> Result<ModelRouteConfig, String> {
+    let ov_connection_id = overrides
+        .and_then(|o| o.connection_id.clone())
+        .filter(|s| !s.trim().is_empty());
     let ov_endpoint = overrides
         .and_then(|o| o.endpoint.clone())
         .or_else(|| opts.endpoint.clone())
@@ -1849,11 +2486,15 @@ fn resolve_route_with_overrides(
 
     // Apply explicit overrides BEFORE falling back to cfg.llm.default_model!
     if let (Some(ep), Some(m)) = (ov_endpoint.clone(), ov_model.clone()) {
-        let matched_conn = cfg
-            .llm
-            .connections
-            .iter()
-            .find(|c| c.endpoint.trim_end_matches('/') == ep.trim_end_matches('/'));
+        let matched_conn = ov_connection_id
+            .as_deref()
+            .and_then(|cid| cfg.llm.connections.iter().find(|c| c.id == cid))
+            .or_else(|| {
+                cfg.llm
+                    .connections
+                    .iter()
+                    .find(|c| c.endpoint.trim_end_matches('/') == ep.trim_end_matches('/'))
+            });
         let matched_entry = matched_conn.and_then(|c| c.models.iter().find(|e| e.id == m));
         let protocol = ov_protocol
             .or_else(|| {
@@ -1872,9 +2513,19 @@ fn resolve_route_with_overrides(
             .or_else(|| std::env::var("NOLA_API_KEY").ok())
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .unwrap_or_default();
+        let effective_reasoning_effort = ov_reasoning_effort
+            .or_else(|| matched_entry.and_then(|e| e.reasoning_effort.clone()));
+        let mut capabilities = matched_entry
+            .and_then(|e| e.capabilities.clone())
+            .unwrap_or_default();
+        if nola_llm::normalized_wire_reasoning_effort(effective_reasoning_effort.as_deref())
+            .is_some()
+        {
+            capabilities.reasoning = true;
+        }
         return Ok(ModelRouteConfig {
-            connection_id: matched_conn
-                .map(|c| c.id.clone())
+            connection_id: ov_connection_id
+                .or_else(|| matched_conn.map(|c| c.id.clone()))
                 .unwrap_or_else(|| "host".into()),
             endpoint: ep,
             protocol,
@@ -1884,11 +2535,8 @@ fn resolve_route_with_overrides(
             max_output_tokens: matched_entry.and_then(|e| e.max_output_tokens),
             temperature: matched_entry.and_then(|e| e.temperature).or(Some(0.2)),
             top_p: matched_entry.and_then(|e| e.top_p),
-            capabilities: matched_entry
-                .and_then(|e| e.capabilities.clone())
-                .unwrap_or_default(),
-            reasoning_effort: ov_reasoning_effort
-                .or_else(|| matched_entry.and_then(|e| e.reasoning_effort.clone())),
+            capabilities,
+            reasoning_effort: effective_reasoning_effort,
             prompt_cache_key: Some("nola-v2-host".into()),
         });
     }
@@ -1950,6 +2598,9 @@ fn resolve_route_with_overrides(
             route.protocol = p;
         }
         if let Some(effort) = ov_reasoning_effort {
+            if nola_llm::normalized_wire_reasoning_effort(Some(&effort)).is_some() {
+                route.capabilities.reasoning = true;
+            }
             route.reasoning_effort = Some(effort);
         }
         return Ok(route);
@@ -2142,12 +2793,17 @@ fn parse_args(args: &[String]) -> Result<CliOptions, String> {
             }
             "--profile" => {
                 i += 1;
-                opts.profile = Some(
-                    args.get(i)
-                        .ok_or("--profile requires a profile name")?
-                        .trim()
-                        .to_string(),
-                );
+                let raw = args
+                    .get(i)
+                    .ok_or("--profile requires a profile name")?
+                    .trim()
+                    .to_string();
+                if raw.eq_ignore_ascii_case("accept_edits")
+                    || raw.eq_ignore_ascii_case("accept-edits")
+                {
+                    return Err(PermissionProfile::parse_strict(&raw).unwrap_err());
+                }
+                opts.profile = Some(raw);
             }
             "--yes" | "-y" => opts.yes = true,
             "--permission-profile" => {
@@ -2702,6 +3358,12 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                     }
                 }
                 save_applied_config(store, &updated_cfg)?;
+                let _ = upsert_model_connection_module_record(
+                    store,
+                    &updated_cfg,
+                    &conn.id,
+                    "discover",
+                );
             }
             println!(
                 "{}",
@@ -2927,6 +3589,7 @@ fn handle_model_cmd(store: &Store, workspace: &Path, args: &[String]) -> Result<
                 }
             }
             save_applied_config(store, &cfg)?;
+            let _ = upsert_model_connection_module_record(store, &cfg, &cid, "manual");
             let reloaded = load_active_config(store);
             println!(
                 "{}",
@@ -3182,13 +3845,18 @@ fn normalize_acquisition_candidate(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("main")
         .to_string();
+    let is_mlx = engine.eq_ignore_ascii_case("mlx");
     let variant = item
         .get("variant")
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
         .or_else(|| {
-            let short = repo.rsplit('/').next().unwrap_or(&repo);
-            Some(format!("{short}.gguf"))
+            if is_mlx {
+                None
+            } else {
+                let short = repo.rsplit('/').next().unwrap_or(&repo);
+                Some(format!("{short}.gguf"))
+            }
         });
     let dl_bytes = item
         .get("downloadBytes")
@@ -3222,7 +3890,7 @@ fn normalize_acquisition_candidate(
         });
     let file_name = variant
         .as_deref()
-        .unwrap_or("model.gguf")
+        .unwrap_or(if is_mlx { "config.json" } else { "model.gguf" })
         .to_string();
     let download_url = item
         .pointer("/plan/url")
@@ -3239,11 +3907,15 @@ fn normalize_acquisition_candidate(
     plan.insert("source".into(), json!(source));
     plan.insert("repository".into(), json!(repo));
     plan.insert("revision".into(), json!(rev));
-    plan.insert("variant".into(), json!(file_name));
+    if let Some(ref v) = variant {
+        plan.insert("variant".into(), json!(v));
+    }
     plan.insert("device".into(), json!(device));
     plan.insert("url".into(), json!(download_url));
-    plan.entry("files".to_string())
-        .or_insert_with(|| json!([{ "path": file_name, "bytes": dl_bytes }]));
+    if !is_mlx {
+        plan.entry("files".to_string())
+            .or_insert_with(|| json!([{ "path": file_name, "bytes": dl_bytes }]));
+    }
 
     Some(json!({
         "repository": repo,
@@ -3420,7 +4092,82 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
             let rev = plan_json
                 .get("revision")
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
                 .unwrap_or("main");
+            let models_root = resolve_local_models_root();
+            let safe_repo_dir: String = repo
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let snapshot_dir = models_root.join(&safe_repo_dir);
+            let ctx_tokens = plan_json
+                .get("contextTokens")
+                .or_else(|| plan_json.get("contextWindowTokens"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(32_768);
+            let device = plan_json
+                .get("device")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unified")
+                .to_string();
+            let quant = plan_json
+                .get("quantization")
+                .or_else(|| plan_json.get("variant"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+
+            if engine.eq_ignore_ascii_case("mlx") {
+                let model_id = new_id();
+                let (artifacts, total_bytes) = download_mlx_repo_snapshot(
+                    source,
+                    &repo,
+                    rev,
+                    &plan_json,
+                    &snapshot_dir,
+                )?;
+                write_local_snapshot_manifest(&snapshot_dir, &artifacts, total_bytes)?;
+                let rec = LocalModelRecord {
+                    id: model_id.clone(),
+                    name: repo.clone(),
+                    engine: "mlx".to_string(),
+                    path: Some(snapshot_dir.display().to_string()),
+                    size_bytes: total_bytes,
+                    quantization: quant.clone(),
+                    installed: true,
+                    updated_at_ms: now_ms(),
+                };
+                let _ = store.put_module_record(KIND_LOCAL_MODEL, &rec.id, &rec);
+                upsert_mac_local_model_catalog_entry(
+                    &models_root,
+                    &MacLocalCatalogRecordInput {
+                        id: &model_id,
+                        name: &repo,
+                        repository: &repo,
+                        runtime: "mlx",
+                        format: "mlx",
+                        quantization: quant.as_deref(),
+                        context_window_tokens: ctx_tokens,
+                        recommended_device: &device,
+                        snapshot_path: &snapshot_dir,
+                        artifact_path: None,
+                        artifact_bytes: total_bytes as i64,
+                    },
+                )?;
+                emit_compact_json_line(&json!({
+                    "model": { "id": model_id },
+                    "downloadedBytes": total_bytes,
+                    "totalBytes": total_bytes,
+                    "status": "completed"
+                }));
+                return Ok(0);
+            }
+
             let first_file = plan_json
                 .get("files")
                 .and_then(|v| v.as_array())
@@ -3446,20 +4193,10 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
 
-            let models_root = std::env::var("NOLA_MODELS_ROOT")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| default_home_dir().join(".nola/models"));
-            let safe_repo_dir: String = repo
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-                .collect();
             let safe_file: String = Path::new(variant_file)
                 .file_name()
                 .and_then(|s| s.to_str())
-                .unwrap_or("model.bin")
+                .unwrap_or("model.gguf")
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
                 .collect();
@@ -3469,20 +4206,16 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| models_root.join(safe_repo_dir).join(safe_file));
+                .unwrap_or_else(|| snapshot_dir.join(&safe_file));
 
             let dl_plan = ModelDownloadPlan {
                 id: Some(new_id()),
-                name: repo,
+                name: repo.clone(),
                 engine: engine.to_string(),
                 url,
                 dest_path: dest_path.display().to_string(),
                 sha256,
-                quantization: plan_json
-                    .get("quantization")
-                    .or_else(|| plan_json.get("variant"))
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string),
+                quantization: quant.clone(),
                 expected_bytes,
             };
 
@@ -3521,6 +4254,48 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
                         .and_then(|v| v.as_str())
                         .map(ToString::to_string)
                         .unwrap_or_else(|| download_id.clone());
+                    let actual_bytes = fs::metadata(&dest_path)
+                        .map(|m| m.len())
+                        .unwrap_or(dl_bytes)
+                        .max(1);
+                    let eff_snapshot_dir = dest_path
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| snapshot_dir.clone());
+                    let rel_name = dest_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&safe_file)
+                        .to_string();
+                    let _ = write_local_snapshot_manifest(
+                        &eff_snapshot_dir,
+                        &[(rel_name, actual_bytes)],
+                        actual_bytes,
+                    );
+                    let _ = upsert_mac_local_model_catalog_entry(
+                        &models_root,
+                        &MacLocalCatalogRecordInput {
+                            id: &model_id,
+                            name: &repo,
+                            repository: &repo,
+                            runtime: if engine.eq_ignore_ascii_case("mlx") {
+                                "mlx"
+                            } else {
+                                "llama.cpp"
+                            },
+                            format: if engine.eq_ignore_ascii_case("mlx") {
+                                "mlx"
+                            } else {
+                                "gguf"
+                            },
+                            quantization: quant.as_deref(),
+                            context_window_tokens: ctx_tokens,
+                            recommended_device: &device,
+                            snapshot_path: &eff_snapshot_dir,
+                            artifact_path: Some(&dest_path),
+                            artifact_bytes: actual_bytes as i64,
+                        },
+                    );
                     emit_compact_json_line(&json!({
                         "model": { "id": model_id },
                         "downloadedBytes": dl_bytes,
@@ -3554,6 +4329,7 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
                 .map(String::as_str)
                 .filter(|s| !s.trim().is_empty())
                 .ok_or("usage: nola model acquire remove <id>")?;
+            let models_root = resolve_local_models_root();
             let records: Vec<LocalModelRecord> = store
                 .list_module_records(KIND_LOCAL_MODEL)
                 .unwrap_or_default();
@@ -3572,20 +4348,18 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
                     }
                 }
                 let _ = store.delete_module_record(KIND_LOCAL_MODEL, &rec.id);
-            } else if !id.contains("..") && !id.contains('/') && !id.contains('\\') {
-                let models_root = std::env::var("NOLA_MODELS_ROOT")
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| default_home_dir().join(".nola/models"));
-                let cand = models_root.join(id);
-                if let Ok(meta) = fs::symlink_metadata(&cand) {
-                    if !meta.file_type().is_symlink() {
-                        if meta.is_dir() {
-                            let _ = fs::remove_dir_all(&cand);
-                        } else if meta.is_file() {
-                            let _ = fs::remove_file(&cand);
+                let _ = remove_mac_local_model_catalog_entry(&models_root, &rec.id, Some(&rec.name));
+            } else {
+                let _ = remove_mac_local_model_catalog_entry(&models_root, id, None);
+                if !id.contains("..") && !id.contains('/') && !id.contains('\\') {
+                    let cand = models_root.join(id);
+                    if let Ok(meta) = fs::symlink_metadata(&cand) {
+                        if !meta.file_type().is_symlink() {
+                            if meta.is_dir() {
+                                let _ = fs::remove_dir_all(&cand);
+                            } else if meta.is_file() {
+                                let _ = fs::remove_file(&cand);
+                            }
                         }
                     }
                 }
@@ -3653,132 +4427,546 @@ fn handle_model_acquire_cmd(store: &Store, args: &[String]) -> Result<u8, String
 }
 
 #[derive(Clone)]
-struct ExtractedImportCandidate {
-    candidate_id: String,
-    connection_id: String,
-    display_name: String,
-    source: String,
-    endpoint: String,
-    protocol: String,
-    models: Vec<String>,
+pub(crate) struct ExtractedImportCandidate {
+    pub(crate) candidate_id: String,
+    pub(crate) connection_id: String,
+    pub(crate) display_name: String,
+    pub(crate) source: String,
+    pub(crate) endpoint: String,
+    pub(crate) protocol: String,
+    pub(crate) models: Vec<String>,
+    pub(crate) secret: Option<String>,
+    pub(crate) credential_status: String,
+    pub(crate) issue: Option<String>,
+}
+
+fn parse_simple_toml(raw: &str) -> BTreeMap<String, BTreeMap<String, Value>> {
+    let mut sections: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
+    let mut current_section = String::new();
+    for raw_line in raw.lines() {
+        let mut in_double = false;
+        let mut in_single = false;
+        let mut escaped = false;
+        let mut cut = raw_line.len();
+        for (idx, ch) in raw_line.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' if in_double => escaped = true,
+                '"' if !in_single => in_double = !in_double,
+                '\'' if !in_double => in_single = !in_single,
+                '#' if !in_double && !in_single => {
+                    cut = idx;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let line = raw_line[..cut].trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            let inner = line.trim_start_matches('[').trim_end_matches(']').trim();
+            let normalized = inner
+                .split('.')
+                .map(|seg| seg.trim().trim_matches('"').trim_matches('\''))
+                .collect::<Vec<_>>()
+                .join(".");
+            current_section = normalized;
+            sections.entry(current_section.clone()).or_default();
+            continue;
+        }
+        if let Some((k_raw, v_raw)) = line.split_once('=') {
+            let key = k_raw.trim().trim_matches('"').trim_matches('\'').to_string();
+            let v_str = v_raw.trim();
+            let val = if (v_str.starts_with('"') && v_str.ends_with('"') && v_str.len() >= 2)
+                || (v_str.starts_with('\'') && v_str.ends_with('\'') && v_str.len() >= 2)
+            {
+                if v_str.starts_with('"') {
+                    serde_json::from_str::<String>(v_str)
+                        .map(Value::String)
+                        .unwrap_or_else(|_| Value::String(v_str[1..v_str.len() - 1].to_string()))
+                } else {
+                    Value::String(v_str[1..v_str.len() - 1].to_string())
+                }
+            } else if v_str == "true" {
+                Value::Bool(true)
+            } else if v_str == "false" {
+                Value::Bool(false)
+            } else if v_str.starts_with('[') && v_str.ends_with(']') {
+                serde_json::from_str::<Value>(v_str).unwrap_or_else(|_| {
+                    let inner = &v_str[1..v_str.len() - 1];
+                    let items: Vec<Value> = inner
+                        .split(',')
+                        .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+                        .filter(|s| !s.is_empty())
+                        .map(|s| Value::String(s.to_string()))
+                        .collect();
+                    Value::Array(items)
+                })
+            } else if let Ok(n) = v_str.parse::<i64>() {
+                json!(n)
+            } else if let Ok(f) = v_str.parse::<f64>() {
+                json!(f)
+            } else {
+                Value::String(v_str.to_string())
+            };
+            sections
+                .entry(current_section.clone())
+                .or_default()
+                .insert(key, val);
+        }
+    }
+    sections
+}
+
+fn resolve_inline_or_env_secret(raw: Option<&str>, allow_environment: bool) -> Option<String> {
+    let val = raw?.trim();
+    if val.is_empty() {
+        return None;
+    }
+    if let Some(rest) = val.strip_prefix("{env:").and_then(|s| s.strip_suffix('}')) {
+        if allow_environment {
+            return std::env::var(rest.trim())
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+        }
+        return None;
+    }
+    if let Some(var_name) = val.strip_prefix('$') {
+        let name = var_name.trim_matches(|c| c == '{' || c == '}');
+        if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            if allow_environment {
+                return std::env::var(name)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty());
+            }
+            return None;
+        }
+    }
+    Some(val.to_string())
+}
+
+fn lookup_credential_in_file(cred_val: &Value, keys: &[&str]) -> Option<String> {
+    let obj = cred_val.as_object()?;
+    for key in keys {
+        if let Some(v) = obj.get(*key) {
+            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                return Some(s.to_string());
+            }
+            if let Some(sub) = v.as_object() {
+                for field in ["key", "api_key", "apiKey", "token", "access_token"] {
+                    if let Some(s) = sub
+                        .get(field)
+                        .and_then(|x| x.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn finalize_credential_state(
     secret: Option<String>,
-    credential_status: String,
+    include_credentials: bool,
+) -> (Option<String>, String) {
+    if !include_credentials {
+        return (None, "not_requested".to_string());
+    }
+    if secret.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+        (secret, "available".to_string())
+    } else {
+        (None, "missing".to_string())
+    }
 }
 
 fn extract_import_candidates_from_path(
     path_str: &str,
     src: &str,
 ) -> Result<Vec<ExtractedImportCandidate>, String> {
+    extract_import_candidates_with_options(path_str, src, None, true, true)
+}
+
+pub(crate) fn extract_import_candidates_with_options(
+    path_str: &str,
+    src: &str,
+    credential_path: Option<&str>,
+    include_credentials: bool,
+    allow_environment: bool,
+) -> Result<Vec<ExtractedImportCandidate>, String> {
     let p = Path::new(path_str);
     reject_if_symlink(p)?;
     let raw = read_config_file_safe(p)?;
-    let parsed: Value = serde_json::from_str(&strip_jsonc(&raw)).unwrap_or_else(|_| json!({}));
+    let cred_doc: Option<Value> = if include_credentials {
+        if let Some(cp) = credential_path.filter(|s| !s.trim().is_empty()) {
+            let cp_path = Path::new(cp);
+            reject_if_symlink(cp_path)?;
+            let cred_raw = read_config_file_safe(cp_path)?;
+            if let Ok(v) = serde_json::from_str::<Value>(&strip_jsonc(&cred_raw)) {
+                Some(v)
+            } else {
+                let toml_map = parse_simple_toml(&cred_raw);
+                let mut flat = serde_json::Map::new();
+                for (sec, kvs) in toml_map {
+                    if sec.is_empty() {
+                        for (k, v) in kvs {
+                            flat.insert(k, v);
+                        }
+                    } else {
+                        flat.insert(sec, Value::Object(kvs.into_iter().collect()));
+                    }
+                }
+                Some(Value::Object(flat))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let src_lower = src.trim().to_ascii_lowercase();
     let mut out = Vec::new();
-    if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
-        for (prov_id, prov_val) in providers {
-            let endpoint = prov_val
-                .pointer("/options/baseURL")
-                .or_else(|| prov_val.get("baseURL"))
-                .or_else(|| prov_val.get("endpoint"))
+    let parsed_json = serde_json::from_str::<Value>(&strip_jsonc(&raw)).ok();
+
+    if let Some(ref parsed) = parsed_json {
+        if let Some(providers) = parsed.get("provider").and_then(|v| v.as_object()) {
+            for (prov_id, prov_val) in providers {
+                let endpoint = prov_val
+                    .pointer("/options/baseURL")
+                    .or_else(|| prov_val.pointer("/options/base_url"))
+                    .or_else(|| prov_val.get("baseURL"))
+                    .or_else(|| prov_val.get("base_url"))
+                    .or_else(|| prov_val.get("endpoint"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let models: Vec<String> = prov_val
+                    .get("models")
+                    .map(|mv| {
+                        if let Some(obj) = mv.as_object() {
+                            obj.keys().cloned().collect()
+                        } else if let Some(arr) = mv.as_array() {
+                            arr.iter()
+                                .filter_map(|m| {
+                                    m.as_str()
+                                        .or_else(|| m.get("id").and_then(|v| v.as_str()))
+                                        .map(ToString::to_string)
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .unwrap_or_default();
+                let raw_secret = prov_val
+                    .pointer("/options/apiKey")
+                    .or_else(|| prov_val.pointer("/options/api_key"))
+                    .or_else(|| prov_val.get("apiKey"))
+                    .or_else(|| prov_val.get("api_key"))
+                    .and_then(|v| v.as_str());
+                let resolved_secret = resolve_inline_or_env_secret(raw_secret, allow_environment)
+                    .or_else(|| {
+                        cred_doc
+                            .as_ref()
+                            .and_then(|cd| lookup_credential_in_file(cd, &[prov_id.as_str()]))
+                    });
+                let (secret, cred_status) =
+                    finalize_credential_state(resolved_secret, include_credentials);
+                let display_name = prov_val
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(prov_id)
+                    .to_string();
+                let inferred_proto = prov_val
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        let npm = prov_val.get("npm").and_then(|v| v.as_str()).unwrap_or("");
+                        if npm.contains("anthropic") {
+                            Some("anthropic")
+                        } else if npm.contains("openai") && !npm.contains("compatible") {
+                            Some("responses")
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or("chat_completions");
+                let proto = crate::daemon::normalize_wire_protocol(inferred_proto);
+                let issue = if endpoint.is_empty() {
+                    Some("Missing base URL".to_string())
+                } else {
+                    None
+                };
+                out.push(ExtractedImportCandidate {
+                    candidate_id: new_id(),
+                    connection_id: prov_id.clone(),
+                    display_name,
+                    source: src.to_string(),
+                    endpoint,
+                    protocol: proto,
+                    models,
+                    secret,
+                    credential_status: cred_status,
+                    issue,
+                });
+            }
+        }
+        if let Some(conns) = parsed.pointer("/llm/connections").and_then(|v| v.as_array()) {
+            for c in conns {
+                let cid = c
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("imported")
+                    .to_string();
+                let display_name = c
+                    .get("name")
+                    .or_else(|| c.get("display_name"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(&cid)
+                    .to_string();
+                let endpoint = c
+                    .get("endpoint")
+                    .or_else(|| c.get("base_url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let proto = crate::daemon::normalize_wire_protocol(
+                    c.get("protocol")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            c.get("protocols")
+                                .and_then(|v| v.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("chat_completions"),
+                );
+                let models: Vec<String> = c
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| {
+                                m.get("id")
+                                    .or_else(|| m.get("model_id"))
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| m.as_str())
+                                    .map(ToString::to_string)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let env_secret = if allow_environment {
+                    c.get("api_key_env")
+                        .and_then(|v| v.as_str())
+                        .and_then(|e| std::env::var(e).ok())
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                } else {
+                    None
+                };
+                let resolved_secret = resolve_inline_or_env_secret(
+                    c.get("api_key").and_then(|v| v.as_str()),
+                    allow_environment,
+                )
+                .or(env_secret)
+                .or_else(|| {
+                    cred_doc
+                        .as_ref()
+                        .and_then(|cd| lookup_credential_in_file(cd, &[cid.as_str()]))
+                });
+                let (secret, cred_status) =
+                    finalize_credential_state(resolved_secret, include_credentials);
+                let issue = if endpoint.is_empty() {
+                    Some("Missing base URL".to_string())
+                } else {
+                    None
+                };
+                out.push(ExtractedImportCandidate {
+                    candidate_id: new_id(),
+                    connection_id: cid,
+                    display_name,
+                    source: src.to_string(),
+                    endpoint,
+                    protocol: proto,
+                    models,
+                    secret,
+                    credential_status: cred_status,
+                    issue,
+                });
+            }
+        }
+    }
+
+    if out.is_empty() && parsed_json.is_none() {
+        let toml = parse_simple_toml(&raw);
+        let top = toml.get("");
+        let top_model = top
+            .and_then(|t| t.get("model"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let top_provider = top
+            .and_then(|t| t.get("model_provider").or_else(|| t.get("default_provider")))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+
+        let mut models_by_provider: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (sec, kvs) in &toml {
+            if let Some(mkey) = sec.strip_prefix("models.") {
+                let prov = kvs
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let mid = kvs
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(mkey)
+                    .to_string();
+                if !prov.is_empty() && !mid.is_empty() {
+                    let entry = models_by_provider.entry(prov).or_default();
+                    if !entry.contains(&mid) {
+                        entry.push(mid);
+                    }
+                }
+            }
+        }
+
+        let has_codex_subscription_only = cred_doc.as_ref().is_some_and(|cd| {
+            let has_api_key = cd
+                .get("OPENAI_API_KEY")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let models: Vec<String> = prov_val
-                .get("models")
-                .and_then(|v| v.as_object())
-                .map(|m| m.keys().cloned().collect())
-                .unwrap_or_default();
-            let secret = prov_val
-                .pointer("/options/apiKey")
-                .or_else(|| prov_val.get("apiKey"))
+                .is_some_and(|s| !s.trim().is_empty());
+            let has_sub = cd.get("tokens").is_some_and(|v| v.is_object())
+                || cd.get("auth_mode").and_then(|v| v.as_str()) == Some("chatgpt");
+            !has_api_key && has_sub
+        });
+
+        for (sec, kvs) in &toml {
+            let prov_id = if let Some(id) = sec.strip_prefix("model_providers.") {
+                id
+            } else if let Some(id) = sec.strip_prefix("providers.") {
+                id
+            } else {
+                continue;
+            };
+            if prov_id.contains('.') || prov_id.is_empty() {
+                continue;
+            }
+            let display_name = kvs
+                .get("name")
                 .and_then(|v| v.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .map(ToString::to_string);
-            let display_name = prov_val
-                .get("name")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
                 .unwrap_or(prov_id)
                 .to_string();
-            let proto = prov_val
-                .get("protocol")
+            let endpoint = kvs
+                .get("base_url")
+                .or_else(|| kvs.get("baseURL"))
+                .or_else(|| kvs.get("endpoint"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("chat_completions")
-                .to_string();
-            let cred_status = if secret.is_some() { "present" } else { "missing" }.to_string();
-            out.push(ExtractedImportCandidate {
-                candidate_id: new_id(),
-                connection_id: prov_id.clone(),
-                display_name,
-                source: src.to_string(),
-                endpoint,
-                protocol: proto,
-                models,
-                secret,
-                credential_status: cred_status,
-            });
-        }
-    }
-    if let Some(conns) = parsed.pointer("/llm/connections").and_then(|v| v.as_array()) {
-        for c in conns {
-            let cid = c
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("imported")
-                .to_string();
-            let display_name = c
-                .get("name")
-                .or_else(|| c.get("display_name"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or(&cid)
-                .to_string();
-            let endpoint = c
-                .get("endpoint")
-                .and_then(|v| v.as_str())
+                .map(str::trim)
                 .unwrap_or("")
                 .to_string();
-            let proto = c
-                .get("protocol")
+            let wire_raw = kvs
+                .get("wire_api")
+                .or_else(|| kvs.get("protocol"))
+                .or_else(|| kvs.get("type"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("chat_completions")
-                .to_string();
-            let models: Vec<String> = c
-                .get("models")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|m| {
-                            m.get("id")
-                                .and_then(|v| v.as_str())
-                                .or_else(|| m.as_str())
-                                .map(ToString::to_string)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let secret = c
-                .get("api_key")
+                .unwrap_or(if src_lower == "codex" {
+                    "responses"
+                } else {
+                    "chat_completions"
+                });
+            let proto = if wire_raw.to_ascii_lowercase().contains("anthropic") {
+                "anthropic".to_string()
+            } else if wire_raw.to_ascii_lowercase().contains("responses") {
+                "responses".to_string()
+            } else {
+                "chat_completions".to_string()
+            };
+            let env_key = kvs
+                .get("env_key")
+                .or_else(|| kvs.get("api_key_env"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let env_secret = if allow_environment {
+                env_key
+                    .and_then(|ek| std::env::var(ek).ok())
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            } else {
+                None
+            };
+            let cred_keys: Vec<&str> = match env_key {
+                Some(ek) => vec![ek, prov_id, "OPENAI_API_KEY"],
+                None => vec![prov_id, "OPENAI_API_KEY"],
+            };
+            let resolved_secret = resolve_inline_or_env_secret(
+                kvs.get("api_key")
+                    .or_else(|| kvs.get("apiKey"))
+                    .and_then(|v| v.as_str()),
+                allow_environment,
+            )
+            .or(env_secret)
+            .or_else(|| {
+                cred_doc
+                    .as_ref()
+                    .and_then(|cd| lookup_credential_in_file(cd, &cred_keys))
+            });
+            let (secret, cred_status) =
+                finalize_credential_state(resolved_secret, include_credentials);
+            let mut models = models_by_provider.remove(prov_id).unwrap_or_default();
+            if let Some(m) = kvs
+                .get("model")
                 .and_then(|v| v.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .map(ToString::to_string);
-            let cred_status = if secret.is_some() {
-                "present"
-            } else if c
-                .get("api_key_env")
-                .and_then(|v| v.as_str())
-                .is_some_and(|e| std::env::var(e).ok().is_some_and(|v| !v.trim().is_empty()))
             {
-                "environment"
-            } else {
-                "missing"
+                if !models.iter().any(|x| x == m) {
+                    models.push(m.to_string());
+                }
             }
-            .to_string();
+            if top_provider.as_deref() == Some(prov_id) {
+                if let Some(ref tm) = top_model {
+                    if !models.iter().any(|x| x == tm) {
+                        models.push(tm.clone());
+                    }
+                }
+            }
+            let issue = if endpoint.is_empty() {
+                Some("Missing base URL".to_string())
+            } else if include_credentials && secret.is_none() && has_codex_subscription_only {
+                Some("subscription_credential_reuse_not_supported".to_string())
+            } else {
+                None
+            };
             out.push(ExtractedImportCandidate {
                 candidate_id: new_id(),
-                connection_id: cid,
+                connection_id: format!("{src_lower}-{prov_id}"),
                 display_name,
                 source: src.to_string(),
                 endpoint,
@@ -3786,9 +4974,53 @@ fn extract_import_candidates_from_path(
                 models,
                 secret,
                 credential_status: cred_status,
+                issue,
+            });
+        }
+
+        if out.is_empty() && src_lower == "codex" && (top_model.is_some() || top_provider.is_some())
+        {
+            let prov_name = top_provider.unwrap_or_else(|| "openai".to_string());
+            let env_secret = if allow_environment {
+                std::env::var("OPENAI_API_KEY")
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            } else {
+                None
+            };
+            let resolved_secret = env_secret.or_else(|| {
+                cred_doc
+                    .as_ref()
+                    .and_then(|cd| lookup_credential_in_file(cd, &["OPENAI_API_KEY", &prov_name]))
+            });
+            let (secret, cred_status) =
+                finalize_credential_state(resolved_secret, include_credentials);
+            let issue = if include_credentials && secret.is_none() && has_codex_subscription_only {
+                Some("subscription_credential_reuse_not_supported".to_string())
+            } else {
+                None
+            };
+            let models = top_model.into_iter().collect();
+            out.push(ExtractedImportCandidate {
+                candidate_id: new_id(),
+                connection_id: format!("codex-{prov_name}"),
+                display_name: if prov_name == "openai" {
+                    "OpenAI (Codex)".to_string()
+                } else {
+                    prov_name
+                },
+                source: src.to_string(),
+                endpoint: "https://api.openai.com/v1".to_string(),
+                protocol: "responses".to_string(),
+                models,
+                secret,
+                credential_status: cred_status,
+                issue,
             });
         }
     }
+
     Ok(out)
 }
 
@@ -3799,6 +5031,7 @@ fn commit_import_candidates(
 ) -> Result<Vec<String>, String> {
     let mut cfg = load_active_config(store);
     let mut imported_ids = Vec::new();
+    let mut imported_sources: BTreeMap<String, String> = BTreeMap::new();
     for cand in candidates {
         let cid = if cand.connection_id.trim().is_empty() {
             new_id()
@@ -3824,7 +5057,7 @@ fn commit_import_candidates(
             None
         };
         if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == cid) {
-            if !cand.endpoint.is_empty() {
+            if !cand.endpoint.trim().is_empty() {
                 existing.endpoint = cand.endpoint.clone();
             }
             if !cand.protocol.is_empty() {
@@ -3838,7 +5071,7 @@ fn commit_import_candidates(
                     existing.models.push(m);
                 }
             }
-        } else if !cand.endpoint.is_empty() {
+        } else if !cand.endpoint.trim().is_empty() {
             cfg.llm.connections.push(ConnectionConfig {
                 id: cid.clone(),
                 endpoint: cand.endpoint.clone(),
@@ -3848,6 +5081,9 @@ fn commit_import_candidates(
                 api_key_env: None,
                 models,
             });
+        } else {
+            // Skip candidates with empty endpoint when no existing connection matches.
+            continue;
         }
         if !cand.display_name.is_empty() && cand.display_name != cid {
             cfg.connection_extras
@@ -3855,15 +5091,27 @@ fn commit_import_candidates(
                 .or_default()
                 .name = Some(cand.display_name.clone());
         }
+        imported_sources.insert(cid.clone(), cand.source.clone());
         imported_ids.push(cid);
     }
     if !imported_ids.is_empty() {
         save_applied_config(store, &cfg)?;
+        for cid in &imported_ids {
+            let src = imported_sources
+                .get(cid)
+                .map(String::as_str)
+                .unwrap_or("import");
+            let _ = upsert_model_connection_module_record(store, &cfg, cid, src);
+        }
     }
     Ok(imported_ids)
 }
 
-fn candidate_to_mac_import_json(cand: &ExtractedImportCandidate, existing_rev: Option<i64>) -> Value {
+fn candidate_to_mac_import_json(
+    cand: &ExtractedImportCandidate,
+    existing_rev: Option<i64>,
+    existing_account_id: Option<&str>,
+) -> Value {
     let models: Vec<Value> = cand
         .models
         .iter()
@@ -3881,11 +5129,13 @@ fn candidate_to_mac_import_json(cand: &ExtractedImportCandidate, existing_rev: O
             })
         })
         .collect();
-    let issue = if cand.endpoint.trim().is_empty() {
-        Some("Missing base URL")
-    } else {
-        None
-    };
+    let issue = cand.issue.clone().or_else(|| {
+        if cand.endpoint.trim().is_empty() {
+            Some("Missing base URL".to_string())
+        } else {
+            None
+        }
+    });
     json!({
         "candidate_id": cand.candidate_id,
         "connection": {
@@ -3893,7 +5143,7 @@ fn candidate_to_mac_import_json(cand: &ExtractedImportCandidate, existing_rev: O
             "display_name": cand.display_name,
             "base_url": cand.endpoint,
             "protocols": [cand.protocol],
-            "account_id": Value::Null,
+            "account_id": existing_account_id.map(|s| json!(s)).unwrap_or(Value::Null),
             "source": cand.source,
             "source_id": cand.connection_id,
             "enabled": true
@@ -3905,7 +5155,11 @@ fn candidate_to_mac_import_json(cand: &ExtractedImportCandidate, existing_rev: O
     })
 }
 
-fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
+fn handle_model_import_bridge_cmd(
+    store: &Store,
+    suite: &ModulesSuite,
+    args: &[String],
+) -> Result<u8, String> {
     let mut cli_op: Option<String> = None;
     let mut cli_source: Option<String> = None;
     let mut cli_path: Option<String> = None;
@@ -4032,6 +5286,7 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                             .unwrap_or_default(),
                         secret: None,
                         credential_status: "missing".into(),
+                        issue: None,
                     })
                     .collect();
                 let imported_ids = commit_import_candidates(store, &extracted, false)?;
@@ -4149,22 +5404,50 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                     .get("include_credentials")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let allow_environment = req
+                    .get("allow_environment")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let credential_path = req
+                    .get("credential_path")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let path_str = req.get("path").and_then(|v| v.as_str());
                 match path_str {
-                    Some(p) => match extract_import_candidates_from_path(p, &src_name) {
+                    Some(p) => match extract_import_candidates_with_options(
+                        p,
+                        &src_name,
+                        credential_path,
+                        include_credentials,
+                        allow_environment,
+                    ) {
                         Ok(candidates) => {
                             let plan_id = new_id();
                             let active_cfg = load_active_config(store);
                             let mac_cands: Vec<Value> = candidates
                                 .iter()
                                 .map(|c| {
-                                    let existing_rev = active_cfg
-                                        .llm
-                                        .connections
-                                        .iter()
-                                        .any(|ex| ex.id == c.connection_id)
-                                        .then_some(1i64);
-                                    candidate_to_mac_import_json(c, existing_rev)
+                                    let existing_rec = suite
+                                        .get_record::<Value>("model_connection", &c.connection_id)
+                                        .ok()
+                                        .flatten();
+                                    let existing_rev = existing_rec
+                                        .as_ref()
+                                        .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                                        .or_else(|| {
+                                            active_cfg
+                                                .llm
+                                                .connections
+                                                .iter()
+                                                .any(|ex| ex.id == c.connection_id)
+                                                .then_some(1i64)
+                                        });
+                                    let existing_acct_id = existing_rec
+                                        .as_ref()
+                                        .and_then(|r| r.get("account_id").and_then(|v| v.as_str()))
+                                        .filter(|s| !s.trim().is_empty());
+                                    candidate_to_mac_import_json(c, existing_rev, existing_acct_id)
                                 })
                                 .collect();
                             let plan_obj = json!({
@@ -4215,32 +5498,88 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                     .cloned()
                     .unwrap_or_default();
                 if let Some((may_store_creds, plan_cands)) = plans.remove(&plan_id) {
-                    let selected_ids: BTreeSet<String> = selections
-                        .iter()
-                        .filter_map(|s| {
-                            s.get("candidate_id")
+                    let mut selection_opts: BTreeMap<String, (Option<String>, bool, bool)> =
+                        BTreeMap::new();
+                    for s in &selections {
+                        if let Some(cid) = s.get("candidate_id").and_then(|v| v.as_str()) {
+                            let disp = s
+                                .get("display_name")
                                 .and_then(|v| v.as_str())
-                                .map(ToString::to_string)
-                        })
-                        .collect();
-                    let chosen: Vec<ExtractedImportCandidate> = if selected_ids.is_empty() {
+                                .map(str::trim)
+                                .filter(|x| !x.is_empty())
+                                .map(ToString::to_string);
+                            let upd = s
+                                .get("update_existing")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let enable = s
+                                .get("enable_models")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+                            selection_opts.insert(cid.to_string(), (disp, upd, enable));
+                        }
+                    }
+                    let chosen: Vec<ExtractedImportCandidate> = if selection_opts.is_empty() {
                         plan_cands
                     } else {
                         plan_cands
                             .into_iter()
-                            .filter(|c| selected_ids.contains(&c.candidate_id))
+                            .filter(|c| selection_opts.contains_key(&c.candidate_id))
+                            .map(|mut c| {
+                                if let Some((Some(disp), _, _)) =
+                                    selection_opts.get(&c.candidate_id)
+                                {
+                                    c.display_name = disp.clone();
+                                }
+                                c
+                            })
                             .collect()
                     };
 
+                    // Filter out existing connections where update_existing was not approved
+                    let mut approved_to_commit: Vec<ExtractedImportCandidate> = Vec::new();
+                    let mut skipped_results: Vec<Value> = Vec::new();
+                    for cand in chosen {
+                        let existing_rec = suite
+                            .get_record::<Value>("model_connection", &cand.connection_id)
+                            .ok()
+                            .flatten();
+                        let update_ok = selection_opts
+                            .get(&cand.candidate_id)
+                            .map(|(_, upd, _)| *upd)
+                            .unwrap_or(true);
+                        if existing_rec.is_some() && !update_ok {
+                            skipped_results.push(json!({
+                                "candidate_id": cand.candidate_id,
+                                "connection_id": cand.connection_id,
+                                "status": "skipped",
+                                "error": "Existing connection requires update confirmation"
+                            }));
+                        } else {
+                            approved_to_commit.push(cand);
+                        }
+                    }
+
                     // Perform interactive `credential_request` -> `credential_saved` handshake with macOS when framed & secrets included
-                    let mut saved_refs: BTreeMap<String, String> = BTreeMap::new();
+                    let mut saved_accounts: BTreeMap<String, (String, String)> = BTreeMap::new();
                     let mut handshake_failed: Option<String> = None;
                     if may_store_creds {
                         if let Some(ref rid) = request_id {
-                            for cand in &chosen {
+                            for cand in &approved_to_commit {
                                 if let Some(ref secret) = cand.secret {
                                     let nonce = new_id();
-                                    let account_id = format!("import-account-{}", new_id());
+                                    let existing_acct = suite
+                                        .get_record::<Value>("model_connection", &cand.connection_id)
+                                        .ok()
+                                        .flatten()
+                                        .and_then(|r| {
+                                            r.get("account_id")
+                                                .and_then(|v| v.as_str())
+                                                .filter(|s| !s.trim().is_empty())
+                                                .map(ToString::to_string)
+                                        });
+                                    let account_id = existing_acct
+                                        .unwrap_or_else(|| format!("import-account-{}", new_id()));
                                     emit_compact_json_line(&json!({
                                         "type": "credential_request",
                                         "request_id": rid,
@@ -4271,9 +5610,9 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                                                         .get("reference")
                                                         .and_then(|v| v.as_str())
                                                     {
-                                                        saved_refs.insert(
+                                                        saved_accounts.insert(
                                                             cand.connection_id.clone(),
-                                                            r.to_string(),
+                                                            (account_id, r.to_string()),
                                                         );
                                                     }
                                                 } else {
@@ -4300,29 +5639,146 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                             "error": err
                         })
                     } else {
-                        match commit_import_candidates(store, &chosen, may_store_creds) {
+                        // When framed (macOS Keychain holds secrets), never write raw secrets into SQLite KV config.
+                        let write_plaintext_secret = request_id.is_none() && may_store_creds;
+                        match commit_import_candidates(store, &approved_to_commit, write_plaintext_secret) {
                             Ok(_) => {
-                                if !saved_refs.is_empty() {
+                                let ts = now_ms();
+                                if !saved_accounts.is_empty() {
                                     let mut cfg = load_active_config(store);
-                                    for (cid, cref) in saved_refs {
+                                    for (cid, (_, cref)) in &saved_accounts {
                                         cfg.connection_extras
-                                            .entry(cid)
+                                            .entry(cid.clone())
                                             .or_default()
-                                            .credential_ref = Some(cref);
+                                            .credential_ref = Some(cref.clone());
                                     }
                                     let _ = save_applied_config(store, &cfg);
                                 }
-                                let results: Vec<Value> = chosen
-                                    .iter()
-                                    .map(|c| {
-                                        json!({
-                                            "candidate_id": c.candidate_id,
-                                            "connection_id": c.connection_id,
-                                            "status": "imported",
-                                            "error": Value::Null
+                                let mut results = skipped_results;
+                                for cand in &approved_to_commit {
+                                    let existing_conn = suite
+                                        .get_record::<Value>("model_connection", &cand.connection_id)
+                                        .ok()
+                                        .flatten();
+                                    let mut account_id_for_conn = existing_conn
+                                        .as_ref()
+                                        .and_then(|r| r.get("account_id").and_then(|v| v.as_str()))
+                                        .filter(|s| !s.trim().is_empty())
+                                        .map(ToString::to_string);
+                                    if let Some((acct_id, cref)) =
+                                        saved_accounts.get(&cand.connection_id)
+                                    {
+                                        let prev_acct_rev = suite
+                                            .get_record::<Value>("model_account", acct_id)
+                                            .ok()
+                                            .flatten()
+                                            .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
+                                            .unwrap_or(0);
+                                        let acct_rec = json!({
+                                            "id": acct_id,
+                                            "account_id": acct_id,
+                                            "display_name": cand.display_name,
+                                            "source": cand.source,
+                                            "credential_ref": cref,
+                                            "state": "ready",
+                                            "revision": prev_acct_rev + 1,
+                                            "updated_at_ms": ts
+                                        });
+                                        if let Err(e) =
+                                            suite.upsert_record("model_account", acct_id, &acct_rec)
+                                        {
+                                            results.push(json!({
+                                                "candidate_id": cand.candidate_id,
+                                                "connection_id": cand.connection_id,
+                                                "status": "failed",
+                                                "error": e.to_string()
+                                            }));
+                                            continue;
+                                        }
+                                        account_id_for_conn = Some(acct_id.clone());
+                                    }
+
+                                    let prev_rev = existing_conn
+                                        .as_ref()
+                                        .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
+                                        .unwrap_or(0);
+                                    let catalog_models: Vec<Value> = cand
+                                        .models
+                                        .iter()
+                                        .filter_map(|mid| {
+                                            crate::daemon::normalize_catalog_model_entry(
+                                                &Value::String(mid.clone()),
+                                                &cand.protocol,
+                                            )
                                         })
-                                    })
-                                    .collect();
+                                        .collect();
+                                    let catalog_val = if !catalog_models.is_empty() {
+                                        json!({
+                                            "observed_at_ms": ts,
+                                            "source": cand.source,
+                                            "models": catalog_models
+                                        })
+                                    } else {
+                                        existing_conn
+                                            .as_ref()
+                                            .and_then(|r| r.get("catalog").cloned())
+                                            .unwrap_or(Value::Null)
+                                    };
+                                    let conn_rec = json!({
+                                        "id": cand.connection_id,
+                                        "connection_id": cand.connection_id,
+                                        "display_name": cand.display_name,
+                                        "base_url": cand.endpoint,
+                                        "protocols": [cand.protocol],
+                                        "account_id": account_id_for_conn,
+                                        "source": cand.source,
+                                        "source_id": cand.connection_id,
+                                        "enabled": true,
+                                        "revision": prev_rev + 1,
+                                        "updated_at_ms": ts,
+                                        "catalog": catalog_val
+                                    });
+                                    if let Err(e) = suite.upsert_record(
+                                        "model_connection",
+                                        &cand.connection_id,
+                                        &conn_rec,
+                                    ) {
+                                        results.push(json!({
+                                            "candidate_id": cand.candidate_id,
+                                            "connection_id": cand.connection_id,
+                                            "status": "failed",
+                                            "error": e.to_string()
+                                        }));
+                                        continue;
+                                    }
+
+                                    let enable_models = selection_opts
+                                        .get(&cand.candidate_id)
+                                        .map(|(_, _, en)| *en)
+                                        .unwrap_or(true);
+                                    if enable_models && !cand.models.is_empty() {
+                                        let enable_keys: Vec<String> = cand
+                                            .models
+                                            .iter()
+                                            .map(|mid| format!("{}:{mid}", cand.protocol))
+                                            .collect();
+                                        let _ = crate::daemon::sync_connection_model_profiles(
+                                            store,
+                                            suite,
+                                            &conn_rec,
+                                            &enable_keys,
+                                            None,
+                                            ts,
+                                        );
+                                    }
+
+                                    results.push(json!({
+                                        "candidate_id": cand.candidate_id,
+                                        "connection_id": cand.connection_id,
+                                        "status": "imported",
+                                        "error": Value::Null
+                                    }));
+                                }
                                 if let Some(ref rid) = request_id {
                                     json!({
                                         "type": "commit",
@@ -4422,54 +5878,243 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let cfg = load_active_config(store);
+                    let existing_rec = suite
+                        .get_record::<Value>("model_connection", conn_id)
+                        .ok()
+                        .flatten();
                     let meta = resolve_probe_connection_metadata(store, &cfg, conn_id, req);
-                    let snapshot = json!({
-                        "revision": expected_rev + 1,
-                        "document": {
-                            "format_version": 1,
-                            "connection": {
-                                "id": conn_id,
-                                "display_name": meta.display_name,
-                                "base_url": meta.base_url,
-                                "protocols": [proto],
-                                "account_id": meta.account_id,
-                                "source": "nola",
-                                "source_id": conn_id,
-                                "enabled": true
-                            },
-                            "catalog": {
-                                "observed_at_ms": now_ms(),
-                                "source": "probe",
-                                "models": [{
-                                    "model_id": model_id,
-                                    "display_name": model_id,
-                                    "protocol": proto,
-                                    "context_window": 128000,
-                                    "output_limit": 16384,
-                                    "modalities": ["text"],
-                                    "reasoning_levels": [],
-                                    "summary_supported": Value::Null,
-                                    "execution_capabilities": Value::Null
-                                }]
-                            },
-                            "capability_assessments": [{
-                                "model_id": model_id,
+
+                    // Obtain API key: prefer credential_read_request handshake when account_id is present & framed
+                    let mut api_key = cfg
+                        .llm
+                        .connections
+                        .iter()
+                        .find(|c| c.id == conn_id)
+                        .and_then(|c| c.api_key.as_deref())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    let mut cred_error: Option<String> = None;
+                    if api_key.is_empty() {
+                        if let (Some(ref acct_id), Some(ref rid)) = (&meta.account_id, &request_id) {
+                            let nonce = new_id();
+                            emit_compact_json_line(&json!({
+                                "type": "credential_read_request",
+                                "request_id": rid,
+                                "nonce": nonce,
+                                "connection_id": conn_id,
+                                "endpoint": meta.base_url,
                                 "protocol": proto,
-                                "evidence": {
-                                    "text_generation": true,
-                                    "account_revision": meta.account_revision,
-                                    "credential_binding": cred_binding,
-                                    "observed_at_ms": now_ms()
-                                },
-                                "user_override": Value::Null
-                            }]
+                                "account_id": acct_id
+                            }));
+                            let mut cred_line = String::new();
+                            match reader.read_line(&mut cred_line) {
+                                Ok(0) => {
+                                    cred_error =
+                                        Some("stdin closed awaiting credential_read".into());
+                                }
+                                Ok(_) => {
+                                    if let Ok(cred_frame) =
+                                        serde_json::from_str::<Value>(cred_line.trim())
+                                    {
+                                        if cred_frame.get("type").and_then(|v| v.as_str())
+                                            == Some("credential_read")
+                                            && cred_frame.get("nonce").and_then(|v| v.as_str())
+                                                == Some(nonce.as_str())
+                                        {
+                                            api_key = cred_frame
+                                                .get("secret")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                        } else {
+                                            cred_error = Some(
+                                                "invalid credential_read handshake frame".into(),
+                                            );
+                                        }
+                                    } else {
+                                        cred_error =
+                                            Some("malformed credential_read JSON frame".into());
+                                    }
+                                }
+                                Err(e) => {
+                                    cred_error = Some(format!("credential_read IO error: {e}"));
+                                }
+                            }
                         }
-                    });
-                    json!({
-                        "type": "probe",
-                        "request_id": request_id,
-                        "snapshot": snapshot
-                    })
+                    }
+
+                    if let Some(err_msg) = cred_error {
+                        json!({
+                            "type": "error",
+                            "request_id": request_id,
+                            "error": err_msg
+                        })
+                    } else if meta.base_url.trim().is_empty() {
+                        json!({
+                            "type": "error",
+                            "request_id": request_id,
+                            "error": "missing base_url for connection probe"
+                        })
+                    } else {
+                        match perform_text_generation_probe(
+                            conn_id,
+                            &meta.base_url,
+                            proto,
+                            model_id,
+                            &api_key,
+                        ) {
+                            Ok(()) => {
+                                let ts = now_ms();
+                                let existing_rev = existing_rec
+                                    .as_ref()
+                                    .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                                    .unwrap_or(0);
+                                let next_rev = existing_rev.max(expected_rev) + 1;
+
+                                // Preserve ALL existing connection fields & catalog models
+                                let mut rec = existing_rec.unwrap_or_else(|| {
+                                    json!({
+                                        "id": conn_id,
+                                        "display_name": meta.display_name,
+                                        "base_url": meta.base_url,
+                                        "protocols": [proto],
+                                        "account_id": meta.account_id,
+                                        "source": "nola",
+                                        "source_id": conn_id,
+                                        "enabled": true
+                                    })
+                                });
+                                let mut models_list: Vec<Value> = rec
+                                    .pointer("/catalog/models")
+                                    .and_then(|v| v.as_array())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let has_model = models_list.iter().any(|m| {
+                                    m.get("model_id").and_then(|v| v.as_str()) == Some(model_id)
+                                        && m.get("protocol")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(proto)
+                                            == proto
+                                });
+                                if !has_model && !model_id.is_empty() {
+                                    models_list.push(json!({
+                                        "model_id": model_id,
+                                        "display_name": model_id,
+                                        "protocol": proto,
+                                        "context_window": 128000,
+                                        "output_limit": 16384,
+                                        "modalities": ["text"],
+                                        "reasoning_levels": [],
+                                        "summary_supported": Value::Null,
+                                        "execution_capabilities": Value::Null
+                                    }));
+                                }
+                                let catalog_source = rec
+                                    .pointer("/catalog/source")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("probe")
+                                    .to_string();
+                                let catalog_val = json!({
+                                    "observed_at_ms": ts,
+                                    "source": catalog_source,
+                                    "models": models_list
+                                });
+
+                                let mut assessments: Vec<Value> = rec
+                                    .get("capability_assessments")
+                                    .and_then(|v| v.as_array())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let mut existing_override = Value::Null;
+                                if let Some(pos) = assessments.iter().position(|a| {
+                                    a.get("model_id").and_then(|v| v.as_str()) == Some(model_id)
+                                        && a.get("protocol").and_then(|v| v.as_str()) == Some(proto)
+                                }) {
+                                    existing_override = assessments[pos]
+                                        .get("user_override")
+                                        .cloned()
+                                        .unwrap_or(Value::Null);
+                                    assessments.remove(pos);
+                                }
+                                assessments.push(json!({
+                                    "model_id": model_id,
+                                    "protocol": proto,
+                                    "evidence": {
+                                        "text_generation": true,
+                                        "account_revision": meta.account_revision,
+                                        "credential_binding": cred_binding,
+                                        "observed_at_ms": ts
+                                    },
+                                    "user_override": existing_override
+                                }));
+
+                                let existing_protocols: Vec<Value> = rec
+                                    .get("protocols")
+                                    .and_then(|v| v.as_array())
+                                    .filter(|a| !a.is_empty())
+                                    .cloned()
+                                    .unwrap_or_else(|| vec![json!(proto)]);
+                                let conn_source = rec
+                                    .get("source")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("nola")
+                                    .to_string();
+                                let conn_source_id = rec
+                                    .get("source_id")
+                                    .cloned()
+                                    .unwrap_or_else(|| json!(conn_id));
+                                let conn_enabled = rec
+                                    .get("enabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+                                if let Some(obj) = rec.as_object_mut() {
+                                    obj.insert("id".into(), json!(conn_id));
+                                    obj.insert("display_name".into(), json!(meta.display_name));
+                                    obj.insert("base_url".into(), json!(meta.base_url));
+                                    obj.insert("protocols".into(), Value::Array(existing_protocols.clone()));
+                                    obj.insert("account_id".into(), json!(meta.account_id));
+                                    obj.insert("source".into(), json!(conn_source));
+                                    obj.insert("source_id".into(), conn_source_id.clone());
+                                    obj.insert("enabled".into(), json!(conn_enabled));
+                                    obj.insert("revision".into(), json!(next_rev));
+                                    obj.insert("updated_at_ms".into(), json!(ts));
+                                    obj.insert("catalog".into(), catalog_val.clone());
+                                    obj.insert("capability_assessments".into(), json!(assessments));
+                                }
+                                let _ = suite.upsert_record("model_connection", conn_id, &rec);
+
+                                let snapshot = json!({
+                                    "revision": next_rev,
+                                    "document": {
+                                        "format_version": 1,
+                                        "connection": {
+                                            "id": conn_id,
+                                            "display_name": meta.display_name,
+                                            "base_url": meta.base_url,
+                                            "protocols": existing_protocols,
+                                            "account_id": meta.account_id,
+                                            "source": conn_source,
+                                            "source_id": conn_source_id,
+                                            "enabled": conn_enabled
+                                        },
+                                        "catalog": catalog_val,
+                                        "capability_assessments": assessments
+                                    }
+                                });
+                                json!({
+                                    "type": "probe",
+                                    "request_id": request_id,
+                                    "snapshot": snapshot
+                                })
+                            }
+                            Err(err) => json!({
+                                "type": "error",
+                                "request_id": request_id,
+                                "error": err
+                            }),
+                        }
+                    }
                 }
             }
             _ => {
@@ -4481,7 +6126,7 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
                 if let Some(p) = req.get("path").and_then(|v| v.as_str()) {
                     if let Ok(found) = extract_import_candidates_from_path(p, src_name) {
                         for c in found {
-                            candidates.push(candidate_to_mac_import_json(&c, None));
+                            candidates.push(candidate_to_mac_import_json(&c, None, None));
                         }
                     }
                 }
@@ -4498,6 +6143,8 @@ fn handle_model_import_bridge_cmd(store: &Store, args: &[String]) -> Result<u8, 
     Ok(0)
 }
 
+type SiwcCallbackResult = Arc<Mutex<Option<Result<String, String>>>>;
+
 #[derive(Clone)]
 struct SiwcFlowState {
     owner_id: String,
@@ -4507,10 +6154,44 @@ struct SiwcFlowState {
     display_name: String,
     phase: String,
     authorization_url: Option<String>,
+    error: Option<String>,
     account: Option<Value>,
+    pkce_verifier: String,
+    redirect_uri: String,
+    callback_result: SiwcCallbackResult,
+    callback_shutdown: Arc<AtomicBool>,
 }
 
 impl SiwcFlowState {
+    fn sync_callback(&mut self) {
+        if self.phase != "awaiting_authorization" {
+            return;
+        }
+        let received = self
+            .callback_result
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        if let Some(res) = received {
+            match res {
+                Ok(_code) => {
+                    self.phase = "authorized".into();
+                    self.authorization_url = None;
+                    self.error = None;
+                }
+                Err(code) => {
+                    self.phase = "failed".into();
+                    self.authorization_url = None;
+                    self.error = Some(code);
+                }
+            }
+        }
+    }
+
+    fn shutdown_listener(&self) {
+        self.callback_shutdown.store(true, Ordering::SeqCst);
+    }
+
     fn to_json(&self) -> Value {
         json!({
             "owner_id": self.owner_id,
@@ -4519,7 +6200,7 @@ impl SiwcFlowState {
             "expected_account_revision": self.expected_account_revision,
             "phase": self.phase,
             "authorization_url": self.authorization_url,
-            "error": Value::Null,
+            "error": self.error,
             "private_session_may_be_retained": false,
             "account": self.account,
             "inference_performed": false
@@ -4971,6 +6652,9 @@ fn handle_model_siwc_bridge_cmd(
                 "owner_id": owner_id
             }),
             "start" => {
+                if let Some(prev) = current_flow.take() {
+                    prev.shutdown_listener();
+                }
                 let account_id = req
                     .get("account_id")
                     .and_then(|v| v.as_str())
@@ -4987,9 +6671,20 @@ fn handle_model_siwc_bridge_cmd(
                     .to_string();
                 let pkce = nola_mcp::McpOAuthManager::generate_pkce().ok();
                 let state = new_id();
-                let challenge = pkce.map(|p| p.challenge).unwrap_or_else(new_id);
+                let (verifier, challenge) = match pkce {
+                    Some(p) => (p.verifier, p.challenge),
+                    None => {
+                        let v = new_id();
+                        (v.clone(), v)
+                    }
+                };
+                let (port, callback_result, callback_shutdown) =
+                    spawn_siwc_callback_listener(state.clone());
+                let redirect_uri = format!("http://localhost:{port}/auth/callback");
+                let encoded_redirect: String =
+                    url::form_urlencoded::byte_serialize(redirect_uri.as_bytes()).collect();
                 let auth_url = format!(
-                    "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&scope=openid+profile+email+offline_access&code_challenge={challenge}&code_challenge_method=S256&state={state}"
+                    "https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&redirect_uri={encoded_redirect}&scope=openid+profile+email+offline_access&code_challenge={challenge}&code_challenge_method=S256&state={state}"
                 );
                 let flow = SiwcFlowState {
                     owner_id: owner_id.clone(),
@@ -4999,7 +6694,12 @@ fn handle_model_siwc_bridge_cmd(
                     display_name,
                     phase: "awaiting_authorization".into(),
                     authorization_url: Some(auth_url),
+                    error: None,
                     account: None,
+                    pkce_verifier: verifier,
+                    redirect_uri,
+                    callback_result,
+                    callback_shutdown,
                 };
                 let flow_val = flow.to_json();
                 current_flow = Some(flow);
@@ -5010,7 +6710,8 @@ fn handle_model_siwc_bridge_cmd(
                 })
             }
             "status" => {
-                if let Some(ref flow) = current_flow {
+                if let Some(ref mut flow) = current_flow {
+                    flow.sync_callback();
                     json!({
                         "type": "flow",
                         "request_id": request_id,
@@ -5026,6 +6727,7 @@ fn handle_model_siwc_bridge_cmd(
             }
             "cancel" => {
                 if let Some(ref mut flow) = current_flow {
+                    flow.shutdown_listener();
                     flow.phase = "cancelled".into();
                     flow.authorization_url = None;
                     let flow_val = flow.to_json();
@@ -5044,6 +6746,8 @@ fn handle_model_siwc_bridge_cmd(
             }
             "finish" => {
                 if let Some(ref mut flow) = current_flow {
+                    flow.sync_callback();
+                    flow.shutdown_listener();
                     let next_rev = flow.expected_account_revision.unwrap_or(0) + 1;
                     let acct = siwc_account_snapshot(
                         &flow.account_id,
@@ -5057,10 +6761,19 @@ fn handle_model_siwc_bridge_cmd(
                         "revision": next_rev,
                         "session_revision": 1,
                         "authenticated": true,
+                        "redirect_uri": flow.redirect_uri,
+                        "has_pkce_verifier": !flow.pkce_verifier.is_empty(),
                         "updated_at_ms": now_ms()
                     });
                     let _ = store.set_kv("siwc_account", &meta);
                     let _ = store.set_kv(&format!("siwc_account:{}", flow.account_id), &meta);
+                    upsert_siwc_model_account_record(
+                        store,
+                        &flow.account_id,
+                        &flow.display_name,
+                        next_rev,
+                        true,
+                    );
                     flow.phase = "committed".into();
                     flow.authorization_url = None;
                     flow.account = Some(acct);
@@ -5150,6 +6863,33 @@ fn handle_model_siwc_bridge_cmd(
                         });
                         let _ = store.set_kv(&format!("siwc_account:{account_id}"), &meta);
                         let _ = store.set_kv("siwc_account", &Value::Null);
+                        upsert_siwc_model_account_record(
+                            store,
+                            &account_id,
+                            &display_name,
+                            next_rev,
+                            false,
+                        );
+                        let conn_id = format!("siwc-{account_id}");
+                        if let Ok(Some(mut existing_conn)) =
+                            store.get_module_record::<Value>("model_connection", &conn_id)
+                        {
+                            let c_rev = existing_conn
+                                .get("revision")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(1)
+                                + 1;
+                            if let Some(obj) = existing_conn.as_object_mut() {
+                                obj.insert("enabled".into(), json!(false));
+                                obj.insert("revision".into(), json!(c_rev));
+                                obj.insert("updated_at_ms".into(), json!(now_ms()));
+                            }
+                            let _ = store.put_module_record(
+                                "model_connection",
+                                &conn_id,
+                                &existing_conn,
+                            );
+                        }
                         json!({
                             "type": "account",
                             "request_id": request_id,
@@ -5204,6 +6944,14 @@ fn handle_model_siwc_bridge_cmd(
                     "models" | "discovermodels" => {
                         let conn_snap = siwc_default_connection_snapshot(&account_id, stored_rev);
                         let _ = store.set_kv(&format!("siwc_connection:{account_id}"), &conn_snap);
+                        upsert_siwc_model_account_record(
+                            store,
+                            &account_id,
+                            &display_name,
+                            stored_rev,
+                            has_token,
+                        );
+                        upsert_siwc_model_connection_record(store, &conn_snap);
                         json!({
                             "type": "account",
                             "request_id": request_id,
@@ -5374,9 +7122,20 @@ fn handle_mcp_cmd(
                 oauth_scopes: Vec::new(),
             };
             store.upsert_mcp_server(&cfg).map_err(|e| e.to_string())?;
+            let mut redacted = cfg.clone();
+            for val in redacted.env.values_mut() {
+                if !val.is_empty() {
+                    *val = "[REDACTED]".to_string();
+                }
+            }
+            for val in redacted.headers.values_mut() {
+                if !val.is_empty() {
+                    *val = "[REDACTED]".to_string();
+                }
+            }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&json!({"ok": true, "server": cfg})).unwrap()
+                serde_json::to_string_pretty(&json!({"ok": true, "server": redacted})).unwrap()
             );
             Ok(0)
         }
@@ -5683,6 +7442,42 @@ fn parse_memory_cli_flags(
                 has_tags = true;
                 has_flags = true;
             }
+            "--confidence" => {
+                let v = take_value(&mut i, "--confidence")?;
+                let n: f64 = v
+                    .parse()
+                    .map_err(|_| "--confidence must be a valid number".to_string())?;
+                map.insert("confidence".into(), json!(n));
+                has_flags = true;
+            }
+            "--importance" => {
+                let v = take_value(&mut i, "--importance")?;
+                let n: f64 = v
+                    .parse()
+                    .map_err(|_| "--importance must be a valid number".to_string())?;
+                map.insert("importance".into(), json!(n));
+                has_flags = true;
+            }
+            "--sensitivity" => {
+                let v = take_value(&mut i, "--sensitivity")?;
+                map.insert("sensitivity".into(), json!(v));
+                has_flags = true;
+            }
+            "--expires-at" => {
+                let v = take_value(&mut i, "--expires-at")?;
+                map.insert("expires_at".into(), json!(v));
+                has_flags = true;
+            }
+            "--source" => {
+                let v = take_value(&mut i, "--source")?;
+                map.insert("source".into(), json!(v));
+                has_flags = true;
+            }
+            "--provenance-kind" => {
+                let v = take_value(&mut i, "--provenance-kind")?;
+                map.insert("provenance_kind".into(), json!(v));
+                has_flags = true;
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unknown memory flag '{other}'"));
             }
@@ -5709,7 +7504,7 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
             let items = store.search_memory("", None, 200).map_err(|e| e.to_string())?;
             let records: Vec<Value> = items
                 .iter()
-                .map(crate::web_api::memory_item_to_record)
+                .map(|item| crate::web_api::memory_item_to_record_with_store(store, item))
                 .collect();
             println!(
                 "{}",
@@ -5717,7 +7512,7 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
             );
             Ok(0)
         }
-        Some("create") | Some("revise") => {
+        Some("create") | Some("add") | Some("revise") => {
             let is_revise = args.first().map(String::as_str) == Some("revise");
             let usage = if is_revise {
                 "usage: nola memory revise <id> [--title <title>] [--content <content>] [--summary <summary>] [--kind <kind>] [--scope <scope>] [--tags <a,b>] (or pipe JSON on stdin)"
@@ -5797,7 +7592,7 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
                 .unwrap_or_default();
             let created_at_ms = existing.as_ref().map(|m| m.created_at_ms).unwrap_or(ts);
             let item = nola_types::MemoryItem {
-                id,
+                id: id.clone(),
                 namespace: format!("{scope}:{kind}"),
                 title,
                 content,
@@ -5806,7 +7601,64 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
                 updated_at_ms: ts,
             };
             store.upsert_memory(&item).map_err(|e| e.to_string())?;
-            let record = crate::web_api::memory_item_to_record(&item);
+
+            // Merge & persist extended memory metadata (`memory_meta:{id}`)
+            let meta_key = format!("memory_meta:{id}");
+            let mut meta = store
+                .get_kv(&meta_key)
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default();
+            for field in [
+                "confidence",
+                "importance",
+                "sensitivity",
+                "expires_at",
+                "source",
+                "provenance_kind",
+            ] {
+                if let Some(val) = draft.get(field) {
+                    if !val.is_null() {
+                        meta.insert(field.to_string(), val.clone());
+                    }
+                }
+            }
+            if let Some(prov_kind) = draft
+                .pointer("/provenance/kind")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                meta.entry("provenance_kind".to_string())
+                    .or_insert_with(|| json!(prov_kind));
+            }
+            let mut supersedes: Vec<String> = meta
+                .get("supersedes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(ToString::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let Some(draft_sup) = draft.get("supersedes").and_then(|v| v.as_array()) {
+                for s in draft_sup.iter().filter_map(|v| v.as_str()) {
+                    if !s.trim().is_empty() && !supersedes.iter().any(|x| x == s) {
+                        supersedes.push(s.to_string());
+                    }
+                }
+            }
+            if is_revise && !supersedes.iter().any(|x| x == &id) {
+                supersedes.push(id.clone());
+            }
+            if !supersedes.is_empty() {
+                meta.insert("supersedes".into(), json!(supersedes));
+            }
+            if !meta.is_empty() {
+                let _ = store.set_kv(&meta_key, &Value::Object(meta));
+            }
+
+            let record = crate::web_api::memory_item_to_record_with_store(store, &item);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({"record": record})).unwrap()
@@ -5821,6 +7673,639 @@ fn handle_memory_cmd(store: &Store, args: &[String]) -> Result<u8, String> {
         }
         Some(other) => Err(format!("unknown memory subcommand '{other}'")),
     }
+}
+
+fn handle_host_goal_control_request(
+    store: &Store,
+    suite: &ModulesSuite,
+    req: &Value,
+) -> Result<Value, String> {
+    let payload = req.get("payload").unwrap_or(req);
+    let goal_id = payload
+        .get("goal_id")
+        .or_else(|| payload.get("goalId"))
+        .or_else(|| payload.get("id"))
+        .or_else(|| req.get("goal_id"))
+        .or_else(|| req.get("goalId"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "goal_control missing 'goal_id'".to_string())?;
+    let action = payload
+        .get("action")
+        .or_else(|| req.get("action"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("status")
+        .trim()
+        .to_ascii_lowercase();
+    let ts = now_ms();
+    let mut goal = suite
+        .get_record::<ExtendedGoalRecord>("goal", goal_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
+    match action.as_str() {
+        "start" | "resume" => {
+            goal.status = GoalStatus::Running;
+            goal.updated_at_ms = ts;
+        }
+        "pause" => {
+            goal.status = GoalStatus::Paused;
+            goal.updated_at_ms = ts;
+        }
+        "cancel" | "stop" => {
+            goal.status = GoalStatus::Failed;
+            goal.updated_at_ms = ts;
+            let _ = store.set_kv(
+                &format!("cancel_requested:{goal_id}"),
+                &json!({"requested_at_ms": ts, "action": "cancel"}),
+            );
+        }
+        "schedule_resume" => {
+            let resume_at = payload
+                .get("resume_at_ms")
+                .or_else(|| payload.get("scheduled_for_ms"))
+                .or_else(|| req.get("resume_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| ts + 60_000);
+            goal.status = GoalStatus::Paused;
+            goal.updated_at_ms = ts;
+            let _ = store.set_kv(
+                &format!("goal_scheduled_resume:{goal_id}"),
+                &json!({"goal_id": goal_id, "resume_at_ms": resume_at, "scheduled_at_ms": ts}),
+            );
+        }
+        other => {
+            return Err(format!(
+                "unsupported goal_control action '{other}' (expected start|pause|resume|cancel|schedule_resume)"
+            ));
+        }
+    }
+    suite
+        .upsert_record("goal", goal_id, &goal)
+        .map_err(|e| e.to_string())?;
+    let status_str = match goal.status {
+        GoalStatus::Pending => "pending",
+        GoalStatus::Running => "running",
+        GoalStatus::Paused => "paused",
+        GoalStatus::Completed => "completed",
+        GoalStatus::Failed => "failed",
+    };
+    Ok(json!({
+        "ok": true,
+        "operation": "goal_control",
+        "goal_id": goal_id,
+        "action": action,
+        "status": status_str,
+        "updated_at_ms": ts
+    }))
+}
+
+fn upsert_model_connection_module_record(
+    store: &Store,
+    cfg: &AppliedConfig,
+    conn_id: &str,
+    source: &str,
+) -> Result<(), String> {
+    let Some(conn) = cfg.llm.connections.iter().find(|c| c.id == conn_id) else {
+        return Ok(());
+    };
+    let existing = store
+        .get_module_record::<Value>("model_connection", conn_id)
+        .ok()
+        .flatten();
+    let prev_rev = existing
+        .as_ref()
+        .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+        .unwrap_or(0);
+    let display_name = cfg
+        .connection_extras
+        .get(conn_id)
+        .and_then(|e| e.name.as_deref())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|r| r.get("display_name").and_then(|v| v.as_str()))
+        })
+        .unwrap_or(conn_id)
+        .to_string();
+    let raw_proto = conn
+        .protocol
+        .as_deref()
+        .or(conn.provider.as_deref())
+        .unwrap_or("chat_completions");
+    let canonical_proto = crate::daemon::normalize_wire_protocol(raw_proto);
+    let ts = now_ms();
+    let catalog_models: Vec<Value> = conn
+        .models
+        .iter()
+        .map(|m| {
+            let mname = cfg
+                .connection_extras
+                .get(conn_id)
+                .and_then(|ex| ex.model_names.get(&m.id))
+                .cloned()
+                .unwrap_or_else(|| m.id.clone());
+            json!({
+                "model_id": m.id,
+                "display_name": mname,
+                "protocol": canonical_proto,
+                "context_window": m.context_window,
+                "output_limit": m.max_output_tokens,
+                "modalities": ["text"],
+                "reasoning_levels": [],
+                "summary_supported": Value::Null,
+                "execution_capabilities": Value::Null
+            })
+        })
+        .collect();
+    let account_id = existing
+        .as_ref()
+        .and_then(|r| r.get("account_id").cloned())
+        .unwrap_or(Value::Null);
+    let assessments = existing
+        .as_ref()
+        .and_then(|r| r.get("capability_assessments").cloned())
+        .unwrap_or_else(|| json!([]));
+    let rec = json!({
+        "id": conn_id,
+        "display_name": display_name,
+        "base_url": conn.endpoint,
+        "protocols": [canonical_proto],
+        "account_id": account_id,
+        "source": source,
+        "source_id": conn_id,
+        "enabled": true,
+        "revision": prev_rev + 1,
+        "updated_at_ms": ts,
+        "catalog": {
+            "observed_at_ms": ts,
+            "source": source,
+            "models": catalog_models
+        },
+        "capability_assessments": assessments
+    });
+    store
+        .put_module_record("model_connection", conn_id, &rec)
+        .map_err(|e| e.to_string())
+}
+
+fn resolve_local_models_root() -> PathBuf {
+    std::env::var("NOLA_MODELS_ROOT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            if std::env::consts::OS == "macos" {
+                default_home_dir().join("Library/Caches/models")
+            } else {
+                default_home_dir().join(".nola/models")
+            }
+        })
+}
+
+struct MacLocalCatalogRecordInput<'a> {
+    id: &'a str,
+    name: &'a str,
+    repository: &'a str,
+    runtime: &'a str,
+    format: &'a str,
+    quantization: Option<&'a str>,
+    context_window_tokens: i64,
+    recommended_device: &'a str,
+    snapshot_path: &'a Path,
+    artifact_path: Option<&'a Path>,
+    artifact_bytes: i64,
+}
+
+fn write_local_snapshot_manifest(
+    snapshot_dir: &Path,
+    artifacts: &[(String, u64)],
+    total_bytes: u64,
+) -> Result<(), String> {
+    fs::create_dir_all(snapshot_dir).map_err(|e| e.to_string())?;
+    let items: Vec<Value> = artifacts
+        .iter()
+        .map(|(p, b)| json!({ "path": p, "bytes": *b as i64 }))
+        .collect();
+    let manifest = json!({
+        "schemaVersion": 1,
+        "totalBytes": total_bytes as i64,
+        "artifacts": items
+    });
+    let manifest_path = snapshot_dir.join("snapshot.json");
+    let raw = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    fs::write(&manifest_path, raw).map_err(|e| format!("failed writing snapshot.json: {e}"))
+}
+
+fn upsert_mac_local_model_catalog_entry(
+    models_root: &Path,
+    entry: &MacLocalCatalogRecordInput<'_>,
+) -> Result<(), String> {
+    fs::create_dir_all(models_root).map_err(|e| e.to_string())?;
+    let catalog_path = models_root.join("catalog.json");
+    let mut models: Vec<Value> = fs::read_to_string(&catalog_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|v| v.get("models").and_then(|m| m.as_array()).cloned())
+        .unwrap_or_default();
+    let peak_mem = (entry.artifact_bytes as f64 * 1.4) as i64;
+    let rec_mem = (entry.artifact_bytes.saturating_mul(2)).max(peak_mem);
+    let record = json!({
+        "id": entry.id,
+        "name": entry.name,
+        "repository": entry.repository,
+        "runtime": entry.runtime,
+        "format": entry.format,
+        "quantization": entry.quantization,
+        "contextWindowTokens": entry.context_window_tokens,
+        "recommendedContextTokens": entry.context_window_tokens,
+        "recommendedDevice": entry.recommended_device,
+        "snapshotPath": entry.snapshot_path.display().to_string(),
+        "artifactPath": entry.artifact_path.map(|p| p.display().to_string()),
+        "artifactBytes": entry.artifact_bytes,
+        "estimatedPeakMemoryBytes": peak_mem,
+        "recommendedMemoryBytes": rec_mem,
+        "state": "configured",
+        "enabled": true
+    });
+    models.retain(|m| {
+        m.get("id").and_then(|v| v.as_str()) != Some(entry.id)
+            && m.get("snapshotPath").and_then(|v| v.as_str())
+                != Some(&entry.snapshot_path.display().to_string())
+    });
+    models.push(record);
+    let doc = json!({
+        "schemaVersion": 2,
+        "models": models
+    });
+    let raw = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    fs::write(&catalog_path, raw).map_err(|e| format!("failed writing catalog.json: {e}"))
+}
+
+fn remove_mac_local_model_catalog_entry(
+    models_root: &Path,
+    id: &str,
+    name: Option<&str>,
+) -> Result<(), String> {
+    let catalog_path = models_root.join("catalog.json");
+    if !catalog_path.exists() {
+        return Ok(());
+    }
+    let Ok(raw) = fs::read_to_string(&catalog_path) else {
+        return Ok(());
+    };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&raw) else {
+        return Ok(());
+    };
+    if let Some(arr) = doc.get_mut("models").and_then(|v| v.as_array_mut()) {
+        arr.retain(|m| {
+            let mid = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let mname = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let mrepo = m.get("repository").and_then(|v| v.as_str()).unwrap_or("");
+            mid != id
+                && mname != id
+                && mrepo != id
+                && name.is_none_or(|n| mname != n && mrepo != n)
+        });
+    }
+    let updated = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    fs::write(&catalog_path, updated).map_err(|e| format!("failed updating catalog.json: {e}"))
+}
+
+fn is_mlx_snapshot_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower == "config.json"
+        || lower == "tokenizer.json"
+        || lower == "tokenizer_config.json"
+        || lower == "special_tokens_map.json"
+        || lower == "generation_config.json"
+        || lower == "chat_template.jinja"
+        || lower == "vocab.json"
+        || lower == "merges.txt"
+        || lower == "model.safetensors.index.json"
+        || lower.ends_with(".safetensors")
+        || lower.ends_with(".model")
+}
+
+fn download_mlx_repo_snapshot(
+    source: &str,
+    repo: &str,
+    rev: &str,
+    plan_json: &Value,
+    snapshot_dir: &Path,
+) -> Result<(Vec<(String, u64)>, u64), String> {
+    fs::create_dir_all(snapshot_dir).map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .user_agent("Nola/2.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Build file list: either explicit plan.files (excluding fabricated .gguf) or HF/mirror tree API
+    let mut files_to_fetch: Vec<(String, String, Option<u64>)> = Vec::new();
+    if let Some(arr) = plan_json.get("files").and_then(|v| v.as_array()) {
+        for f in arr {
+            if let Some(rel) = f.get("path").and_then(|v| v.as_str()) {
+                if rel.to_ascii_lowercase().ends_with(".gguf") {
+                    continue;
+                }
+                let url = f
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| build_hub_download_url(source, repo, rev, rel));
+                let sz = f.get("bytes").and_then(|v| v.as_u64());
+                files_to_fetch.push((rel.to_string(), url, sz));
+            }
+        }
+    }
+
+    if files_to_fetch.is_empty() {
+        let api_base = if source.eq_ignore_ascii_case("modelscope") {
+            "https://hf-mirror.com"
+        } else {
+            "https://huggingface.co"
+        };
+        let tree_url = format!("{api_base}/api/models/{repo}/tree/{rev}");
+        let resp = client
+            .get(&tree_url)
+            .send()
+            .map_err(|e| format!("failed fetching MLX file tree from {tree_url}: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "failed fetching MLX file tree from {tree_url}: HTTP {}",
+                resp.status()
+            ));
+        }
+        let entries: Value = resp
+            .json()
+            .map_err(|e| format!("invalid MLX file tree JSON: {e}"))?;
+        if let Some(arr) = entries.as_array() {
+            for entry in arr {
+                let kind = entry.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if kind != "file" {
+                    continue;
+                }
+                let Some(rel) = entry.get("path").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if rel.contains("..") || rel.starts_with('/') || !is_mlx_snapshot_file(rel) {
+                    continue;
+                }
+                let sz = entry
+                    .get("size")
+                    .or_else(|| entry.pointer("/lfs/size"))
+                    .and_then(|v| v.as_u64());
+                let url = build_hub_download_url(source, repo, rev, rel);
+                files_to_fetch.push((rel.to_string(), url, sz));
+            }
+        }
+    }
+
+    if files_to_fetch.is_empty() {
+        return Err(format!(
+            "no MLX snapshot files found for repository '{repo}' (revision '{rev}')"
+        ));
+    }
+
+    let expected_total: u64 = files_to_fetch.iter().filter_map(|(_, _, sz)| *sz).sum();
+    let mut downloaded_total = 0u64;
+    let mut artifacts: Vec<(String, u64)> = Vec::new();
+    emit_compact_json_line(&json!({
+        "downloadedBytes": 0,
+        "totalBytes": if expected_total > 0 { json!(expected_total) } else { Value::Null },
+        "status": "downloading"
+    }));
+
+    for (rel, url, _) in files_to_fetch {
+        let target = snapshot_dir.join(&rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut resp = client
+            .get(&url)
+            .send()
+            .map_err(|e| format!("failed downloading MLX file {rel}: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "failed downloading MLX file {rel}: HTTP {}",
+                resp.status()
+            ));
+        }
+        let mut file = fs::File::create(&target)
+            .map_err(|e| format!("failed creating {}: {e}", target.display()))?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut file_bytes = 0u64;
+        loop {
+            let n = resp
+                .read(&mut buf)
+                .map_err(|e| format!("failed reading MLX file {rel}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])
+                .map_err(|e| format!("failed writing MLX file {rel}: {e}"))?;
+            file_bytes += n as u64;
+            downloaded_total += n as u64;
+        }
+        artifacts.push((rel, file_bytes));
+        emit_compact_json_line(&json!({
+            "downloadedBytes": downloaded_total,
+            "totalBytes": if expected_total > 0 { json!(expected_total.max(downloaded_total)) } else { json!(downloaded_total) },
+            "status": "downloading"
+        }));
+    }
+
+    Ok((artifacts, downloaded_total))
+}
+
+fn perform_text_generation_probe(
+    conn_id: &str,
+    base_url: &str,
+    proto_str: &str,
+    model_id: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    let protocol = ModelProtocol::parse(proto_str).unwrap_or(ModelProtocol::OpenAiChat);
+    let route = ModelRouteConfig {
+        connection_id: conn_id.to_string(),
+        endpoint: base_url.to_string(),
+        protocol,
+        api_key: api_key.to_string(),
+        model: model_id.to_string(),
+        context_window: 32_768,
+        max_output_tokens: Some(8),
+        temperature: Some(0.0),
+        top_p: None,
+        reasoning_effort: None,
+        prompt_cache_key: None,
+        capabilities: nola_types::ModelCapabilities::default(),
+    };
+    let caller = HttpModelCaller::new(15).map_err(|e| e.to_string())?;
+    let req = nola_types::StructuredModelRequest {
+        frozen_system_prefix: vec![nola_types::FrozenSystemBlock {
+            id: "probe".to_string(),
+            text: "Reply with OK.".to_string(),
+        }],
+        prefix_stable_tools: Vec::new(),
+        history: vec![nola_types::HistoryMessage::User {
+            content: "ping".to_string(),
+            media: Vec::new(),
+        }],
+        ephemeral_tail_reminders: Vec::new(),
+        max_output_tokens: 8,
+        json_schema: None,
+    };
+    let mut noop = |_delta: nola_types::ModelStreamDelta| {};
+    caller
+        .call(&route, &req, false, &mut noop)
+        .map(|_| ())
+        .map_err(|e| format!("text generation probe failed: {e}"))
+}
+
+fn spawn_siwc_callback_listener(
+    expected_state: String,
+) -> (u16, SiwcCallbackResult, Arc<AtomicBool>) {
+    let result = Arc::new(Mutex::new(None));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let listener = std::net::TcpListener::bind("127.0.0.1:1455")
+        .or_else(|_| std::net::TcpListener::bind("127.0.0.1:0"));
+    let Ok(listener) = listener else {
+        return (1455, result, shutdown);
+    };
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(1455);
+    let _ = listener.set_nonblocking(true);
+    let res_clone = Arc::clone(&result);
+    let stop_clone = Arc::clone(&shutdown);
+    std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        while !stop_clone.load(Ordering::SeqCst) && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                    let mut buf = [0u8; 4096];
+                    if let Ok(n) = stream.read(&mut buf) {
+                        let req_str = String::from_utf8_lossy(&buf[..n]);
+                        let first_line = req_str.lines().next().unwrap_or("");
+                        let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+                        if path.starts_with("/auth/callback") {
+                            let parsed_url =
+                                url::Url::parse(&format!("http://localhost{path}")).ok();
+                            let mut code: Option<String> = None;
+                            let mut state: Option<String> = None;
+                            let mut err: Option<String> = None;
+                            if let Some(u) = parsed_url {
+                                for (k, v) in u.query_pairs() {
+                                    match k.as_ref() {
+                                        "code" => code = Some(v.into_owned()),
+                                        "state" => state = Some(v.into_owned()),
+                                        "error" => err = Some(v.into_owned()),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            let (status_line, body, outcome) = if let Some(e) = err {
+                                let mapped = if e == "access_denied" {
+                                    "native_siwc_authorization_declined".to_string()
+                                } else {
+                                    format!("native_siwc_authorization_declined:{e}")
+                                };
+                                (
+                                    "HTTP/1.1 200 OK",
+                                    "<html><body><h3>Authorization declined. You may close this tab.</h3></body></html>",
+                                    Err(mapped),
+                                )
+                            } else if state.as_deref() != Some(expected_state.as_str()) {
+                                (
+                                    "HTTP/1.1 400 Bad Request",
+                                    "<html><body><h3>Invalid OAuth state.</h3></body></html>",
+                                    Err("native_siwc_authorization_expired".to_string()),
+                                )
+                            } else if let Some(c) = code.filter(|s| !s.trim().is_empty()) {
+                                (
+                                    "HTTP/1.1 200 OK",
+                                    "<html><body><h3>Sign-in complete! You may close this tab and return to Nola.</h3></body></html>",
+                                    Ok(c),
+                                )
+                            } else {
+                                (
+                                    "HTTP/1.1 400 Bad Request",
+                                    "<html><body><h3>Missing authorization code.</h3></body></html>",
+                                    Err("native_siwc_authorization_expired".to_string()),
+                                )
+                            };
+                            let resp = format!(
+                                "{status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = stream.write_all(resp.as_bytes());
+                            let _ = stream.flush();
+                            if let Ok(mut g) = res_clone.lock() {
+                                *g = Some(outcome);
+                            }
+                            break;
+                        } else {
+                            let _ = stream.write_all(
+                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            );
+                        }
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (port, result, shutdown)
+}
+
+fn upsert_siwc_model_account_record(
+    store: &Store,
+    account_id: &str,
+    display_name: &str,
+    revision: i64,
+    connected: bool,
+) {
+    let rec = json!({
+        "id": account_id,
+        "account_id": account_id,
+        "display_name": if display_name.trim().is_empty() { "ChatGPT" } else { display_name },
+        "source": "nola_chatgpt",
+        "credential_ref": if connected { json!(format!("siwc:{account_id}")) } else { Value::Null },
+        "state": if connected { "ready" } else { "disconnected" },
+        "revision": revision,
+        "updated_at_ms": now_ms()
+    });
+    let _ = store.put_module_record("model_account", account_id, &rec);
+}
+
+fn upsert_siwc_model_connection_record(store: &Store, conn_snap: &Value) {
+    let Some(conn) = conn_snap.pointer("/document/connection") else {
+        return;
+    };
+    let Some(conn_id) = conn.get("id").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let rev = conn_snap
+        .get("revision")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1);
+    let mut rec = conn.clone();
+    if let Some(obj) = rec.as_object_mut() {
+        obj.insert("revision".into(), json!(rev));
+        obj.insert("updated_at_ms".into(), json!(now_ms()));
+        if let Some(cat) = conn_snap.pointer("/document/catalog") {
+            obj.insert("catalog".into(), cat.clone());
+        }
+        if let Some(ass) = conn_snap.pointer("/document/capability_assessments") {
+            obj.insert("capability_assessments".into(), ass.clone());
+        }
+    }
+    let _ = store.put_module_record("model_connection", conn_id, &rec);
 }
 
 const MAX_HARNESS_PLUGIN_HTML_BYTES: usize = 2 * 1024 * 1024;

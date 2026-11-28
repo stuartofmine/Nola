@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Domain command dispatchers (skills, data sources, memory, MCP, automations, goals, etc.).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use chrono::Utc;
 use nola_modules::ModulesSuite;
 use nola_store::Store;
@@ -539,6 +539,829 @@ fn parse_mcp_server_config(payload: &Value) -> Result<McpServerConfig, (&'static
     })
 }
 
+pub(crate) fn normalize_wire_protocol(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "anthropic" | "anthropic_messages" | "anthropic-messages" => "anthropic".to_string(),
+        "responses" | "openai_responses" | "openai-responses" => "responses".to_string(),
+        "siwc_responses" | "siwc-responses" => "siwc_responses".to_string(),
+        _ => "chat_completions".to_string(),
+    }
+}
+
+pub(crate) fn normalize_catalog_model_entry(raw: &Value, default_protocol: &str) -> Option<Value> {
+    let default_proto = normalize_wire_protocol(default_protocol);
+    if let Some(mid) = raw.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(json!({
+            "model_id": mid,
+            "display_name": mid,
+            "protocol": default_proto,
+            "context_window": Value::Null,
+            "output_limit": Value::Null,
+            "modalities": ["text"],
+            "reasoning_levels": [],
+            "summary_supported": Value::Null,
+            "execution_capabilities": Value::Null
+        }));
+    }
+    let obj = raw.as_object()?;
+    let model_id = obj
+        .get("model_id")
+        .or_else(|| obj.get("modelId"))
+        .or_else(|| obj.get("id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let display_name = obj
+        .get("display_name")
+        .or_else(|| obj.get("displayName"))
+        .or_else(|| obj.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&model_id)
+        .to_string();
+    let protocol = obj
+        .get("protocol")
+        .and_then(|v| v.as_str())
+        .map(normalize_wire_protocol)
+        .unwrap_or(default_proto);
+    let context_window = obj
+        .get("context_window")
+        .or_else(|| obj.get("contextWindow"))
+        .and_then(|v| v.as_u64())
+        .map(|n| json!(n))
+        .unwrap_or(Value::Null);
+    let output_limit = obj
+        .get("output_limit")
+        .or_else(|| obj.get("outputLimit"))
+        .and_then(|v| v.as_u64())
+        .map(|n| json!(n))
+        .unwrap_or(Value::Null);
+    let modalities: Vec<String> = obj
+        .get("modalities")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["text".to_string()]);
+    let reasoning_levels: Vec<String> = obj
+        .get("reasoning_levels")
+        .or_else(|| obj.get("reasoningLevels"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let summary_supported = obj
+        .get("summary_supported")
+        .or_else(|| obj.get("summarySupported"))
+        .and_then(|v| v.as_bool())
+        .map(|b| json!(b))
+        .unwrap_or(Value::Null);
+    let execution_capabilities = obj
+        .get("execution_capabilities")
+        .or_else(|| obj.get("executionCapabilities"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    Some(json!({
+        "model_id": model_id,
+        "display_name": display_name,
+        "protocol": protocol,
+        "context_window": context_window,
+        "output_limit": output_limit,
+        "modalities": modalities,
+        "reasoning_levels": reasoning_levels,
+        "summary_supported": summary_supported,
+        "execution_capabilities": execution_capabilities
+    }))
+}
+
+pub(crate) fn build_connection_snapshot(rec: &Value) -> Value {
+    let id = rec
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+    let catalog = rec.get("catalog").cloned().unwrap_or(Value::Null);
+    let assessments = rec
+        .get("capability_assessments")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mut conn_only = rec.clone();
+    if let Some(obj) = conn_only.as_object_mut() {
+        obj.remove("catalog");
+        obj.remove("capability_assessments");
+    }
+    json!({
+        "ok": true,
+        "id": id,
+        "revision": rev,
+        "document": {
+            "format_version": 1,
+            "connection": conn_only,
+            "catalog": catalog,
+            "capability_assessments": assessments
+        }
+    })
+}
+
+fn config_connection_to_canonical_record(
+    cfg: &crate::config::AppliedConfig,
+    c: &Value,
+) -> Value {
+    let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let display_name = cfg
+        .connection_extras
+        .get(cid)
+        .and_then(|e| e.name.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| c.get("display_name").and_then(|v| v.as_str()))
+        .or_else(|| c.get("name").and_then(|v| v.as_str()))
+        .unwrap_or(cid);
+    let base_url = c
+        .get("base_url")
+        .or_else(|| c.get("endpoint"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let raw_proto = c
+        .get("protocol")
+        .or_else(|| c.get("provider"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("chat_completions");
+    let canonical_proto = match raw_proto.trim().to_ascii_lowercase().as_str() {
+        "anthropic" | "anthropic_messages" => "anthropic_messages",
+        "gemini" | "gemini_generate_content" => "gemini_generate_content",
+        "responses" | "openai_responses" => "responses",
+        "siwc" | "siwc_responses" => "siwc_responses",
+        _ => "chat_completions",
+    };
+    let protocols: Vec<Value> = c
+        .get("protocols")
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty())
+        .cloned()
+        .unwrap_or_else(|| vec![json!(canonical_proto)]);
+    let models_arr: Vec<Value> = c
+        .get("models")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| normalize_catalog_model_entry(m, canonical_proto))
+                .collect()
+        })
+        .unwrap_or_default();
+    let catalog = json!({
+        "observed_at_ms": now_ms(),
+        "source": "config",
+        "models": models_arr
+    });
+    json!({
+        "id": cid,
+        "display_name": display_name,
+        "base_url": base_url,
+        "protocols": protocols,
+        "account_id": c.get("account_id").cloned().unwrap_or(Value::Null),
+        "source": c.get("source").and_then(|v| v.as_str()).unwrap_or("nola"),
+        "source_id": c.get("source_id").cloned().unwrap_or_else(|| json!(cid)),
+        "enabled": c.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+        "revision": 1,
+        "catalog": catalog
+    })
+}
+
+fn normalize_execution_capabilities(raw: Option<&Value>, model_id: &str) -> Value {
+    if let Some(obj) = raw.and_then(|v| v.as_object()) {
+        let inferred = crate::web_api::infer_model_capabilities(model_id, None);
+        let tool_calls = obj
+            .get("toolCalls")
+            .or_else(|| obj.get("tool_calls"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(inferred.tool_calls);
+        let image_input = obj
+            .get("imageInput")
+            .or_else(|| obj.get("image_input"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(inferred.image_input);
+        let reasoning = obj
+            .get("reasoning")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(inferred.reasoning);
+        let sampling_parameters = obj
+            .get("samplingParameters")
+            .or_else(|| obj.get("sampling_parameters"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(inferred.sampling_parameters);
+        let sampling_requires_no_reasoning = obj
+            .get("samplingRequiresNoReasoning")
+            .or_else(|| obj.get("sampling_requires_no_reasoning"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            && sampling_parameters
+            && reasoning;
+        let mut out = serde_json::Map::new();
+        out.insert("toolCalls".into(), json!(tool_calls));
+        out.insert("imageInput".into(), json!(image_input));
+        out.insert("reasoning".into(), json!(reasoning));
+        out.insert("samplingParameters".into(), json!(sampling_parameters));
+        if sampling_requires_no_reasoning {
+            out.insert("samplingRequiresNoReasoning".into(), json!(true));
+        }
+        if let Some(field) = obj
+            .get("chatOutputTokenField")
+            .or_else(|| obj.get("chat_output_token_field"))
+            .and_then(|v| v.as_str())
+        {
+            if matches!(field, "auto" | "max_tokens" | "max_completion_tokens") {
+                out.insert("chatOutputTokenField".into(), json!(field));
+            }
+        }
+        return Value::Object(out);
+    }
+    let inferred = crate::web_api::infer_model_capabilities(model_id, None);
+    json!({
+        "toolCalls": inferred.tool_calls,
+        "imageInput": inferred.image_input,
+        "reasoning": inferred.reasoning,
+        "samplingParameters": inferred.sampling_parameters,
+        "chatOutputTokenField": "auto"
+    })
+}
+
+fn parse_enabled_model_key(raw_key: &str, conn_id: &str, default_protocol: &str) -> (String, String, String) {
+    let trimmed = raw_key.trim();
+    if let Some((prefix, rest)) = trimmed.split_once(':') {
+        if matches!(
+            prefix,
+            "chat_completions" | "responses" | "siwc_responses" | "anthropic"
+        ) && !rest.is_empty()
+        {
+            let proto = normalize_wire_protocol(prefix);
+            return (format!("{proto}:{rest}"), proto, rest.to_string());
+        }
+        if prefix == conn_id && !rest.is_empty() {
+            let proto = normalize_wire_protocol(default_protocol);
+            return (format!("{proto}:{rest}"), proto, rest.to_string());
+        }
+    }
+    let proto = normalize_wire_protocol(default_protocol);
+    (format!("{proto}:{trimmed}"), proto, trimmed.to_string())
+}
+
+pub(crate) fn sync_connection_model_profiles(
+    store: &Store,
+    suite: &ModulesSuite,
+    conn_rec: &Value,
+    enabled_keys: &[String],
+    selected_key: Option<&str>,
+    ts: i64,
+) -> Result<(), (&'static str, String)> {
+    let conn_id = conn_rec
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if conn_id.is_empty() {
+        return Ok(());
+    }
+    let display_name = conn_rec
+        .get("display_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(conn_id);
+    let base_url = conn_rec
+        .get("base_url")
+        .or_else(|| conn_rec.get("endpoint"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let default_protocol = conn_rec
+        .get("protocols")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .or_else(|| conn_rec.get("protocol").and_then(|v| v.as_str()))
+        .unwrap_or("chat_completions");
+    let conn_enabled = conn_rec
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let account_id = conn_rec
+        .get("account_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(ToString::to_string);
+    let credential_account = account_id.as_deref().and_then(|aid| {
+        suite
+            .get_record::<Value>("model_account", aid)
+            .ok()
+            .flatten()
+            .and_then(|a| {
+                a.get("credential_ref")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string)
+            })
+    });
+    let catalog_models: Vec<Value> = conn_rec
+        .get("catalog")
+        .and_then(|c| c.get("models"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let assessments: Vec<Value> = conn_rec
+        .get("capability_assessments")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let selected_catalog_key = selected_key
+        .map(|k| parse_enabled_model_key(k, conn_id, default_protocol).0);
+
+    let mut desired: Vec<(String, String, String)> = Vec::new();
+    let mut desired_keys: HashSet<String> = HashSet::new();
+    for raw_key in enabled_keys {
+        if raw_key.trim().is_empty() {
+            continue;
+        }
+        let (catalog_key, proto, model_id) =
+            parse_enabled_model_key(raw_key, conn_id, default_protocol);
+        if !model_id.is_empty() && desired_keys.insert(catalog_key.clone()) {
+            desired.push((catalog_key, proto, model_id));
+        }
+    }
+
+    let existing_profiles = suite.list_records::<Value>("model").unwrap_or_default();
+    let mut existing_by_catalog_key: std::collections::HashMap<String, Value> =
+        std::collections::HashMap::new();
+    for prof in existing_profiles {
+        let Some(src_str) = prof.get("source_json").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(src_val) = serde_json::from_str::<Value>(src_str) else {
+            continue;
+        };
+        if src_val.get("connectionID").and_then(|v| v.as_str()) != Some(conn_id) {
+            continue;
+        }
+        let ckey = src_val
+            .get("catalogKey")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| {
+                let proto = src_val
+                    .get("wireProtocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(default_protocol);
+                let mid = prof
+                    .get("model_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                format!("{}:{mid}", normalize_wire_protocol(proto))
+            });
+        if !desired_keys.contains(&ckey) {
+            // Soft-delete models that were disabled for this connection.
+            if prof.get("deleted_at_ms").is_none_or(|v| v.is_null()) {
+                if let Some(pid) = prof.get("id").and_then(|v| v.as_str()).map(ToString::to_string) {
+                    let mut tomb = prof.clone();
+                    let prev_rev = tomb.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+                    if let Some(obj) = tomb.as_object_mut() {
+                        obj.insert("enabled".into(), json!(false));
+                        obj.insert("selected".into(), json!(false));
+                        obj.insert("deleted_at_ms".into(), json!(ts));
+                        obj.insert("updated_at_ms".into(), json!(ts));
+                        obj.insert("revision".into(), json!(prev_rev + 1));
+                    }
+                    let _ = suite.upsert_record("model", &pid, &tomb);
+                }
+            }
+        } else {
+            existing_by_catalog_key.insert(ckey, prof);
+        }
+    }
+
+    for (idx, (catalog_key, wire_protocol, model_id)) in desired.iter().enumerate() {
+        let cat_entry = catalog_models.iter().find(|m| {
+            m.get("model_id").and_then(|v| v.as_str()) == Some(model_id.as_str())
+                && m.get("protocol")
+                    .and_then(|v| v.as_str())
+                    .map(normalize_wire_protocol)
+                    .as_deref()
+                    == Some(wire_protocol.as_str())
+        }).or_else(|| {
+            catalog_models
+                .iter()
+                .find(|m| m.get("model_id").and_then(|v| v.as_str()) == Some(model_id.as_str()))
+        });
+
+        let model_display_name = cat_entry
+            .and_then(|m| m.get("display_name").and_then(|v| v.as_str()))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(model_id.as_str());
+        let override_caps = assessments
+            .iter()
+            .find(|a| {
+                a.get("model_id").and_then(|v| v.as_str()) == Some(model_id.as_str())
+                    && a.get("protocol")
+                        .and_then(|v| v.as_str())
+                        .map(normalize_wire_protocol)
+                        .as_deref()
+                        == Some(wire_protocol.as_str())
+            })
+            .and_then(|a| a.get("user_override"))
+            .filter(|v| v.is_object())
+            .cloned()
+            .or_else(|| {
+                store
+                    .get_kv(&format!("model_cap_override:{conn_id}:{model_id}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("user_override").cloned())
+                    .filter(|v| v.is_object())
+            });
+        let raw_caps = override_caps.as_ref().or_else(|| {
+            cat_entry
+                .and_then(|m| m.get("execution_capabilities"))
+                .filter(|v| v.is_object())
+        });
+        let exec_caps = normalize_execution_capabilities(raw_caps, model_id);
+        let summary_supported = cat_entry
+            .and_then(|m| m.get("summary_supported"))
+            .and_then(|v| v.as_bool());
+        let reasoning_levels: Vec<String> = cat_entry
+            .and_then(|m| m.get("reasoning_levels"))
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .filter(|l| matches!(l.as_str(), "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let reasoning_json = if exec_caps.get("reasoning").and_then(|v| v.as_bool()) == Some(true) {
+            let effective_levels = if reasoning_levels.is_empty() {
+                vec![
+                    "none".to_string(),
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                ]
+            } else {
+                reasoning_levels
+            };
+            json!({
+                "control": "effort",
+                "efforts": effective_levels,
+                "responses": matches!(wire_protocol.as_str(), "responses" | "siwc_responses")
+            })
+        } else {
+            Value::Null
+        };
+
+        let existing = existing_by_catalog_key.get(catalog_key);
+        let profile_id = existing
+            .and_then(|p| p.get("id").and_then(|v| v.as_str()))
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("conn:{conn_id}:{catalog_key}"));
+        let prev_rev = existing
+            .and_then(|p| p.get("revision").and_then(|v| v.as_i64()))
+            .unwrap_or(0);
+        let created_at = existing
+            .and_then(|p| p.get("created_at_ms").and_then(|v| v.as_i64()))
+            .unwrap_or(ts);
+        let is_selected = selected_catalog_key.as_deref() == Some(catalog_key.as_str())
+            || existing
+                .and_then(|p| p.get("selected").and_then(|v| v.as_bool()))
+                .unwrap_or(false);
+
+        let mut source_obj = serde_json::Map::new();
+        source_obj.insert("schemaVersion".into(), json!(1));
+        source_obj.insert("connectionID".into(), json!(conn_id));
+        source_obj.insert("catalogKey".into(), json!(catalog_key));
+        if let Some(ref aid) = account_id {
+            source_obj.insert("accountID".into(), json!(aid));
+        }
+        source_obj.insert("endpointID".into(), json!(conn_id));
+        source_obj.insert("endpointName".into(), json!(display_name));
+        source_obj.insert("baseURL".into(), json!(base_url));
+        source_obj.insert("endpointEnabled".into(), json!(conn_enabled));
+        source_obj.insert("endpointOrder".into(), json!(0));
+        source_obj.insert("modelEnabled".into(), json!(true));
+        source_obj.insert("modelOrder".into(), json!(idx as i64));
+        source_obj.insert("priority".into(), json!(if is_selected { 100 } else { 50 }));
+        source_obj.insert(
+            "capabilities".into(),
+            json!(["chat", "retrieval", "issue_repair"]),
+        );
+        source_obj.insert("executionCapabilities".into(), exec_caps);
+        if !reasoning_json.is_null() {
+            source_obj.insert("reasoning".into(), reasoning_json);
+        }
+        if let Some(sum) = summary_supported {
+            source_obj.insert("reasoningSummarySupported".into(), json!(sum));
+        }
+        source_obj.insert("wireProtocol".into(), json!(wire_protocol));
+        if let Some(ref cred_acc) = credential_account {
+            source_obj.insert("credentialAccount".into(), json!(cred_acc));
+        }
+        let source_json_str = serde_json::to_string(&Value::Object(source_obj))
+            .map_err(|e| ("storage_error", e.to_string()))?;
+
+        let mut params_obj = serde_json::Map::new();
+        if let Some(ctx) = cat_entry.and_then(|m| m.get("context_window").and_then(|v| v.as_u64())) {
+            params_obj.insert("maxContextLength".into(), json!(ctx));
+        }
+        if let Some(out_lim) = cat_entry.and_then(|m| m.get("output_limit").and_then(|v| v.as_u64())) {
+            params_obj.insert("maxTokens".into(), json!(out_lim));
+        }
+        let parameters_json_str = existing
+            .and_then(|p| p.get("parameters_json").and_then(|v| v.as_str()))
+            .filter(|s| !s.trim().is_empty() && s.trim() != "{}")
+            .map(ToString::to_string)
+            .unwrap_or_else(|| {
+                serde_json::to_string(&Value::Object(params_obj))
+                    .unwrap_or_else(|_| "{}".to_string())
+            });
+
+        let provider = if wire_protocol == "siwc_responses" {
+            "nola-chatgpt"
+        } else {
+            "openai-compatible"
+        };
+        let profile_record = json!({
+            "id": profile_id,
+            "display_name": model_display_name,
+            "provider": provider,
+            "model_name": model_id,
+            "runtime": "remote",
+            "source_json": source_json_str,
+            "parameters_json": parameters_json_str,
+            "selected": is_selected,
+            "enabled": true,
+            "revision": prev_rev + 1,
+            "created_at_ms": created_at,
+            "updated_at_ms": ts,
+            "deleted_at_ms": Value::Null
+        });
+        suite
+            .upsert_record("model", &profile_id, &profile_record)
+            .map_err(|e| ("storage_error", e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn sync_connection_metadata_to_profiles(suite: &ModulesSuite, conn_rec: &Value, ts: i64) {
+    let Some(conn_id) = conn_rec.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let conn_enabled = conn_rec
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let display_name = conn_rec
+        .get("display_name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(conn_id);
+    for mut prof in suite.list_records::<Value>("model").unwrap_or_default() {
+        if prof.get("deleted_at_ms").is_some_and(|v| !v.is_null()) {
+            continue;
+        }
+        let Some(src_str) = prof.get("source_json").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(mut src_val) = serde_json::from_str::<Value>(src_str) else {
+            continue;
+        };
+        if src_val.get("connectionID").and_then(|v| v.as_str()) != Some(conn_id) {
+            continue;
+        }
+        let mut changed = false;
+        if let Some(sobj) = src_val.as_object_mut() {
+            if sobj.get("endpointEnabled").and_then(|v| v.as_bool()) != Some(conn_enabled) {
+                sobj.insert("endpointEnabled".into(), json!(conn_enabled));
+                changed = true;
+            }
+            if sobj.get("endpointName").and_then(|v| v.as_str()) != Some(display_name) {
+                sobj.insert("endpointName".into(), json!(display_name));
+                changed = true;
+            }
+        }
+        if changed {
+            if let (Some(pid), Ok(new_src)) = (
+                prof.get("id").and_then(|v| v.as_str()).map(ToString::to_string),
+                serde_json::to_string(&src_val),
+            ) {
+                let prev_rev = prof.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+                if let Some(obj) = prof.as_object_mut() {
+                    obj.insert("source_json".into(), json!(new_src));
+                    obj.insert("revision".into(), json!(prev_rev + 1));
+                    obj.insert("updated_at_ms".into(), json!(ts));
+                }
+                let _ = suite.upsert_record("model", &pid, &prof);
+            }
+        }
+    }
+}
+
+/// Overlay fresher discovered catalog capabilities & reasoning efforts onto a connection-managed
+/// `model` profile at read time (zero DB writes, zero extra Discover clicks required).
+fn overlay_connection_catalog_on_profile(
+    store: &Store,
+    profile: &mut Value,
+    connections_by_id: &HashMap<String, Value>,
+) {
+    let Some(src_str) = profile.get("source_json").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Ok(mut src_val) = serde_json::from_str::<Value>(src_str) else {
+        return;
+    };
+    let Some(conn_id) = src_val
+        .get("connectionID")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+    else {
+        return;
+    };
+    let Some(conn) = connections_by_id.get(&conn_id) else {
+        return;
+    };
+    let model_id = profile
+        .get("model_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let wire_protocol = src_val
+        .get("wireProtocol")
+        .and_then(|v| v.as_str())
+        .map(normalize_wire_protocol)
+        .unwrap_or_else(|| "chat_completions".to_string());
+    let catalog_key = src_val
+        .get("catalogKey")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("{wire_protocol}:{model_id}"));
+
+    let default_proto = conn
+        .get("protocols")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .map(normalize_wire_protocol)
+        .unwrap_or_else(|| wire_protocol.clone());
+    let cat_entry = conn
+        .pointer("/catalog/models")
+        .or_else(|| conn.get("models"))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter().find(|m| {
+                let m_id = m.get("model_id").or_else(|| m.get("id")).and_then(|v| v.as_str());
+                let m_proto = m
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .map(normalize_wire_protocol)
+                    .unwrap_or_else(|| default_proto.clone());
+                m_id.is_some_and(|mid| {
+                    format!("{m_proto}:{mid}") == catalog_key || mid == model_id
+                })
+            })
+        });
+    let Some(cat_entry) = cat_entry else {
+        return;
+    };
+
+    let override_caps = conn
+        .get("capability_assessments")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter().find(|a| {
+                a.get("model_id").and_then(|v| v.as_str()) == Some(model_id.as_str())
+                    && a.get("protocol")
+                        .and_then(|v| v.as_str())
+                        .map(normalize_wire_protocol)
+                        .as_deref()
+                        == Some(wire_protocol.as_str())
+            })
+        })
+        .and_then(|a| a.get("user_override"))
+        .filter(|v| v.is_object())
+        .cloned()
+        .or_else(|| {
+            store
+                .get_kv(&format!("model_cap_override:{conn_id}:{model_id}"))
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("user_override").cloned())
+                .filter(|v| v.is_object())
+        });
+    let raw_caps = override_caps.as_ref().or_else(|| {
+        cat_entry
+            .get("execution_capabilities")
+            .filter(|v| v.is_object())
+    });
+    let exec_caps = normalize_execution_capabilities(raw_caps, &model_id);
+    let profile_updated = profile
+        .get("updated_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let conn_updated = conn
+        .get("updated_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let catalog_observed = conn
+        .pointer("/catalog/observed_at_ms")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let missing_reasoning = exec_caps.get("reasoning").and_then(|v| v.as_bool()) == Some(true)
+        && src_val.get("reasoning").is_none_or(|v| v.is_null());
+    if conn_updated <= profile_updated && catalog_observed <= profile_updated && !missing_reasoning {
+        return;
+    }
+
+    let reasoning_levels: Vec<String> = cat_entry
+        .get("reasoning_levels")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .filter(|l| {
+                    matches!(
+                        l.as_str(),
+                        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if let Some(sobj) = src_val.as_object_mut() {
+        sobj.insert("executionCapabilities".into(), exec_caps.clone());
+        if exec_caps.get("reasoning").and_then(|v| v.as_bool()) == Some(true) {
+            let effective_levels = if reasoning_levels.is_empty() {
+                vec![
+                    "none".to_string(),
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                ]
+            } else {
+                reasoning_levels
+            };
+            sobj.insert(
+                "reasoning".into(),
+                json!({
+                    "control": "effort",
+                    "efforts": effective_levels,
+                    "responses": matches!(wire_protocol.as_str(), "responses" | "siwc_responses")
+                }),
+            );
+        } else {
+            sobj.remove("reasoning");
+        }
+        if let Some(ss) = cat_entry.get("summary_supported").and_then(|v| v.as_bool()) {
+            sobj.insert("reasoningSummarySupported".into(), json!(ss));
+        }
+    }
+    if let Ok(new_src) = serde_json::to_string(&src_val) {
+        if let Some(pobj) = profile.as_object_mut() {
+            pobj.insert("source_json".into(), json!(new_src));
+        }
+    }
+
+    if let Some(params_str) = profile.get("parameters_json").and_then(|v| v.as_str()) {
+        if let Ok(mut params_val) = serde_json::from_str::<Value>(params_str) {
+            let mut params_changed = false;
+            if let Some(pobj) = params_val.as_object_mut() {
+                if pobj.get("maxContextLength").is_none() {
+                    if let Some(cw) = cat_entry.get("context_window").and_then(|v| v.as_i64()) {
+                        pobj.insert("maxContextLength".into(), json!(cw));
+                        params_changed = true;
+                    }
+                }
+                if pobj.get("maxOutputTokens").is_none() {
+                    if let Some(ol) = cat_entry.get("output_limit").and_then(|v| v.as_i64()) {
+                        pobj.insert("maxOutputTokens".into(), json!(ol));
+                        params_changed = true;
+                    }
+                }
+            }
+            if params_changed {
+                if let Ok(new_params) = serde_json::to_string(&params_val) {
+                    if let Some(pobj) = profile.as_object_mut() {
+                        pobj.insert("parameters_json".into(), json!(new_params));
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn dispatch_domain_command(
     store: &Store,
     suite: &ModulesSuite,
@@ -549,14 +1372,42 @@ pub(super) fn dispatch_domain_command(
 
     match (domain, op) {
         // --- Model Domain ---
-        ("model", "list" | "list_profiles") => {
-            let mut items: Vec<Value> = suite
+        ("model", "list_profiles") => {
+            // Canonical native clients (macOS/iOS/Android) strictly expect canonical `model`
+            // records (`source_json`, `parameters_json`, `runtime`, `created_at_ms`, `updated_at_ms`).
+            // Never fall back to Web UI camelCase projections from `build_model_profiles_response`
+            // when zero models have been enabled yet!
+            let connections_by_id: HashMap<String, Value> = suite
+                .list_records::<Value>("model_connection")
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|c| {
+                    let id = c.get("id").and_then(|v| v.as_str())?.to_string();
+                    Some((id, c))
+                })
+                .collect();
+            let items: Vec<Value> = suite
                 .list_records::<Value>("model")
                 .map_err(|e| ("storage_error", e.to_string()))?
                 .into_iter()
                 .filter(|r| r.get("deleted_at_ms").is_none_or(|v| v.is_null()))
+                .map(|mut r| {
+                    overlay_connection_catalog_on_profile(store, &mut r, &connections_by_id);
+                    r
+                })
                 .collect();
-            if items.is_empty() {
+            Ok(json!({"kind": "model", "items": items, "profiles": items}))
+        }
+        ("model", "list") => {
+            let all_records = suite
+                .list_records::<Value>("model")
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let had_canonical = !all_records.is_empty();
+            let mut items: Vec<Value> = all_records
+                .into_iter()
+                .filter(|r| r.get("deleted_at_ms").is_none_or(|v| v.is_null()))
+                .collect();
+            if !had_canonical {
                 if let Some(arr) = crate::web_api::build_model_profiles_response(store)
                     .get("profiles")
                     .and_then(|v| v.as_array())
@@ -573,10 +1424,24 @@ pub(super) fn dispatch_domain_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'id'".into()))?;
-            let found = suite
+            let mut found = suite
                 .get_record::<Value>("model", id)
                 .map_err(|e| ("storage_error", e.to_string()))?
                 .filter(|r| r.get("deleted_at_ms").is_none_or(|v| v.is_null()));
+            if let Some(ref mut rec) = found {
+                if let Some(conn_id) = rec
+                    .get("source_json")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    .and_then(|v| v.get("connectionID").and_then(|x| x.as_str()).map(ToString::to_string))
+                {
+                    if let Ok(Some(conn)) = suite.get_record::<Value>("model_connection", &conn_id) {
+                        let mut map = HashMap::new();
+                        map.insert(conn_id, conn);
+                        overlay_connection_catalog_on_profile(store, rec, &map);
+                    }
+                }
+            }
             Ok(found.unwrap_or(Value::Null))
         }
         ("model", "list_connections") => {
@@ -584,23 +1449,10 @@ pub(super) fn dispatch_domain_command(
             let mut list: Vec<Value> = Vec::new();
             let mut seen_ids: HashSet<String> = HashSet::new();
             for rec in suite.list_records::<Value>("model_connection").unwrap_or_default() {
-                let rid = rec.get("id").and_then(|v| v.as_str()).map(ToString::to_string);
-                if let Some(ref id) = rid {
-                    seen_ids.insert(id.clone());
+                if let Some(id) = rec.get("id").and_then(|v| v.as_str()) {
+                    seen_ids.insert(id.to_string());
                 }
-                let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
-                let catalog = rec.get("catalog").cloned().unwrap_or(Value::Null);
-                list.push(json!({
-                    "id": rid,
-                    "revision": rev,
-                    "document": {
-                        "format_version": 1,
-                        "connection": rec,
-                        "catalog": catalog
-                    },
-                    "connection": rec,
-                    "catalog": catalog
-                }));
+                list.push(build_connection_snapshot(&rec));
             }
             if let Some(cfg_conns) = crate::config::redacted_llm_config(&cfg.llm)
                 .get("connections")
@@ -609,11 +1461,12 @@ pub(super) fn dispatch_domain_command(
                 for c in cfg_conns {
                     let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     if !cid.is_empty() && !seen_ids.contains(cid) {
-                        list.push(c.clone());
+                        let canonical = config_connection_to_canonical_record(&cfg, c);
+                        list.push(build_connection_snapshot(&canonical));
                     }
                 }
             }
-            Ok(json!({"connections": list, "items": list}))
+            Ok(json!({"connections": list}))
         }
         ("model", "list_accounts") => {
             let mut list: Vec<Value> = Vec::new();
@@ -624,7 +1477,7 @@ pub(super) fn dispatch_domain_command(
                     "account": rec
                 }));
             }
-            Ok(json!({"accounts": list, "items": list}))
+            Ok(json!({"accounts": list}))
         }
         ("model", "get_connection") => {
             let id = payload
@@ -634,19 +1487,7 @@ pub(super) fn dispatch_domain_command(
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'id'".into()))?;
             if let Ok(Some(rec)) = suite.get_record::<Value>("model_connection", id) {
-                let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
-                let catalog = rec.get("catalog").cloned().unwrap_or(Value::Null);
-                return Ok(json!({
-                    "id": id,
-                    "revision": rev,
-                    "document": {
-                        "format_version": 1,
-                        "connection": rec,
-                        "catalog": catalog
-                    },
-                    "connection": rec,
-                    "catalog": catalog
-                }));
+                return Ok(build_connection_snapshot(&rec));
             }
             let cfg = crate::config::load_active_config(store);
             let found = crate::config::redacted_llm_config(&cfg.llm)
@@ -655,7 +1496,10 @@ pub(super) fn dispatch_domain_command(
                 .and_then(|arr| {
                     arr.iter()
                         .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id))
-                        .cloned()
+                        .map(|c| {
+                            let canonical = config_connection_to_canonical_record(&cfg, c);
+                            build_connection_snapshot(&canonical)
+                        })
                 });
             Ok(found.unwrap_or(Value::Null))
         }
@@ -737,13 +1581,24 @@ pub(super) fn dispatch_domain_command(
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string)
                 .unwrap_or_else(new_id);
-            let prev_rev = suite
+            let existing_rec = suite
                 .get_record::<Value>("model_connection", &id)
                 .ok()
-                .flatten()
+                .flatten();
+            let prev_rev = existing_rec
+                .as_ref()
                 .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
                 .unwrap_or(0);
             let next_rev = prev_rev + 1;
+            let ts = payload
+                .get("updated_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let clear_catalog = payload
+                .get("clear_catalog")
+                .or_else(|| input.get("clear_catalog"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let mut sanitized = input.clone();
             if let Some(obj) = sanitized.as_object_mut() {
                 obj.insert("id".into(), json!(id));
@@ -751,12 +1606,36 @@ pub(super) fn dispatch_domain_command(
                 obj.insert("revision".into(), json!(next_rev));
                 obj.remove("api_key");
                 obj.remove("apiKey");
-                obj.insert("updated_at_ms".into(), json!(now_ms()));
+                obj.remove("clear_catalog");
+                obj.insert("updated_at_ms".into(), json!(ts));
+                if clear_catalog {
+                    obj.remove("catalog");
+                    obj.remove("capability_assessments");
+                } else if let Some(ref prev) = existing_rec {
+                    // Preserve existing catalog and capability assessments on partial updates (e.g. disconnect/reconnect/rename).
+                    if !obj.contains_key("catalog") || obj.get("catalog").is_some_and(Value::is_null)
+                    {
+                        if let Some(prev_cat) = prev.get("catalog").filter(|v| !v.is_null()) {
+                            obj.insert("catalog".into(), prev_cat.clone());
+                        }
+                    }
+                    if !obj.contains_key("capability_assessments")
+                        || obj
+                            .get("capability_assessments")
+                            .is_some_and(Value::is_null)
+                    {
+                        if let Some(prev_ass) =
+                            prev.get("capability_assessments").filter(|v| !v.is_null())
+                        {
+                            obj.insert("capability_assessments".into(), prev_ass.clone());
+                        }
+                    }
+                }
             }
-            let catalog = sanitized.get("catalog").cloned().unwrap_or(Value::Null);
             suite
                 .upsert_record("model_connection", &id, &sanitized)
                 .map_err(|e| ("storage_error", e.to_string()))?;
+            sync_connection_metadata_to_profiles(suite, &sanitized, ts);
             if let Some(ep) = input
                 .get("endpoint")
                 .or_else(|| input.get("base_url"))
@@ -770,7 +1649,14 @@ pub(super) fn dispatch_domain_command(
                     .get("protocol")
                     .or_else(|| input.get("wire_protocol"))
                     .and_then(|v| v.as_str())
-                    .map(ToString::to_string);
+                    .or_else(|| {
+                        input
+                            .get("protocols")
+                            .and_then(|v| v.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|v| v.as_str())
+                    })
+                    .map(normalize_wire_protocol);
                 let provider = input
                     .get("provider")
                     .and_then(|v| v.as_str())
@@ -789,6 +1675,7 @@ pub(super) fn dispatch_domain_command(
                         arr.iter()
                             .filter_map(|m| {
                                 m.as_str()
+                                    .or_else(|| m.get("model_id").and_then(|v| v.as_str()))
                                     .or_else(|| m.get("id").and_then(|v| v.as_str()))
                                     .map(|mid| crate::config::ModelEntry {
                                         id: mid.to_string(),
@@ -832,17 +1719,141 @@ pub(super) fn dispatch_domain_command(
                 }
                 let _ = crate::config::save_applied_config(store, &cfg);
             }
+            Ok(build_connection_snapshot(&sanitized))
+        }
+        ("model", "delete_connection") => {
+            let input = payload.get("input").unwrap_or(payload);
+            let id = payload
+                .get("id")
+                .or_else(|| payload.get("connection_id"))
+                .or_else(|| input.get("id"))
+                .or_else(|| input.get("connection_id"))
+                .or_else(|| args.get("id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(("invalid_argument", "missing 'id' or 'connection_id'".into()))?;
+            let delete_account = payload
+                .get("delete_account")
+                .or_else(|| input.get("delete_account"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let ts = payload
+                .get("deleted_at_ms")
+                .or_else(|| payload.get("updated_at_ms"))
+                .or_else(|| input.get("deleted_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let existing = suite
+                .get_record::<Value>("model_connection", id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let account_id = existing
+                .as_ref()
+                .and_then(|rec| rec.get("account_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let deleted_record = suite
+                .delete_record("model_connection", id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+
+            // Soft-delete all model profiles linked to this connection.
+            let mut removed_profiles = 0usize;
+            for prof in suite.list_records::<Value>("model").unwrap_or_default() {
+                let belongs = prof
+                    .get("source_json")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    .and_then(|v| v.get("connectionID").and_then(|c| c.as_str()).map(ToString::to_string))
+                    .as_deref()
+                    == Some(id);
+                if belongs && prof.get("deleted_at_ms").is_none_or(|v| v.is_null()) {
+                    if let Some(pid) = prof.get("id").and_then(|v| v.as_str()).map(ToString::to_string) {
+                        let mut tomb = prof.clone();
+                        let prev_rev = tomb.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+                        if let Some(obj) = tomb.as_object_mut() {
+                            obj.insert("enabled".into(), json!(false));
+                            obj.insert("selected".into(), json!(false));
+                            obj.insert("deleted_at_ms".into(), json!(ts));
+                            obj.insert("updated_at_ms".into(), json!(ts));
+                            obj.insert("revision".into(), json!(prev_rev + 1));
+                        }
+                        let _ = suite.upsert_record("model", &pid, &tomb);
+                        removed_profiles += 1;
+                    }
+                }
+            }
+
+            // Remove from applied config so list_connections won't resurrect it.
+            let mut cfg = crate::config::load_active_config(store);
+            let before_len = cfg.llm.connections.len();
+            cfg.llm.connections.retain(|c| c.id != id);
+            let removed_from_cfg = cfg.llm.connections.len() != before_len;
+            cfg.connection_extras.remove(id);
+            if cfg
+                .llm
+                .default_model
+                .as_ref()
+                .is_some_and(|dm| dm.connection == id)
+            {
+                cfg.llm.default_model = None;
+            }
+            if removed_from_cfg || existing.is_some() {
+                let _ = crate::config::save_applied_config(store, &cfg);
+            }
+
+            let _ = store.delete_kv(&format!("model_catalog_refreshed:{id}"));
+            let _ = store.delete_kv(&format!("model_conn_selections:{id}"));
+            if let Ok(Some(Value::Array(arr))) = store.get_kv("web_model_profiles") {
+                let filtered: Vec<Value> = arr
+                    .into_iter()
+                    .filter(|p| {
+                        let cid = p
+                            .get("connection_id")
+                            .or_else(|| p.get("connectionId"))
+                            .and_then(|v| v.as_str());
+                        if cid == Some(id) {
+                            return false;
+                        }
+                        if let Some(src_str) = p.get("source_json").and_then(|v| v.as_str()) {
+                            if let Ok(src_val) = serde_json::from_str::<Value>(src_str) {
+                                if src_val.get("connectionID").and_then(|v| v.as_str()) == Some(id)
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                        true
+                    })
+                    .collect();
+                let _ = store.set_kv("web_model_profiles", &Value::Array(filtered));
+            }
+
+            // Optionally delete unreferenced model_account record.
+            let mut deleted_account_id: Option<String> = None;
+            if delete_account {
+                if let Some(ref acct_id) = account_id {
+                    let still_referenced = suite
+                        .list_records::<Value>("model_connection")
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|r| {
+                            r.get("account_id").and_then(|v| v.as_str()) == Some(acct_id.as_str())
+                        });
+                    if !still_referenced {
+                        let _ = suite.delete_record("model_account", acct_id);
+                        deleted_account_id = Some(acct_id.clone());
+                    }
+                }
+            }
+
             Ok(json!({
                 "ok": true,
+                "deleted": deleted_record || removed_from_cfg,
                 "id": id,
-                "revision": next_rev,
-                "document": {
-                    "format_version": 1,
-                    "connection": sanitized,
-                    "catalog": catalog
-                },
-                "connection": sanitized,
-                "catalog": catalog
+                "removed_profiles": removed_profiles,
+                "deleted_account_id": deleted_account_id
             }))
         }
         ("model", "set_connection_capability_override") => {
@@ -859,15 +1870,21 @@ pub(super) fn dispatch_domain_command(
                 .or_else(|| args.get("model_id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'model_id'".into()))?;
-            let protocol = input
-                .get("protocol")
-                .and_then(|v| v.as_str())
-                .unwrap_or("chat_completions");
+            let protocol = normalize_wire_protocol(
+                input
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("chat_completions"),
+            );
             let caps = input
                 .get("capabilities")
                 .or_else(|| input.get("override"))
                 .cloned()
                 .unwrap_or(Value::Null);
+            let ts = input
+                .get("updated_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
             let kv_key = format!("model_cap_override:{conn_id}:{model_id}");
             let stored = if caps.is_null() {
                 store
@@ -880,13 +1897,95 @@ pub(super) fn dispatch_domain_command(
                     "model_id": model_id,
                     "protocol": protocol,
                     "user_override": caps,
-                    "updated_at_ms": now_ms()
+                    "updated_at_ms": ts
                 });
                 store
                     .set_kv(&kv_key, &rec)
                     .map_err(|e| ("storage_error", e.to_string()))?;
                 rec
             };
+            if let Ok(Some(mut conn_rec)) = suite.get_record::<Value>("model_connection", conn_id) {
+                let prev_rev = conn_rec
+                    .get("revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                let mut assessments: Vec<Value> = conn_rec
+                    .get("capability_assessments")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut matched = false;
+                for item in &mut assessments {
+                    if item.get("model_id").and_then(|v| v.as_str()) == Some(model_id)
+                        && item
+                            .get("protocol")
+                            .and_then(|v| v.as_str())
+                            .map(normalize_wire_protocol)
+                            .as_deref()
+                            == Some(protocol.as_str())
+                    {
+                        if let Some(obj) = item.as_object_mut() {
+                            obj.insert("user_override".into(), caps.clone());
+                        }
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched && !caps.is_null() {
+                    assessments.push(json!({
+                        "model_id": model_id,
+                        "protocol": protocol,
+                        "evidence": Value::Null,
+                        "user_override": caps
+                    }));
+                }
+                if let Some(obj) = conn_rec.as_object_mut() {
+                    obj.insert("capability_assessments".into(), json!(assessments));
+                    obj.insert("revision".into(), json!(prev_rev + 1));
+                    obj.insert("updated_at_ms".into(), json!(ts));
+                }
+                let _ = suite.upsert_record("model_connection", conn_id, &conn_rec);
+                // Re-sync active model profiles for this connection so overrides take effect immediately.
+                let enabled_keys: Vec<String> = suite
+                    .list_records::<Value>("model")
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|p| {
+                        p.get("enabled").and_then(|v| v.as_bool()) == Some(true)
+                            && p.get("deleted_at_ms").is_none_or(|v| v.is_null())
+                    })
+                    .filter_map(|p| {
+                        let src_str = p.get("source_json").and_then(|v| v.as_str())?;
+                        let src_val = serde_json::from_str::<Value>(src_str).ok()?;
+                        if src_val.get("connectionID").and_then(|v| v.as_str()) == Some(conn_id) {
+                            src_val
+                                .get("catalogKey")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !enabled_keys.is_empty() {
+                    let _ = sync_connection_model_profiles(
+                        store,
+                        suite,
+                        &conn_rec,
+                        &enabled_keys,
+                        None,
+                        ts,
+                    );
+                }
+                let mut snap = build_connection_snapshot(&conn_rec);
+                if let Some(obj) = snap.as_object_mut() {
+                    obj.insert("connection_id".into(), json!(conn_id));
+                    obj.insert("model_id".into(), json!(model_id));
+                    obj.insert("protocol".into(), json!(protocol));
+                    obj.insert("override".into(), stored);
+                }
+                return Ok(snap);
+            }
             Ok(json!({
                 "ok": true,
                 "connection_id": conn_id,
@@ -904,57 +2003,176 @@ pub(super) fn dispatch_domain_command(
                 .or_else(|| args.get("connection_id"))
                 .and_then(|v| v.as_str())
                 .ok_or(("invalid_argument", "missing 'connection_id'".into()))?;
-            let mut cfg = crate::config::load_active_config(store);
-            let mut models: Vec<String> = Vec::new();
-            if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
-                let mut changed = false;
-                if let Some(incoming) = input.get("models").and_then(|v| v.as_array()) {
-                    for m in incoming {
-                        if let Some(mid) = m
-                            .as_str()
-                            .or_else(|| m.get("id").and_then(|v| v.as_str()))
-                            .filter(|s| !s.trim().is_empty())
-                        {
-                            if !conn.models.iter().any(|e| e.id == mid) {
-                                conn.models.push(crate::config::ModelEntry {
-                                    id: mid.to_string(),
-                                    context_window: None,
-                                    max_output_tokens: None,
-                                    temperature: None,
-                                    top_p: None,
-                                    reasoning_effort: None,
-                                    capabilities: None,
-                                });
-                                changed = true;
+            let ts = input
+                .get("observed_at_ms")
+                .or_else(|| payload.get("observed_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let existing_rec = suite
+                .get_record::<Value>("model_connection", conn_id)
+                .ok()
+                .flatten();
+            let default_proto = existing_rec
+                .as_ref()
+                .and_then(|r| {
+                    r.get("protocols")
+                        .and_then(|v| v.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_str())
+                        .or_else(|| r.get("protocol").and_then(|v| v.as_str()))
+                })
+                .unwrap_or("chat_completions")
+                .to_string();
+
+            let incoming_raw = input
+                .get("models")
+                .or_else(|| input.pointer("/catalog/models"))
+                .and_then(|v| v.as_array());
+            let mut normalized_catalog_models: Vec<Value> = Vec::new();
+            let mut seen_catalog_keys: HashSet<String> = HashSet::new();
+            if let Some(incoming) = incoming_raw {
+                for m in incoming {
+                    if let Some(norm) = normalize_catalog_model_entry(m, &default_proto) {
+                        let ckey = format!(
+                            "{}:{}",
+                            norm.get("protocol").and_then(|v| v.as_str()).unwrap_or(&default_proto),
+                            norm.get("model_id").and_then(|v| v.as_str()).unwrap_or("")
+                        );
+                        if seen_catalog_keys.insert(ckey) {
+                            normalized_catalog_models.push(norm);
+                        }
+                    }
+                }
+            } else if let Some(ref rec) = existing_rec {
+                if let Some(arr) = rec
+                    .pointer("/catalog/models")
+                    .or_else(|| rec.get("models"))
+                    .and_then(|v| v.as_array())
+                {
+                    for m in arr {
+                        if let Some(norm) = normalize_catalog_model_entry(m, &default_proto) {
+                            let ckey = format!(
+                                "{}:{}",
+                                norm.get("protocol").and_then(|v| v.as_str()).unwrap_or(&default_proto),
+                                norm.get("model_id").and_then(|v| v.as_str()).unwrap_or("")
+                            );
+                            if seen_catalog_keys.insert(ckey) {
+                                normalized_catalog_models.push(norm);
                             }
                         }
                     }
                 }
-                models = conn.models.iter().map(|m| m.id.clone()).collect();
+            }
+
+            let catalog_obj = json!({
+                "observed_at_ms": ts,
+                "source": input
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("discovery"),
+                "models": normalized_catalog_models
+            });
+
+            let mut model_ids: Vec<String> = normalized_catalog_models
+                .iter()
+                .filter_map(|m| m.get("model_id").and_then(|v| v.as_str()).map(ToString::to_string))
+                .collect();
+
+            let mut cfg = crate::config::load_active_config(store);
+            if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
+                let mut changed = false;
+                for m in &normalized_catalog_models {
+                    if let Some(mid) = m.get("model_id").and_then(|v| v.as_str()) {
+                        if !conn.models.iter().any(|e| e.id == mid) {
+                            conn.models.push(crate::config::ModelEntry {
+                                id: mid.to_string(),
+                                context_window: m
+                                    .get("context_window")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize),
+                                max_output_tokens: m
+                                    .get("output_limit")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|n| n as usize),
+                                temperature: None,
+                                top_p: None,
+                                reasoning_effort: None,
+                                capabilities: None,
+                            });
+                            changed = true;
+                        }
+                    }
+                }
+                if model_ids.is_empty() {
+                    model_ids = conn.models.iter().map(|m| m.id.clone()).collect();
+                }
                 if changed {
                     let _ = crate::config::save_applied_config(store, &cfg);
                 }
-            } else if let Ok(Some(rec)) = suite.get_record::<Value>("model_connection", conn_id) {
-                if let Some(arr) = rec.get("models").and_then(|v| v.as_array()) {
-                    models = arr
-                        .iter()
-                        .filter_map(|m| {
-                            m.as_str()
-                                .or_else(|| m.get("id").and_then(|v| v.as_str()))
-                                .map(ToString::to_string)
-                        })
-                        .collect();
-                }
             }
-            let ts = now_ms();
+
             let _ = store.set_kv(
                 &format!("model_catalog_refreshed:{conn_id}"),
-                &json!({"connection_id": conn_id, "models": models, "refreshed_at_ms": ts}),
+                &json!({"connection_id": conn_id, "models": model_ids, "refreshed_at_ms": ts}),
             );
+
+            if let Some(mut rec) = existing_rec {
+                let prev_rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+                let next_rev = prev_rev + 1;
+                if let Some(obj) = rec.as_object_mut() {
+                    obj.insert("catalog".into(), catalog_obj);
+                    obj.insert("revision".into(), json!(next_rev));
+                    obj.insert("updated_at_ms".into(), json!(ts));
+                }
+                suite
+                    .upsert_record("model_connection", conn_id, &rec)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                // Re-sync currently enabled model profiles so newly discovered capabilities,
+                // reasoning levels, and token limits take effect immediately in chat composers.
+                let enabled_keys: Vec<String> = suite
+                    .list_records::<Value>("model")
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|p| {
+                        p.get("enabled").and_then(|v| v.as_bool()) == Some(true)
+                            && p.get("deleted_at_ms").is_none_or(|v| v.is_null())
+                    })
+                    .filter_map(|p| {
+                        let src_str = p.get("source_json").and_then(|v| v.as_str())?;
+                        let src_val = serde_json::from_str::<Value>(src_str).ok()?;
+                        if src_val.get("connectionID").and_then(|v| v.as_str()) == Some(conn_id) {
+                            src_val
+                                .get("catalogKey")
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !enabled_keys.is_empty() {
+                    let _ = sync_connection_model_profiles(
+                        store,
+                        suite,
+                        &rec,
+                        &enabled_keys,
+                        None,
+                        ts,
+                    );
+                }
+                let mut snap = build_connection_snapshot(&rec);
+                if let Some(obj) = snap.as_object_mut() {
+                    obj.insert("connection_id".into(), json!(conn_id));
+                    obj.insert("models".into(), json!(model_ids));
+                    obj.insert("refreshed_at_ms".into(), json!(ts));
+                }
+                return Ok(snap);
+            }
+
             Ok(json!({
                 "ok": true,
                 "connection_id": conn_id,
-                "models": models,
+                "models": model_ids,
                 "refreshed_at_ms": ts
             }))
         }
@@ -981,6 +2199,11 @@ pub(super) fn dispatch_domain_command(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .map(ToString::to_string);
+            let ts = input
+                .get("updated_at_ms")
+                .or_else(|| payload.get("updated_at_ms"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
             let mut cfg = crate::config::load_active_config(store);
             if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
                 for key in &enabled_ids {
@@ -1008,11 +2231,32 @@ pub(super) fn dispatch_domain_command(
                 }
                 let _ = crate::config::save_applied_config(store, &cfg);
             }
+            if let Ok(Some(mut conn_rec)) = suite.get_record::<Value>("model_connection", conn_id) {
+                let prev_rev = conn_rec
+                    .get("revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                if let Some(obj) = conn_rec.as_object_mut() {
+                    obj.insert("revision".into(), json!(prev_rev + 1));
+                    obj.insert("updated_at_ms".into(), json!(ts));
+                }
+                suite
+                    .upsert_record("model_connection", conn_id, &conn_rec)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                sync_connection_model_profiles(
+                    store,
+                    suite,
+                    &conn_rec,
+                    &enabled_ids,
+                    selected_id.as_deref(),
+                    ts,
+                )?;
+            }
             let selection = json!({
                 "connection_id": conn_id,
                 "enabled": enabled_ids,
                 "selected_model_id": selected_id,
-                "updated_at_ms": now_ms()
+                "updated_at_ms": ts
             });
             store
                 .set_kv(&format!("model_conn_selections:{conn_id}"), &selection)
@@ -1077,14 +2321,25 @@ pub(super) fn dispatch_domain_command(
                 .and_then(|v| v.get("revision").and_then(|r| r.as_i64()))
                 .unwrap_or(0);
             let next_rev = prev_rev + 1;
+            let default_proto = input
+                .get("protocols")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .or_else(|| input.get("protocol").and_then(|v| v.as_str()))
+                .unwrap_or("chat_completions");
             let catalog = payload
                 .get("models")
                 .and_then(|v| v.as_array())
                 .map(|models| {
+                    let norm: Vec<Value> = models
+                        .iter()
+                        .filter_map(|m| normalize_catalog_model_entry(m, default_proto))
+                        .collect();
                     json!({
                         "observed_at_ms": ts,
                         "source": input.get("source").and_then(|v| v.as_str()).unwrap_or("manual"),
-                        "models": models
+                        "models": norm
                     })
                 })
                 .unwrap_or(Value::Null);
@@ -1100,18 +2355,113 @@ pub(super) fn dispatch_domain_command(
             suite
                 .upsert_record("model_connection", &id, &rec)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({
-                "ok": true,
-                "id": id,
-                "revision": next_rev,
-                "document": {
-                    "format_version": 1,
-                    "connection": rec,
-                    "catalog": catalog
-                },
-                "connection": rec,
-                "catalog": catalog
-            }))
+            // Keep cfg.llm.connections in nola_v2_applied_config in sync so CLI/TUI/Web see imported connections.
+            if let Some(ep) = input
+                .get("base_url")
+                .or_else(|| input.get("endpoint"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let mut cfg = crate::config::load_active_config(store);
+                let protocol = Some(default_proto.to_string());
+                let provider = input
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                let api_key = input
+                    .get("api_key")
+                    .or_else(|| input.get("apiKey"))
+                    .or_else(|| payload.get("api_key"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(ToString::to_string);
+                let models: Vec<crate::config::ModelEntry> = catalog
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| {
+                                m.get("model_id")
+                                    .or_else(|| m.get("id"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|mid| crate::config::ModelEntry {
+                                        id: mid.to_string(),
+                                        context_window: m
+                                            .get("context_window")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as usize),
+                                        max_output_tokens: m
+                                            .get("output_limit")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as usize),
+                                        temperature: None,
+                                        top_p: None,
+                                        reasoning_effort: None,
+                                        capabilities: None,
+                                    })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(existing) = cfg.llm.connections.iter_mut().find(|c| c.id == id) {
+                    existing.endpoint = ep.to_string();
+                    existing.protocol = protocol;
+                    if provider.is_some() {
+                        existing.provider = provider;
+                    }
+                    if api_key.is_some() {
+                        existing.api_key = api_key;
+                    }
+                    for m in models {
+                        if !existing.models.iter().any(|e| e.id == m.id) {
+                            existing.models.push(m);
+                        }
+                    }
+                } else {
+                    cfg.llm.connections.push(crate::config::ConnectionConfig {
+                        id: id.clone(),
+                        endpoint: ep.to_string(),
+                        protocol,
+                        provider,
+                        api_key,
+                        api_key_env: None,
+                        models,
+                    });
+                }
+                if let Some(dname) = input
+                    .get("display_name")
+                    .or_else(|| input.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && *s != id)
+                {
+                    cfg.connection_extras
+                        .entry(id.clone())
+                        .or_default()
+                        .name = Some(dname.to_string());
+                }
+                let _ = crate::config::save_applied_config(store, &cfg);
+            }
+            if payload.get("enable_models").and_then(|v| v.as_bool()) == Some(true) {
+                let enable_keys: Vec<String> = catalog
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| {
+                                let proto = m.get("protocol").and_then(|v| v.as_str()).unwrap_or(default_proto);
+                                let mid = m.get("model_id").and_then(|v| v.as_str())?;
+                                Some(format!("{proto}:{mid}"))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !enable_keys.is_empty() {
+                    let _ = sync_connection_model_profiles(store, suite, &rec, &enable_keys, None, ts);
+                }
+            }
+            Ok(build_connection_snapshot(&rec))
         }
         ("model", "report_runtime") => {
             let input = payload.get("input").unwrap_or(payload);
@@ -3133,17 +4483,8 @@ pub(super) fn dispatch_domain_command(
                 .get("conversation_id")
                 .or_else(|| args.get("conversation_id"))
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
                 .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
-            if store
-                .get_session(conv_id)
-                .map_err(|e| ("storage_error", e.to_string()))?
-                .is_none()
-            {
-                return Err((
-                    "not_found",
-                    format!("conversation '{conv_id}' not found"),
-                ));
-            }
             let ds_id = input
                 .get("source_id")
                 .or_else(|| input.get("data_source_id"))

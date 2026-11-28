@@ -1362,7 +1362,6 @@ internal fun ChatScreen(
                     Text(stringResource(R.string.chat_permission_mode) + ": " + stringResource(
                         when (state.permissionMode) {
                             com.nola.core.AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
-                            com.nola.core.AndroidAgentPermissionMode.AcceptEdits -> R.string.chat_permission_mode_accept_edits
                             com.nola.core.AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
                         }
                     ))

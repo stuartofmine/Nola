@@ -1640,9 +1640,9 @@ const MATH_SYMBOLS: Readonly<Record<string, string>> = {
     cup: '∪', cap: '∩', emptyset: '∅', varnothing: '∅',
     forall: '∀', exists: '∃', nexists: '∄', neg: '¬', lnot: '¬',
     land: '∧', lor: '∨', wedge: '∧', vee: '∨',
-    partial: '∂', nabla: '∇', degree: '°', angle: '∠', perp: '⊥', parallel: '∥',
-    prime: '′', ell: 'ℓ', hbar: 'ℏ', Re: 'ℜ', Im: 'ℑ', aleph: 'ℵ',
-    circ: '∘', bullet: '•', star: '⋆', oplus: '⊕', otimes: '⊗',
+    partial: '∂', nabla: '∇', degree: '°', angle: '∠', top: '⊤', bot: '⊥', perp: '⊥', parallel: '∥',
+    prime: '′', dagger: '†', ddagger: '‡', ell: 'ℓ', hbar: 'ℏ', Re: 'ℜ', Im: 'ℑ', aleph: 'ℵ',
+    circ: '∘', bullet: '•', star: '⋆', ast: '∗', setminus: '∖', oplus: '⊕', otimes: '⊗',
     langle: '⟨', rangle: '⟩', lfloor: '⌊', rfloor: '⌋', lceil: '⌈', rceil: '⌉',
     quad: '\u2001', qquad: '\u2001\u2001',
 };

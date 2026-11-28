@@ -1,6 +1,6 @@
 {
   "name": "nola-windows",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Tauri desktop client for the Nola Web Host on Windows",
   "scripts": {

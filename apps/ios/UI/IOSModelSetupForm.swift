@@ -253,26 +253,52 @@ struct IOSModelSetupForm: View {
         guard !busy else { return }
         focusedField = nil
         busy = true; error = nil
-        defer { busy = false }
-        do {
-            // If setting the default was rejected, retry that exact saved model instead
-            // of creating a second connection with the same entered credentials.
-            let model: ModelInfo
-            if let savedModel = draft.savedModel { model = savedModel }
-            else {
-                let connection = try service.create(name: draft.name, endpoint: draft.endpoint, wireProtocol: draft.wire, secret: draft.secret, modelID: draft.modelID,
-                    discoveredModel: discoveredModels.first { $0.id == draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines) })
-                guard let profile = try service.application.listModelProfiles().first(where: {
-                    guard $0.enabled, $0.deletedAtMs == nil,
-                          let source = try? JSONSerialization.jsonObject(with: Data($0.sourceJSON.utf8)) as? [String: Any] else { return false }
-                    return source["connectionID"] as? String == connection.id && $0.modelName == draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines) && source["wireProtocol"] as? String == draft.wire
-                }), let configured = ModelSelectionManager.modelInfo(from: profile) else { throw IOSApplicationRuntimeError.invalidResponse }
-                model = configured; draft.savedModel = configured; draft.secret = ""
-            }
-            try ModelSelectionManager.commitSelectedModel(model, using: service.application)
-            draft = IOSModelSetupDraft()
-            onSaved(model)
-        } catch { self.error = error.localizedDescription }
+        let service = self.service
+        let savedModel = draft.savedModel
+        let name = draft.name
+        let endpoint = draft.endpoint
+        let wire = draft.wire
+        let secret = draft.secret
+        let modelID = draft.modelID
+        let trimmedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedDiscovered = discoveredModels.first { $0.id == trimmedModelID }
+        Task { @MainActor in
+            defer { busy = false }
+            await Task.yield()
+            do {
+                // If setting the default was rejected, retry that exact saved model instead
+                // of creating a second connection with the same entered credentials.
+                let model: ModelInfo
+                if let savedModel {
+                    model = savedModel
+                } else {
+                    let configured: ModelInfo = try await Task.detached(priority: .userInitiated) {
+                        let connection = try service.create(
+                            name: name,
+                            endpoint: endpoint,
+                            wireProtocol: wire,
+                            secret: secret,
+                            modelID: modelID,
+                            discoveredModel: matchedDiscovered
+                        )
+                        guard let profile = try service.application.listModelProfiles().first(where: {
+                            guard $0.enabled, $0.deletedAtMs == nil,
+                                  let source = try? JSONSerialization.jsonObject(with: Data($0.sourceJSON.utf8)) as? [String: Any] else { return false }
+                            return source["connectionID"] as? String == connection.id
+                                && $0.modelName == trimmedModelID
+                                && source["wireProtocol"] as? String == wire
+                        }), let resolved = ModelSelectionManager.modelInfo(from: profile) else {
+                            throw IOSApplicationRuntimeError.invalidResponse
+                        }
+                        return resolved
+                    }.value
+                    model = configured; draft.savedModel = configured; draft.secret = ""
+                }
+                try ModelSelectionManager.commitSelectedModel(model, using: service.application)
+                draft = IOSModelSetupDraft()
+                onSaved(model)
+            } catch { self.error = error.localizedDescription }
+        }
     }
 }
 
@@ -307,14 +333,23 @@ struct IOSModelProtocolEditor: View {
             }
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             Button(NSLocalizedString("model.setup.save", value: "Save and use", comment: "Save and use model")) {
+                guard !saving else { return }
                 saving = true; error = nil
-                defer { saving = false }
-                do {
-                    let configured = try service.configureProtocol(for: model, wireProtocol: wire)
-                    try ModelSelectionManager.commitSelectedModel(configured, using: service.application)
-                    onSaved(configured)
-                    dismiss()
-                } catch { self.error = error.localizedDescription }
+                let service = self.service
+                let targetModel = self.model
+                let targetWire = self.wire
+                Task { @MainActor in
+                    defer { saving = false }
+                    await Task.yield()
+                    do {
+                        let configured = try await Task.detached(priority: .userInitiated) {
+                            try service.configureProtocol(for: targetModel, wireProtocol: targetWire)
+                        }.value
+                        try ModelSelectionManager.commitSelectedModel(configured, using: service.application)
+                        onSaved(configured)
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
             }.disabled(saving || wire == model.wireProtocol)
                 .frame(minHeight: 44).accessibilityIdentifier("model.protocol.save")
         }

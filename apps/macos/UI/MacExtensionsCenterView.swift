@@ -369,11 +369,16 @@ struct MacExtensionsCenterView: View {
             if hasRemovedBuiltInSkills {
                 Divider()
                 Button {
-                    do {
-                        try MacBuiltInSkillRegistry.restoreBuiltInSkills(store: store)
-                        refresh()
-                    } catch {
-                        errorMessage = error.localizedDescription
+                    let store = self.store
+                    Task {
+                        do {
+                            try await Task.detached(priority: .userInitiated) {
+                                try MacBuiltInSkillRegistry.restoreBuiltInSkills(store: store)
+                            }.value
+                            refresh()
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
                     }
                 } label: {
                     Label(
@@ -595,42 +600,39 @@ struct MacExtensionsCenterView: View {
     }
 
     private func setEnabled(_ enabled: Bool, for item: MacExtensionItem) {
-        if let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
+        let store = self.store
+        Task {
             do {
-                try MacBuiltInSkillRegistry.setEnabled(enabled, for: id, store: store)
-            } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-        } else if let id = item.installedSkillID {
-            do {
-                guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
-                    throw MacExtensionsServiceError.contentUnavailable
+                let mutated = try await Task.detached(priority: .userInitiated) { () -> Bool in
+                    if let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
+                        try MacBuiltInSkillRegistry.setEnabled(enabled, for: id, store: store)
+                        return true
+                    } else if let id = item.installedSkillID {
+                        guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
+                            throw MacExtensionsServiceError.contentUnavailable
+                        }
+                        _ = try store.setSkillEnabled(
+                            editor,
+                            enabled: enabled,
+                            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                        )
+                        return true
+                    } else if item.kind == .skill, item.source != .connectedHost {
+                        try MacLocalSkillActivationStore.setEnabled(enabled, itemID: item.id, store: store)
+                        return true
+                    } else if item.kind == .mcp, item.source != .connectedHost {
+                        try MacLocalMCPActivationStore.setEnabled(enabled, itemID: item.id, store: store)
+                        return true
+                    }
+                    return false
+                }.value
+                if mutated {
+                    refresh()
                 }
-                _ = try store.setSkillEnabled(editor, enabled: enabled,
-                    updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
             } catch {
                 errorMessage = error.localizedDescription
-                return
             }
-        } else if item.kind == .skill, item.source != .connectedHost {
-            do {
-                try MacLocalSkillActivationStore.setEnabled(enabled, itemID: item.id, store: store)
-            } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-        } else if item.kind == .mcp, item.source != .connectedHost {
-            do {
-                try MacLocalMCPActivationStore.setEnabled(enabled, itemID: item.id, store: store)
-            } catch {
-                errorMessage = error.localizedDescription
-                return
-            }
-        } else {
-            return
         }
-        refresh()
     }
 
     private func openMCPEditor(for item: MacExtensionItem) {
@@ -647,15 +649,23 @@ struct MacExtensionsCenterView: View {
 
     private func remove(_ item: MacExtensionItem) {
         pendingRemoval = nil
+        let store = self.store
         if let id = item.installedSkillID {
-            do {
-                guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
-                    throw MacExtensionsServiceError.contentUnavailable
-                }
-                _ = try store.deleteUserSkill(editor, deletedAtMs: Int64(Date().timeIntervalSince1970 * 1_000))
-                if selectedID == item.id { selectedID = nil }
-                refresh()
-            } catch { errorMessage = error.localizedDescription }
+            Task {
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        guard let editor = try store.skillEditor(id), editor.record.gitHubSourceURL != nil else {
+                            throw MacExtensionsServiceError.contentUnavailable
+                        }
+                        _ = try store.deleteUserSkill(
+                            editor,
+                            deletedAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                        )
+                    }.value
+                    if selectedID == item.id { selectedID = nil }
+                    refresh()
+                } catch { errorMessage = error.localizedDescription }
+            }
             return
         }
         if item.id.hasPrefix("managed-mcp:") {
@@ -671,13 +681,16 @@ struct MacExtensionsCenterView: View {
             return
         }
         guard let id = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) else { return }
-        do {
-            try MacBuiltInSkillRegistry.remove(id, store: store)
-        } catch {
-            errorMessage = error.localizedDescription
-            return
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try MacBuiltInSkillRegistry.remove(id, store: store)
+                }.value
+                refresh()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
-        refresh()
     }
 }
 
@@ -1806,7 +1819,12 @@ private struct MacExtensionDetail: View {
             draft = loaded.content
             savedContent = loaded.content
             if let skillID = MacBuiltInSkillRegistry.skillID(forExtensionItemID: item.id) {
-                hasBuiltInOverride = MacBuiltInSkillRegistry.hasOverride(for: skillID, store: store)
+                let store = self.store
+                let overridePresent = await Task.detached(priority: .userInitiated) {
+                    MacBuiltInSkillRegistry.hasOverride(for: skillID, store: store)
+                }.value
+                guard !Task.isCancelled else { return }
+                hasBuiltInOverride = overridePresent
             }
         } catch MacExtensionsServiceError.contentUnavailable {
             document = nil
@@ -1855,10 +1873,13 @@ private struct MacExtensionDetail: View {
         }
         isSaving = true
         defer { isSaving = false }
+        let store = self.store
         do {
-            try MacBuiltInSkillRegistry.resetOverride(for: skillID, store: store)
-            try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
-            try MacBuiltInSkillRegistry.installTrustedRouter()
+            try await Task.detached(priority: .userInitiated) {
+                try MacBuiltInSkillRegistry.resetOverride(for: skillID, store: store)
+                try MacBuiltInSkillRegistry.synchronizeCatalog(store: store)
+                try MacBuiltInSkillRegistry.installTrustedRouter()
+            }.value
             hasBuiltInOverride = false
             onSaved()
             await loadDocument()

@@ -28,7 +28,7 @@
 /* Begin PBXFileReference section */
 		C00000000000000000000003 /* NolaCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = NolaCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000004 /* NolaCore.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = NolaCore.c; sourceTree = "<group>"; };
-		C00000000000000000000005 /* ../../crates/nola-app/include/nola_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ../../crates/nola-app/include/nola_core.h; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000005 /* ../../crates/nola-app/include/nola_core.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "../../crates/nola-app/include/nola_core.h"; sourceTree = SOURCE_ROOT; };
 		C00000000000000000000006 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		C00000000000000000000042 /* Cargo.toml */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.toml; path = ../../Cargo.toml; sourceTree = SOURCE_ROOT; };
 		C00000000000000000000043 /* Cargo.lock */ = {isa = PBXFileReference; lastKnownFileType = text; name = Cargo.lock; path = ../../Cargo.lock; sourceTree = SOURCE_ROOT; };

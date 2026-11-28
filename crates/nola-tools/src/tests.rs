@@ -1292,3 +1292,850 @@ fn code_mode_tools_proxy_all_tools_cap_and_lsp_browser_extensions() {
     // should_pass_no_sandbox helper compiles and runs cleanly
     let _ = crate::browser::should_pass_no_sandbox();
 }
+
+/// Build a valid, standards-compliant multi-page PDF 1.4 byte buffer with Helvetica text streams
+/// on each page and exact byte offsets in the xref table (parsed cleanly by `lopdf`).
+fn build_multipage_pdf(pages: &[Vec<String>]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"%PDF-1.4\n");
+
+    let num_pages = pages.len();
+    let total_objects = 3 + num_pages * 2;
+    let mut offsets: Vec<usize> = vec![0; total_objects + 1];
+
+    // Object 1: Catalog
+    offsets[1] = out.len();
+    out.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+    // Object 2: Pages
+    let kids: Vec<String> = (0..num_pages)
+        .map(|i| format!("{} 0 R", 4 + i * 2))
+        .collect();
+    offsets[2] = out.len();
+    out.extend_from_slice(
+        format!(
+            "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+            kids.join(" "),
+            num_pages
+        )
+        .as_bytes(),
+    );
+
+    // Object 3: Helvetica Type1 Font
+    offsets[3] = out.len();
+    out.extend_from_slice(
+        b"3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n",
+    );
+
+    for (idx, lines) in pages.iter().enumerate() {
+        let page_obj = 4 + idx * 2;
+        let content_obj = page_obj + 1;
+
+        offsets[page_obj] = out.len();
+        out.extend_from_slice(
+            format!(
+                "{page_obj} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_obj} 0 R >>\nendobj\n"
+            )
+            .as_bytes(),
+        );
+
+        let mut stream = String::from("BT\n/F1 10 Tf\n40 760 Td\n");
+        for (li, line) in lines.iter().enumerate() {
+            let escaped = line
+                .replace('\\', "\\\\")
+                .replace('(', "\\(")
+                .replace(')', "\\)");
+            if li > 0 {
+                stream.push_str("0 -12 Td\n");
+            }
+            stream.push_str(&format!("({escaped}) Tj\n"));
+        }
+        stream.push_str("ET\n");
+
+        offsets[content_obj] = out.len();
+        out.extend_from_slice(
+            format!(
+                "{content_obj} 0 obj\n<< /Length {} >>\nstream\n{stream}endstream\nendobj\n",
+                stream.len()
+            )
+            .as_bytes(),
+        );
+    }
+
+    let xref_offset = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n", total_objects + 1).as_bytes());
+    out.extend_from_slice(b"0000000000 65535 f \n");
+    for off in offsets.iter().skip(1) {
+        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+            total_objects + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+fn build_minimal_xlsx_bytes() -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("[Content_Types].xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>"#,
+        )
+        .unwrap();
+        zw.start_file("_rels/.rels", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+        zw.start_file("xl/workbook.xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Quarterly" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>"#,
+        )
+        .unwrap();
+        zw.start_file("xl/_rels/workbook.xml.rels", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"#,
+        )
+        .unwrap();
+        zw.start_file("xl/worksheets/sheet1.xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c r="A1" t="inlineStr"><is><t>Region</t></is></c>
+      <c r="B1" t="inlineStr"><is><t>Revenue</t></is></c>
+    </row>
+    <row r="2">
+      <c r="A2" t="inlineStr"><is><t>APAC-Q4</t></is></c>
+      <c r="B2"><v>42500</v></c>
+    </row>
+  </sheetData>
+</worksheet>"#,
+        )
+        .unwrap();
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+#[test]
+fn real_scenario_multipage_pdf_generation_default_and_explicit_page_extraction() {
+    let dir = tempfile::tempdir().unwrap();
+    // Generate a 15-page PDF with >36 KiB of text across pages and distinct markers on every page
+    let pages: Vec<Vec<String>> = (1..=15)
+        .map(|p| {
+            let mut lines = vec![format!("PDF_PAGE_{p:02}_MARKER Title Section for Page {p}")];
+            for row in 1..=28 {
+                lines.push(format!(
+                    "Page {p:02} row {row:02}: Detailed specification paragraph explaining Nola v2 subsystem telemetry and checksum validation."
+                ));
+            }
+            lines
+        })
+        .collect();
+    let total_text_bytes: usize = pages
+        .iter()
+        .flat_map(|p| p.iter())
+        .map(|l| l.len())
+        .sum();
+    assert!(
+        total_text_bytes > 32 * 1024,
+        "expected >32 KiB total PDF text, got {total_text_bytes}"
+    );
+
+    let pdf_bytes = build_multipage_pdf(&pages);
+    let pdf_path = dir.path().join("architecture_spec_15p.pdf");
+    std::fs::write(&pdf_path, &pdf_bytes).unwrap();
+
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. Default read_file extracts pages 1-10 and summary explicitly reports `(pages 1-10 of 15)`
+    let def_res = reg.execute("read_file", &ctx, json!({"path": "architecture_spec_15p.pdf"}));
+    assert!(!def_res.is_error, "default PDF read failed: {:?}", def_res.payload);
+    assert!(
+        def_res.payload.ui_summary().contains("(pages 1-10 of 15)"),
+        "expected summary to include '(pages 1-10 of 15)', got: {}",
+        def_res.payload.ui_summary()
+    );
+    let def_val = def_res.payload.to_model_value();
+    assert_eq!(def_val["format"], "pdf");
+    assert_eq!(def_val["total_pages"], 15);
+    let extracted = def_val["extracted_pages"].as_array().unwrap();
+    assert_eq!(extracted.len(), 10);
+    assert_eq!(extracted[0]["page"], 1);
+    assert!(extracted[0]["text"].as_str().unwrap().contains("PDF_PAGE_01_MARKER"));
+    assert_eq!(extracted[4]["page"], 5);
+    assert!(extracted[4]["text"].as_str().unwrap().contains("PDF_PAGE_05_MARKER"));
+    assert_eq!(extracted[9]["page"], 10);
+    assert!(extracted[9]["text"].as_str().unwrap().contains("PDF_PAGE_10_MARKER"));
+    assert!(
+        !def_res.payload.to_model_string().contains("PDF_PAGE_15_MARKER"),
+        "default read should stop at page 10"
+    );
+
+    // 2. Explicit `page: 1` -> summary `(page 1 of 15)` with page 1 marker
+    let p1 = reg.execute(
+        "read_file",
+        &ctx,
+        json!({"path": "architecture_spec_15p.pdf", "page": 1}),
+    );
+    assert!(!p1.is_error, "page 1 read failed: {:?}", p1.payload);
+    assert!(
+        p1.payload.ui_summary().contains("(page 1 of 15)"),
+        "expected '(page 1 of 15)', got: {}",
+        p1.payload.ui_summary()
+    );
+    let p1_pages = p1.payload.to_model_value()["extracted_pages"]
+        .as_array()
+        .cloned()
+        .unwrap();
+    assert_eq!(p1_pages.len(), 1);
+    assert_eq!(p1_pages[0]["page"], 1);
+    assert!(p1_pages[0]["text"].as_str().unwrap().contains("PDF_PAGE_01_MARKER"));
+
+    // 3. Explicit `page: 15` -> summary `(page 15 of 15)` with page 15 marker
+    let p15 = reg.execute(
+        "read_file",
+        &ctx,
+        json!({"path": "architecture_spec_15p.pdf", "page": 15}),
+    );
+    assert!(!p15.is_error, "page 15 read failed: {:?}", p15.payload);
+    assert!(
+        p15.payload.ui_summary().contains("(page 15 of 15)"),
+        "expected '(page 15 of 15)', got: {}",
+        p15.payload.ui_summary()
+    );
+    let p15_pages = p15.payload.to_model_value()["extracted_pages"]
+        .as_array()
+        .cloned()
+        .unwrap();
+    assert_eq!(p15_pages.len(), 1);
+    assert_eq!(p15_pages[0]["page"], 15);
+    assert!(p15_pages[0]["text"].as_str().unwrap().contains("PDF_PAGE_15_MARKER"));
+
+    // 4. In-memory attachment extraction with disguised extension uses magic bytes to extract all 15 pages
+    let full_text = crate::extract_document_text_from_bytes("disguised.bin", "", &pdf_bytes)
+        .expect("magic-byte PDF extraction should succeed");
+    assert!(full_text.contains("PDF_PAGE_01_MARKER"));
+    assert!(full_text.contains("PDF_PAGE_05_MARKER"));
+    assert!(full_text.contains("PDF_PAGE_10_MARKER"));
+    assert!(full_text.contains("PDF_PAGE_15_MARKER"));
+}
+
+#[test]
+fn real_scenario_output_store_session_scoped_spill_full_actions_and_cross_session_isolation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(crate::OutputStore::new(dir.path().join("spill_store")));
+    let reg = ToolRegistry::with_builtin_tools();
+
+    let mut ctx_a = ToolContext::new(dir.path()).with_session_id("sess-A");
+    ctx_a.output_store = std::sync::Arc::clone(&store);
+    let mut ctx_b = ToolContext::new(dir.path()).with_session_id("sess-B");
+    ctx_b.output_store = std::sync::Arc::clone(&store);
+
+    // Construct >32 KiB payload with distinct line markers & regex hits
+    let mut body = String::new();
+    for i in 1..=800 {
+        let tag = match i {
+            1 => "FIRST_ROW_MARKER",
+            400 => "MID_ROW_400_ERROR_CODE_404",
+            720 => "LATE_ROW_720_ERROR_CODE_503",
+            800 => "FINAL_ROW_800_MARKER",
+            _ => "ordinary_log_payload_entry_for_spill_verification",
+        };
+        body.push_str(&format!("entry_{i:04}: {tag}\n"));
+    }
+    assert!(body.len() > crate::DEFAULT_SPILL_THRESHOLD_BYTES);
+
+    let big_payload = ToolModelPayload::structured(
+        json!({"path": "server.log", "content": body, "total_lines": 800}),
+        "Read server.log (800 lines)",
+    );
+    let (compact, meta) = store
+        .maybe_spill_payload_scoped(
+            "sess-A",
+            "read_file",
+            &big_payload,
+            crate::DEFAULT_SPILL_THRESHOLD_BYTES,
+        )
+        .expect("payload >24 KiB must spill");
+    let cv = compact.to_model_value();
+    assert_eq!(cv["spilled"], json!(true));
+    assert_eq!(cv["full_output_available"], json!(true));
+    assert_eq!(cv["output_id"], json!(meta.output_id));
+    assert_eq!(cv["path"], json!("server.log"));
+
+    // sess-A: action=list
+    let list_a = reg.execute("tool_output", &ctx_a, json!({"action": "list"}));
+    assert!(!list_a.is_error);
+    assert_eq!(list_a.payload.to_model_value()["count"], 1);
+    assert_eq!(
+        list_a.payload.to_model_value()["outputs"][0]["output_id"],
+        meta.output_id
+    );
+
+    // sess-A: action=read exact line range (note rendered content starts with "=== content ===" on line 1)
+    let read_a = reg.execute(
+        "tool_output",
+        &ctx_a,
+        json!({"action": "read", "output_id": meta.output_id, "start_line": 399, "end_line": 405}),
+    );
+    assert!(!read_a.is_error, "read failed: {:?}", read_a.payload);
+    let read_text = read_a.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        read_text.contains("MID_ROW_400_ERROR_CODE_404"),
+        "expected line 400 marker in range, got: {read_text}"
+    );
+
+    // sess-A: action=tail
+    let tail_a = reg.execute(
+        "tool_output",
+        &ctx_a,
+        json!({"action": "tail", "output_id": meta.output_id, "tail_lines": 5}),
+    );
+    assert!(!tail_a.is_error);
+    assert!(tail_a.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("FINAL_ROW_800_MARKER"));
+
+    // sess-A: action=search with regex
+    let search_a = reg.execute(
+        "tool_output",
+        &ctx_a,
+        json!({"action": "search", "output_id": meta.output_id, "pattern": "ERROR_CODE_(404|503)"}),
+    );
+    assert!(!search_a.is_error);
+    let sv = search_a.payload.to_model_value();
+    assert_eq!(sv["count"], 2);
+    assert!(sv["matches"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("ERROR_CODE_404"));
+    assert!(sv["matches"][1]["text"]
+        .as_str()
+        .unwrap()
+        .contains("ERROR_CODE_503"));
+
+    // sess-A: action=slice with byte offset continuation
+    let slice1 = reg.execute(
+        "tool_output",
+        &ctx_a,
+        json!({"action": "slice", "output_id": meta.output_id, "offset": 0, "max_bytes": 256}),
+    );
+    assert!(!slice1.is_error);
+    let s1v = slice1.payload.to_model_value();
+    assert_eq!(s1v["has_more"], json!(true));
+    assert!(s1v["content"].as_str().unwrap().contains("FIRST_ROW_MARKER"));
+    let next_off = s1v["next_offset"].as_u64().unwrap();
+    let slice2 = reg.execute(
+        "tool_output",
+        &ctx_a,
+        json!({"action": "slice", "output_id": meta.output_id, "offset": next_off, "max_bytes": 256}),
+    );
+    assert!(!slice2.is_error);
+    assert_eq!(slice2.payload.to_model_value()["offset"], next_off);
+
+    // Cross-session isolation: sess-B MUST NOT see or read sess-A's output!
+    let list_b = reg.execute("tool_output", &ctx_b, json!({"action": "list"}));
+    assert!(!list_b.is_error);
+    assert_eq!(list_b.payload.to_model_value()["count"], 0);
+
+    for (action, extra) in [
+        ("read", json!({"start_line": 1, "end_line": 10})),
+        ("tail", json!({"tail_lines": 5})),
+        ("search", json!({"pattern": "ERROR_CODE"})),
+        ("slice", json!({"offset": 0, "max_bytes": 128})),
+    ] {
+        let mut req = json!({"action": action, "output_id": meta.output_id});
+        for (k, v) in extra.as_object().unwrap() {
+            req[k] = v.clone();
+        }
+        let cross = reg.execute("tool_output", &ctx_b, req);
+        assert!(
+            cross.is_error,
+            "sess-B tool_output action={action} must fail on sess-A output_id"
+        );
+        assert!(
+            cross
+                .payload
+                .to_model_string()
+                .contains("unknown output_id"),
+            "expected 'unknown output_id' for cross-session action={action}, got: {:?}",
+            cross.payload
+        );
+    }
+}
+
+#[test]
+fn real_scenario_binary_format_sniffing_docx_xlsx_png_jpeg_pdf_with_disguised_extensions() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. DOCX disguised as `.dat`
+    let mut docx_buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut docx_buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("word/document.xml", opts).unwrap();
+        zw.write_all(
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Board Memo &amp; Forecast</w:t></w:r></w:p>
+    <w:tbl><w:tr>
+      <w:tc><w:p><w:r><w:t>Metric</w:t></w:r></w:p></w:tc>
+      <w:tc><w:p><w:r><w:t>Target</w:t></w:r></w:p></w:tc>
+    </w:tr></w:tbl>
+  </w:body>
+</w:document>"#,
+        )
+        .unwrap();
+        zw.finish().unwrap();
+    }
+    let docx_bytes = docx_buf.into_inner();
+    std::fs::write(dir.path().join("blob_docx.dat"), &docx_bytes).unwrap();
+    let r_docx = reg.execute("read_file", &ctx, json!({"path": "blob_docx.dat"}));
+    assert!(!r_docx.is_error, "docx failed: {:?}", r_docx.payload);
+    assert_eq!(r_docx.payload.to_model_value()["format"], "docx");
+    assert!(r_docx.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("Board Memo & Forecast"));
+
+    // 2. XLSX disguised as `.dat`
+    let xlsx_bytes = build_minimal_xlsx_bytes();
+    std::fs::write(dir.path().join("blob_xlsx.dat"), &xlsx_bytes).unwrap();
+    let r_xlsx = reg.execute("read_file", &ctx, json!({"path": "blob_xlsx.dat"}));
+    assert!(!r_xlsx.is_error, "xlsx failed: {:?}", r_xlsx.payload);
+    let xv = r_xlsx.payload.to_model_value();
+    assert_eq!(xv["format"], "spreadsheet");
+    assert_eq!(xv["sheets"][0]["name"], "Quarterly");
+    assert_eq!(xv["sheets"][0]["preview_rows"][1][0], "APAC-Q4");
+    let xlsx_txt = crate::extract_document_text_from_bytes("blob_xlsx.dat", "", &xlsx_bytes)
+        .expect("xlsx text extraction");
+    assert!(xlsx_txt.contains("APAC-Q4") && xlsx_txt.contains("42500"));
+
+    // 3. PNG disguised as `.dat`
+    let mut png_bytes = Vec::new();
+    let png_img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        16,
+        12,
+        image::Rgba([20, 40, 60, 255]),
+    ));
+    png_img
+        .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(dir.path().join("blob_png.dat"), &png_bytes).unwrap();
+    let r_png = reg.execute("read_file", &ctx, json!({"path": "blob_png.dat"}));
+    assert!(!r_png.is_error, "png failed: {:?}", r_png.payload);
+    let pv = r_png.payload.to_model_value();
+    assert_eq!(pv["format"], "image");
+    assert_eq!(pv["mime_type"], "image/png");
+    assert_eq!(pv["dimensions"], json!({"width": 16, "height": 12}));
+    assert_eq!(r_png.media.len(), 1);
+    assert_eq!(r_png.media[0].mime_type, "image/png");
+    assert!(crate::extract_document_text_from_bytes("blob_png.dat", "", &png_bytes).is_none());
+
+    // 4. JPEG disguised as `.dat`
+    let mut jpg_bytes = Vec::new();
+    let jpg_img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        24,
+        18,
+        image::Rgb([200, 110, 50]),
+    ));
+    jpg_img
+        .write_to(&mut std::io::Cursor::new(&mut jpg_bytes), image::ImageFormat::Jpeg)
+        .unwrap();
+    std::fs::write(dir.path().join("blob_jpg.dat"), &jpg_bytes).unwrap();
+    let r_jpg = reg.execute("read_file", &ctx, json!({"path": "blob_jpg.dat"}));
+    assert!(!r_jpg.is_error, "jpeg failed: {:?}", r_jpg.payload);
+    let jv = r_jpg.payload.to_model_value();
+    assert_eq!(jv["format"], "image");
+    assert_eq!(jv["mime_type"], "image/jpeg");
+    assert_eq!(jv["dimensions"], json!({"width": 24, "height": 18}));
+    assert_eq!(r_jpg.media.len(), 1);
+    assert_eq!(r_jpg.media[0].mime_type, "image/jpeg");
+    assert!(crate::extract_document_text_from_bytes("blob_jpg.dat", "", &jpg_bytes).is_none());
+
+    // 5. PDF disguised as `.dat`
+    let pdf_bytes = build_multipage_pdf(&[vec!["DISGUISED_PDF_MAGIC_OK".to_string()]]);
+    std::fs::write(dir.path().join("blob_pdf.dat"), &pdf_bytes).unwrap();
+    let r_pdf = reg.execute("read_file", &ctx, json!({"path": "blob_pdf.dat"}));
+    assert!(!r_pdf.is_error, "pdf failed: {:?}", r_pdf.payload);
+    assert_eq!(r_pdf.payload.to_model_value()["format"], "pdf");
+    assert!(r_pdf.payload.to_model_value()["extracted_pages"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("DISGUISED_PDF_MAGIC_OK"));
+}
+
+#[test]
+fn real_scenario_safe_file_mutation_pipeline_and_workspace_escape_rejection() {
+    let ws = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside_secret = outside.path().join("secret.txt");
+    std::fs::write(&outside_secret, "DO_NOT_TOUCH\n").unwrap();
+
+    #[cfg(unix)]
+    {
+        let link = ws.path().join("escape_dir");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    }
+
+    let ctx = ToolContext::new(ws.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // 1. Safe in-workspace lifecycle: write_file -> read_file -> edit_file -> apply_patch -> move_file -> delete_file
+    let w = reg.execute(
+        "write_file",
+        &ctx,
+        json!({
+            "path": "src/service.rs",
+            "content": "pub fn port() -> u16 {\n    8080\n}\n\npub fn name() -> &'static str {\n    \"alpha\"\n}\n"
+        }),
+    );
+    assert!(!w.is_error);
+    assert!(matches!(w.effects[0].transition, VersionTransition::Created { .. }));
+
+    let r = reg.execute("read_file", &ctx, json!({"path": "src/service.rs"}));
+    assert!(!r.is_error);
+    assert!(r.payload.to_model_value()["content"]
+        .as_str()
+        .unwrap()
+        .contains("2:     8080"));
+
+    let e = reg.execute(
+        "edit_file",
+        &ctx,
+        json!({"path": "src/service.rs", "old_text": "8080", "new_text": "8443"}),
+    );
+    assert!(!e.is_error);
+    assert!(matches!(e.effects[0].transition, VersionTransition::Modified { .. }));
+
+    let patch = "--- a/src/service.rs\n+++ b/src/service.rs\n@@ -4,4 +4,4 @@\n \n pub fn name() -> &'static str {\n-    \"alpha\"\n+    \"beta\"\n }\n";
+    let p = reg.execute("apply_patch", &ctx, json!({"patch": patch}));
+    assert!(!p.is_error, "apply_patch failed: {:?}", p.payload);
+    assert_eq!(
+        std::fs::read_to_string(ws.path().join("src/service.rs")).unwrap(),
+        "pub fn port() -> u16 {\n    8443\n}\n\npub fn name() -> &'static str {\n    \"beta\"\n}\n"
+    );
+
+    let mv = reg.execute(
+        "move_file",
+        &ctx,
+        json!({"source": "src/service.rs", "destination": "src/server.rs"}),
+    );
+    assert!(!mv.is_error, "move_file failed: {:?}", mv.payload);
+    assert!(!ws.path().join("src/service.rs").exists());
+    assert!(ws.path().join("src/server.rs").is_file());
+
+    let del = reg.execute("delete_file", &ctx, json!({"path": "src/server.rs"}));
+    assert!(!del.is_error);
+    assert!(matches!(del.effects[0].transition, VersionTransition::Deleted { .. }));
+    assert!(!ws.path().join("src/server.rs").exists());
+
+    // 2. Workspace escape rejection across EVERY mutation tool (relative `..`, absolute path, symlink)
+    let abs_outside = outside.path().join("pwned.txt").display().to_string();
+    let escape_targets = vec![
+        "../escaped_rel.txt".to_string(),
+        abs_outside.clone(),
+        #[cfg(unix)]
+        "escape_dir/pwned_via_symlink.txt".to_string(),
+    ];
+    for target in &escape_targets {
+        let rw = reg.execute(
+            "write_file",
+            &ctx,
+            json!({"path": target, "content": "malicious"}),
+        );
+        assert!(rw.is_error, "write_file must reject escape target '{target}'");
+
+        let rd = reg.execute("delete_file", &ctx, json!({"path": target}));
+        assert!(rd.is_error, "delete_file must reject escape target '{target}'");
+
+        let rm = reg.execute(
+            "move_file",
+            &ctx,
+            json!({"source": "nonexistent", "destination": target}),
+        );
+        assert!(rm.is_error, "move_file must reject escape destination '{target}'");
+
+        let rp = reg.execute(
+            "apply_patch",
+            &ctx,
+            json!({"patch": format!("--- /dev/null\n+++ {target}\n@@ -0,0 +1 @@\n+malicious\n")}),
+        );
+        assert!(rp.is_error, "apply_patch must reject escape target '{target}'");
+    }
+
+    // Outside secret file must remain untouched
+    assert_eq!(
+        std::fs::read_to_string(&outside_secret).unwrap(),
+        "DO_NOT_TOUCH\n"
+    );
+    assert!(!outside.path().join("pwned.txt").exists());
+    assert!(!outside.path().join("pwned_via_symlink.txt").exists());
+}
+
+#[test]
+fn real_scenario_checkpoint_create_diff_restore_undo_redo_across_create_edit_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("alpha.txt"), "alpha_v1\n").unwrap();
+    std::fs::write(dir.path().join("beta.txt"), "beta_v1\n").unwrap();
+
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // Baseline checkpoint
+    let cp = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "create", "label": "before-multi-op"}),
+    );
+    assert!(!cp.is_error);
+    let cp_id = cp.payload.to_model_value()["checkpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Mutate: edit alpha, delete beta, create gamma
+    assert!(!reg.execute("read_file", &ctx, json!({"path": "alpha.txt"})).is_error);
+    assert!(!reg
+        .execute(
+            "edit_file",
+            &ctx,
+            json!({"path": "alpha.txt", "old_text": "alpha_v1", "new_text": "alpha_v2"}),
+        )
+        .is_error);
+    assert!(!reg
+        .execute("delete_file", &ctx, json!({"path": "beta.txt"}))
+        .is_error);
+    assert!(!reg
+        .execute(
+            "write_file",
+            &ctx,
+            json!({"path": "gamma.txt", "content": "gamma_new\n"}),
+        )
+        .is_error);
+
+    let diff = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "diff", "checkpoint_id": cp_id}),
+    );
+    assert!(!diff.is_error);
+    let dv = diff.payload.to_model_value();
+    assert!(dv["modified"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["path"] == "alpha.txt"));
+    assert!(dv["deleted"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d == "beta.txt" || d["path"] == "beta.txt"));
+
+    // Restore -> alpha returns to v1, beta recreated as v1, unrelated gamma preserved
+    let restored = reg.execute(
+        "workspace_checkpoint",
+        &ctx,
+        json!({"action": "restore", "checkpoint_id": cp_id}),
+    );
+    assert!(!restored.is_error);
+    assert_eq!(std::fs::read_to_string(dir.path().join("alpha.txt")).unwrap(), "alpha_v1\n");
+    assert_eq!(std::fs::read_to_string(dir.path().join("beta.txt")).unwrap(), "beta_v1\n");
+    assert_eq!(std::fs::read_to_string(dir.path().join("gamma.txt")).unwrap(), "gamma_new\n");
+
+    // Undo -> returns to post-edit state (alpha_v2, beta deleted)
+    let undo = reg.execute("workspace_checkpoint", &ctx, json!({"action": "undo"}));
+    assert!(!undo.is_error, "undo failed: {:?}", undo.payload);
+    assert_eq!(std::fs::read_to_string(dir.path().join("alpha.txt")).unwrap(), "alpha_v2\n");
+    assert!(!dir.path().join("beta.txt").exists());
+
+    // Redo -> re-applies restored baseline (alpha_v1, beta_v1)
+    let redo = reg.execute("workspace_checkpoint", &ctx, json!({"action": "redo"}));
+    assert!(!redo.is_error, "redo failed: {:?}", redo.payload);
+    assert_eq!(std::fs::read_to_string(dir.path().join("alpha.txt")).unwrap(), "alpha_v1\n");
+    assert_eq!(std::fs::read_to_string(dir.path().join("beta.txt")).unwrap(), "beta_v1\n");
+}
+
+#[test]
+fn real_scenario_multi_edit_and_grep_glob_search_pipeline_over_nested_project() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src/net")).unwrap();
+    std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+    std::fs::create_dir_all(dir.path().join("build")).unwrap();
+
+    std::fs::write(
+        dir.path().join("src/net/client.rs"),
+        "const TIMEOUT: u64 = 10;\nconst RETRIES: u32 = 2;\nconst HOST: &str = \"old.local\";\nconst TAG: &str = \"v1\";\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("tests/net_test.rs"),
+        "// checks old.local\nfn test_client() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("build/ignored.rs"),
+        "const HOST: &str = \"old.local\";\n",
+    )
+    .unwrap();
+
+    let ctx = ToolContext::new(dir.path());
+    let reg = ToolRegistry::with_builtin_tools();
+
+    // glob skips gitignored build/ directory
+    let gl = reg.execute("glob", &ctx, json!({"pattern": "**/*.rs"}));
+    assert!(!gl.is_error);
+    let gl_files: Vec<String> = gl.payload.to_model_value()["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(ToString::to_string))
+        .collect();
+    assert_eq!(gl_files.len(), 2, "expected 2 non-ignored .rs files, got {gl_files:?}");
+    assert!(!gl_files.iter().any(|f| f.contains("build")));
+
+    // grep respects .gitignore and supports include + context_lines
+    let gr = reg.execute(
+        "grep",
+        &ctx,
+        json!({"pattern": "old\\.local", "include": "*.rs", "context_lines": 1}),
+    );
+    assert!(!gr.is_error);
+    assert_eq!(gr.payload.to_model_value()["count"], 2);
+
+    // multi_edit_file atomically rejects partial failure (missing 2nd anchor) without modifying file
+    assert!(!reg.execute("read_file", &ctx, json!({"path": "src/net/client.rs"})).is_error);
+    let bad_multi = reg.execute(
+        "multi_edit_file",
+        &ctx,
+        json!({
+            "path": "src/net/client.rs",
+            "edits": [
+                {"old_text": "TIMEOUT: u64 = 10;", "new_text": "TIMEOUT: u64 = 30;"},
+                {"old_text": "DOES_NOT_EXIST", "new_text": "X"}
+            ]
+        }),
+    );
+    assert!(bad_multi.is_error);
+    assert!(std::fs::read_to_string(dir.path().join("src/net/client.rs"))
+        .unwrap()
+        .contains("TIMEOUT: u64 = 10;"));
+
+    // multi_edit_file applies all 4 non-overlapping edits cleanly in one shot
+    let ok_multi = reg.execute(
+        "multi_edit_file",
+        &ctx,
+        json!({
+            "path": "src/net/client.rs",
+            "edits": [
+                {"old_text": "TIMEOUT: u64 = 10;", "new_text": "TIMEOUT: u64 = 30;"},
+                {"old_text": "RETRIES: u32 = 2;", "new_text": "RETRIES: u32 = 5;"},
+                {"old_text": "\"old.local\"", "new_text": "\"prod.local\""},
+                {"old_text": "\"v1\"", "new_text": "\"v2\""}
+            ]
+        }),
+    );
+    assert!(!ok_multi.is_error, "multi_edit_file failed: {:?}", ok_multi.payload);
+    let updated = std::fs::read_to_string(dir.path().join("src/net/client.rs")).unwrap();
+    assert!(updated.contains("TIMEOUT: u64 = 30;"));
+    assert!(updated.contains("RETRIES: u32 = 5;"));
+    assert!(updated.contains("\"prod.local\""));
+    assert!(updated.contains("\"v2\""));
+}
+
+#[test]
+fn real_scenario_large_pdf_read_file_spills_and_recovers_via_session_scoped_tool_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let pages: Vec<Vec<String>> = (1..=15)
+        .map(|p| {
+            let mut lines = vec![format!("PDF_SPILL_PAGE_{p:02}_HEADER")];
+            for r in 1..=35 {
+                lines.push(format!(
+                    "Page {p:02} item {r:02}: Large structured document content to ensure default 10-page extraction exceeds 24 KiB spill threshold."
+                ));
+            }
+            lines
+        })
+        .collect();
+    let pdf_bytes = build_multipage_pdf(&pages);
+    std::fs::write(dir.path().join("large_paper.pdf"), &pdf_bytes).unwrap();
+
+    let store = std::sync::Arc::new(crate::OutputStore::new(dir.path().join("outputs")));
+    let mut ctx = ToolContext::new(dir.path()).with_session_id("uuid-pdf-sess-001");
+    ctx.output_store = std::sync::Arc::clone(&store);
+    let reg = ToolRegistry::with_builtin_tools();
+
+    let pdf_res = reg.execute("read_file", &ctx, json!({"path": "large_paper.pdf"}));
+    assert!(!pdf_res.is_error);
+    assert!(
+        pdf_res.payload.to_model_string().len() > crate::DEFAULT_SPILL_THRESHOLD_BYTES,
+        "expected default 10-page PDF payload to exceed 24 KiB"
+    );
+
+    let (compact, meta) = store
+        .maybe_spill_payload_scoped(
+            "uuid-pdf-sess-001",
+            "read_file",
+            &pdf_res.payload,
+            crate::DEFAULT_SPILL_THRESHOLD_BYTES,
+        )
+        .expect("large PDF read_file output must spill");
+    assert_eq!(compact.to_model_value()["spilled"], json!(true));
+
+    let found = reg.execute(
+        "tool_output",
+        &ctx,
+        json!({"action": "search", "output_id": meta.output_id, "pattern": "PDF_SPILL_PAGE_08_HEADER"}),
+    );
+    assert!(!found.is_error, "tool_output search failed: {:?}", found.payload);
+    assert_eq!(found.payload.to_model_value()["count"], 1);
+
+    let mut other_ctx = ToolContext::new(dir.path()).with_session_id("uuid-other-sess");
+    other_ctx.output_store = std::sync::Arc::clone(&store);
+    let denied = reg.execute(
+        "tool_output",
+        &other_ctx,
+        json!({"action": "search", "output_id": meta.output_id, "pattern": "PDF_SPILL_PAGE_08_HEADER"}),
+    );
+    assert!(denied.is_error);
+    assert!(denied.payload.to_model_string().contains("unknown output_id"));
+}

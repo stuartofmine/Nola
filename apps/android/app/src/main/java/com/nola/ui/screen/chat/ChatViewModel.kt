@@ -139,9 +139,8 @@ internal fun conversationPermissionMode(
 ): com.nola.core.AndroidAgentPermissionMode = when (stored) {
     null -> default
     "cautious" -> com.nola.core.AndroidAgentPermissionMode.Cautious
-    "accept_edits" -> com.nola.core.AndroidAgentPermissionMode.AcceptEdits
     "allow_all" -> com.nola.core.AndroidAgentPermissionMode.AllowAll
-    else -> throw IllegalArgumentException("Permission profile must be cautious, accept_edits, or allow_all")
+    else -> throw IllegalArgumentException("Permission profile must be cautious or allow_all")
 }
 
 private val CHAT_ATTACHMENT_BLOCK = Regex(
@@ -5013,7 +5012,6 @@ class ChatViewModel @Inject constructor(
         val selectedModelId = _uiState.value.currentModel?.id?.takeIf { it.isNotBlank() }
         val permissionProfile = when (_uiState.value.permissionMode) {
             com.nola.core.AndroidAgentPermissionMode.AllowAll -> "allow_all"
-            com.nola.core.AndroidAgentPermissionMode.AcceptEdits -> "accept_edits"
             com.nola.core.AndroidAgentPermissionMode.Cautious -> "cautious"
         }
         val hybridState = _uiState.value

@@ -676,43 +676,58 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
             .collect()
     };
 
-    let mcp_servers: Vec<Value> =
-        if let Some(arr) = saved.get("mcp_servers").and_then(|v| v.as_array()) {
-            arr.iter()
-                .cloned()
-                .map(|mut item| {
-                    if let Some(map) = item.as_object_mut() {
-                        let ep = map.get("endpoint").cloned();
-                        let u = map.get("url").cloned();
-                        if ep.is_some() && u.is_none() {
-                            map.insert("url".into(), ep.unwrap_or(Value::Null));
-                        } else if u.is_some() && ep.is_none() {
-                            map.insert("endpoint".into(), u.unwrap_or(Value::Null));
-                        }
-                    }
-                    item
-                })
-                .collect()
-        } else {
-            store
-                .list_mcp_servers()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|srv| {
-                    json!({
-                        "server_id": srv.id,
-                        "name": srv.name,
-                        "display_name": srv.name,
-                        "enabled": srv.enabled,
-                        "endpoint": srv.url,
-                        "url": srv.url,
-                        "command": srv.command,
-                        "args": srv.args,
-                        "revision": 1
-                    })
-                })
-                .collect()
-        };
+    let store_mcp_servers = store.list_mcp_servers().unwrap_or_default();
+    let mcp_servers: Vec<Value> = if let Some(arr) =
+        saved.get("mcp_servers").and_then(|v| v.as_array())
+    {
+        let mut merged: Vec<Value> = Vec::new();
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let saved_by_id: std::collections::BTreeMap<String, Value> = arr
+            .iter()
+            .filter_map(|item| {
+                let id = item
+                    .get("server_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(|v| v.as_str())?
+                    .to_string();
+                Some((id, item.clone()))
+            })
+            .collect();
+        for srv in &store_mcp_servers {
+            seen_ids.insert(srv.id.clone());
+            merged.push(project_store_mcp_server(srv, saved_by_id.get(&srv.id)));
+        }
+        for item in arr {
+            let id = item
+                .get("server_id")
+                .or_else(|| item.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !id.is_empty() && seen_ids.contains(id) {
+                continue;
+            }
+            let mut normalized = item.clone();
+            if let Some(map) = normalized.as_object_mut() {
+                let ep = map.get("endpoint").cloned();
+                let u = map.get("url").cloned();
+                if ep.is_some() && u.is_none() {
+                    map.insert("url".into(), ep.unwrap_or(Value::Null));
+                } else if u.is_some() && ep.is_none() {
+                    map.insert("endpoint".into(), u.unwrap_or(Value::Null));
+                }
+            }
+            if !id.is_empty() {
+                seen_ids.insert(id.to_string());
+            }
+            merged.push(normalized);
+        }
+        merged
+    } else {
+        store_mcp_servers
+            .iter()
+            .map(|srv| project_store_mcp_server(srv, None))
+            .collect()
+    };
 
     let uploaded_documents = saved
         .get("uploaded_documents")
@@ -860,6 +875,57 @@ pub fn build_agent_settings_snapshot(store: &Store, suite: &ModulesSuite) -> Val
     })
 }
 
+fn project_store_mcp_server(srv: &nola_types::McpServerConfig, existing: Option<&Value>) -> Value {
+    let mut obj = existing
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    let revision = obj.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+    obj.insert("id".into(), json!(srv.id));
+    obj.insert("server_id".into(), json!(srv.id));
+    obj.insert("name".into(), json!(srv.name));
+    obj.insert("display_name".into(), json!(srv.name));
+    obj.insert("enabled".into(), json!(srv.enabled));
+    obj.insert("endpoint".into(), json!(srv.url));
+    obj.insert("url".into(), json!(srv.url));
+    obj.insert("command".into(), json!(srv.command));
+    obj.insert("args".into(), json!(srv.args));
+    obj.insert("revision".into(), json!(revision));
+    Value::Object(obj)
+}
+
+/// Keep `agent_settings.mcp_servers` consistent with the authoritative `store.list_mcp_servers()`
+/// table after `/api/mcp` mutations so Capabilities immediately reflects additions, edits, and deletions.
+pub fn sync_agent_settings_mcp_servers(store: &Store) {
+    let Ok(Some(mut saved)) = store.get_kv("agent_settings") else {
+        return;
+    };
+    let Some(obj) = saved.as_object_mut() else {
+        return;
+    };
+    let prev_by_id: std::collections::BTreeMap<String, Value> = obj
+        .get("mcp_servers")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item
+                .get("server_id")
+                .or_else(|| item.get("id"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            Some((id, item.clone()))
+        })
+        .collect();
+    let updated: Vec<Value> = store
+        .list_mcp_servers()
+        .unwrap_or_default()
+        .iter()
+        .map(|srv| project_store_mcp_server(srv, prev_by_id.get(&srv.id)))
+        .collect();
+    obj.insert("mcp_servers".into(), Value::Array(updated));
+    let _ = store.set_kv("agent_settings", &saved);
+}
+
 fn scrub_secret_fields(val: &mut Value) {
     match val {
         Value::Object(map) => {
@@ -881,8 +947,201 @@ fn scrub_secret_fields(val: &mut Value) {
     }
 }
 
-pub fn build_model_profiles_response(store: &Store) -> Value {
-    let cfg: AppliedConfig = load_active_config(store);
+fn normalize_wire_protocol(raw: Option<&str>) -> &'static str {
+    match raw.unwrap_or("openai_chat") {
+        "anthropic" | "anthropic_messages" => "anthropic",
+        "responses" | "openai_responses" => "responses",
+        "siwc_responses" => "siwc_responses",
+        "gemini" | "google_gemini" => "gemini",
+        _ => "chat_completions",
+    }
+}
+
+fn load_enabled_selection_set(store: &Store, conn_id: &str) -> Option<std::collections::HashSet<String>> {
+    store
+        .get_kv(&format!("model_conn_selections:{conn_id}"))
+        .ok()
+        .flatten()
+        .and_then(|v| v.get("enabled").and_then(|a| a.as_array()).cloned())
+        .map(|arr| {
+            arr.into_iter()
+                .filter_map(|x| x.as_str().map(ToString::to_string))
+                .collect()
+        })
+}
+
+fn project_connection_model_profile(
+    conn: &crate::config::ConnectionConfig,
+    ep_idx: usize,
+    m: &crate::config::ModelEntry,
+    m_idx: usize,
+    default_sel: Option<&crate::config::DefaultModelSelection>,
+    conn_rec: Option<&Value>,
+    saved_enabled: Option<&std::collections::HashSet<String>>,
+) -> Value {
+    let wire_protocol = normalize_wire_protocol(conn.protocol.as_deref());
+    let catalog_key = format!("{wire_protocol}:{}", m.id);
+    let enabled = match saved_enabled {
+        Some(set) => set.contains(&catalog_key) || set.contains(&m.id),
+        None => conn_rec
+            .and_then(|r| r.get("enabled").and_then(|v| v.as_bool()))
+            .unwrap_or(true),
+    };
+    let selected = default_sel
+        .map(|d| d.connection == conn.id && d.model == m.id)
+        .unwrap_or(false);
+    let caps = infer_model_capabilities(&m.id, m.capabilities.as_ref());
+    let capabilities = vec!["chat".to_string()];
+    let exec_caps = json!({
+        "toolCalls": caps.tool_calls,
+        "imageInput": caps.image_input,
+        "reasoning": caps.reasoning,
+        "samplingParameters": caps.sampling_parameters,
+        "samplingRequiresNoReasoning": false,
+        "chatOutputTokenField": "auto"
+    });
+    let mut params = serde_json::Map::new();
+    if let Some(t) = m.temperature {
+        params.insert("temperature".into(), json!(t));
+    }
+    if let Some(p) = m.top_p {
+        params.insert("topP".into(), json!(p));
+    }
+    if let Some(max_out) = m.max_output_tokens {
+        params.insert("maxOutputTokens".into(), json!(max_out));
+    }
+    if let Some(ctx) = m.context_window {
+        params.insert("maxContextLength".into(), json!(ctx));
+    }
+    let reasoning_obj = if caps.reasoning {
+        json!({
+            "control": "automatic",
+            "supportedLevels": caps.supported_reasoning_levels,
+            "efforts": caps.supported_reasoning_levels,
+            "supportsSummary": caps.supports_reasoning_summary
+        })
+    } else {
+        json!({ "control": "unsupported" })
+    };
+    let ep_name = conn_rec
+        .and_then(|r| {
+            r.get("display_name")
+                .or_else(|| r.pointer("/connection/display_name"))
+                .and_then(|v| v.as_str())
+        })
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&conn.id);
+    let ep_enabled = conn_rec
+        .and_then(|r| {
+            r.get("enabled")
+                .or_else(|| r.pointer("/connection/enabled"))
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(true);
+    let is_managed = conn.id.starts_with("local:")
+        || conn
+            .provider
+            .as_deref()
+            .is_some_and(|p| !p.is_empty() && p != "manual_legacy" && p != "openai-compatible")
+        || conn_rec.is_some_and(|r| {
+            r.get("source")
+                .or_else(|| r.pointer("/connection/source"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom")
+                != "manual_legacy"
+        });
+    let connection_id_val = if is_managed {
+        json!(conn.id)
+    } else {
+        Value::Null
+    };
+    let provider_label = if conn.id.starts_with("local:") {
+        "local"
+    } else {
+        "openai-compatible"
+    };
+    let prof_id = format!("{}:{}", conn.id, m.id);
+    json!({
+        "id": prof_id,
+        "profile_id": prof_id,
+        "provider": provider_label,
+        "connectionId": connection_id_val,
+        "modelId": m.id,
+        "modelName": m.id,
+        "model_name": m.id,
+        "displayName": m.id,
+        "display_name": m.id,
+        "revision": conn_rec.and_then(|r| r.get("revision").and_then(|v| v.as_i64())).unwrap_or(1),
+        "enabled": enabled,
+        "selected": selected,
+        "priority": if selected { 100 } else { 50 },
+        "order": m_idx,
+        "capabilities": capabilities,
+        "executionCapabilities": exec_caps,
+        "executionCapabilityStatus": if caps.tool_calls { "tools_enabled" } else { "text_only" },
+        "reasoning": reasoning_obj,
+        "parameters": Value::Object(params),
+        "protocol": wire_protocol,
+        "endpoint": {
+            "id": conn.id,
+            "name": ep_name,
+            "url": conn.endpoint,
+            "baseURL": conn.endpoint,
+            "protocol": wire_protocol,
+            "wireProtocol": wire_protocol,
+            "enabled": ep_enabled,
+            "order": ep_idx
+        }
+    })
+}
+
+fn build_merged_model_profiles(store: &Store, cfg: &AppliedConfig, prune_removed: bool) -> Vec<Value> {
+    let default_sel = cfg.llm.default_model.as_ref();
+    let conn_records: std::collections::BTreeMap<String, Value> = store
+        .list_module_records::<Value>("model_connection")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|rec| {
+            let id = rec
+                .get("id")
+                .or_else(|| rec.pointer("/connection/id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            Some((id, rec))
+        })
+        .collect();
+
+    let live_pairs: std::collections::HashSet<(String, String)> = {
+        let mut set = std::collections::HashSet::new();
+        for conn in &cfg.llm.connections {
+            for m in &conn.models {
+                set.insert((conn.id.clone(), m.id.clone()));
+            }
+        }
+        for (cid, rec) in &conn_records {
+            if let Some(models) = rec
+                .pointer("/catalog/models")
+                .or_else(|| rec.get("models"))
+                .and_then(|v| v.as_array())
+            {
+                for m in models {
+                    if let Some(mid) = m
+                        .get("model_id")
+                        .or_else(|| m.get("id"))
+                        .or_else(|| m.get("modelId"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        set.insert((cid.clone(), mid.to_string()));
+                    }
+                }
+            }
+        }
+        set
+    };
+
     let mut stored_profiles: Vec<Value> = store
         .get_kv("web_model_profiles")
         .ok()
@@ -894,93 +1153,175 @@ pub fn build_model_profiles_response(store: &Store) -> Value {
         ensure_profile_snake_case_aliases(p);
     }
 
-    let profiles: Vec<Value> = if !stored_profiles.is_empty() {
-        stored_profiles
-    } else {
-        let default_sel = cfg.llm.default_model.as_ref();
-        let mut out = Vec::new();
-        for (ep_idx, conn) in cfg.llm.connections.iter().enumerate() {
-            let wire_protocol = match conn.protocol.as_deref().unwrap_or("openai_chat") {
-                "anthropic" | "anthropic_messages" => "anthropic",
-                "responses" | "openai_responses" => "responses",
-                "siwc_responses" => "siwc_responses",
-                "gemini" | "google_gemini" => "gemini",
-                _ => "chat_completions",
-            };
-            for (m_idx, m) in conn.models.iter().enumerate() {
-                let selected = default_sel
-                    .map(|d| d.connection == conn.id && d.model == m.id)
-                    .unwrap_or(false);
-                let caps = infer_model_capabilities(&m.id, m.capabilities.as_ref());
-                let capabilities = vec!["chat".to_string()];
-                let exec_caps = json!({
-                    "toolCalls": caps.tool_calls,
-                    "imageInput": caps.image_input,
-                    "reasoning": caps.reasoning,
-                    "samplingParameters": caps.sampling_parameters,
-                    "samplingRequiresNoReasoning": false,
-                    "chatOutputTokenField": "auto"
-                });
-                let mut params = serde_json::Map::new();
-                if let Some(t) = m.temperature {
-                    params.insert("temperature".into(), json!(t));
-                }
-                if let Some(p) = m.top_p {
-                    params.insert("topP".into(), json!(p));
-                }
-                if let Some(max_out) = m.max_output_tokens {
-                    params.insert("maxOutputTokens".into(), json!(max_out));
-                }
-                if let Some(ctx) = m.context_window {
-                    params.insert("maxContextLength".into(), json!(ctx));
-                }
-                let reasoning_obj = if caps.reasoning {
-                    json!({
-                        "control": "automatic",
-                        "supportedLevels": caps.supported_reasoning_levels,
-                        "efforts": caps.supported_reasoning_levels,
-                        "supportsSummary": caps.supports_reasoning_summary
-                    })
-                } else {
-                    json!({ "control": "unsupported" })
-                };
-                let prof_id = format!("{}:{}", conn.id, m.id);
-                out.push(json!({
-                    "id": prof_id,
-                    "profile_id": prof_id,
-                    "provider": "openai-compatible",
-                    "connectionId": Value::Null,
-                    "modelId": m.id,
-                    "modelName": m.id,
-                    "model_name": m.id,
-                    "displayName": m.id,
-                    "display_name": m.id,
-                    "revision": 1,
-                    "enabled": true,
-                    "selected": selected,
-                    "priority": if selected { 100 } else { 50 },
-                    "order": m_idx,
-                    "capabilities": capabilities,
-                    "executionCapabilities": exec_caps,
-                    "executionCapabilityStatus": if caps.tool_calls { "tools_enabled" } else { "text_only" },
-                    "reasoning": reasoning_obj,
-                    "parameters": Value::Object(params),
-                    "protocol": wire_protocol,
-                    "endpoint": {
-                        "id": conn.id,
-                        "name": conn.id,
-                        "url": conn.endpoint,
-                        "baseURL": conn.endpoint,
-                        "protocol": wire_protocol,
-                        "wireProtocol": wire_protocol,
-                        "enabled": true,
-                        "order": ep_idx
-                    }
-                }));
+    let mut out: Vec<Value> = Vec::new();
+    let mut seen_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+    for mut p in stored_profiles {
+        let ep_id = p
+            .pointer("/endpoint/id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let model_name = p
+            .get("modelName")
+            .or_else(|| p.get("model_name"))
+            .or_else(|| p.get("modelId"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if prune_removed
+            && !live_pairs.is_empty()
+            && !ep_id.is_empty()
+            && !model_name.is_empty()
+            && !live_pairs.contains(&(ep_id.clone(), model_name.clone()))
+        {
+            continue;
+        }
+        if let Some(def) = default_sel {
+            if let Some(obj) = p.as_object_mut() {
+                obj.insert(
+                    "selected".into(),
+                    json!(ep_id == def.connection && model_name == def.model),
+                );
             }
         }
-        out
-    };
+        if let Some(sel_set) = load_enabled_selection_set(store, &ep_id) {
+            let wire_proto = p
+                .get("protocol")
+                .or_else(|| p.pointer("/endpoint/wireProtocol"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("chat_completions");
+            let ckey = format!("{wire_proto}:{model_name}");
+            let is_en = sel_set.contains(&ckey) || sel_set.contains(&model_name);
+            if let Some(obj) = p.as_object_mut() {
+                obj.insert("enabled".into(), json!(is_en));
+            }
+        }
+        if !ep_id.is_empty() && !model_name.is_empty() {
+            seen_pairs.insert((ep_id, model_name));
+        }
+        out.push(p);
+    }
+
+    for (ep_idx, conn) in cfg.llm.connections.iter().enumerate() {
+        let conn_rec = conn_records.get(&conn.id);
+        let saved_enabled = load_enabled_selection_set(store, &conn.id);
+        for (m_idx, m) in conn.models.iter().enumerate() {
+            let pair = (conn.id.clone(), m.id.clone());
+            if seen_pairs.contains(&pair) {
+                continue;
+            }
+            seen_pairs.insert(pair);
+            out.push(project_connection_model_profile(
+                conn,
+                ep_idx,
+                m,
+                m_idx,
+                default_sel,
+                conn_rec,
+                saved_enabled.as_ref(),
+            ));
+        }
+    }
+
+    let base_ep_idx = cfg.llm.connections.len();
+    for (rec_idx, (cid, rec)) in conn_records.iter().enumerate() {
+        let base_url = rec
+            .get("base_url")
+            .or_else(|| rec.get("endpoint"))
+            .or_else(|| rec.pointer("/connection/base_url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let proto = rec
+            .get("protocol")
+            .or_else(|| rec.pointer("/connection/protocols/0"))
+            .or_else(|| rec.pointer("/protocols/0"))
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        let source = rec
+            .get("source")
+            .or_else(|| rec.pointer("/connection/source"))
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+        let Some(models_arr) = rec
+            .pointer("/catalog/models")
+            .or_else(|| rec.get("models"))
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+        let saved_enabled = load_enabled_selection_set(store, cid);
+        let synth_conn = crate::config::ConnectionConfig {
+            id: cid.clone(),
+            endpoint: base_url,
+            protocol: proto,
+            provider: source,
+            api_key: None,
+            api_key_env: None,
+            models: Vec::new(),
+        };
+        for (m_idx, m_val) in models_arr.iter().enumerate() {
+            let Some(mid) = m_val
+                .get("model_id")
+                .or_else(|| m_val.get("id"))
+                .or_else(|| m_val.get("modelId"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let pair = (cid.clone(), mid.to_string());
+            if seen_pairs.contains(&pair) {
+                continue;
+            }
+            seen_pairs.insert(pair);
+            let entry = crate::config::ModelEntry {
+                id: mid.to_string(),
+                context_window: m_val
+                    .get("context_window")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize),
+                max_output_tokens: None,
+                temperature: None,
+                top_p: None,
+                reasoning_effort: None,
+                capabilities: None,
+            };
+            out.push(project_connection_model_profile(
+                &synth_conn,
+                base_ep_idx + rec_idx,
+                &entry,
+                m_idx,
+                default_sel,
+                Some(rec),
+                saved_enabled.as_ref(),
+            ));
+        }
+    }
+
+    out
+}
+
+/// Synchronize the `web_model_profiles` KV cache after any config/connection/import/discovery/local
+/// mutation so stale cached profiles never hide newly added or modified connections.
+pub fn sync_web_model_profiles_cache(store: &Store) {
+    let has_cached = store
+        .get_kv("web_model_profiles")
+        .ok()
+        .flatten()
+        .is_some_and(|v| v.is_array());
+    if !has_cached {
+        return;
+    }
+    let cfg = load_active_config(store);
+    let synced = build_merged_model_profiles(store, &cfg, true);
+    let _ = store.set_kv("web_model_profiles", &Value::Array(synced));
+}
+
+pub fn build_model_profiles_response(store: &Store) -> Value {
+    let cfg: AppliedConfig = load_active_config(store);
+    let profiles = build_merged_model_profiles(store, &cfg, false);
 
     json!({
         "profiles": profiles,
@@ -1662,18 +2003,20 @@ mod tests {
         assert_eq!(proj["knowledge"]["wikiMarkdown"], "");
         assert!(proj["knowledge"]["entries"].is_array());
 
-        // Known profile (`accept_edits`) is preserved; unknown/legacy profile normalizes to cautious
+        // Known profile (`allow_all`) is preserved; removed/unknown profile normalizes to cautious
         store
-            .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": "accept_edits"}))
+            .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": "allow_all"}))
             .unwrap();
         let proj2 = conversation_configuration_json(&store, &sess);
-        assert_eq!(proj2["permissionProfile"], "accept_edits");
+        assert_eq!(proj2["permissionProfile"], "allow_all");
 
-        store
-            .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": "unknown_legacy_mode"}))
-            .unwrap();
-        let proj3 = conversation_configuration_json(&store, &sess);
-        assert_eq!(proj3["permissionProfile"], "cautious");
+        for rejected in ["accept_edits", "unknown_legacy_mode"] {
+            store
+                .set_kv(&session_meta_key("conv-1"), &json!({"permissionProfile": rejected}))
+                .unwrap();
+            let proj3 = conversation_configuration_json(&store, &sess);
+            assert_eq!(proj3["permissionProfile"], "cautious");
+        }
     }
 
     #[test]
@@ -2075,5 +2418,153 @@ mod tests {
         assert_eq!(msgs[1]["toolCalls"][0]["name"], "render_ui_surface");
         assert_eq!(msgs[1]["roomId"], "room-1");
         assert_eq!(msgs[1]["expertReplies"][0]["expert_name"], "Architect");
+    }
+
+    #[test]
+    fn model_profiles_merges_config_and_module_records_when_kv_nonempty_and_syncs_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+
+        // Populate legacy cached `web_model_profiles` with one profile
+        store
+            .set_kv(
+                "web_model_profiles",
+                &json!([{
+                    "id": "legacy:gpt-4o",
+                    "modelName": "gpt-4o",
+                    "displayName": "Legacy GPT-4o",
+                    "enabled": true,
+                    "selected": true,
+                    "endpoint": { "id": "legacy", "name": "Legacy", "baseURL": "https://legacy.invalid/v1", "wireProtocol": "chat_completions", "enabled": true, "order": 0 }
+                }]),
+            )
+            .unwrap();
+
+        // Also save a config connection + a managed module record
+        let cfg = AppliedConfig {
+            llm: crate::config::LlmSection {
+                default_model: Some(crate::config::DefaultModelSelection {
+                    connection: "imported-conn".into(),
+                    model: "claude-sonnet-4".into(),
+                }),
+                connections: vec![
+                    crate::config::ConnectionConfig {
+                        id: "legacy".into(),
+                        endpoint: "https://legacy.invalid/v1".into(),
+                        protocol: Some("openai_chat".into()),
+                        provider: None,
+                        api_key: None,
+                        api_key_env: None,
+                        models: vec![crate::config::ModelEntry {
+                            id: "gpt-4o".into(),
+                            context_window: None,
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        }],
+                    },
+                    crate::config::ConnectionConfig {
+                        id: "imported-conn".into(),
+                        endpoint: "https://api.anthropic.com".into(),
+                        protocol: Some("anthropic".into()),
+                        provider: Some("open_code".into()),
+                        api_key: None,
+                        api_key_env: None,
+                        models: vec![crate::config::ModelEntry {
+                            id: "claude-sonnet-4".into(),
+                            context_window: Some(200_000),
+                            max_output_tokens: None,
+                            temperature: None,
+                            top_p: None,
+                            reasoning_effort: None,
+                            capabilities: None,
+                        }],
+                    },
+                ],
+            },
+            ..Default::default()
+        };
+        save_applied_config(&store, &cfg).unwrap();
+        store
+            .put_module_record(
+                "model_connection",
+                "record-only",
+                &json!({
+                    "id": "record-only",
+                    "display_name": "Record Only",
+                    "base_url": "https://rec.invalid/v1",
+                    "protocol": "gemini",
+                    "source": "import",
+                    "catalog": {
+                        "models": [{"model_id": "gemini-2.5-pro", "protocol": "gemini"}]
+                    }
+                }),
+            )
+            .unwrap();
+
+        let resp = build_model_profiles_response(&store);
+        let profiles = resp["profiles"].as_array().unwrap();
+        assert_eq!(profiles.len(), 3);
+        let legacy = profiles.iter().find(|p| p["modelName"] == "gpt-4o").unwrap();
+        assert_eq!(legacy["displayName"], "Legacy GPT-4o");
+        assert_eq!(legacy["selected"], false);
+        let imported = profiles
+            .iter()
+            .find(|p| p["modelName"] == "claude-sonnet-4")
+            .unwrap();
+        assert_eq!(imported["selected"], true);
+        assert_eq!(imported["connectionId"], "imported-conn");
+        assert!(profiles.iter().any(|p| p["modelName"] == "gemini-2.5-pro"));
+
+        // sync_web_model_profiles_cache persists the merged set into KV
+        sync_web_model_profiles_cache(&store);
+        let cached = store.get_kv("web_model_profiles").unwrap().unwrap();
+        assert_eq!(cached.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn mcp_servers_sync_keeps_agent_settings_and_store_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+        save_applied_config(&store, &AppliedConfig::default()).unwrap();
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+        // Pre-seed stale empty mcp_servers in agent_settings KV
+        store
+            .set_kv("agent_settings", &json!({ "mcp_servers": [] }))
+            .unwrap();
+
+        // Add MCP server to store -> immediately visible in build_agent_settings_snapshot
+        store
+            .upsert_mcp_server(&nola_types::McpServerConfig {
+                id: "mcp-1".into(),
+                name: "Docs MCP".into(),
+                transport: nola_types::McpTransport::StreamableHttp,
+                command: None,
+                args: vec![],
+                env: Default::default(),
+                url: Some("https://docs.example.com/mcp".into()),
+                headers: Default::default(),
+                enabled: true,
+                oauth_client_id: None,
+                oauth_scopes: vec![],
+            })
+            .unwrap();
+        sync_agent_settings_mcp_servers(&store);
+        let snap = build_agent_settings_snapshot(&store, &suite);
+        let srvs = snap["mcp_servers"].as_array().unwrap();
+        assert_eq!(srvs.len(), 1);
+        assert_eq!(srvs[0]["server_id"], "mcp-1");
+        assert_eq!(srvs[0]["endpoint"], "https://docs.example.com/mcp");
+
+        // Delete MCP server + sync -> immediately removed from agent_settings snapshot
+        store.delete_mcp_server("mcp-1").unwrap();
+        sync_agent_settings_mcp_servers(&store);
+        let snap2 = build_agent_settings_snapshot(&store, &suite);
+        assert!(snap2["mcp_servers"].as_array().unwrap().is_empty());
     }
 }

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+// File Overview:
+// - Purpose: Native macOS Master-Detail workspace for managing remote API model connections, catalogs, credentials, and imports.
+
 import SwiftUI
 import AppKit
 
@@ -44,12 +47,45 @@ struct MacModelConnectionsView: View {
         }
     }
 
+    private enum ModelFilter: String, CaseIterable, Identifiable {
+        case all
+        case enabled
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: String(localized: "All", table: "ModelCenter")
+            case .enabled: String(localized: "Enabled", table: "ModelCenter")
+            }
+        }
+    }
+
+    private enum SheetTarget: Hashable, Identifiable {
+        case api
+        case edit(String)
+        case imports
+        case accounts
+        case host
+
+        var id: String {
+            switch self {
+            case .api: "api"
+            case .edit(let connectionID): "edit:\(connectionID)"
+            case .imports: "imports"
+            case .accounts: "accounts"
+            case .host: "host"
+            }
+        }
+    }
+
     let service: MacModelConnectionService
     let focusedRemoteProfileID: String?
     let focusRevision: Int
     let pendingAction: MacModelCenterNavigationState.RemoteAction?
     let pendingActionRevision: Int
     private var refreshOnAppear = true
+
     init(
         service: MacModelConnectionService,
         focusedRemoteProfileID: String? = nil,
@@ -63,23 +99,51 @@ struct MacModelConnectionsView: View {
         self.pendingAction = pendingAction
         self.pendingActionRevision = pendingActionRevision
     }
+
     @State private var connections: [MacModelConnectionSnapshot] = []
     @State private var accounts: [MacModelAccountSnapshot] = []
     @State private var enabled: [String: Set<String>] = [:]
     @State private var savedEnabled: [String: Set<String>] = [:]
-    @State private var confirmsDiscard = false
+    @State private var selectedConnectionID: String?
+    @State private var showsCompactDetail = false
+    @State private var hoveredConnectionID: String?
+    @State private var search = ""
+    @State private var modelSearch = ""
+    @State private var modelFilter: ModelFilter = .all
+    @State private var expandedModelID: String?
+    @State private var copiedEndpointID: String?
+
+    // Add API sheet form state
     @State private var selectedPreset: ProviderPreset = .openai
     @State private var showsAdvancedProtocol = false
     @State private var name = "OpenAI"
     @State private var endpoint = "https://api.openai.com/v1"
     @State private var secret = ""
     @State private var wire = "responses"
+
+    // Edit API sheet form state
+    @State private var editName = ""
+    @State private var editEndpoint = ""
+    @State private var editWire = "chat_completions"
+    @State private var editSecret = ""
+    @State private var editClearSecret = false
+
+    // Delete & Discard confirmation state
+    @State private var deletionTarget: MacModelConnectionSnapshot?
+    @State private var confirmsDiscard = false
+    @State private var pendingSelectionID: String?
+
+    // Async execution state
     @State private var busy = false
     @State private var busyAccountIDs: Set<String> = []
     @State private var discovering = false
     @State private var operationTask: Task<Void, Never>?
+    @State private var reloadTask: Task<Void, Never>?
+    @State private var reloadGeneration = 0
     @State private var error: String?
     @State private var status: String?
+
+    // Import & Probe & ChatGPT state
     @State private var importSource = "open_code"
     @State private var sourceURL: URL?
     @State private var credentialURL: URL?
@@ -97,90 +161,72 @@ struct MacModelConnectionsView: View {
     @State private var managementHost: MacRemoteHostConfiguration?
     @State private var showingSiwc = false
     @State private var siwcAccount: MacModelAccountSnapshot?
-    @State private var hoveredConnectionID: String?
-    @State private var search = ""
-    @State private var modelSearch = ""
-    @State private var expandedModelID: String?
-    @State private var selectedConnectionID: String?
-    @State private var workspace: Workspace?
+    @State private var activeSheet: SheetTarget?
     @State private var handledFocusRevision: Int?
     @State private var handledPendingActionRevision: Int?
-    private enum Workspace: Hashable, Identifiable {
-        case connections, api, imports, accounts, host
-        var id: Self { self }
-    }
-    @Environment(\.openURL) private var openURL
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    Image("nola-search").renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 16, height: 16).foregroundStyle(.secondary)
-                    TextField(String(localized: "Search connections", table: "ModelCenter"), text: $search)
-                        .textFieldStyle(.plain)
-                }
-                .padding(9)
-                .background(
-                    MacDesignColor.chrome.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.field, style: .continuous)
-                )
-                .frame(maxWidth: 320)
-                Spacer(minLength: 0)
-                if busy { ProgressView().controlSize(.small) }
-                Button { reload() } label: {
-                    Label(String(localized: "Refresh connections", table: "ModelCenter"), systemImage: "arrow.clockwise")
-                }
-                .labelStyle(.iconOnly)
-                .help(String(localized: "Refresh connections", table: "ModelCenter"))
-            }
-            .padding(.horizontal, MacDesignTokens.Layout.pageGutter).padding(.vertical, MacDesignTokens.Spacing.md)
-            .background(MacDesignColor.chrome.opacity(0.72))
-            if !connections.isEmpty {
-                connectionActionRow
-                    .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
-                    .padding(.bottom, MacDesignTokens.Spacing.md)
-            }
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal, 24) }
-            if let status { Text(status).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 24) }
-            if connections.isEmpty {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(String(localized: "Connections and accounts", table: "ModelCenter"))
-                        .font(.title2.weight(.semibold))
-                    connectionActionRow
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
 
-            } else {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(filteredConnections) { connection in
+    @Environment(\.openURL) private var openURL
+
+    private var selectedConnection: MacModelConnectionSnapshot? {
+        if let selectedConnectionID,
+           let match = connections.first(where: { $0.id == selectedConnectionID }) {
+            return match
+        }
+        return connections.first
+    }
+
+    private var filteredConnections: [MacModelConnectionSnapshot] {
+        connections.filter {
+            search.isEmpty
+                || $0.document.connection.display_name.localizedCaseInsensitiveContains(search)
+                || $0.document.connection.base_url.localizedCaseInsensitiveContains(search)
+        }
+    }
+
+    private var hasModelChanges: Bool {
+        guard let id = selectedConnection?.id else { return false }
+        return enabled[id, default: []] != savedEnabled[id, default: []]
+    }
+
+    private var isEditorBusy: Bool { busy || probeRunning || !busyAccountIDs.isEmpty }
+
+    var body: some View {
+        GeometryReader { geometry in
+            if connections.isEmpty && !busy {
+                emptyWorkspace
+            } else if geometry.size.width >= 760 {
+                HStack(spacing: 0) {
+                    connectionSidebar
+                        .frame(width: min(320, max(268, geometry.size.width * 0.34)))
+                    Divider()
+                    connectionDetailPane
+                }
+            } else if showsCompactDetail, selectedConnection != nil {
+                VStack(spacing: 0) {
+                    HStack {
                         Button {
-                            openEditor(.connections)
-                            selectedConnectionID = connection.id
+                            showsCompactDetail = false
                         } label: {
-                            connectionRow(connection)
+                            Label(String(localized: "API Models", table: "ModelCenter"), systemImage: "chevron.left")
                         }
                         .buttonStyle(.plain)
-                        .background(hoveredConnectionID == connection.id ? MacDesignColor.hover : Color.clear, in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.panel, style: .continuous))
-                        .onHover { hoveredConnectionID = $0 ? connection.id : nil }
-                        .accessibilityIdentifier("model-connection-" + connection.id)
-                        Divider().padding(.leading, 44)
+                        .accessibilityIdentifier("api-model-back")
+                        Spacer()
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    Divider()
+                    connectionDetailPane
                 }
-                .padding(.horizontal, MacDesignTokens.Layout.pageGutter)
-                if filteredConnections.isEmpty {
-                    ContentUnavailableView.search(text: search)
-                }
-            }
+            } else {
+                connectionSidebar
             }
         }
         .background(MacDesignColor.canvas)
         .tint(MacDesignColor.brand)
         .task {
             if refreshOnAppear {
-                reload()
+                await reloadAsync()
                 managementHost = MacRemoteHostConfigurationStore.shared.load()
             }
             focusRemoteProfileIfNeeded()
@@ -193,53 +239,923 @@ struct MacModelConnectionsView: View {
         .onChange(of: pendingActionRevision) { _, _ in
             applyPendingActionIfNeeded()
         }
-        .sheet(item: $workspace) { target in
-            VStack(spacing: 0) {
-                HStack {
-                    Text(editorTitle(target)).font(.headline)
-                    Spacer()
-                    Button(String(localized: "Close", table: "ModelCenter")) {
-                        requestEditorClose()
-                    }
-                        .keyboardShortcut(.cancelAction)
-                        .disabled(isEditorBusy)
-                        .accessibilityIdentifier("model-editor-close")
-                }.padding(20)
-                Divider()
-                editorContent(target)
-                editorFooter
+        .onDisappear {
+            operationTask?.cancel()
+            reloadTask?.cancel()
+            cancelImport()
+            cancelProbe()
+        }
+        .confirmationDialog(
+            String(localized: "Delete this API connection?", table: "ModelCenter"),
+            isPresented: Binding(
+                get: { deletionTarget != nil },
+                set: { if !$0 { deletionTarget = nil } }
+            ),
+            presenting: deletionTarget
+        ) { target in
+            Button(String(localized: "Delete Connection", table: "ModelCenter"), role: .destructive) {
+                deleteConnection(target)
             }
-            .frame(minWidth: 460, idealWidth: 580, minHeight: 480, idealHeight: 640)
-            .interactiveDismissDisabled(hasModelChanges || isEditorBusy)
-            .background(MacEditorWindowCloseGuard(
-                shouldPreventClose: { hasModelChanges || isEditorBusy },
-                onCloseAttempt: requestEditorClose
+            .accessibilityIdentifier("model-connection-confirm-delete")
+            Button(String(localized: "Cancel", table: "ModelCenter"), role: .cancel) {
+                deletionTarget = nil
+            }
+        } message: { target in
+            Text(String(
+                format: String(localized: "“%@” and its saved API key will be removed from this Mac, and its enabled models will be removed from the chat picker.", table: "ModelCenter"),
+                target.document.connection.display_name
             ))
-            .confirmationDialog(String(localized: "Discard model selection changes?", table: "ModelCenter"), isPresented: $confirmsDiscard) {
-                Button(String(localized: "Discard changes", table: "ModelCenter"), role: .destructive) {
-                    if let id = selectedConnectionID { enabled[id] = savedEnabled[id, default: []] }
-                    workspace = nil
+        }
+        .confirmationDialog(
+            String(localized: "Discard model selection changes?", table: "ModelCenter"),
+            isPresented: $confirmsDiscard
+        ) {
+            Button(String(localized: "Discard changes", table: "ModelCenter"), role: .destructive) {
+                if let id = selectedConnection?.id {
+                    enabled[id] = savedEnabled[id, default: []]
                 }
-                Button(String(localized: "Continue editing", table: "ModelCenter"), role: .cancel) {}
+                if let next = pendingSelectionID {
+                    selectConnectionImmediately(next)
+                    pendingSelectionID = nil
+                }
+            }
+            Button(String(localized: "Continue editing", table: "ModelCenter"), role: .cancel) {
+                pendingSelectionID = nil
+            }
+        }
+        .sheet(item: $activeSheet) { target in
+            sheetContainer(target)
+        }
+        .sheet(item: $probeConfirmation, onDismiss: { if !probeRunning { cancelProbe() } }) { confirmation in
+            probeSheet(confirmation)
+        }
+        .sheet(isPresented: $showingSiwc, onDismiss: reload) {
+            MacSiwcSignInView(
+                application: service.application,
+                account: siwcAccount,
+                showAccounts: {
+                    showingSiwc = false
+                    activeSheet = .accounts
+                    reload()
+                },
+                saved: { connectionID in
+                    showingSiwc = false
+                    activeSheet = nil
+                    reload()
+                    selectedConnectionID = connectionID
+                    showsCompactDetail = true
+                }
+            )
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyWorkspace: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                bannerStack
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "network")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(MacDesignColor.brand)
+                            .frame(width: 44, height: 44)
+                            .background(MacDesignColor.brand.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(String(localized: "Connect Remote API Models", table: "ModelCenter"))
+                                .font(.title3.weight(.semibold))
+                            Text(String(localized: "Add OpenAI, Anthropic, DeepSeek, OpenRouter, Ollama, or any OpenAI-compatible LAN server.", table: "ModelCenter"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            openSheet(.api)
+                        } label: {
+                            Label(String(localized: "Connect an API account", table: "ModelCenter"), systemImage: "plus")
+                        }
+                        .buttonStyle(.nolaProminent)
+                        .accessibilityIdentifier("model.add.api")
+
+                        Button {
+                            openSheet(.imports)
+                        } label: {
+                            Label(String(localized: "Import from this Mac", table: "ModelCenter"), systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("model.add.import")
+
+                        Button {
+                            openSheet(.accounts)
+                        } label: {
+                            Label(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter"), systemImage: "person.crop.circle")
+                        }
+                        .accessibilityIdentifier("model.add.chatgpt")
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: 720, alignment: .leading)
+                .macPanel()
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Left Sidebar
+
+    private var connectionSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                    TextField(String(localized: "Search connections", table: "ModelCenter"), text: $search)
+                        .textFieldStyle(.plain)
+                    if !search.isEmpty {
+                        Button { search = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(
+                    MacDesignColor.subtleFill,
+                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                )
+
+                Button { reload() } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .disabled(busy)
+                .help(String(localized: "Refresh connections", table: "ModelCenter"))
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            VStack(spacing: 6) {
+                Button {
+                    openSheet(.api)
+                } label: {
+                    Label(String(localized: "Connect an API account", table: "ModelCenter"), systemImage: "plus.circle.fill")
+                        .font(.callout.weight(.medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            MacDesignColor.brand.opacity(0.11),
+                            in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                        )
+                        .foregroundStyle(MacDesignColor.brand)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("model.add.api")
+
+                HStack(spacing: 6) {
+                    Button {
+                        openSheet(.imports)
+                    } label: {
+                        Label(String(localized: "Import", table: "ModelCenter"), systemImage: "square.and.arrow.down")
+                            .font(.caption.weight(.medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(
+                                MacDesignColor.subtleFill,
+                                in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "Import from this Mac", table: "ModelCenter"))
+                    .accessibilityIdentifier("model.add.import")
+
+                    Button {
+                        openSheet(.accounts)
+                    } label: {
+                        Label(String(localized: "ChatGPT", table: "ModelCenter"), systemImage: "person.crop.circle")
+                            .font(.caption.weight(.medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(
+                                MacDesignColor.subtleFill,
+                                in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter"))
+                    .accessibilityIdentifier("model.add.chatgpt")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if filteredConnections.isEmpty {
+                        Text(String(localized: "No matching connections", table: "ModelCenter"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 28)
+                    } else {
+                        ForEach(filteredConnections) { connection in
+                            sidebarConnectionRow(connection)
+                        }
+                    }
+                }
+                .padding(10)
+            }
+        }
+        .background(MacDesignColor.sidebar.opacity(0.45))
+    }
+
+    private func sidebarConnectionRow(_ snapshot: MacModelConnectionSnapshot) -> some View {
+        let connection = snapshot.document.connection
+        let isSelected = selectedConnection?.id == snapshot.id
+        let isHovered = hoveredConnectionID == snapshot.id
+        let totalModels = snapshot.document.catalog?.models.count ?? 0
+        let enabledCount = savedEnabled[snapshot.id]?.count ?? 0
+
+        return Button {
+            requestSelectConnection(snapshot.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: connection.source == "nola_chatgpt" ? "person.crop.circle.fill" : "network")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(connection.enabled ? MacDesignColor.brand : .secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            (connection.enabled ? MacDesignColor.brand : Color.secondary).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
+                    Text(connection.display_name)
+                        .font(.body.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Circle()
+                        .fill(connection.enabled ? MacDesignColor.success : Color.secondary.opacity(0.45))
+                        .frame(width: 7, height: 7)
+                        .help(connection.enabled ? String(localized: "Enabled") : String(localized: "Disabled"))
+                }
+
+                Text(Self.displayHost(connection.base_url))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                HStack(spacing: 6) {
+                    if let proto = connection.protocols.first {
+                        Text(Self.shortProtocolTitle(proto))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(MacDesignColor.subtleFill, in: Capsule())
+                    }
+                    Spacer(minLength: 4)
+                    if totalModels > 0 {
+                        Text("\(enabledCount)/\(totalModels) " + String(localized: "Models", table: "ModelCenter"))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(enabledCount > 0 ? MacDesignColor.brand : .secondary)
+                    } else {
+                        Text(String(localized: "Not discovered", table: "ModelCenter"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                    ? MacDesignColor.brand.opacity(0.10)
+                    : (isHovered ? MacDesignColor.hover : Color.clear),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(MacDesignColor.brand.opacity(0.32), lineWidth: 1)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredConnectionID = $0 ? snapshot.id : nil }
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityIdentifier("model-connection-" + snapshot.id)
+        .contextMenu {
+            if connection.enabled && connection.source != "nola_chatgpt" {
+                Button {
+                    selectedConnectionID = snapshot.id
+                    discoverModels(for: snapshot)
+                } label: {
+                    Label(String(localized: "Discover models", table: "ModelCenter"), systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+            if connection.source != "nola_chatgpt" {
+                Button {
+                    openEditSheet(for: snapshot)
+                } label: {
+                    Label(String(localized: "Edit connection…", table: "ModelCenter"), systemImage: "pencil")
+                }
+            }
+            if connection.enabled {
+                Button {
+                    toggleEnabled(for: snapshot)
+                } label: {
+                    Label(String(localized: "Disconnect", table: "ModelCenter"), systemImage: "pause.circle")
+                }
+            } else {
+                Button {
+                    toggleEnabled(for: snapshot)
+                } label: {
+                    Label(String(localized: "Reconnect", table: "ModelCenter"), systemImage: "play.circle")
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                deletionTarget = snapshot
+            } label: {
+                Label(String(localized: "Delete Connection…", table: "ModelCenter"), systemImage: "trash")
             }
         }
     }
 
-    private var connectionActionRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { connectionActions }
-            VStack(alignment: .leading, spacing: 8) { connectionActions }
+    // MARK: - Right Detail Pane
+
+    @ViewBuilder
+    private var connectionDetailPane: some View {
+        if let connection = selectedConnection {
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        bannerStack
+                        connectionHeaderCard(connection)
+
+                        if connection.document.connection.enabled {
+                            if connection.document.connection.source == "nola_chatgpt" {
+                                if let account = accounts.first(where: { $0.id == connection.document.connection.account_id }) {
+                                    MacSiwcAccountManagementView(
+                                        application: service.application,
+                                        account: account,
+                                        changed: reload,
+                                        modelsDiscovered: { id in selectedConnectionID = id },
+                                        reauthorize: { siwcAccount = account; showingSiwc = true },
+                                        activityChanged: { active in
+                                            if active { busyAccountIDs.insert(account.id) }
+                                            else { busyAccountIDs.remove(account.id) }
+                                        }
+                                    )
+                                    .padding(16)
+                                    .macPanel()
+                                }
+                            }
+                            catalogSection(connection)
+                        } else {
+                            disabledConnectionBanner(connection)
+                        }
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if connection.document.connection.enabled && hasModelChanges {
+                    unsavedSelectionFooter(connection)
+                }
+            }
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "network")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                Text(String(localized: "Select a connection to manage its models.", table: "ModelCenter"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private var connectionActions: some View {
-        Button(String(localized: "Connect an API account", table: "ModelCenter")) { openEditor(.api) }
-            .accessibilityIdentifier("model.add.api")
-        Button(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")) { openEditor(.accounts) }
-            .accessibilityIdentifier("model.add.chatgpt")
-        Button(String(localized: "Import from this Mac", table: "ModelCenter")) { openEditor(.imports) }
-            .accessibilityIdentifier("model.add.import")
+    @ViewBuilder
+    private var bannerStack: some View {
+        if let error {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(MacDesignColor.danger)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(error)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if error.localizedCaseInsensitiveContains("local network") {
+                        Button(String(localized: "Open Local Network Settings", table: "ModelCenter")) {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
+                                openURL(url)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                Spacer(minLength: 8)
+                Button { self.error = nil } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .background(
+                MacDesignColor.danger.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                    .strokeBorder(MacDesignColor.danger.opacity(0.28), lineWidth: 1)
+            }
+        }
+        if let status {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(MacDesignColor.success)
+                    .padding(.top, 1)
+                Text(status)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button { self.status = nil } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .background(
+                MacDesignColor.success.opacity(0.09),
+                in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                    .strokeBorder(MacDesignColor.success.opacity(0.25), lineWidth: 1)
+            }
+        }
+    }
+
+    private func connectionHeaderCard(_ snapshot: MacModelConnectionSnapshot) -> some View {
+        let connection = snapshot.document.connection
+        let account = connection.account_id.flatMap { id in accounts.first(where: { $0.id == id }) }
+        let wireLabel = connection.protocols.first.map(Self.protocolTitle) ?? "Chat Completions"
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: connection.source == "nola_chatgpt" ? "person.crop.circle.fill" : "network")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(connection.enabled ? MacDesignColor.brand : .secondary)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        (connection.enabled ? MacDesignColor.brand : Color.secondary).opacity(0.11),
+                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(connection.display_name)
+                            .font(.title3.weight(.semibold))
+                            .lineLimit(1)
+                        statusPill(enabled: connection.enabled)
+                        Text(wireLabel)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(MacDesignColor.subtleFill, in: Capsule())
+                    }
+
+                    HStack(spacing: 6) {
+                        Text(connection.base_url)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(connection.base_url)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(connection.base_url, forType: .string)
+                            copiedEndpointID = snapshot.id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedEndpointID == snapshot.id { copiedEndpointID = nil }
+                            }
+                        } label: {
+                            Image(systemName: copiedEndpointID == snapshot.id ? "checkmark" : "doc.on.doc")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(String(localized: "Copy endpoint URL", table: "ModelCenter"))
+                    }
+
+                    HStack(spacing: 12) {
+                        if let account {
+                            Label(
+                                account.account.source == "nola_chatgpt"
+                                    ? account.account.display_name
+                                    : String(localized: "API key stored in Keychain", table: "ModelCenter"),
+                                systemImage: account.account.source == "nola_chatgpt" ? "person.crop.circle" : "key.fill"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else {
+                            Label(String(localized: "Anonymous endpoint (no API key)", table: "ModelCenter"), systemImage: "lock.open")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let observedAt = snapshot.document.catalog?.observed_at_ms, observedAt > 0 {
+                            Label(
+                                Date(timeIntervalSince1970: Double(observedAt) / 1000).formatted(date: .abbreviated, time: .shortened),
+                                systemImage: "clock"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+
+            Divider().opacity(0.6)
+
+            HStack(spacing: 8) {
+                if connection.enabled && connection.source != "nola_chatgpt" {
+                    if discovering {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(String(localized: "Discovering models…", table: "ModelCenter"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            Button(String(localized: "Cancel", table: "ModelCenter")) {
+                                operationTask?.cancel()
+                            }
+                            .controlSize(.small)
+                        }
+                    } else {
+                        Button {
+                            discoverModels(for: snapshot)
+                        } label: {
+                            Label(String(localized: "Discover models", table: "ModelCenter"), systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.nolaProminent)
+                        .disabled(busy)
+                        .accessibilityIdentifier("model-connection-discover")
+                    }
+                }
+
+                if connection.source != "nola_chatgpt" {
+                    Button {
+                        openEditSheet(for: snapshot)
+                    } label: {
+                        Label(String(localized: "Edit", table: "ModelCenter"), systemImage: "pencil")
+                    }
+                    .disabled(busy)
+                    .accessibilityIdentifier("model-connection-edit")
+                }
+
+                Button {
+                    toggleEnabled(for: snapshot)
+                } label: {
+                    Label(
+                        connection.enabled
+                            ? String(localized: "Disconnect", table: "ModelCenter")
+                            : String(localized: "Reconnect", table: "ModelCenter"),
+                        systemImage: connection.enabled ? "pause.circle" : "play.circle"
+                    )
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("model-connection-toggle-enabled")
+
+                Spacer(minLength: 0)
+
+                Button(role: .destructive) {
+                    deletionTarget = snapshot
+                } label: {
+                    Label(String(localized: "Delete", table: "ModelCenter"), systemImage: "trash")
+                        .foregroundStyle(MacDesignColor.danger)
+                }
+                .disabled(busy)
+                .accessibilityIdentifier("model-connection-delete")
+            }
+        }
+        .padding(18)
+        .macPanel()
+    }
+
+    private func statusPill(enabled: Bool) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(enabled ? MacDesignColor.success : Color.secondary)
+                .frame(width: 6, height: 6)
+            Text(enabled ? String(localized: "Enabled") : String(localized: "Disabled"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(enabled ? MacDesignColor.success : .secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            (enabled ? MacDesignColor.success : Color.secondary).opacity(0.10),
+            in: Capsule()
+        )
+    }
+
+    private func disabledConnectionBanner(_ snapshot: MacModelConnectionSnapshot) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pause.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(String(localized: "Connection is paused", table: "ModelCenter"))
+                    .font(.body.weight(.semibold))
+                Text(String(localized: "This connection is disabled. Reconnect it to discover or use its models in chat.", table: "ModelCenter"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button(String(localized: "Reconnect", table: "ModelCenter")) {
+                toggleEnabled(for: snapshot)
+            }
+            .buttonStyle(.nolaProminent)
+            .disabled(busy)
+        }
+        .padding(16)
+        .macPanel()
+    }
+
+    private func catalogSection(_ connection: MacModelConnectionSnapshot) -> some View {
+        let allModels = connection.document.catalog?.models ?? []
+        let enabledSet = enabled[connection.id, default: []]
+        let filteredModels = allModels.filter { model in
+            if modelFilter == .enabled && !enabledSet.contains(model.id) {
+                return false
+            }
+            if modelSearch.isEmpty { return true }
+            return model.display_name.localizedCaseInsensitiveContains(modelSearch)
+                || model.model_id.localizedCaseInsensitiveContains(modelSearch)
+        }
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Text(String(localized: "Models", table: "ModelCenter"))
+                    .font(.headline)
+                if !allModels.isEmpty {
+                    Text("\(enabledSet.count) / \(allModels.count)")
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(MacDesignColor.subtleFill, in: Capsule())
+                }
+                Spacer(minLength: 8)
+                if !allModels.isEmpty {
+                    Picker(String(localized: "Filter", table: "ModelCenter"), selection: $modelFilter) {
+                        ForEach(ModelFilter.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 148)
+                }
+            }
+
+            if connection.document.connection.source == "nola_chatgpt",
+               allModels.contains(where: { $0.reasoning_levels.contains("ultra") }) {
+                Text(String(localized: "Ultra is a ChatGPT multi-agent mode, not a model reasoning effort. Nola uses the single-model reasoning levels available for each model.", table: "ModelCenter"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if allModels.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(String(localized: "No models discovered yet", table: "ModelCenter"))
+                        .font(.body.weight(.medium))
+                    Text(String(localized: "Click “Discover models” above to query the endpoint’s model list without running inference, then toggle the models you want available in chat.", table: "ModelCenter"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .macPanel()
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    TextField(String(localized: "Search models", table: "ModelCenter"), text: $modelSearch)
+                        .textFieldStyle(.plain)
+                    if !modelSearch.isEmpty {
+                        Button { modelSearch = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if filteredModels.count != allModels.count {
+                        Text("\(filteredModels.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    MacDesignColor.subtleFill,
+                    in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                )
+
+                if filteredModels.isEmpty {
+                    Text(modelFilter == .enabled
+                        ? String(localized: "No enabled models match your filter.", table: "ModelCenter")
+                        : String(localized: "No matching models", table: "ModelCenter"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 24)
+                } else {
+                    // LazyVStack keeps 477+ OpenRouter models silky smooth at 60fps.
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(filteredModels) { model in
+                            let isOn = enabledSet.contains(model.id)
+                            let isExpanded = expandedModelID == model.id
+                            let hasEvidence = connection.document.capability_assessments?.contains(where: {
+                                $0.model_id == model.model_id && $0.protocol == model.protocol && $0.evidence != nil
+                            }) ?? false
+                            ConnectionModelRow(
+                                model: model,
+                                isEnabled: isOn,
+                                isExpanded: isExpanded,
+                                hasVerifiedEvidence: hasEvidence,
+                                onToggle: { value in
+                                    if value { enabled[connection.id, default: []].insert(model.id) }
+                                    else { enabled[connection.id]?.remove(model.id) }
+                                },
+                                onToggleExpand: {
+                                    expandedModelID = isExpanded ? nil : model.id
+                                },
+                                expandedContent: {
+                                    if connection.document.connection.source == "nola_chatgpt" {
+                                        MacModelCapabilityOverrideEditor(
+                                            connection: connection,
+                                            model: model,
+                                            service: service,
+                                            onSave: reload,
+                                            onError: { error = $0 }
+                                        )
+                                    } else {
+                                        modelActions(connection, model: model)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func unsavedSelectionFooter(_ connection: MacModelConnectionSnapshot) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 12) {
+                let count = enabled[connection.id, default: []].count
+                Label(
+                    String(
+                        format: String(localized: "Unsaved model changes (%d selected)", table: "ModelCenter"),
+                        count
+                    ),
+                    systemImage: "circle.badge.exclamationmark"
+                )
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.primary)
+                Spacer()
+                Button(String(localized: "Revert", table: "ModelCenter")) {
+                    enabled[connection.id] = savedEnabled[connection.id, default: []]
+                }
+                .disabled(busy)
+                Button(String(localized: "Apply enabled models", table: "ModelCenter")) {
+                    let chosen = enabled[connection.id, default: []]
+                    perform {
+                        try await Task.detached(priority: .userInitiated) { [service] in
+                            try service.enable(connection, modelIDs: chosen)
+                        }.value
+                        savedEnabled[connection.id] = chosen
+                        status = String(localized: "Enabled models are available in the chat model picker.", table: "ModelCenter")
+                    }
+                }
+                .buttonStyle(.nolaProminent)
+                .disabled(busy)
+                .accessibilityIdentifier("model-connection-apply")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.regularMaterial)
+        }
+    }
+
+    // MARK: - Modal Sheets (Add / Edit / Import / Accounts / Host)
+
+    private func sheetContainer(_ target: SheetTarget) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(sheetTitle(target)).font(.headline)
+                Spacer()
+                Button(String(localized: "Close", table: "ModelCenter")) {
+                    if !isEditorBusy { activeSheet = nil }
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isEditorBusy)
+                .accessibilityIdentifier("model-editor-close")
+            }
+            .padding(20)
+            Divider()
+            Form {
+                if let error {
+                    Text(error)
+                        .foregroundStyle(MacDesignColor.danger)
+                        .textSelection(.enabled)
+                }
+                if let status {
+                    Text(status)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                switch target {
+                case .api:
+                    apiConnectionSection
+                case .edit(let connectionID):
+                    if let snapshot = connections.first(where: { $0.id == connectionID }) {
+                        editConnectionSection(snapshot)
+                    } else {
+                        Text(String(localized: "Connection is no longer available.", table: "ModelCenter"))
+                            .foregroundStyle(.secondary)
+                    }
+                case .imports:
+                    sourceImportSection
+                case .accounts:
+                    accountsSection
+                case .host:
+                    hostManagementSection
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(MacDesignColor.canvas)
+            .disabled(busy)
+            .overlay(alignment: .topTrailing) {
+                if busy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        if importBridge != nil {
+                            Button(String(localized: "Cancel import", table: "ModelCenter")) { cancelImport() }
+                        }
+                    }
+                    .padding(10)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(12)
+                }
+            }
+        }
+        .frame(minWidth: 480, idealWidth: 560, minHeight: 420, idealHeight: 580)
+        .interactiveDismissDisabled(isEditorBusy)
+    }
+
+    private func sheetTitle(_ target: SheetTarget) -> String {
+        switch target {
+        case .api: String(localized: "Connect an API account", table: "ModelCenter")
+        case .edit: String(localized: "Edit API Connection", table: "ModelCenter")
+        case .imports: String(localized: "Import from this Mac", table: "ModelCenter")
+        case .accounts: String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")
+        case .host: String(localized: "Source login on a Nola Host", table: "ModelCenter")
+        }
     }
 
     private var apiConnectionSection: some View {
@@ -263,7 +1179,10 @@ struct MacModelConnectionsView: View {
                                 )
                                 .overlay {
                                     RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
-                                        .strokeBorder(isSelected ? MacDesignColor.brand : MacDesignColor.borderSubtle, lineWidth: isSelected ? 1.25 : 0.75)
+                                        .strokeBorder(
+                                            isSelected ? MacDesignColor.brand : MacDesignColor.borderSubtle,
+                                            lineWidth: isSelected ? 1.25 : 0.75
+                                        )
                                 }
                         }
                         .buttonStyle(.plain)
@@ -276,10 +1195,16 @@ struct MacModelConnectionsView: View {
 
             Section {
                 TextField(String(localized: "Connection name", table: "ModelCenter"), text: $name)
-                TextField(String(localized: "API endpoint", table: "ModelCenter"), text: $endpoint,
-                    prompt: Text("https://api.example.com/v1"))
-                    .autocorrectionDisabled()
-                SecureField(String(localized: "API key · optional for anonymous endpoints", table: "ModelCenter"), text: $secret)
+                TextField(
+                    String(localized: "API endpoint", table: "ModelCenter"),
+                    text: $endpoint,
+                    prompt: Text("https://api.example.com/v1")
+                )
+                .autocorrectionDisabled()
+                SecureField(
+                    String(localized: "API key · optional for anonymous endpoints", table: "ModelCenter"),
+                    text: $secret
+                )
                 DisclosureGroup(String(localized: "Advanced", table: "ModelCenter"), isExpanded: $showsAdvancedProtocol) {
                     Picker(String(localized: "Protocol", table: "ModelCenter"), selection: $wire) {
                         Text(verbatim: "Responses").tag("responses")
@@ -288,25 +1213,253 @@ struct MacModelConnectionsView: View {
                     }
                     .padding(.top, 4)
                 }
-                Button(String(localized: "Connect account", table: "ModelCenter")) {
-                    perform {
-                        let created = try service.create(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                            endpoint: endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
-                            wireProtocol: wire, secret: secret)
-                        secret = ""
-                        applyPreset(.openai)
-                        selectedConnectionID = created.id
-                        workspace = .connections
-                        status = String(localized: "Connection saved. Discover and enable models before using it.", table: "ModelCenter")
-                    }
-                }
-                .buttonStyle(.nolaProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(endpoint))
                 if !endpoint.isEmpty && !Self.isValidEndpoint(endpoint) {
                     Text(String(localized: "Enter an HTTP or HTTPS address without embedded credentials.", table: "ModelCenter"))
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout)
+                        .foregroundStyle(MacDesignColor.danger)
+                }
+                HStack {
+                    Spacer()
+                    Button(String(localized: "Connect account", table: "ModelCenter")) {
+                        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmedEndpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let selectedWire = wire
+                        let enteredSecret = secret
+                        perform {
+                            let created = try await Task.detached(priority: .userInitiated) { [service] in
+                                try service.create(
+                                    name: trimmedName,
+                                    endpoint: trimmedEndpoint,
+                                    wireProtocol: selectedWire,
+                                    secret: enteredSecret
+                                )
+                            }.value
+                            secret = ""
+                            applyPreset(.openai)
+                            selectedConnectionID = created.id
+                            showsCompactDetail = true
+                            activeSheet = nil
+                            status = String(localized: "Connection saved. Discover and enable models below.", table: "ModelCenter")
+                        }
+                    }
+                    .buttonStyle(.nolaProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(endpoint))
                 }
             }
+        }
+    }
+
+    private func editConnectionSection(_ snapshot: MacModelConnectionSnapshot) -> some View {
+        let old = snapshot.document.connection
+        let routeWillChange = editEndpoint.trimmingCharacters(in: .whitespacesAndNewlines) != old.base_url
+            || old.protocols != [editWire]
+        let hasExistingAccount = old.account_id != nil
+
+        return Group {
+            Section(String(localized: "Connection details", table: "ModelCenter")) {
+                TextField(String(localized: "Connection name", table: "ModelCenter"), text: $editName)
+                TextField(
+                    String(localized: "API endpoint", table: "ModelCenter"),
+                    text: $editEndpoint,
+                    prompt: Text("https://api.example.com/v1")
+                )
+                .autocorrectionDisabled()
+                Picker(String(localized: "Protocol", table: "ModelCenter"), selection: $editWire) {
+                    Text(verbatim: "Responses").tag("responses")
+                    Text(verbatim: "Chat Completions").tag("chat_completions")
+                    Text(verbatim: "Anthropic Messages").tag("anthropic")
+                }
+                if !editEndpoint.isEmpty && !Self.isValidEndpoint(editEndpoint) {
+                    Text(String(localized: "Enter an HTTP or HTTPS address without embedded credentials.", table: "ModelCenter"))
+                        .font(.callout)
+                        .foregroundStyle(MacDesignColor.danger)
+                }
+                if routeWillChange {
+                    Label(
+                        String(localized: "Changing the endpoint or protocol resets discovered models so you can re-discover them for the new route.", table: "ModelCenter"),
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Section(String(localized: "API Key", table: "ModelCenter")) {
+                SecureField(
+                    hasExistingAccount
+                        ? String(localized: "Leave blank to keep existing API key", table: "ModelCenter")
+                        : String(localized: "Enter API key (optional)", table: "ModelCenter"),
+                    text: $editSecret
+                )
+                .disabled(editClearSecret)
+                if hasExistingAccount {
+                    Toggle(String(localized: "Remove saved API key (switch to anonymous)", table: "ModelCenter"), isOn: $editClearSecret)
+                        .toggleStyle(.macSwitch)
+                        .onChange(of: editClearSecret) { _, cleared in
+                            if cleared { editSecret = "" }
+                        }
+                }
+            }
+
+            Section {
+                HStack {
+                    Button(role: .destructive) {
+                        activeSheet = nil
+                        deletionTarget = snapshot
+                    } label: {
+                        Label(String(localized: "Delete Connection…", table: "ModelCenter"), systemImage: "trash")
+                    }
+                    Spacer()
+                    Button(String(localized: "Save changes", table: "ModelCenter")) {
+                        let newName = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let newEndpoint = editEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let newWire = editWire
+                        let newSecret = editSecret
+                        let clearKey = editClearSecret
+                        perform {
+                            let updated = try await Task.detached(priority: .userInitiated) { [service] in
+                                try service.update(
+                                    snapshot,
+                                    name: newName,
+                                    endpoint: newEndpoint,
+                                    wireProtocol: newWire,
+                                    secret: newSecret.isEmpty ? nil : newSecret,
+                                    clearSecret: clearKey
+                                )
+                            }.value
+                            editSecret = ""
+                            editClearSecret = false
+                            selectedConnectionID = updated.id
+                            activeSheet = nil
+                            status = routeWillChange
+                                ? String(localized: "Connection updated. Click “Discover models” to refresh the model catalog.", table: "ModelCenter")
+                                : String(localized: "Connection updated.", table: "ModelCenter")
+                        }
+                    }
+                    .buttonStyle(.nolaProminent)
+                    .disabled(editName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !Self.isValidEndpoint(editEndpoint))
+                }
+            }
+        }
+    }
+
+    private var accountsSection: some View {
+        Section(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")) {
+            Text(String(localized: "Connect your ChatGPT account, then choose the models to use on this Mac.", table: "ModelCenter"))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) {
+                siwcAccount = nil
+                showingSiwc = true
+            }
+            .buttonStyle(.nolaProminent)
+            ForEach(accounts.filter { $0.account.source == "nola_chatgpt" }) { account in
+                MacSiwcAccountManagementView(
+                    application: service.application,
+                    account: account,
+                    changed: reload,
+                    modelsDiscovered: { id in
+                        selectedConnectionID = id
+                        activeSheet = nil
+                    },
+                    reauthorize: { siwcAccount = account; showingSiwc = true },
+                    activityChanged: { active in
+                        if active { busyAccountIDs.insert(account.id) }
+                        else { busyAccountIDs.remove(account.id) }
+                    }
+                )
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func openSheet(_ target: SheetTarget) {
+        error = nil
+        status = nil
+        activeSheet = target
+    }
+
+    private func openEditSheet(for snapshot: MacModelConnectionSnapshot) {
+        let conn = snapshot.document.connection
+        editName = conn.display_name
+        editEndpoint = conn.base_url
+        editWire = conn.protocols.first ?? "chat_completions"
+        editSecret = ""
+        editClearSecret = false
+        openSheet(.edit(snapshot.id))
+    }
+
+    private func requestSelectConnection(_ id: String) {
+        if id == selectedConnection?.id {
+            showsCompactDetail = true
+            return
+        }
+        if hasModelChanges {
+            pendingSelectionID = id
+            confirmsDiscard = true
+        } else {
+            selectConnectionImmediately(id)
+        }
+    }
+
+    private func selectConnectionImmediately(_ id: String) {
+        selectedConnectionID = id
+        showsCompactDetail = true
+        modelSearch = ""
+        modelFilter = .all
+        expandedModelID = nil
+        error = nil
+        status = nil
+    }
+
+    private func discoverModels(for connection: MacModelConnectionSnapshot) {
+        perform {
+            discovering = true
+            defer { discovering = false }
+            let updated = try await service.discover(connection)
+            let count = updated.document.catalog?.models.count ?? 0
+            status = String(
+                format: String(localized: "Discovered %d models. Toggle the ones you want and click Apply.", table: "ModelCenter"),
+                count
+            )
+        }
+    }
+
+    private func toggleEnabled(for connection: MacModelConnectionSnapshot) {
+        let wasEnabled = connection.document.connection.enabled
+        perform {
+            _ = try await Task.detached(priority: .userInitiated) { [service] in
+                if wasEnabled {
+                    return try service.disconnect(connection)
+                } else {
+                    return try service.reconnect(connection)
+                }
+            }.value
+            status = wasEnabled
+                ? String(localized: "Connection disabled. Credentials were not deleted.", table: "ModelCenter")
+                : String(localized: "Connection enabled. Discover or enable models below.", table: "ModelCenter")
+        }
+    }
+
+    private func deleteConnection(_ snapshot: MacModelConnectionSnapshot) {
+        deletionTarget = nil
+        let removedID = snapshot.id
+        let removedName = snapshot.document.connection.display_name
+        perform {
+            try await Task.detached(priority: .userInitiated) { [service] in
+                try service.delete(snapshot, deleteAccount: true)
+            }.value
+            enabled[removedID] = nil
+            savedEnabled[removedID] = nil
+            if selectedConnectionID == removedID {
+                selectedConnectionID = nil
+                showsCompactDetail = false
+            }
+            status = String(
+                format: String(localized: "Deleted “%@”.", table: "ModelCenter"),
+                removedName
+            )
         }
     }
 
@@ -330,302 +1483,12 @@ struct MacModelConnectionsView: View {
         handledPendingActionRevision = pendingActionRevision
         switch pendingAction {
         case .api:
-            openEditor(.api)
+            openSheet(.api)
         case .accounts:
-            openEditor(.accounts)
+            openSheet(.accounts)
         }
     }
 
-    private var filteredConnections: [MacModelConnectionSnapshot] {
-        connections.filter {
-            search.isEmpty || $0.document.connection.display_name.localizedCaseInsensitiveContains(search)
-                || $0.document.connection.base_url.localizedCaseInsensitiveContains(search)
-        }
-    }
-
-    private var hasModelChanges: Bool {
-        guard let id = selectedConnectionID else { return false }
-        return enabled[id, default: []] != savedEnabled[id, default: []]
-    }
-
-    private func editorTitle(_ target: Workspace) -> String {
-        switch target {
-        case .connections: connections.first { $0.id == selectedConnectionID }?.document.connection.display_name
-            ?? String(localized: "Connections and accounts", table: "ModelCenter")
-        case .api: String(localized: "Connect an API account", table: "ModelCenter")
-        case .imports: String(localized: "Import from this Mac", table: "ModelCenter")
-        case .accounts: String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")
-        case .host: String(localized: "Source login on a Nola Host", table: "ModelCenter")
-        }
-    }
-
-    private var isEditorBusy: Bool { busy || probeRunning || !busyAccountIDs.isEmpty }
-
-    private func requestEditorClose() {
-        guard !isEditorBusy else { return }
-        if hasModelChanges { confirmsDiscard = true } else { workspace = nil }
-    }
-
-    private func openEditor(_ target: Workspace) {
-        error = nil
-        status = nil
-        modelSearch = ""
-        workspace = target
-        selectedConnectionID = nil
-    }
-
-    private func connectionRow(_ snapshot: MacModelConnectionSnapshot) -> some View {
-        let connection = snapshot.document.connection
-        return HStack(spacing: 14) {
-            Image(connection.source == "nola_chatgpt" ? "nola-person" : "nola-models")
-                .renderingMode(.template).resizable().scaledToFit().frame(width: 17, height: 17)
-                .foregroundStyle(MacDesignColor.brand)
-                .frame(width: 30, height: 30)
-                .background(MacDesignColor.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(connection.display_name).font(.body.weight(.semibold)).lineLimit(1)
-                Text(connection.base_url)
-                    .font(.callout).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
-                    .help(connection.base_url)
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(connection.enabled ? String(localized: "Enabled")
-                     : String(localized: "Disabled"))
-                    .font(.callout)
-                    .foregroundStyle(connection.enabled ? Color.primary : Color.secondary)
-                Text(String(localized: "Models", table: "ModelCenter") + " · " + String(snapshot.document.catalog?.models.count ?? 0))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-    }
-
-    @ViewBuilder private var editorFooter: some View {
-        if workspace == .connections,
-           let connection = connections.first(where: { $0.id == selectedConnectionID }),
-           connection.document.connection.enabled {
-            Divider()
-            HStack {
-                Menu {
-                    Button(String(localized: "Disconnect", table: "ModelCenter"), role: .destructive) {
-                        perform {
-                            _ = try service.disconnect(connection)
-                            status = String(localized: "Connection disabled. Credentials were not deleted.", table: "ModelCenter")
-                        }
-                    }
-                } label: {
-                    Label(String(localized: "Model options", table: "ModelCenter"), systemImage: "ellipsis")
-                }.labelStyle(.iconOnly).menuStyle(.borderlessButton).fixedSize()
-                .help(String(localized: "Model options", table: "ModelCenter"))
-                Spacer()
-                if connection.document.catalog != nil {
-                    Button(String(localized: "Apply enabled models", table: "ModelCenter")) {
-                        perform {
-                            try service.enable(connection, modelIDs: enabled[connection.id, default: []])
-                            savedEnabled[connection.id] = enabled[connection.id, default: []]
-                            status = String(localized: "Enabled models are available in the chat model picker.", table: "ModelCenter")
-                        }
-                    }
-                    .buttonStyle(.nolaProminent)
-                    // Applying also adopts newly discovered capability metadata for enabled models.
-                    .disabled(busy)
-                }
-            }.padding(.horizontal, 24).padding(.vertical, 12).disabled(busy)
-        }
-    }
-
-    private var connectionDetail: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-                if let status { Text(status).font(.callout).foregroundStyle(.secondary) }
-            if connections.isEmpty {
-                ContentUnavailableView {
-                    Label(String(localized: "Connections and accounts", table: "ModelCenter"), systemImage: "network")
-                } actions: {
-                    Button(String(localized: "Connect an API account", table: "ModelCenter")) { workspace = .api }
-                        .buttonStyle(.nolaProminent)
-                    Button(String(localized: "Import from this Mac", table: "ModelCenter")) { workspace = .imports }
-                }
-            }
-            ForEach(connections.filter { $0.id == selectedConnectionID }) { connection in
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 8) {
-                    Text(connection.document.connection.base_url).font(.caption).textSelection(.enabled)
-                        .lineLimit(2).truncationMode(.middle).help(connection.document.connection.base_url)
-                    Text(connection.document.connection.enabled ? String(localized: "Enabled") : String(localized: "Disabled"))
-                        .foregroundStyle(.secondary)
-                    if let id = connection.document.connection.account_id,
-                       let account = accounts.first(where: { $0.id == id }) {
-                        Label(account.account.display_name, systemImage: "person.crop.circle")
-                    }
-                    }
-                    if connection.document.connection.enabled {
-                        if connection.document.connection.source != "nola_chatgpt" {
-                        Button(String(localized: "Discover models · no inference", table: "ModelCenter")) {
-                            perform {
-                                discovering = true
-                                defer { discovering = false }
-                                _ = try await service.discover(connection)
-                                status = String(localized: "Model discovery finished. Select the models to enable.", table: "ModelCenter")
-                            }
-                        }
-                        } else {
-                            if let account = accounts.first(where: { $0.id == connection.document.connection.account_id }) {
-                                MacSiwcAccountManagementView(
-                                    application: service.application,
-                                    account: account,
-                                    changed: reload,
-                                    modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections },
-                                    reauthorize: { siwcAccount = account; showingSiwc = true },
-                                    activityChanged: { active in
-                                        if active { busyAccountIDs.insert(account.id) }
-                                        else { busyAccountIDs.remove(account.id) }
-                                    }
-                                )
-                            }
-                        }
-                        if let catalog = connection.document.catalog, !catalog.models.isEmpty {
-                            if connection.document.connection.source == "nola_chatgpt",
-                               catalog.models.contains(where: { $0.reasoning_levels.contains("ultra") }) {
-                                Text(String(localized: "Ultra is a ChatGPT multi-agent mode, not a model reasoning effort. Nola uses the single-model reasoning levels available for each model.", table: "ModelCenter"))
-                                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                            }
-                            TextField(String(localized: "Search models", table: "ModelCenter"), text: $modelSearch)
-                                .textFieldStyle(.roundedBorder)
-                        } else {
-                            Text(String(localized: "Discover models to choose which ones appear in chat.", table: "ModelCenter"))
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                        ForEach((connection.document.catalog?.models ?? []).filter {
-                            modelSearch.isEmpty || $0.display_name.localizedCaseInsensitiveContains(modelSearch)
-                                || $0.model_id.localizedCaseInsensitiveContains(modelSearch)
-                        }) { model in
-                            VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 12) {
-                            Toggle(isOn: Binding(get: { enabled[connection.id, default: []].contains(model.id) }, set: { value in
-                                if value { enabled[connection.id, default: []].insert(model.id) }
-                                else { enabled[connection.id]?.remove(model.id) }
-                            })) {
-                                VStack(alignment: .leading) {
-                                    Text(model.display_name)
-                                    Text(Self.protocolTitle(model.protocol)).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .toggleStyle(.macSwitch)
-                            Spacer(minLength: 8)
-                                Button {
-                                    expandedModelID = expandedModelID == model.id ? nil : model.id
-                                } label: {
-                                    Label(String(localized: "Model options", table: "ModelCenter"), systemImage: "slider.horizontal.3")
-                                }
-                                .labelStyle(.iconOnly).buttonStyle(.borderless)
-                                .help(String(localized: "Model options", table: "ModelCenter"))
-                                .accessibilityValue(expandedModelID == model.id ? String(localized: "Expanded") : String(localized: "Collapsed"))
-                            }
-                            if expandedModelID == model.id {
-                                if connection.document.connection.source == "nola_chatgpt" {
-                                    MacModelCapabilityOverrideEditor(connection: connection, model: model,
-                                        service: service, onSave: reload, onError: { error = $0 })
-                                } else { modelActions(connection, model: model) }
-                            }
-                            }.padding(.vertical, 6)
-                            Divider()
-                        }
-
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(String(localized: "This connection is disabled. Reconnect it to use its models in chat.", table: "ModelCenter"))
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button(String(localized: "Reconnect", table: "ModelCenter")) {
-                                perform {
-                                    _ = try service.reconnect(connection)
-                                    status = String(localized: "Connection enabled. Discover or enable models below.", table: "ModelCenter")
-                                }
-                            }
-                            .buttonStyle(.nolaProminent)
-                            .disabled(busy)
-                        }
-                    }
-                }
-            }
-            
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func editorContent(_ target: Workspace) -> some View {
-        Group {
-        if target == .connections { connectionDetail }
-        else { Form {
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-            if let status { Text(status).font(.callout).foregroundStyle(.secondary) }
-            if target == .imports { sourceImportSection }
-            if target == .accounts {
-            Section(String(localized: "ChatGPT authorization on this Mac", table: "ModelCenter")) {
-                Text(String(localized: "Connect your ChatGPT account, then choose the models to use on this Mac.", table: "ModelCenter"))
-                    .font(.callout).foregroundStyle(.secondary)
-                Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) { siwcAccount = nil; showingSiwc = true }
-                ForEach(accounts.filter { $0.account.source == "nola_chatgpt" }) { account in
-                    MacSiwcAccountManagementView(application: service.application, account: account, changed: reload,
-                        modelsDiscovered: { id in selectedConnectionID = id; workspace = .connections },
-                        reauthorize: { siwcAccount = account; showingSiwc = true },
-                        activityChanged: { active in
-                            if active { busyAccountIDs.insert(account.id) }
-                            else { busyAccountIDs.remove(account.id) }
-                        })
-                }
-            }
-            }
-            if target == .host { hostManagementSection }
-            if target == .api { apiConnectionSection }
-        }
-        .formStyle(.grouped)
-        }
-        }
-        .scrollContentBackground(.hidden)
-        .background(MacDesignColor.canvas)
-        .disabled(busy)
-        .overlay(alignment: .topTrailing) {
-            if busy {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    if discovering { Button(String(localized: "Cancel discovery", table: "ModelCenter")) { operationTask?.cancel() } }
-                    if importBridge != nil { Button(String(localized: "Cancel import", table: "ModelCenter")) { cancelImport() } }
-                    if probeBridge != nil { Button(String(localized: "Cancel test", table: "ModelCenter")) { cancelProbe() } }
-                }.padding().background(.regularMaterial)
-            }
-        }
-        .task {
-            if refreshOnAppear {
-                reload()
-                managementHost = MacRemoteHostConfigurationStore.shared.load()
-            }
-        }
-        .navigationTitle(String(localized: "Connections and accounts", table: "ModelCenter"))
-        .sheet(item: $probeConfirmation, onDismiss: { if !probeRunning { cancelProbe() } }) { confirmation in
-            probeSheet(confirmation)
-        }
-        .sheet(isPresented: $showingSiwc, onDismiss: reload) {
-            MacSiwcSignInView(application: service.application, account: siwcAccount, showAccounts: {
-                showingSiwc = false; workspace = .accounts; reload()
-            }, saved: { connectionID in
-                showingSiwc = false
-                reload()
-                selectedConnectionID = connectionID
-                workspace = .connections
-            })
-        }
-        .onDisappear { operationTask?.cancel(); cancelImport(); cancelProbe() }
-    }
     nonisolated static func protocolTitle(_ value: String) -> String {
         switch value {
         case "responses": "Responses"
@@ -633,6 +1496,24 @@ struct MacModelConnectionsView: View {
         case "anthropic": "Anthropic Messages"
         default: value
         }
+    }
+
+    nonisolated static func shortProtocolTitle(_ value: String) -> String {
+        switch value {
+        case "responses": "Responses"
+        case "chat_completions": "Chat"
+        case "anthropic": "Anthropic"
+        case "siwc_responses": "ChatGPT"
+        default: value
+        }
+    }
+
+    nonisolated static func displayHost(_ endpoint: String) -> String {
+        guard let url = URL(string: endpoint), let host = url.host else { return endpoint }
+        if let port = url.port {
+            return "\(host):\(port)\(url.path)"
+        }
+        return "\(host)\(url.path)"
     }
 
     nonisolated static func isValidEndpoint(_ value: String) -> Bool {
@@ -658,7 +1539,9 @@ struct MacModelConnectionsView: View {
                     Text(String(localized: "Remote access supports API import and capability checks. Source login is local-only: open /models?tab=api in a browser on that Host computer. This Mac cannot start or cancel its source login remotely.", table: "ModelCenter"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                Button(Self.isLocalManagementHost(host.baseURL) ? String(localized: "Open Host source and API management", table: "ModelCenter") : String(localized: "Open remote Host API management", table: "ModelCenter")) {
+                Button(Self.isLocalManagementHost(host.baseURL)
+                    ? String(localized: "Open Host source and API management", table: "ModelCenter")
+                    : String(localized: "Open remote Host API management", table: "ModelCenter")) {
                     perform {
                         let url = try await MacRemoteHostService.shared.requestModelManagementURL(configuration: host)
                         try Task.checkCancellation()
@@ -672,21 +1555,27 @@ struct MacModelConnectionsView: View {
             }
         }
     }
+
     nonisolated static func isLocalManagementHost(_ url: URL) -> Bool {
         ["http", "https"].contains(url.scheme?.lowercased() ?? "")
             && url.user == nil && url.password == nil
             && ["127.0.0.1", "[::1]", "::1"].contains(url.host?.lowercased() ?? "")
     }
+
     private func modelActions(_ connection: MacModelConnectionSnapshot,
-        model: MacModelConnectionSnapshot.Model) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+                              model: MacModelConnectionSnapshot.Model) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             if let evidence = connection.document.capability_assessments?.first(where: {
                 $0.model_id == model.model_id && $0.protocol == model.protocol
             })?.evidence {
-                Label(String(localized: "A previous text test succeeded", table: "ModelCenter"), systemImage: "clock")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text(Date(timeIntervalSince1970: Double(evidence.observed_at_ms) / 1000), style: .date)
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Label(String(localized: "A previous text test succeeded", table: "ModelCenter"), systemImage: "checkmark.seal.fill")
+                        .font(.callout)
+                        .foregroundStyle(MacDesignColor.success)
+                    Text(Date(timeIntervalSince1970: Double(evidence.observed_at_ms) / 1000), style: .date)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Button(String(localized: "Test text response…", table: "ModelCenter")) {
                 perform {
@@ -697,16 +1586,27 @@ struct MacModelConnectionsView: View {
                     } catch { bridge.cancel(); probeBridge = nil; throw error }
                 }
             }
-            MacModelCapabilityOverrideEditor(connection: connection, model: model, service: service,
-                onSave: { reload() }, onError: { error = $0 })
+            MacModelCapabilityOverrideEditor(
+                connection: connection,
+                model: model,
+                service: service,
+                onSave: { reload() },
+                onError: { error = $0 }
+            )
         }
     }
+
     private func probeSheet(_ confirmation: MacModelProbeConfirmation) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(String(localized: "Test this model?", table: "ModelCenter")).font(.title2).bold()
             LabeledContent(String(localized: "Model", table: "ModelCenter"), value: confirmation.model_id)
             LabeledContent(String(localized: "Protocol", table: "ModelCenter"), value: confirmation.protocol)
-            LabeledContent(String(localized: "Account", table: "ModelCenter"), value: accounts.first(where: { $0.id == confirmation.account_id })?.account.display_name ?? confirmation.account_id ?? String(localized: "Anonymous endpoint", table: "ModelCenter"))
+            LabeledContent(
+                String(localized: "Account", table: "ModelCenter"),
+                value: accounts.first(where: { $0.id == confirmation.account_id })?.account.display_name
+                    ?? confirmation.account_id
+                    ?? String(localized: "Anonymous endpoint", table: "ModelCenter")
+            )
             if let connection = connections.first(where: { $0.id == confirmation.connection_id }) {
                 Text(connection.document.connection.base_url)
                     .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
@@ -731,6 +1631,7 @@ struct MacModelConnectionsView: View {
         .background(MacDesignColor.canvas)
         .interactiveDismissDisabled(probeRunning)
     }
+
     private func cancelProbe() {
         probeBridge?.cancel(); probeBridge = nil; probeConfirmation = nil
         if probeRunning {
@@ -738,6 +1639,7 @@ struct MacModelConnectionsView: View {
             status = String(localized: "Test stopped. A request already sent may still be charged; its result may be unknown.", table: "ModelCenter")
         }
     }
+
     private func confirmProbe(_ confirmation: MacModelProbeConfirmation) {
         guard let bridge = probeBridge, !probeRunning else { return }
         probeRunning = true
@@ -750,26 +1652,33 @@ struct MacModelConnectionsView: View {
             status = String(localized: "Text response verified. Other capabilities were not tested.", table: "ModelCenter")
         }
     }
+
     #if DEBUG
     static func visualDetailFixture(service: MacModelConnectionService,
-        connection: MacModelConnectionSnapshot) -> some View {
+                                    connection: MacModelConnectionSnapshot) -> some View {
         var view = Self(service: service)
         view.refreshOnAppear = false
         view._connections = State(initialValue: [connection])
         view._selectedConnectionID = State(initialValue: connection.id)
-        return view.editorContent(.connections).tint(MacDesignColor.brand)
+        return view.connectionDetailPane.tint(MacDesignColor.brand)
     }
 
     static func visualFixture(service: MacModelConnectionService,
-        connections: [MacModelConnectionSnapshot] = [], busy: Bool = false, error: String? = nil) -> Self {
+                              connections: [MacModelConnectionSnapshot] = [],
+                              busy: Bool = false,
+                              error: String? = nil) -> Self {
         var view = Self(service: service)
         view.refreshOnAppear = false
         view._connections = State(initialValue: connections)
+        view._selectedConnectionID = State(initialValue: connections.first?.id)
         view._busy = State(initialValue: busy)
         view._error = State(initialValue: error)
         return view
     }
     #endif
+
+    // MARK: - Source Import
+
     private var sourceImportSection: some View {
         Section {
             Text(String(localized: "Select a source file, preview its connections, then confirm. Imported API keys stay in this Mac’s Keychain. Source files are never changed.", table: "ModelCenter"))
@@ -793,7 +1702,12 @@ struct MacModelConnectionsView: View {
             if includeCredentials {
                 Button(String(localized: "Choose a separate credentials file…", table: "ModelCenter")) { chooseSourceFile(credential: true) }
                 if let credentialURL {
-                    HStack { Text(credentialURL.lastPathComponent); Button(String(localized: "Remove selection", table: "ModelCenter")) { self.credentialURL = nil; invalidateImport() } }
+                    HStack {
+                        Text(credentialURL.lastPathComponent)
+                        Button(String(localized: "Remove selection", table: "ModelCenter")) {
+                            self.credentialURL = nil; invalidateImport()
+                        }
+                    }
                 }
                 Toggle(String(localized: "Allow explicitly named environment variables", table: "ModelCenter"), isOn: $allowEnvironment)
                     .toggleStyle(.macSwitch)
@@ -801,15 +1715,21 @@ struct MacModelConnectionsView: View {
             }
             Text(String(localized: "To use a ChatGPT account, sign in in your browser. Use file import for API connections.", table: "ModelCenter"))
                 .font(.callout).foregroundStyle(.secondary)
-            Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) {
-                cancelImport(); siwcAccount = nil; showingSiwc = true
+            HStack(spacing: 8) {
+                Button(String(localized: "Sign in with ChatGPT", table: "ModelCenter")) {
+                    cancelImport(); siwcAccount = nil; showingSiwc = true
+                }
+                Button(String(localized: "Source login on a Nola Host", table: "ModelCenter")) {
+                    cancelImport(); activeSheet = .host
+                }
             }
-            Button(String(localized: "Source login on a Nola Host", table: "ModelCenter")) {
-                cancelImport(); workspace = .host
-            }
-            Button(String(localized: "Preview import", table: "ModelCenter")) { previewImport() }.disabled(sourceURL == nil)
+            Button(String(localized: "Preview import", table: "ModelCenter")) { previewImport() }
+                .disabled(sourceURL == nil)
                 .accessibilityIdentifier("model.import.preview")
-            if busy { ProgressView().controlSize(.small).accessibilityLabel(String(localized: "Import in progress", table: "ModelCenter")) }
+            if busy {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel(String(localized: "Import in progress", table: "ModelCenter"))
+            }
             if let plan = importPlan {
                 if plan.candidates.isEmpty {
                     Text(String(localized: "No connections were found in this file. Check the selected source and configuration file.", table: "ModelCenter"))
@@ -846,27 +1766,37 @@ struct MacModelConnectionsView: View {
                 }
                 Toggle(String(localized: "Enable imported models for chat", table: "ModelCenter"), isOn: $enableImportedModels)
                     .toggleStyle(.macSwitch)
-                Button(String(localized: "Confirm import", table: "ModelCenter")) { confirmImport(plan) }
-                    .buttonStyle(.nolaProminent)
-                    .disabled(importSelection.isEmpty || plan.candidates.contains { importSelection.contains($0.id) && $0.existing_revision != nil && !importUpdates.contains($0.id) })
-                    .accessibilityIdentifier("model.import.confirm")
-                Button(String(localized: "Discard preview", table: "ModelCenter")) { invalidateImport() }
+                HStack(spacing: 8) {
+                    Button(String(localized: "Confirm import", table: "ModelCenter")) { confirmImport(plan) }
+                        .buttonStyle(.nolaProminent)
+                        .disabled(importSelection.isEmpty || plan.candidates.contains { importSelection.contains($0.id) && $0.existing_revision != nil && !importUpdates.contains($0.id) })
+                        .accessibilityIdentifier("model.import.confirm")
+                    Button(String(localized: "Discard preview", table: "ModelCenter")) { invalidateImport() }
+                }
             }
             ForEach(importResults) { result in
-                Label(result.status == "imported" ? String(localized: "Connection imported", table: "ModelCenter") : String(localized: "Connection not imported", table: "ModelCenter") + ": " + (result.error ?? String(localized: "Refresh the preview and try again", table: "ModelCenter")),
-                    systemImage: result.status == "imported" ? "checkmark.circle" : "exclamationmark.triangle")
+                Label(
+                    result.status == "imported"
+                        ? String(localized: "Connection imported", table: "ModelCenter")
+                        : String(localized: "Connection not imported", table: "ModelCenter") + ": " + (result.error ?? String(localized: "Refresh the preview and try again", table: "ModelCenter")),
+                    systemImage: result.status == "imported" ? "checkmark.circle" : "exclamationmark.triangle"
+                )
             }
         }
     }
+
     private func chooseSourceFile(credential: Bool) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = false
-        panel.message = credential ? String(localized: "Choose the credentials file you authorize Nola to read.", table: "ModelCenter") : String(localized: "Choose the configuration file for the selected source.", table: "ModelCenter")
+        panel.message = credential
+            ? String(localized: "Choose the credentials file you authorize Nola to read.", table: "ModelCenter")
+            : String(localized: "Choose the configuration file for the selected source.", table: "ModelCenter")
         panel.prompt = String(localized: "Choose", table: "ModelCenter")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         invalidateImport()
         if credential { credentialURL = url } else { sourceURL = url }
     }
+
     private func importCredentialLabel(_ status: String) -> String {
         switch status {
         case "available": String(localized: "API key: included", table: "ModelCenter")
@@ -880,37 +1810,86 @@ struct MacModelConnectionsView: View {
         importBridge?.cancel(); importBridge = nil; importPlan = nil
         importSelection = []; importUpdates = []; importResults = []
     }
+
     private func cancelImport() {
         importBridge?.cancel(); importBridge = nil; importPlan = nil
     }
+
     private func previewImport() {
         guard let sourceURL else { return }
         invalidateImport()
         perform {
             let bridge = try service.makeImportBridge(); importBridge = bridge
-            importPlan = try await bridge.preview(source: importSource, path: sourceURL.path,
+            importPlan = try await bridge.preview(
+                source: importSource,
+                path: sourceURL.path,
                 credentialPath: includeCredentials ? credentialURL?.path : nil,
-                includeCredentials: includeCredentials, allowEnvironment: includeCredentials && allowEnvironment)
+                includeCredentials: includeCredentials,
+                allowEnvironment: includeCredentials && allowEnvironment
+            )
         }
     }
+
     private func confirmImport(_ plan: MacModelImportPlan) {
         guard let bridge = importBridge else { return }
         perform {
             defer { bridge.cancel(); importBridge = nil; importPlan = nil }
-            importResults = try await bridge.commit(planID: plan.plan_id, selected: importSelection,
-                updateExisting: importUpdates, enableModels: enableImportedModels)
+            importResults = try await bridge.commit(
+                planID: plan.plan_id,
+                selected: importSelection,
+                updateExisting: importUpdates,
+                enableModels: enableImportedModels
+            )
             NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+            if let firstImported = importResults.first(where: { $0.status == "imported" }) {
+                selectedConnectionID = firstImported.connection_id
+                showsCompactDetail = true
+            }
             status = String(localized: "Import finished. Review the per-connection results below.", table: "ModelCenter")
         }
     }
+
+    // MARK: - Reload & Execution
+
     private func reload() {
+        reloadTask?.cancel()
+        reloadTask = Task {
+            await reloadAsync()
+        }
+    }
+
+    private func reloadAsync() async {
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
         do {
-            connections = try service.connections(); accounts = try service.accounts()
-            let fresh = try Dictionary(uniqueKeysWithValues: connections.map { ($0.id, try service.enabledModels(connectionID: $0.id)) })
-            enabled = Self.refreshedSelection(draft: enabled, saved: savedEnabled, fresh: fresh)
-            savedEnabled = fresh
+            let inventory = try await Task.detached(priority: .userInitiated) { [service] in
+                try service.loadInventory()
+            }.value
+            guard !Task.isCancelled, generation == reloadGeneration else { return }
+            connections = inventory.connections
+            accounts = inventory.accounts
+            enabled = Self.refreshedSelection(draft: enabled, saved: savedEnabled, fresh: inventory.enabledByConnection)
+            savedEnabled = inventory.enabledByConnection
+            if selectedConnectionID == nil || !connections.contains(where: { $0.id == selectedConnectionID }) {
+                selectedConnectionID = connections.first?.id
+            }
             error = nil
-        } catch { self.error = error.localizedDescription }
+            focusRemoteProfileIfNeeded()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == reloadGeneration else { return }
+            self.error = error.localizedDescription
+            Logger.shared.log(
+                .error,
+                "MacModelConnectionsView",
+                "Failed to load model connections",
+                metadata: [
+                    "error": error.localizedDescription,
+                    "detail": String(describing: error),
+                ]
+            )
+        }
     }
 
     private func focusRemoteProfileIfNeeded() {
@@ -926,14 +1905,15 @@ struct MacModelConnectionsView: View {
         }
         handledFocusRevision = focusRevision
         selectedConnectionID = connection.id
-        workspace = .connections
+        showsCompactDetail = true
         if let catalogKey = source["catalogKey"] as? String,
            connection.document.catalog?.models.contains(where: { $0.id == catalogKey }) == true {
             expandedModelID = catalogKey
         }
     }
+
     nonisolated static func refreshedSelection(draft: [String: Set<String>], saved: [String: Set<String>],
-        fresh: [String: Set<String>]) -> [String: Set<String>] {
+                                               fresh: [String: Set<String>]) -> [String: Set<String>] {
         fresh.mapValues { $0 }.merging(draft.filter { id, value in
             fresh[id] != nil && value != saved[id, default: []]
         }) { _, edited in edited }
@@ -944,14 +1924,132 @@ struct MacModelConnectionsView: View {
         busy = true; error = nil; status = nil
         operationTask = Task {
             defer { busy = false; operationTask = nil }
-            do { try await action(); reload() }
-            catch {
-                if Task.isCancelled { reload(); if status == nil { status = String(localized: "Operation cancelled. Saved state was refreshed for review.", table: "ModelCenter") } }
-                else { self.error = error.localizedDescription }
+            do {
+                try await action()
+                await reloadAsync()
+            } catch {
+                if Task.isCancelled {
+                    await reloadAsync()
+                    if status == nil {
+                        status = String(localized: "Operation cancelled. Saved state was refreshed for review.", table: "ModelCenter")
+                    }
+                } else {
+                    self.error = error.localizedDescription
+                    Logger.shared.log(
+                        .error,
+                        "MacModelConnectionsView",
+                        "Model connection operation failed",
+                        metadata: ["error": error.localizedDescription]
+                    )
+                }
             }
         }
     }
 }
+
+// MARK: - Lightweight Lazy Row for 400+ Model Catalogs
+
+private struct ConnectionModelRow<ExpandedContent: View>: View {
+    let model: MacModelConnectionSnapshot.Model
+    let isEnabled: Bool
+    let isExpanded: Bool
+    let hasVerifiedEvidence: Bool
+    let onToggle: (Bool) -> Void
+    let onToggleExpand: () -> Void
+    @ViewBuilder let expandedContent: () -> ExpandedContent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Toggle(isOn: Binding(get: { isEnabled }, set: onToggle)) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(model.display_name)
+                                .font(.body.weight(isEnabled ? .semibold : .regular))
+                                .lineLimit(1)
+                            if hasVerifiedEvidence {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(MacDesignColor.success)
+                                    .help(String(localized: "Text response verified", table: "ModelCenter"))
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            if model.display_name != model.model_id {
+                                Text(model.model_id)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            if let ctx = model.context_window, ctx > 0 {
+                                capabilityBadge(Self.formatContext(ctx))
+                            }
+                            if model.modalities.contains("image") {
+                                capabilityBadge("Vision")
+                            }
+                            if !model.reasoning_levels.isEmpty {
+                                capabilityBadge("Reasoning")
+                            }
+                        }
+                    }
+                }
+                .toggleStyle(.macSwitch)
+
+                Spacer(minLength: 8)
+
+                Button(action: onToggleExpand) {
+                    Label(String(localized: "Model options", table: "ModelCenter"), systemImage: "slider.horizontal.3")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .foregroundStyle(isExpanded ? MacDesignColor.brand : .secondary)
+                .help(String(localized: "Model options", table: "ModelCenter"))
+                .accessibilityValue(isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            }
+
+            if isExpanded {
+                Divider().opacity(0.5)
+                expandedContent()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            isEnabled ? MacDesignColor.brand.opacity(0.05) : MacDesignColor.panel,
+            in: RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: MacDesignTokens.Radius.control, style: .continuous)
+                .strokeBorder(
+                    isEnabled ? MacDesignColor.brand.opacity(0.24) : MacDesignColor.borderSubtle.opacity(0.75),
+                    lineWidth: 0.75
+                )
+        }
+    }
+
+    private func capabilityBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1.5)
+            .background(MacDesignColor.subtleFill, in: Capsule())
+    }
+
+    private static func formatContext(_ tokens: UInt64) -> String {
+        if tokens >= 1_000_000 {
+            let m = Double(tokens) / 1_000_000.0
+            return m.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(m))M" : String(format: "%.1fM", m)
+        }
+        if tokens >= 1_000 {
+            return "\(tokens / 1_000)K"
+        }
+        return "\(tokens)"
+    }
+}
+
+// MARK: - Explicit Capability Override Editor
 
 private struct MacModelCapabilityOverrideEditor: View {
     let connection: MacModelConnectionSnapshot

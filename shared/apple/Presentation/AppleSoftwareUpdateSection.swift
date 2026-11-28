@@ -52,7 +52,18 @@ nonisolated enum AppleSoftwareUpdateClient {
         url: String? = nil,
         sha256: String? = nil
     ) async throws -> T {
-        var request: [String: String] = ["operation": operation, "target": target]
+        var request: [String: Any] = ["operation": operation, "target": target]
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { request["current_version"] = trimmed }
+        }
+        if let rawBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
+           let build = UInt64(rawBuild.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            request["current_build"] = build
+        } else if let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? NSNumber {
+            let build = buildNumber.uint64Value
+            if build > 0 { request["current_build"] = build }
+        }
         if let id { request["expected_release_id"] = id }
         if let url { request["url"] = url }
         if let sha256 { request["sha256"] = sha256 }

@@ -705,6 +705,7 @@ pub(super) struct OAuthFlowState {
     pub(super) instructions: Option<String>,
     pub(super) poll_interval_seconds: Option<u64>,
     pub(super) cancellation_confirmed: Option<bool>,
+    pub(super) expires_at_ms: i64,
 }
 
 pub(super) fn generate_pkce_pair() -> (String, String) {

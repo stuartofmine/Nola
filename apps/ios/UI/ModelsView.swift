@@ -26,8 +26,9 @@ struct ModelsView: View {
     private var hostIsConnecting: Bool { hostVerificationTask != nil }
     @State private var confirmsDiscard = false
     private var hasDraft: Bool { apiDraft.hasChanges || hostHasDraft }
-    @State private var models: [ModelInfo] = ModelSelectionManager.getAvailableModels()
-    @State private var selectedModel: ModelInfo? = ModelSelectionManager.getLastSelectedModel()
+    @State private var models: [ModelInfo] = []
+    @State private var selectedModel: ModelInfo? = nil
+    @State private var modelsReloadGeneration = 0
     @State private var detailTarget: ModelInfo? = nil
     @State private var parameterTarget: ModelInfo? = nil
     @State private var protocolTarget: ModelInfo? = nil
@@ -189,9 +190,9 @@ struct ModelsView: View {
 
             }
             .navigationTitle(L10n.modelsTitle)
-            .onAppear {
-                reloadModels()
-                Task { await refreshHostAgentSettings() }
+            .task {
+                await reloadModelsAsync()
+                await refreshHostAgentSettings()
             }
             .onReceive(container.chatManager.$selectedModelInfo) { info in
                 selectedModel = info
@@ -645,8 +646,19 @@ struct ModelsView: View {
     }
 
     private func reloadModels() {
-        models = ModelSelectionManager.getAvailableModels()
-        selectedModel = container.chatManager.getCurrentModel() ?? ModelSelectionManager.getLastSelectedModel()
+        Task { await reloadModelsAsync() }
+    }
+
+    @MainActor
+    private func reloadModelsAsync() async {
+        modelsReloadGeneration += 1
+        let generation = modelsReloadGeneration
+        let loaded = await Task.detached(priority: .userInitiated) {
+            (ModelSelectionManager.getAvailableModels(), ModelSelectionManager.getLastSelectedModel())
+        }.value
+        guard generation == modelsReloadGeneration else { return }
+        models = loaded.0
+        selectedModel = container.chatManager.getCurrentModel() ?? loaded.1
     }
 
     private func resolveLocalModel(_ model: ModelInfo) -> LMModel? {
@@ -857,11 +869,7 @@ struct WebHostConfigurationView: View {
         _accessToken = State(initialValue: "")
     }
 
-    private var pairedHost: URL? {
-        guard let url = IOSHostConnectionDraftPolicy.endpoint(hostURL),
-              ModelSelectionManager.pairedWebHostIdentity(for: url) != nil else { return nil }
-        return url
-    }
+    @State private var pairedHost: URL? = nil
 
     var body: some View {
         let pairedURL = pairedHost
@@ -1065,11 +1073,22 @@ struct WebHostConfigurationView: View {
             Button("model.setup.discard", role: .destructive) { dismiss() }
             Button("model.setup.keep_editing", role: .cancel) {}
         }
+        .task(id: "\(hostURL)|\(verifiedAddress ?? "")") {
+            let draftURL = hostURL
+            let resolved: URL? = await Task.detached(priority: .userInitiated) {
+                guard let url = IOSHostConnectionDraftPolicy.endpoint(draftURL),
+                      ModelSelectionManager.pairedWebHostIdentity(for: url) != nil else { return nil }
+                return url
+            }.value
+            guard !Task.isCancelled else { return }
+            pairedHost = resolved
+        }
         .alert(Text("chat.host_pairing.forget.confirm.title"), isPresented: Binding(
             get: { pairingToForget != nil }, set: { if !$0 { pairingToForget = nil } }
         ), presenting: pairingToForget) { url in
             Button("chat.host_pairing.forget.confirm.action", role: .destructive) {
                 ModelSelectionManager.forgetWebHostIdentity(for: url)
+                pairedHost = nil
                 verifiedAddress = nil
                 errorMessage = nil
             }
@@ -1462,7 +1481,7 @@ func webHostPairingErrorMessage(_ error: Error) -> String {
         return tailcatMessage
     }
     if case let NolaError.llm(.network(underlying)) = error,
-       (underlying as NSError).domain == "WebAgentProvider.Tailcat" {
+       (underlying as NSError).domain == "WebAgentProviderTailcat" {
         return underlying.localizedDescription
     }
     switch error {

@@ -40,8 +40,45 @@ public final class DataManager {
     
     // MARK: - Export Data
     
+    /// Export all user data to JSON format off the main actor.
+    @MainActor
+    public func exportDataAsync() async -> Data? {
+        let customTemplates = promptTemplates?.templates.filter { !$0.isBuiltIn } ?? []
+        let runs: [LocalJSONStorage.ScheduledActionRunRecord] = (try? localJSONStorage?.getScheduledActionRuns(limit: 500)) ?? []
+        let runtime = applicationRuntime
+        let convStore = conversationStore
+        let logger = self.logger
+        return await Task.detached(priority: .userInitiated) {
+            Self.buildExportData(
+                logger: logger,
+                runtime: runtime,
+                conversationStore: convStore,
+                customTemplates: customTemplates,
+                scheduledActionRuns: runs
+            )
+        }.value
+    }
+
     /// Export all user data to JSON format
     public func exportData() -> Data? {
+        let customTemplates = promptTemplates?.templates.filter { !$0.isBuiltIn } ?? []
+        let runs: [LocalJSONStorage.ScheduledActionRunRecord] = (try? localJSONStorage?.getScheduledActionRuns(limit: 500)) ?? []
+        return Self.buildExportData(
+            logger: logger,
+            runtime: applicationRuntime,
+            conversationStore: conversationStore,
+            customTemplates: customTemplates,
+            scheduledActionRuns: runs
+        )
+    }
+
+    private nonisolated static func buildExportData(
+        logger: Logger,
+        runtime: IOSApplicationRuntime?,
+        conversationStore: ConversationStore?,
+        customTemplates: [PromptTemplate],
+        scheduledActionRuns: [LocalJSONStorage.ScheduledActionRunRecord]
+    ) -> Data? {
         logger.log(.info, "DataManager", NSLocalizedString("autogen.DataManager.b2556e9c", comment: "AUTOGEN"))
         
         var exportData: [String: Any] = [:]
@@ -73,7 +110,7 @@ public final class DataManager {
         
         // Export canonical data sources, conversations, memories, templates, skills, and MCP servers (excluding secrets)
         let iso = ISO8601DateFormatter()
-        if let runtime = applicationRuntime {
+        if let runtime {
             do {
                 let canonicalSources = try runtime.listDataSources()
                 exportData["urlDataSources"] = canonicalSources.map { source -> [String: Any] in
@@ -203,8 +240,8 @@ public final class DataManager {
             exportData["urlDataSources"] = exportableSources
         }
 
-        if let templates = promptTemplates?.templates.filter({ !$0.isBuiltIn }), !templates.isEmpty {
-            exportData["promptTemplates"] = templates.map { template -> [String: Any] in
+        if !customTemplates.isEmpty {
+            exportData["promptTemplates"] = customTemplates.map { template -> [String: Any] in
                 var dict: [String: Any] = [
                     "id": template.id.uuidString,
                     "name": template.name,
@@ -221,39 +258,34 @@ public final class DataManager {
         }
 
         // Export structured scheduled-action run history (file-backed local storage)
-        if let storage = localJSONStorage {
-            do {
-                let runs = try storage.getScheduledActionRuns(limit: 500)
-                let iso = ISO8601DateFormatter()
-                let exportableRuns: [[String: Any]] = runs.map { r in
-                    var dict: [String: Any] = [
-                        "id": r.id,
-                        "createdAt": iso.string(from: r.createdAt),
-                        "startedAt": iso.string(from: r.startedAt),
-                        "finishedAt": iso.string(from: r.finishedAt),
-                        "isBackground": r.isBackground,
-                        "actionType": r.actionType,
-                        "actionId": r.actionId,
-                        "status": r.status.rawValue
-                    ]
-                    if let v = r.actionName { dict["actionName"] = v }
-                    if let v = r.actionUrl { dict["actionUrl"] = v }
-                    if let v = r.dedupeKey { dict["dedupeKey"] = v }
-                    if let v = r.reason { dict["reason"] = v }
-                    if let v = r.resultEventId { dict["resultEventId"] = v }
-                    if let v = r.notificationSent { dict["notificationSent"] = v }
-                    if let v = r.notificationError { dict["notificationError"] = v }
-                    if let v = r.modelUsed { dict["modelUsed"] = v }
-                    if let v = r.tokensUsed { dict["tokensUsed"] = v }
-                    if let v = r.processingDurationSec { dict["processingDurationSec"] = v }
-                    if let v = r.details { dict["details"] = v }
-                    if let v = r.errorMessage { dict["errorMessage"] = v }
-                    return dict
-                }
-                exportData["scheduledActionRuns"] = exportableRuns
-            } catch {
-                logger.log(.warn, "DataManager", NSLocalizedString("autogen.DataManager.4c447732", comment: "AUTOGEN"), metadata: ["error": error.localizedDescription])
+        if !scheduledActionRuns.isEmpty {
+            let iso = ISO8601DateFormatter()
+            let exportableRuns: [[String: Any]] = scheduledActionRuns.map { r in
+                var dict: [String: Any] = [
+                    "id": r.id,
+                    "createdAt": iso.string(from: r.createdAt),
+                    "startedAt": iso.string(from: r.startedAt),
+                    "finishedAt": iso.string(from: r.finishedAt),
+                    "isBackground": r.isBackground,
+                    "actionType": r.actionType,
+                    "actionId": r.actionId,
+                    "status": r.status.rawValue
+                ]
+                if let v = r.actionName { dict["actionName"] = v }
+                if let v = r.actionUrl { dict["actionUrl"] = v }
+                if let v = r.dedupeKey { dict["dedupeKey"] = v }
+                if let v = r.reason { dict["reason"] = v }
+                if let v = r.resultEventId { dict["resultEventId"] = v }
+                if let v = r.notificationSent { dict["notificationSent"] = v }
+                if let v = r.notificationError { dict["notificationError"] = v }
+                if let v = r.modelUsed { dict["modelUsed"] = v }
+                if let v = r.tokensUsed { dict["tokensUsed"] = v }
+                if let v = r.processingDurationSec { dict["processingDurationSec"] = v }
+                if let v = r.details { dict["details"] = v }
+                if let v = r.errorMessage { dict["errorMessage"] = v }
+                return dict
             }
+            exportData["scheduledActionRuns"] = exportableRuns
         }
         
         // Export notification settings
@@ -304,8 +336,22 @@ public final class DataManager {
     
     // MARK: - Clear Data
     
+    /// Clear all user data and reset to factory settings off the main actor.
+    @MainActor
+    public func clearAllDataAsync() async {
+        let logger = self.logger
+        let storage = self.localJSONStorage
+        await Task.detached(priority: .userInitiated) {
+            Self.performClearAllData(logger: logger, localJSONStorage: storage)
+        }.value
+    }
+
     /// Clear all user data and reset to factory settings
     public func clearAllData() {
+        Self.performClearAllData(logger: logger, localJSONStorage: localJSONStorage)
+    }
+
+    private nonisolated static func performClearAllData(logger: Logger, localJSONStorage: LocalJSONStorage?) {
         logger.log(.warn, "DataManager", NSLocalizedString("autogen.DataManager.640e954b", comment: "AUTOGEN"))
         
         let defaults = UserDefaults.standard
@@ -334,7 +380,7 @@ public final class DataManager {
         }
         
         // Clear Keychain (API credentials)
-        clearKeychain()
+        clearKeychain(logger: logger)
 
         // Clear file-backed local storage (journals/reminders/tasks/scheduled-action runs)
         do {
@@ -497,7 +543,7 @@ public final class DataManager {
     
     // MARK: - Private Helpers
     
-    private func clearKeychain() {
+    private nonisolated static func clearKeychain(logger: Logger) {
         let keychainServices = [
             "nola.llm",
             "com.nola.llm",

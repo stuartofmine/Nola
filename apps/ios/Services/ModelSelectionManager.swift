@@ -191,7 +191,7 @@ public final class ModelSelectionManager {
         )
     }
 
-    public static func getAvailableModels() -> [ModelInfo] {
+    nonisolated public static func getAvailableModels() -> [ModelInfo] {
         guard let store = IOSApplicationRuntime.shared else { return [] }
         do {
             return try availableModels(using: store)
@@ -202,7 +202,7 @@ public final class ModelSelectionManager {
         }
     }
 
-    public static func getLastSelectedModel() -> ModelInfo? {
+    nonisolated public static func getLastSelectedModel() -> ModelInfo? {
         guard let store = IOSApplicationRuntime.shared else { return nil }
         do {
             return try lastSelectedModel(using: store)
@@ -294,14 +294,14 @@ public final class ModelSelectionManager {
             reasoningTier: runtime?["reasoning_tier"]?.stringScalar ?? "balanced")
     }
 
-    static func availableModels(using store: IOSApplicationRuntime) throws -> [ModelInfo] {
+    nonisolated static func availableModels(using store: IOSApplicationRuntime) throws -> [ModelInfo] {
         let stored = try store.listModelProfiles().filter { $0.enabled && $0.deletedAtMs == nil }.compactMap(modelInfo(from:))
         // Catalog suggestions are not configured profiles. A query must not
         // turn them into durable models or choose one on the user's behalf.
         return stored
     }
 
-    static func lastSelectedModel(using store: IOSApplicationRuntime) throws -> ModelInfo? {
+    nonisolated static func lastSelectedModel(using store: IOSApplicationRuntime) throws -> ModelInfo? {
         guard let setting = try store.productSetting(key: "chat.default_model") else { return nil }
         try store.validateDefaultChatModel(valueJSON: setting.valueJSON)
         struct Configuration: Decodable {
@@ -490,7 +490,7 @@ public final class ModelSelectionManager {
         return updated
     }
 
-    public static func clearSessionCredentials() {
+    nonisolated public static func clearSessionCredentials() {
         sessionCredentialLock.lock()
         sessionWebHostTokens.removeAll()
         sessionWebHostIdentities.removeAll()
@@ -514,7 +514,7 @@ public final class ModelSelectionManager {
         getAvailableModels().first { $0.isWebBackend }
     }
 
-    public static func pairedWebHostIdentity(for baseURL: URL) -> String? {
+    nonisolated public static func pairedWebHostIdentity(for baseURL: URL) -> String? {
         let account = webHostIdentityKey(baseURL)
         sessionCredentialLock.lock()
         let sessionIdentity = sessionWebHostIdentities[account]

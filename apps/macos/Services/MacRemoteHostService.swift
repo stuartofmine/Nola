@@ -636,7 +636,6 @@ nonisolated enum MacPermissionGrantScope: String, Sendable {
 
 nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case cautious
-    case acceptEdits = "accept_edits"
     case allowAll = "allow_all"
 
     var id: String { rawValue }
@@ -644,7 +643,6 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
     var title: String {
         switch self {
         case .cautious: return String(localized: "Cautious", table: "Permissions")
-        case .acceptEdits: return String(localized: "Accept Edits", table: "Permissions")
         case .allowAll: return String(localized: "Allow All")
         }
     }
@@ -653,8 +651,6 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         switch self {
         case .cautious:
             return String(localized: "Confirm deletion, overwrites, sensitive data access, outgoing content, and new connections. Ordinary reads and new files proceed.", table: "Permissions")
-        case .acceptEdits:
-            return String(localized: "Auto-allow workspace file edits. Confirm shell commands, outside-workspace writes, outgoing content, and new connections.", table: "Permissions")
         case .allowAll:
             return String(localized: "No Nola approval prompts in this conversation. System permissions still apply.", table: "Permissions")
         }
@@ -667,8 +663,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
     private var rank: Int {
         switch self {
         case .cautious: return 0
-        case .acceptEdits: return 1
-        case .allowAll: return 2
+        case .allowAll: return 1
         }
     }
 
@@ -685,7 +680,7 @@ nonisolated enum MacPermissionMode: String, CaseIterable, Identifiable, Codable,
         guard let value else { return .cautious }
         guard let mode = Self(rawValue: value) else {
             throw DecodingError.dataCorrupted(.init(codingPath: [],
-                debugDescription: "Permission mode must be cautious, accept_edits, or allow_all."))
+                debugDescription: "Permission mode must be cautious or allow_all."))
         }
         return mode
     }

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use chrono::Utc;
+use chrono::{Datelike, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use nola_engine::{compact_session_now, load_session_plan, load_session_todos, load_session_usage};
 use nola_llm::LlmClient;
 use nola_modules::a2ui::{build_nodes_from_spec, catalog_digest, commit_ui_interaction, delete_ui_surface, list_conversation_surfaces, preview_ui_surface, read_ui_surface_changes, read_ui_surface_revision, upsert_ui_surface, UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceOwner, UiSurfaceRevisionRef, DEFAULT_CATALOG_ID, MAX_ACTIVE_SURFACES_PER_CONVERSATION};
@@ -37,6 +37,10 @@ mod run_journal;
 #[cfg(test)]
 mod tests;
 
+#[allow(unused_imports)]
+pub(crate) use domain::{
+    normalize_catalog_model_entry, normalize_wire_protocol, sync_connection_model_profiles,
+};
 #[allow(unused_imports)]
 pub(crate) use rooms::canonical_agent_directory_payload;
 pub(crate) use rooms::dispatch_agent_room_command;
@@ -385,37 +389,60 @@ pub fn run_daemon(
 
         let active_clients = Arc::new(AtomicUsize::new(0));
         let mut client_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
+        use std::os::unix::io::AsRawFd;
+        let listener_fd = listener.as_raw_fd();
 
         while !shutdown.load(Ordering::Acquire) {
             client_handles.retain(|h| !h.is_finished());
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    let _ = stream.set_nonblocking(false);
-                    if !peer_matches_euid(&stream) {
-                        continue;
-                    }
-                    if active_clients.fetch_add(1, Ordering::SeqCst) >= MAX_CONCURRENT_DAEMON_CLIENTS
-                    {
-                        active_clients.fetch_sub(1, Ordering::SeqCst);
-                        continue;
-                    }
-                    let client_guard = ActiveClientGuard(Arc::clone(&active_clients));
-                    let store_c = store.clone();
-                    let suite_c = Arc::clone(&suite);
-                    let handle = std::thread::spawn(move || {
-                        let _guard = client_guard;
-                        handle_client(stream, &store_c, &suite_c);
-                    });
-                    client_handles.push(handle);
+            let mut pfd = libc::pollfd {
+                fd: listener_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let poll_rc = unsafe { libc::poll(&mut pfd, 1, 50) };
+            if poll_rc < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(50));
+                if shutdown.load(Ordering::Acquire) {
+                    break;
                 }
-                Err(_) => {
-                    if shutdown.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            if poll_rc == 0 {
+                continue;
+            }
+            // Drain all queued incoming UDS connections immediately without sleeping.
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        if !peer_matches_euid(&stream) {
+                            continue;
+                        }
+                        if active_clients.fetch_add(1, Ordering::SeqCst)
+                            >= MAX_CONCURRENT_DAEMON_CLIENTS
+                        {
+                            active_clients.fetch_sub(1, Ordering::SeqCst);
+                            continue;
+                        }
+                        let client_guard = ActiveClientGuard(Arc::clone(&active_clients));
+                        let store_c = store.clone();
+                        let suite_c = Arc::clone(&suite);
+                        let handle = std::thread::spawn(move || {
+                            let _guard = client_guard;
+                            handle_client(stream, &store_c, &suite_c);
+                        });
+                        client_handles.push(handle);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         break;
                     }
-                    std::thread::sleep(Duration::from_millis(50));
+                    Err(_) => {
+                        break;
+                    }
                 }
             }
         }
@@ -1583,7 +1610,7 @@ pub fn dispatch_command(
                 .or_else(|| args.get("source"))
                 .and_then(|v| v.as_str())
                 .map(str::trim)
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
             let needs_response_filter = input
                 .get("needs_response")
                 .or_else(|| args.get("needs_response"))
@@ -1594,73 +1621,194 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .map(|s| s.trim().to_ascii_lowercase())
                 .filter(|s| !s.is_empty());
-            let sessions = store
-                .list_sessions(200)
-                .map_err(|e| ("storage_error", e.to_string()))?;
-            let mut entries = Vec::new();
-            for (idx, s) in sessions.into_iter().enumerate() {
-                let (msgs, evs) = crate::web_api::reconstruct_v2_messages(store, &s.id);
-                let last_assistant = msgs
-                    .iter()
-                    .rev()
-                    .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
-                let assistant_message_id = last_assistant
-                    .and_then(|m| m.get("id").and_then(|v| v.as_str()))
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
-                let last_summary = msgs
-                    .last()
-                    .and_then(|m| m.get("content").and_then(|v| v.as_str()))
-                    .map(|t| t.chars().take(160).collect::<String>())
-                    .unwrap_or_default();
-                let open_waits = store
-                    .get_kv(&format!("open_waits:{}", s.id))
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.as_array().map(|a| !a.is_empty()))
-                    .unwrap_or(false);
-                if let Some(src) = source_filter {
-                    if !src.eq_ignore_ascii_case("conversation") {
+
+            let mut entries: Vec<Value> = Vec::new();
+            let include_conversation = source_filter.is_none_or(|src| {
+                src.eq_ignore_ascii_case("conversation") || src.eq_ignore_ascii_case("agent")
+            });
+            let include_automation =
+                source_filter.is_none_or(|src| src.eq_ignore_ascii_case("automation"));
+
+            if include_conversation {
+                let sessions = store
+                    .list_sessions(200)
+                    .map_err(|e| ("storage_error", e.to_string()))?;
+                for (idx, s) in sessions.into_iter().enumerate() {
+                    let is_agent_session = s.id.starts_with("agent-")
+                        || store
+                            .get_kv(&format!("conv_room_assoc:{}", s.id))
+                            .ok()
+                            .flatten()
+                            .is_some();
+                    let entry_source = if is_agent_session
+                        && source_filter.is_some_and(|f| f.eq_ignore_ascii_case("agent"))
+                    {
+                        "agent"
+                    } else {
+                        "conversation"
+                    };
+                    if let Some(src) = source_filter {
+                        if src.eq_ignore_ascii_case("agent") && !is_agent_session {
+                            continue;
+                        }
+                    }
+                    let (msgs, evs) = crate::web_api::reconstruct_v2_messages(store, &s.id);
+                    let last_assistant = msgs
+                        .iter()
+                        .rev()
+                        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"));
+                    let assistant_message_id = last_assistant
+                        .and_then(|m| m.get("id").and_then(|v| v.as_str()))
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    let last_summary = msgs
+                        .last()
+                        .and_then(|m| m.get("content").and_then(|v| v.as_str()))
+                        .map(|t| t.chars().take(160).collect::<String>())
+                        .unwrap_or_default();
+                    let open_waits = store
+                        .get_kv(&format!("open_waits:{}", s.id))
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+                        .unwrap_or(false);
+                    if needs_response_filter == Some(true) && !open_waits {
                         continue;
                     }
-                }
-                if let Some(req_needs) = needs_response_filter {
-                    if open_waits != req_needs {
-                        continue;
+                    if let Some(ref q) = query_filter {
+                        let title_match = s.title.to_ascii_lowercase().contains(q);
+                        let summary_match = last_summary.to_ascii_lowercase().contains(q);
+                        if !title_match && !summary_match {
+                            continue;
+                        }
                     }
-                }
-                if let Some(ref q) = query_filter {
-                    let title_match = s.title.to_ascii_lowercase().contains(q);
-                    let summary_match = last_summary.to_ascii_lowercase().contains(q);
-                    if !title_match && !summary_match {
-                        continue;
-                    }
-                }
-                entries.push(json!({
-                    "id": s.id,
-                    "activity_id": s.id,
-                    "run_id": format!("run-{}", s.id),
-                    "conversation_id": s.id,
-                    "assistant_message_id": assistant_message_id,
-                    "source": "conversation",
-                    "kind": "conversation",
-                    "title": s.title,
-                    "summary": last_summary,
-                    "status": if open_waits { "waiting" } else { "completed" },
-                    "needs_response": open_waits,
-                    "is_current": idx == 0,
-                    "message_count": msgs.len(),
-                    "event_count": evs.len(),
-                    "created_at": crate::web_api::ms_to_rfc3339(s.created_at_ms),
-                    "updated_at": crate::web_api::ms_to_rfc3339(s.updated_at_ms),
-                    "created_at_ms": s.created_at_ms,
-                    "completed_at_ms": s.updated_at_ms,
-                    "updated_at_ms": s.updated_at_ms
-                }));
-                if entries.len() >= limit {
-                    break;
+                    entries.push(json!({
+                        "id": s.id,
+                        "activity_id": s.id,
+                        "run_id": format!("run-{}", s.id),
+                        "conversation_id": s.id,
+                        "assistant_message_id": assistant_message_id,
+                        "source": entry_source,
+                        "kind": entry_source,
+                        "title": s.title,
+                        "summary": last_summary,
+                        "status": if open_waits { "waiting" } else { "completed" },
+                        "needs_response": open_waits,
+                        "is_current": idx == 0,
+                        "message_count": msgs.len(),
+                        "event_count": evs.len(),
+                        "created_at": crate::web_api::ms_to_rfc3339(s.created_at_ms),
+                        "updated_at": crate::web_api::ms_to_rfc3339(s.updated_at_ms),
+                        "created_at_ms": s.created_at_ms,
+                        "completed_at_ms": s.updated_at_ms,
+                        "updated_at_ms": s.updated_at_ms
+                    }));
                 }
             }
+
+            if include_automation {
+                let runs = suite
+                    .list_records::<Value>("automation_run")
+                    .unwrap_or_default();
+                for r in runs {
+                    let run_id = r
+                        .get("id")
+                        .or_else(|| r.get("run_id"))
+                        .or_else(|| r.get("occurrence_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if run_id.is_empty() {
+                        continue;
+                    }
+                    let auto_id = r
+                        .get("automation_id")
+                        .or_else(|| r.get("definition_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let conv_id = r
+                        .get("conversation_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(auto_id);
+                    let title = r
+                        .get("title")
+                        .or_else(|| r.get("name"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or(if auto_id.is_empty() { "Automation Run" } else { auto_id });
+                    let summary = r
+                        .get("summary")
+                        .or_else(|| r.get("output"))
+                        .or_else(|| r.get("result"))
+                        .and_then(|v| v.as_str())
+                        .map(|t| t.chars().take(160).collect::<String>())
+                        .unwrap_or_default();
+                    let status = r
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("completed");
+                    let needs_resp = r
+                        .get("needs_response")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(matches!(status, "waiting" | "needs_response" | "needs_user"));
+                    if needs_response_filter == Some(true) && !needs_resp {
+                        continue;
+                    }
+                    if let Some(ref q) = query_filter {
+                        let title_match = title.to_ascii_lowercase().contains(q);
+                        let summary_match = summary.to_ascii_lowercase().contains(q);
+                        let id_match = auto_id.to_ascii_lowercase().contains(q);
+                        if !title_match && !summary_match && !id_match {
+                            continue;
+                        }
+                    }
+                    let created_ms = r
+                        .get("created_at_ms")
+                        .or_else(|| r.get("started_at_ms"))
+                        .or_else(|| r.get("scheduled_for_ms"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_else(now_ms);
+                    let updated_ms = r
+                        .get("updated_at_ms")
+                        .or_else(|| r.get("completed_at_ms"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(created_ms);
+                    let assistant_msg_id = r
+                        .get("assistant_message_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    entries.push(json!({
+                        "id": run_id,
+                        "activity_id": run_id,
+                        "run_id": run_id,
+                        "automation_id": auto_id,
+                        "conversation_id": conv_id,
+                        "assistant_message_id": assistant_msg_id,
+                        "source": "automation",
+                        "kind": "automation",
+                        "title": title,
+                        "summary": summary,
+                        "status": status,
+                        "needs_response": needs_resp,
+                        "is_current": false,
+                        "message_count": 0,
+                        "event_count": 0,
+                        "created_at": crate::web_api::ms_to_rfc3339(created_ms),
+                        "updated_at": crate::web_api::ms_to_rfc3339(updated_ms),
+                        "created_at_ms": created_ms,
+                        "completed_at_ms": updated_ms,
+                        "updated_at_ms": updated_ms
+                    }));
+                }
+            }
+
+            entries.sort_by(|a, b| {
+                let b_ts = b.get("updated_at_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                let a_ts = a.get("updated_at_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+                b_ts.cmp(&a_ts)
+            });
+            entries.truncate(limit);
+
             Ok(json!({
                 "entries": entries,
                 "next_cursor": Value::Null,
@@ -1748,10 +1896,72 @@ pub fn dispatch_command(
                 .map(|dt| dt.and_utc().timestamp_millis())
                 .unwrap_or(0);
             let sessions = store.list_sessions(200).unwrap_or_default();
-            let conversations: Vec<Value> = sessions
-                .iter()
-                .map(|s| crate::web_api::session_to_conversation_json(store, s))
-                .collect();
+            let mut conversations: Vec<Value> = Vec::with_capacity(sessions.len());
+            let mut attention_list: Vec<Value> = Vec::new();
+            for s in &sessions {
+                let conv = crate::web_api::session_to_conversation_json(store, s);
+                let revision = conv
+                    .get("revision")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1)
+                    .max(1);
+                let open_waits: Vec<Value> = store
+                    .get_kv(&format!("open_waits:{}", s.id))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let owned_task_waits: Vec<Value> = store
+                    .get_kv(&format!("owned_task_waits:{}", s.id))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let owned_task_permissions: Vec<Value> = store
+                    .get_kv(&format!("owned_task_permissions:{}", s.id))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.as_array().cloned())
+                    .unwrap_or_default();
+                let permission_projection = store
+                    .get_kv(&format!("permission_projection:{}", s.id))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null());
+                let active_run = store
+                    .get_kv(&format!("active_run_owner:{}", s.id))
+                    .ok()
+                    .flatten()
+                    .filter(|v| {
+                        v.get("run_id").and_then(|r| r.as_str()).is_some()
+                            && v.get("assistant_message_id")
+                                .and_then(|r| r.as_str())
+                                .is_some()
+                    });
+                let needs_response = !open_waits.is_empty()
+                    || !owned_task_waits.is_empty()
+                    || !owned_task_permissions.is_empty();
+                if needs_response {
+                    attention_list.push(json!({
+                        "conversation_id": s.id,
+                        "title": s.title,
+                        "reason": "waiting_for_user_input"
+                    }));
+                }
+                conversations.push(json!({
+                    "conversation_id": s.id,
+                    "title": s.title,
+                    "revision": revision,
+                    "updated_at_ms": s.updated_at_ms,
+                    "needs_response": needs_response,
+                    "active_run": active_run.unwrap_or(Value::Null),
+                    "permission_projection": permission_projection.unwrap_or(Value::Null),
+                    "open_waits": open_waits,
+                    "owned_task_waits": owned_task_waits,
+                    "owned_task_permissions": owned_task_permissions,
+                    "expert_contexts": []
+                }));
+            }
             let sessions_today: Vec<Value> = sessions
                 .iter()
                 .filter(|s| s.updated_at_ms >= start_of_day_ms)
@@ -1774,22 +1984,6 @@ pub fn dispatch_command(
                 .filter(|g| g.status == GoalStatus::Completed && g.updated_at_ms >= start_of_day_ms)
                 .map(|g| json!({"id": g.id, "title": g.title, "status": g.status}))
                 .collect();
-            let mut attention_list: Vec<Value> = Vec::new();
-            for s in &sessions {
-                let has_wait = store
-                    .get_kv(&format!("open_waits:{}", s.id))
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.as_array().map(|a| !a.is_empty()))
-                    .unwrap_or(false);
-                if has_wait {
-                    attention_list.push(json!({
-                        "conversation_id": s.id,
-                        "title": s.title,
-                        "reason": "waiting_for_user_input"
-                    }));
-                }
-            }
             for g in &goals {
                 if g.status == GoalStatus::Failed {
                     attention_list.push(json!({
@@ -3783,7 +3977,7 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(100)
                 .clamp(1, 500) as usize;
-            let runs: Vec<Value> = suite
+            let mut occurrences: Vec<Value> = suite
                 .list_records::<Value>("automation_run")
                 .map_err(|e| ("storage_error", e.to_string()))?
                 .into_iter()
@@ -3800,9 +3994,46 @@ pub fn dispatch_command(
                     after_ms.is_none_or(|a| sched.is_some_and(|s| s > a))
                         && through_ms.is_none_or(|t| sched.is_some_and(|s| s <= t))
                 })
-                .take(limit)
                 .collect();
-            Ok(json!({"occurrences": runs, "items": runs}))
+
+            let frequency = input
+                .get("frequency")
+                .or_else(|| args.get("frequency"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let once_at_ms = input
+                .get("once_at_ms")
+                .or_else(|| args.get("once_at_ms"))
+                .and_then(|v| v.as_i64());
+
+            if frequency.is_some() || once_at_ms.is_some() {
+                let computed = compute_scheduled_automation_occurrences(
+                    def_id,
+                    input,
+                    after_ms,
+                    through_ms,
+                    limit,
+                );
+                let mut seen_ts: HashSet<i64> = occurrences
+                    .iter()
+                    .filter_map(|r| r.get("scheduled_for_ms").and_then(|v| v.as_i64()))
+                    .collect();
+                for occ in computed {
+                    let ts = occ.get("scheduled_for_ms").and_then(|v| v.as_i64());
+                    if ts.is_none_or(|t| seen_ts.insert(t)) {
+                        occurrences.push(occ);
+                    }
+                }
+            }
+
+            occurrences.sort_by_key(|r| {
+                r.get("scheduled_for_ms")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(i64::MAX)
+            });
+            occurrences.truncate(limit);
+            Ok(json!({"occurrences": occurrences, "items": occurrences}))
         }
         "inspect_mobile_permission_request" => {
             let input = args.get("input").unwrap_or(args);
@@ -4041,7 +4272,7 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .trim();
-            let q_lower = query.to_ascii_lowercase();
+            let q_lower = query.to_lowercase();
             let limit = args
                 .get("limit")
                 .and_then(|v| v.as_u64())
@@ -4060,15 +4291,35 @@ pub fn dispatch_command(
             let mut matches = Vec::new();
             for cid in targets {
                 let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, &cid);
-                for m in msgs {
+                for (ordinal, m) in msgs.into_iter().enumerate() {
                     let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                    if q_lower.is_empty() || content.to_ascii_lowercase().contains(&q_lower) {
+                    let match_char_idx = if q_lower.is_empty() {
+                        Some(0usize)
+                    } else {
+                        let lower = content.to_lowercase();
+                        lower
+                            .find(&q_lower)
+                            .map(|byte_idx| lower[..byte_idx].chars().count())
+                    };
+                    if let Some(start_char) = match_char_idx {
+                        let msg_id = m
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| format!("msg-{ordinal}"));
+                        let part_id = format!("{msg_id}:text:0");
+                        let snippet_start = start_char.saturating_sub(40);
+                        let snippet: String =
+                            content.chars().skip(snippet_start).take(240).collect();
                         matches.push(json!({
                             "conversation_id": cid,
-                            "message_id": m.get("id").cloned().unwrap_or(Value::Null),
-                            "seq": m.get("seq").cloned().unwrap_or(json!(0)),
+                            "message_id": msg_id,
+                            "part_id": part_id,
+                            "message_ordinal": ordinal as i64,
+                            "seq": m.get("seq").cloned().unwrap_or(json!(ordinal)),
                             "role": m.get("role").cloned().unwrap_or(json!("assistant")),
-                            "snippet": content.chars().take(240).collect::<String>()
+                            "snippet": snippet,
+                            "start_character": start_char as i64
                         }));
                         if matches.len() >= limit {
                             break;
@@ -4079,13 +4330,7 @@ pub fn dispatch_command(
                     break;
                 }
             }
-            let total = matches.len();
-            Ok(json!({
-                "conversation_id": conv_id,
-                "query": query,
-                "matches": matches,
-                "total": total
-            }))
+            Ok(Value::Array(matches))
         }
         "prepare_goal_control_intent" => {
             let input = args.get("input").unwrap_or(args);
@@ -4128,33 +4373,78 @@ pub fn dispatch_command(
             let input = args.get("input").unwrap_or(args);
             let goal_id = input
                 .get("goal_id")
+                .or_else(|| input.get("goalID"))
                 .or_else(|| input.get("id"))
                 .or_else(|| args.get("goal_id"))
+                .or_else(|| args.get("goalID"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let conv_id = input
                 .get("conversation_id")
+                .or_else(|| input.get("conversationID"))
                 .or_else(|| args.get("conversation_id"))
-                .and_then(|v| v.as_str());
-            let exec_id = new_id();
+                .or_else(|| args.get("conversationID"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let exec_id = input
+                .get("run_id")
+                .or_else(|| input.get("execution_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let contract_id = format!("goal-contract:{goal_id}:{exec_id}");
+            let control_token = format!("goal-ctrl:{goal_id}");
+            let assistant_message_id = format!("{exec_id}:assistant");
             let host_id = store
                 .get_kv("host_id")
                 .ok()
                 .flatten()
                 .and_then(|v| v.as_str().map(ToString::to_string))
                 .unwrap_or_else(|| "local-host".into());
+            let ts = now_ms();
+            let cfg = crate::config::load_active_config(store);
+            let primary_route = match crate::config::resolve_model_route(&cfg) {
+                Ok(r) => json!({
+                    "kind": "native",
+                    "connection_id": r.connection_id,
+                    "model_id": r.model,
+                    "endpoint": r.endpoint,
+                    "protocol": r.protocol.as_str(),
+                    "context_window": r.context_window
+                }),
+                Err(_) => json!({
+                    "kind": "native",
+                    "connection_id": "default",
+                    "model_id": "default",
+                    "endpoint": "",
+                    "protocol": "chat_completions",
+                    "context_window": 128_000
+                }),
+            };
             let owner = json!({
                 "execution_id": exec_id,
+                "run_id": exec_id,
                 "goal_id": goal_id,
                 "conversation_id": conv_id,
+                "contract_id": contract_id,
+                "assistant_message_id": assistant_message_id,
+                "control_token": control_token,
                 "host_id": host_id,
-                "prepared_at_ms": now_ms()
+                "prepared_at_ms": ts
             });
             if !goal_id.is_empty() {
                 let _ = store.set_kv(&format!("goal_exec_owner:{goal_id}"), &owner);
+                if !conv_id.is_empty() {
+                    let _ = store.set_kv(
+                        &format!("goal_exec_owner_run:{conv_id}:{goal_id}:{exec_id}"),
+                        &owner,
+                    );
+                    let _ = store.set_kv(&format!("goal_for_conv:{conv_id}"), &json!(goal_id));
+                }
             }
-            if let Some(cid) = conv_id {
-                let _ = store.set_kv(&format!("goal_exec_owner_conv:{cid}"), &owner);
+            if !conv_id.is_empty() {
+                let _ = store.set_kv(&format!("goal_exec_owner_conv:{conv_id}"), &owner);
             }
             Ok(json!({
                 "ok": true,
@@ -4162,34 +4452,108 @@ pub fn dispatch_command(
                 "goal_id": goal_id,
                 "conversation_id": conv_id,
                 "owner": owner,
-                "ready": true
+                "ready": true,
+                "identity": {
+                    "conversation_id": conv_id,
+                    "goal_id": goal_id,
+                    "run_id": exec_id,
+                    "contract_id": contract_id,
+                    "assistant_message_id": assistant_message_id,
+                    "control_token": control_token
+                },
+                "template": {
+                    "core_config": {
+                        "turn_identity": {
+                            "conversation_id": conv_id,
+                            "goal_id": goal_id,
+                            "run_id": exec_id,
+                            "assistant_message_id": assistant_message_id,
+                            "host_invocation": {
+                                "primary": primary_route
+                            }
+                        }
+                    }
+                }
             }))
         }
         "load_goal_execution_owner" => {
             let goal_id = args
                 .get("goal_id")
+                .or_else(|| args.get("goalID"))
                 .or_else(|| args.get("id"))
-                .and_then(|v| v.as_str());
-            let conv_id = args.get("conversation_id").and_then(|v| v.as_str());
-            let owner = goal_id
-                .and_then(|gid| {
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let conv_id = args
+                .get("conversation_id")
+                .or_else(|| args.get("conversationID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let run_id = args
+                .get("run_id")
+                .or_else(|| args.get("runID"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
+            let stored = match (conv_id, goal_id, run_id) {
+                (Some(cid), Some(gid), Some(rid)) => store
+                    .get_kv(&format!("goal_exec_owner_run:{cid}:{gid}:{rid}"))
+                    .ok()
+                    .flatten(),
+                _ => None,
+            }
+            .or_else(|| {
+                goal_id.and_then(|gid| {
                     store
                         .get_kv(&format!("goal_exec_owner:{gid}"))
                         .ok()
                         .flatten()
                 })
-                .or_else(|| {
-                    conv_id.and_then(|cid| {
-                        store
-                            .get_kv(&format!("goal_exec_owner_conv:{cid}"))
-                            .ok()
-                            .flatten()
-                    })
-                });
+            })
+            .or_else(|| {
+                conv_id.and_then(|cid| {
+                    store
+                        .get_kv(&format!("goal_exec_owner_conv:{cid}"))
+                        .ok()
+                        .flatten()
+                })
+            });
+            let Some(owner) = stored.filter(|v| v.is_object()) else {
+                return Ok(Value::Null);
+            };
+            let eff_goal_id = owner
+                .get("goal_id")
+                .and_then(|v| v.as_str())
+                .or(goal_id)
+                .unwrap_or("");
+            let eff_run_id = run_id
+                .or_else(|| owner.get("run_id").and_then(|v| v.as_str()))
+                .or_else(|| owner.get("execution_id").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            let contract_id = owner
+                .get("contract_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("goal-contract:{eff_goal_id}:{eff_run_id}"));
+            let assistant_message_id = owner
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("{eff_run_id}:assistant"));
+            let control_token = owner
+                .get("control_token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("goal-ctrl:{eff_goal_id}"));
             Ok(json!({
-                "goal_id": goal_id,
-                "conversation_id": conv_id,
-                "owner": owner.unwrap_or(Value::Null)
+                "goal_id": eff_goal_id,
+                "run_id": eff_run_id,
+                "contract_id": contract_id,
+                "assistant_message_id": assistant_message_id,
+                "control_token": control_token,
+                "conversation_id": conv_id.or_else(|| owner.get("conversation_id").and_then(|v| v.as_str())),
+                "owner": owner
             }))
         }
         "effective_permission_grants" => {
@@ -4720,10 +5084,46 @@ pub fn dispatch_command(
                     .map_err(|e| ("storage_error", e.to_string()))?;
                 synchronize_session_state_after_truncate(store, conv_id);
             }
-            let experts = input
+            let experts: Vec<Value> = input
                 .get("selected_experts")
                 .and_then(|v| v.as_array())
-                .cloned()
+                .map(|arr| {
+                    arr.iter()
+                        .enumerate()
+                        .map(|(idx, e)| {
+                            let agent_id = e
+                                .get("agent_id")
+                                .or_else(|| e.get("id"))
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or("expert")
+                                .to_string();
+                            let participant_id = e
+                                .get("participant_id")
+                                .or_else(|| e.get("id"))
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| format!("participant-{agent_id}-{idx}"));
+                            let context_conversation_id = e
+                                .get("context_conversation_id")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .map(ToString::to_string)
+                                .unwrap_or_else(|| format!("{conv_id}:expert:{participant_id}"));
+                            let agent_revision = e
+                                .get("agent_revision")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(1);
+                            json!({
+                                "participant_id": participant_id,
+                                "agent_id": agent_id,
+                                "agent_revision": agent_revision,
+                                "context_conversation_id": context_conversation_id
+                            })
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let prepared = json!({
                 "input": input,
@@ -4742,12 +5142,21 @@ pub fn dispatch_command(
         }
         "prepare_edited_resend" => {
             let input = args.get("input").unwrap_or(args);
-            let conv_id = input
-                .get("conversation_id")
+            let source_conv_id = input
+                .get("source_conversation_id")
+                .or_else(|| input.get("conversation_id"))
                 .or_else(|| input.get("id"))
+                .or_else(|| args.get("source_conversation_id"))
                 .or_else(|| args.get("conversation_id"))
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
                 .ok_or(("invalid_argument", "missing conversation_id".into()))?;
+            let target_conv_id = input
+                .get("target_conversation_id")
+                .or_else(|| args.get("target_conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(source_conv_id);
             if let Some(from_seq) = input
                 .get("from_seq")
                 .or_else(|| input.get("truncate_from_seq"))
@@ -4755,20 +5164,118 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_i64())
             {
                 store
-                    .truncate_events_from(conv_id, from_seq)
+                    .truncate_events_from(source_conv_id, from_seq)
                     .map_err(|e| ("storage_error", e.to_string()))?;
-                synchronize_session_state_after_truncate(store, conv_id);
+                synchronize_session_state_after_truncate(store, source_conv_id);
             }
-            let mut rec = input.clone();
-            if let Some(obj) = rec.as_object_mut() {
-                obj.insert("conversation_id".into(), json!(conv_id));
-                obj.insert("prepared_at_ms".into(), json!(now_ms()));
-                obj.insert("kind".into(), json!("edited_resend"));
-            }
+            let op_id = input
+                .get("operation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let source_msg_id = input
+                .get("source_message_id")
+                .or_else(|| input.get("message_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let edited_text = input
+                .get("edited_text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let title = input
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Edited conversation");
+            let created_at_ms = input
+                .get("created_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            let canonical_input = json!({
+                "operation_id": op_id,
+                "source_conversation_id": source_conv_id,
+                "source_message_id": source_msg_id,
+                "expected_source_revision": input.get("expected_source_revision").and_then(|v| v.as_i64()).unwrap_or(1),
+                "expected_source_message_revision": input.get("expected_source_message_revision").and_then(|v| v.as_u64()).unwrap_or(1),
+                "edited_text": edited_text,
+                "target_conversation_id": target_conv_id,
+                "title": title,
+                "created_at_ms": created_at_ms
+            });
+            let cfg = crate::config::load_active_config(store);
+            let (profile_id, endpoint, model_name, proto_str) =
+                match crate::config::resolve_model_route(&cfg) {
+                    Ok(r) => (
+                        format!("{}:{}", r.connection_id, r.model),
+                        r.endpoint,
+                        r.model,
+                        r.protocol.as_str().to_string(),
+                    ),
+                    Err(_) => (
+                        "default".to_string(),
+                        String::new(),
+                        "default".to_string(),
+                        "chat_completions".to_string(),
+                    ),
+                };
+            let source_run_id = format!("src-run-{source_conv_id}");
+            let source_assistant_id = format!("{source_run_id}:assistant");
+            let body_sha = sha256_hex(edited_text.as_bytes());
+            let config_sha = sha256_hex(format!("{profile_id}:{endpoint}:{proto_str}").as_bytes());
+            let user_message_id = format!("{op_id}:user");
+            let assistant_message_id = format!("{op_id}:assistant");
+            let prepared = json!({
+                "input": canonical_input,
+                "source": {
+                    "conversation_id": source_conv_id,
+                    "message_id": source_msg_id,
+                    "run_id": source_run_id,
+                    "assistant_message_id": source_assistant_id,
+                    "body_sha256": body_sha,
+                    "invocation_config_sha256": config_sha,
+                    "model": {
+                        "version": 1,
+                        "primary": {
+                            "profile_id": profile_id,
+                            "endpoint": endpoint,
+                            "model_name": model_name,
+                            "protocol": proto_str
+                        },
+                        "fallbacks": [],
+                        "generation": {},
+                        "output_admission": {},
+                        "model_capability": {
+                            "profileId": profile_id,
+                            "revision": 1,
+                            "instructionProfile": "default",
+                            "nativeToolCalls": true,
+                            "parallelToolCalls": true,
+                            "reasoning": false,
+                            "reasoningContinuity": false,
+                            "promptCache": false,
+                            "visionInput": false,
+                            "nativePdfInput": false,
+                            "contextWindowTokens": 128000,
+                            "maxOutputTokens": 16384,
+                            "requestContinuation": false,
+                            "maxRequestContinuations": 0,
+                            "streamText": true,
+                            "streamReasoning": false,
+                            "streamToolCalls": true,
+                            "directToolCapabilityIds": []
+                        }
+                    }
+                },
+                "user_message_id": user_message_id,
+                "assistant_message_id": assistant_message_id,
+                "run_id": op_id,
+                "admitted_run_id": Value::Null
+            });
             store
-                .set_kv(&format!("prepared_edited_resend:{conv_id}"), &rec)
+                .set_kv(&format!("prepared_edited_resend:{target_conv_id}"), &prepared)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(json!({"ok": true, "conversation_id": conv_id, "prepared": rec}))
+            Ok(prepared)
         }
         "load_prepared_edited_resend" => {
             let conv_id = args
@@ -8737,6 +9244,491 @@ pub fn dispatch_command(
                 "expert_target": expert_target
             }))
         }
+        "load_task_child_conversation_window" => {
+            let dest = args.get("destination").unwrap_or(args);
+            let child_conv_id = dest
+                .get("child_conversation_id")
+                .or_else(|| dest.get("childConversationID"))
+                .or_else(|| args.get("child_conversation_id"))
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'child_conversation_id'".into()))?;
+            let before_ordinal = args
+                .get("before_ordinal")
+                .or_else(|| args.get("beforeOrdinal"))
+                .and_then(|v| v.as_i64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.clamp(1, 500) as usize);
+            let effective_before = before_ordinal.or_else(|| limit.map(|_| i64::MAX));
+            let sess = match get_session_case_insensitive(store, child_conv_id)
+                .map_err(|e| ("storage_error", e.to_string()))?
+            {
+                Some(s) => s,
+                None => Session {
+                    id: child_conv_id.to_string(),
+                    title: "Task Child".to_string(),
+                    workspace_root: String::new(),
+                    model_connection: None,
+                    model_id: None,
+                    created_at_ms: now_ms(),
+                    updated_at_ms: now_ms(),
+                },
+            };
+            let mut resp = build_conversation_projection_response(
+                store,
+                &sess,
+                0,
+                limit,
+                effective_before,
+                true,
+            );
+            let ownership = json!({
+                "kind": "task_child",
+                "task_id": dest.get("task_id").or_else(|| dest.get("taskID")).cloned().unwrap_or(Value::Null),
+                "parent_conversation_id": dest.get("parent_conversation_id").or_else(|| dest.get("parentConversationID")).cloned().unwrap_or(Value::Null),
+                "parent_run_id": dest.get("parent_run_id").or_else(|| dest.get("parentRunID")).cloned().unwrap_or(Value::Null),
+                "child_conversation_id": child_conv_id,
+                "child_run_id": dest.get("child_run_id").or_else(|| dest.get("childRunID")).cloned().unwrap_or(Value::Null)
+            });
+            if let Some(proj) = resp.get_mut("projection").and_then(|v| v.as_object_mut()) {
+                proj.insert("execution_ownership".into(), ownership.clone());
+            }
+            if let Some(obj) = resp.as_object_mut() {
+                obj.entry("assistant_journal_heads".to_string())
+                    .or_insert_with(|| json!([]));
+                obj.insert("execution_ownership".into(), ownership);
+            }
+            Ok(resp)
+        }
+        "load_exact_run_trace_replay" => {
+            let conv_id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let run_id = args
+                .get("run_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'run_id'".into()))?;
+            let assistant_msg_id = args
+                .get("assistant_message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let after_seq = args
+                .get("after_sequence")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let requested_through = args.get("through_sequence").and_then(|v| v.as_i64());
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(256)
+                .clamp(1, 256) as usize;
+            let trace_id = format!("trace-{run_id}");
+            let stored = store
+                .get_kv(&format!("run_trace:{conv_id}:{run_id}"))
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            let matching: Vec<Value> = stored
+                .into_iter()
+                .filter(|ev| {
+                    assistant_msg_id.is_empty()
+                        || ev
+                            .get("message_id")
+                            .or_else(|| ev.get("messageId"))
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|m| m == assistant_msg_id)
+                })
+                .collect();
+            let max_seq = matching
+                .iter()
+                .filter_map(|e| e.get("sequence").and_then(|v| v.as_i64()))
+                .max()
+                .unwrap_or(0);
+            let frontier = requested_through
+                .map(|t| t.max(after_seq))
+                .unwrap_or_else(|| max_seq.max(after_seq));
+            let mut page_events = Vec::new();
+            let mut cursor = after_seq;
+            for ev in matching {
+                let seq = ev.get("sequence").and_then(|v| v.as_i64()).unwrap_or(0);
+                if seq == cursor + 1 && seq <= frontier && page_events.len() < limit {
+                    page_events.push(ev);
+                    cursor += 1;
+                }
+            }
+            let effective_trace_id = page_events
+                .first()
+                .and_then(|e| {
+                    e.get("trace_id")
+                        .or_else(|| e.get("traceId"))
+                        .and_then(|v| v.as_str())
+                })
+                .map(ToString::to_string)
+                .unwrap_or(trace_id);
+            Ok(json!({
+                "trace_id": effective_trace_id,
+                "through_sequence": frontier,
+                "next_sequence": cursor,
+                "events": page_events
+            }))
+        }
+        "recover_observed_orphaned_run" => {
+            let conv_id = args
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let run_id = args
+                .get("expected_run_id")
+                .or_else(|| args.get("run_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'expected_run_id'".into()))?;
+            let interrupted_at_ms = args
+                .get("interrupted_at_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(now_ms);
+            for run_key in [
+                format!("committed_run:{run_id}"),
+                format!("active_run:{conv_id}:{run_id}"),
+            ] {
+                if let Ok(Some(mut run)) = store.get_kv(&run_key) {
+                    if let Some(obj) = run.as_object_mut() {
+                        obj.insert("turn_status".into(), json!("cancelled"));
+                        obj.insert("orphaned_recovered".into(), json!(true));
+                        obj.insert("interrupted_at_ms".into(), json!(interrupted_at_ms));
+                        if let Some(p) =
+                            obj.get_mut("pending_permissions").and_then(|v| v.as_array_mut())
+                        {
+                            p.clear();
+                        }
+                    }
+                    let _ = store.set_kv(&run_key, &run);
+                }
+            }
+            let _ = store.set_kv(&format!("open_waits:{conv_id}"), &json!([]));
+            let _ = store.set_kv(
+                &format!("orphaned_run_recovery:{conv_id}:{run_id}"),
+                &json!({
+                    "conversation_id": conv_id,
+                    "run_id": run_id,
+                    "status": "interrupted",
+                    "interrupted_at_ms": interrupted_at_ms,
+                    "interrupted_at": args.get("interrupted_at").cloned().unwrap_or(Value::Null),
+                    "observed_deliveries": args.get("observed_deliveries").cloned().unwrap_or_else(|| json!([]))
+                }),
+            );
+            Ok(json!({
+                "ok": true,
+                "recovered": true,
+                "conversation_id": conv_id,
+                "run_id": run_id,
+                "status": "interrupted",
+                "interrupted_at_ms": interrupted_at_ms
+            }))
+        }
+        "query_claimable_memory_jobs" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let now_epoch_ms = input
+                .get("now_epoch_ms")
+                .or_else(|| args.get("now_epoch_ms"))
+                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                .unwrap_or_else(now_ms);
+            let jobs = store
+                .get_kv(&format!("memory_jobs:{conv_id}"))
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+            let claimable: Vec<Value> = jobs
+                .into_iter()
+                .filter(|j| {
+                    let status = j
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending");
+                    match status {
+                        "pending" | "queued" => true,
+                        "retry_scheduled" => j
+                            .get("next_retry_at_ms")
+                            .and_then(|v| v.as_i64())
+                            .is_none_or(|t| t <= now_epoch_ms),
+                        "claimed" => j
+                            .get("lease_until_epoch_ms")
+                            .and_then(|v| v.as_i64())
+                            .is_some_and(|t| t <= now_epoch_ms),
+                        _ => false,
+                    }
+                })
+                .collect();
+            Ok(Value::Array(claimable))
+        }
+        "build_memory_worker_plan" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let job_id = input
+                .get("job_id")
+                .or_else(|| args.get("job_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'job_id'".into()))?;
+            let (messages, events) = crate::web_api::reconstruct_v2_messages(store, conv_id);
+            let last_seq = events
+                .last()
+                .and_then(|e| e.get("seq").and_then(|v| v.as_i64()))
+                .unwrap_or(0);
+            let existing_memories: Vec<Value> = store
+                .search_memory("", None, 50)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| crate::web_api::memory_item_to_record_with_store(store, &m))
+                .collect();
+            Ok(json!({
+                "job_id": job_id,
+                "conversation_id": conv_id,
+                "input_watermark": format!("seq:{last_seq}"),
+                "messages": messages,
+                "existing_memories": existing_memories,
+                "instructions": "Extract durable user preferences, facts, and project context."
+            }))
+        }
+        "reduce_and_commit_idle_submission" => {
+            let input = args.get("input").unwrap_or(args);
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'conversation_id'".into()))?;
+            let submission = input
+                .get("submission")
+                .or_else(|| args.get("submission"))
+                .ok_or(("invalid_argument", "missing 'submission'".into()))?;
+            let sub_type = submission
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let job_id = submission
+                .get("job_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let committed_at_ms = input
+                .get("committed_at_ms")
+                .or_else(|| submission.get("now_epoch_ms"))
+                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                .unwrap_or_else(now_ms);
+            let jobs_key = format!("memory_jobs:{conv_id}");
+            let mut jobs = store
+                .get_kv(&jobs_key)
+                .ok()
+                .flatten()
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default();
+
+            let mut updated_status = "committed".to_string();
+            match sub_type {
+                "claim_memory_worker" => {
+                    let worker_id = submission
+                        .get("worker_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let token = submission
+                        .get("ownership_token")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let lease_until = submission
+                        .get("lease_until_epoch_ms")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(committed_at_ms + 15 * 60 * 1_000);
+                    let mut found = false;
+                    for job in &mut jobs {
+                        if job.get("id").and_then(|v| v.as_str()) == Some(job_id) {
+                            job["status"] = json!("claimed");
+                            job["worker_id"] = json!(worker_id);
+                            job["ownership_token"] = json!(token);
+                            job["claimed_at_ms"] = json!(committed_at_ms);
+                            job["lease_until_epoch_ms"] = json!(lease_until);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if !found && !job_id.is_empty() {
+                        jobs.push(json!({
+                            "id": job_id,
+                            "conversation_id": conv_id,
+                            "status": "claimed",
+                            "worker_id": worker_id,
+                            "ownership_token": token,
+                            "claimed_at_ms": committed_at_ms,
+                            "lease_until_epoch_ms": lease_until
+                        }));
+                    }
+                    updated_status = "claimed".to_string();
+                }
+                "heartbeat_memory_worker" => {
+                    let token = submission
+                        .get("ownership_token")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let lease_until = submission
+                        .get("lease_until_epoch_ms")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(committed_at_ms + 15 * 60 * 1_000);
+                    for job in &mut jobs {
+                        if job.get("id").and_then(|v| v.as_str()) == Some(job_id) {
+                            if token.is_empty()
+                                || job.get("ownership_token").and_then(|v| v.as_str()) == Some(token)
+                            {
+                                job["lease_until_epoch_ms"] = json!(lease_until);
+                                job["last_heartbeat_ms"] = json!(committed_at_ms);
+                            }
+                            break;
+                        }
+                    }
+                    updated_status = "claimed".to_string();
+                }
+                "memory_worker_completed" => {
+                    let watermark = submission
+                        .get("completion_watermark")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    for job in &mut jobs {
+                        if job.get("id").and_then(|v| v.as_str()) == Some(job_id) {
+                            job["status"] = json!("completed");
+                            job["completion_watermark"] = json!(watermark);
+                            job["completed_at_ms"] = json!(committed_at_ms);
+                            break;
+                        }
+                    }
+                    if let Some(output) = submission.get("output") {
+                        let items_arr = output
+                            .get("memories")
+                            .or_else(|| output.get("items"))
+                            .or_else(|| output.get("records"))
+                            .and_then(|v| v.as_array());
+                        if let Some(arr) = items_arr {
+                            for raw in arr {
+                                let content = raw
+                                    .get("content")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .trim();
+                                if content.is_empty() {
+                                    continue;
+                                }
+                                let mid = raw
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(new_id);
+                                let scope = raw
+                                    .get("scope")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("global");
+                                let kind = raw
+                                    .get("kind")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("fact");
+                                let title = raw
+                                    .get("summary")
+                                    .or_else(|| raw.get("title"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(kind)
+                                    .to_string();
+                                let tags: Vec<String> = raw
+                                    .get("tags")
+                                    .and_then(|v| v.as_array())
+                                    .map(|t| {
+                                        t.iter()
+                                            .filter_map(|x| x.as_str().map(ToString::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let item = MemoryItem {
+                                    id: mid,
+                                    namespace: format!("{scope}:{kind}"),
+                                    title,
+                                    content: content.to_string(),
+                                    tags,
+                                    created_at_ms: committed_at_ms,
+                                    updated_at_ms: committed_at_ms,
+                                };
+                                let _ = store.upsert_memory(&item);
+                            }
+                        }
+                    }
+                    updated_status = "completed".to_string();
+                }
+                "memory_worker_failed" => {
+                    let retry_after = submission
+                        .get("retry_after_ms")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(60_000);
+                    let max_retries = submission
+                        .get("max_retry_count")
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(3);
+                    let err_msg = submission
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("memory worker failed");
+                    for job in &mut jobs {
+                        if job.get("id").and_then(|v| v.as_str()) == Some(job_id) {
+                            let retries =
+                                job.get("retry_count").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+                            job["retry_count"] = json!(retries);
+                            job["last_error"] = json!(err_msg);
+                            if retries >= max_retries {
+                                job["status"] = json!("failed");
+                                updated_status = "failed".to_string();
+                            } else {
+                                job["status"] = json!("retry_scheduled");
+                                job["next_retry_at_ms"] = json!(committed_at_ms + retry_after);
+                                updated_status = "retry_scheduled".to_string();
+                            }
+                            break;
+                        }
+                    }
+                }
+                other => {
+                    return Err((
+                        "unsupported_command",
+                        format!("unsupported idle submission type '{other}'"),
+                    ));
+                }
+            }
+            store
+                .set_kv(&jobs_key, &Value::Array(jobs))
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "conversation_id": conv_id,
+                "submission_type": sub_type,
+                "job_id": job_id,
+                "status": updated_status,
+                "committed_at_ms": committed_at_ms
+            }))
+        }
         other => Err((
             "unsupported_command",
             format!("unsupported daemon command '{other}'"),
@@ -9043,6 +10035,303 @@ fn put_product_setting_impl(
         "updated_at_ms": ts,
         "ok": true
     }))
+}
+
+fn parse_schedule_timezone_offset(tz: Option<&str>) -> FixedOffset {
+    let Some(raw) = tz.map(str::trim).filter(|s| !s.is_empty()) else {
+        return *Local::now().offset();
+    };
+    if raw.eq_ignore_ascii_case("utc")
+        || raw.eq_ignore_ascii_case("gmt")
+        || raw.eq_ignore_ascii_case("etc/utc")
+        || raw == "Z"
+    {
+        return FixedOffset::east_opt(0).unwrap();
+    }
+    if (raw.starts_with('+') || raw.starts_with('-')) && raw.len() >= 5 {
+        let sign = if raw.starts_with('-') { -1 } else { 1 };
+        let body = &raw[1..];
+        let (hh, mm) = if let Some((h, m)) = body.split_once(':') {
+            (h.parse::<i32>().ok(), m.parse::<i32>().ok())
+        } else if body.len() == 4 {
+            (body[0..2].parse::<i32>().ok(), body[2..4].parse::<i32>().ok())
+        } else {
+            (None, None)
+        };
+        if let (Some(h), Some(m)) = (hh, mm) {
+            if let Some(off) = FixedOffset::east_opt(sign * (h * 3600 + m * 60)) {
+                return off;
+            }
+        }
+    }
+    let secs = match raw {
+        "Asia/Shanghai" | "Asia/Hong_Kong" | "Asia/Taipei" | "Asia/Singapore" | "Asia/Chongqing" => {
+            Some(8 * 3600)
+        }
+        "Asia/Tokyo" | "Asia/Seoul" => Some(9 * 3600),
+        "Asia/Kolkata" => Some(5 * 3600 + 1800),
+        "Europe/London" => Some(0),
+        "Europe/Berlin" | "Europe/Paris" | "Europe/Zurich" | "Europe/Amsterdam" => Some(3600),
+        "America/New_York" => Some(-5 * 3600),
+        "America/Chicago" => Some(-6 * 3600),
+        "America/Denver" => Some(-7 * 3600),
+        "America/Los_Angeles" => Some(-8 * 3600),
+        "Australia/Sydney" => Some(10 * 3600),
+        _ => None,
+    };
+    secs.and_then(FixedOffset::east_opt)
+        .unwrap_or_else(|| *Local::now().offset())
+}
+
+fn parse_schedule_hour_minute(input: &Value) -> (u32, u32) {
+    if let Some(time_str) = input.get("time").and_then(|v| v.as_str()) {
+        if let Some((h_s, m_s)) = time_str.trim().split_once(':') {
+            if let (Ok(h), Ok(m)) = (h_s.parse::<u32>(), m_s.parse::<u32>()) {
+                return (h.min(23), m.min(59));
+            }
+        }
+    }
+    let h = input
+        .get("hour")
+        .and_then(|v| v.as_u64())
+        .map(|n| (n as u32).min(23))
+        .unwrap_or(9);
+    let m = input
+        .get("minute")
+        .and_then(|v| v.as_u64())
+        .map(|n| (n as u32).min(59))
+        .unwrap_or(0);
+    (h, m)
+}
+
+fn parse_schedule_iso_weekday(input: &Value) -> u32 {
+    if let Some(n) = input.get("weekday").and_then(|v| v.as_i64()) {
+        if (1..=7).contains(&n) {
+            return n as u32;
+        }
+        if n == 0 {
+            return 7; // Sunday
+        }
+    }
+    if let Some(s) = input.get("weekday").and_then(|v| v.as_str()) {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "mon" | "monday" => return 1,
+            "tue" | "tuesday" => return 2,
+            "wed" | "wednesday" => return 3,
+            "thu" | "thursday" => return 4,
+            "fri" | "friday" => return 5,
+            "sat" | "saturday" => return 6,
+            "sun" | "sunday" => return 7,
+            _ => {}
+        }
+    }
+    1
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (ny, nm) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let next_first = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
+    let cur_first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+    (next_first - cur_first).num_days() as u32
+}
+
+fn compute_scheduled_automation_occurrences(
+    def_id: Option<&str>,
+    input: &Value,
+    after_ms: Option<i64>,
+    through_ms: Option<i64>,
+    limit: usize,
+) -> Vec<Value> {
+    let after = after_ms.unwrap_or_else(now_ms);
+    let through = through_ms.unwrap_or_else(|| after.saturating_add(31 * 86_400_000));
+    if through <= after || limit == 0 {
+        return Vec::new();
+    }
+    let id_str = def_id.unwrap_or("schedule");
+    let make_occ = |ts: i64| -> Value {
+        json!({
+            "occurrence_id": format!("{id_str}:{ts}"),
+            "automation_id": id_str,
+            "scheduled_for_ms": ts,
+            "status": "scheduled",
+            "source": "schedule"
+        })
+    };
+
+    if let Some(once_ts) = input.get("once_at_ms").and_then(|v| v.as_i64()) {
+        if once_ts > after && once_ts <= through {
+            return vec![make_occ(once_ts)];
+        }
+        return Vec::new();
+    }
+
+    let freq = input
+        .get("frequency")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let offset = parse_schedule_timezone_offset(input.get("timezone").and_then(|v| v.as_str()));
+    let (hour, minute) = parse_schedule_hour_minute(input);
+    let Some(after_utc) = Utc.timestamp_millis_opt(after).single() else {
+        return Vec::new();
+    };
+    let after_local = after_utc.with_timezone(&offset);
+    let mut out = Vec::new();
+
+    match freq.as_str() {
+        "hourly" => {
+            let base_hour = after_local.date_naive().and_hms_opt(
+                after_local.time().format("%H").to_string().parse::<u32>().unwrap_or(0),
+                minute,
+                0,
+            );
+            let Some(mut cur_naive) = base_hour else {
+                return Vec::new();
+            };
+            while out.len() < limit {
+                if let Some(dt) = offset.from_local_datetime(&cur_naive).single() {
+                    let ts = dt.timestamp_millis();
+                    if ts > through {
+                        break;
+                    }
+                    if ts > after {
+                        out.push(make_occ(ts));
+                    }
+                }
+                cur_naive += chrono::Duration::hours(1);
+            }
+        }
+        "daily" => {
+            let Some(t) = NaiveTime::from_hms_opt(hour, minute, 0) else {
+                return Vec::new();
+            };
+            let mut date = after_local.date_naive();
+            for _ in 0..400 {
+                if out.len() >= limit {
+                    break;
+                }
+                if let Some(dt) = offset.from_local_datetime(&date.and_time(t)).single() {
+                    let ts = dt.timestamp_millis();
+                    if ts > through {
+                        break;
+                    }
+                    if ts > after {
+                        out.push(make_occ(ts));
+                    }
+                }
+                let Some(next_date) = date.succ_opt() else {
+                    break;
+                };
+                date = next_date;
+            }
+        }
+        "weekly" => {
+            let Some(t) = NaiveTime::from_hms_opt(hour, minute, 0) else {
+                return Vec::new();
+            };
+            let target_wd = parse_schedule_iso_weekday(input);
+            let cur_wd = after_local.weekday().number_from_monday();
+            let days_ahead = (target_wd + 7 - cur_wd) % 7;
+            let mut date = after_local.date_naive() + chrono::Duration::days(days_ahead as i64);
+            for _ in 0..104 {
+                if out.len() >= limit {
+                    break;
+                }
+                if let Some(dt) = offset.from_local_datetime(&date.and_time(t)).single() {
+                    let ts = dt.timestamp_millis();
+                    if ts > through {
+                        break;
+                    }
+                    if ts > after {
+                        out.push(make_occ(ts));
+                    }
+                }
+                date += chrono::Duration::days(7);
+            }
+        }
+        "monthly" => {
+            let Some(t) = NaiveTime::from_hms_opt(hour, minute, 0) else {
+                return Vec::new();
+            };
+            let target_day = input
+                .get("day_of_month")
+                .or_else(|| input.get("day"))
+                .and_then(|v| v.as_u64())
+                .map(|n| (n as u32).clamp(1, 31))
+                .unwrap_or(1);
+            let mut year = after_local.year();
+            let mut month = after_local.month();
+            for _ in 0..60 {
+                if out.len() >= limit {
+                    break;
+                }
+                let day = target_day.min(days_in_month(year, month));
+                if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+                    if let Some(dt) = offset.from_local_datetime(&date.and_time(t)).single() {
+                        let ts = dt.timestamp_millis();
+                        if ts > through {
+                            break;
+                        }
+                        if ts > after {
+                            out.push(make_occ(ts));
+                        }
+                    }
+                }
+                if month == 12 {
+                    year += 1;
+                    month = 1;
+                } else {
+                    month += 1;
+                }
+            }
+        }
+        "interval" => {
+            let interval_ms = input
+                .get("interval_ms")
+                .and_then(|v| v.as_i64())
+                .or_else(|| {
+                    input
+                        .get("interval_seconds")
+                        .and_then(|v| v.as_i64())
+                        .map(|s| s.saturating_mul(1_000))
+                })
+                .or_else(|| {
+                    input
+                        .get("interval_minutes")
+                        .and_then(|v| v.as_i64())
+                        .map(|m| m.saturating_mul(60_000))
+                })
+                .unwrap_or(3_600_000)
+                .max(1_000);
+            let anchor = input
+                .get("anchor_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(after);
+            let mut ts = if anchor > after {
+                anchor
+            } else {
+                let steps = (after - anchor) / interval_ms + 1;
+                anchor.saturating_add(steps.saturating_mul(interval_ms))
+            };
+            while out.len() < limit && ts <= through {
+                if ts > after {
+                    out.push(make_occ(ts));
+                }
+                let Some(next) = ts.checked_add(interval_ms) else {
+                    break;
+                };
+                ts = next;
+            }
+        }
+        _ => {}
+    }
+
+    out
 }
 
 fn get_session_case_insensitive(

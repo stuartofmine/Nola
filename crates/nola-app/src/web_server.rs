@@ -61,7 +61,8 @@ use crate::web_api::{
     infer_model_capabilities, load_conversation_knowledge, memory_item_to_record_with_store,
     memory_meta_key, ms_to_rfc3339, normalize_automation_record, normalize_data_source_record,
     project_skill_descriptor, reconstruct_v2_messages, session_meta_key,
-    session_to_conversation_json, session_usage_json,
+    session_to_conversation_json, session_usage_json, sync_agent_settings_mcp_servers,
+    sync_web_model_profiles_cache,
 };
 
 
@@ -1847,9 +1848,22 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let paired_events = has_expected_host_id(&body)
                     || parse_query_str(query, "expected_host_id")
                         .is_some_and(|s| !s.trim().is_empty());
+                let is_ui_queue_query = paired_events
+                    || (method == Method::Post
+                        && (body.get("expected_source_store_epoch").is_some()
+                            || body.get("client_id").is_some()));
                 match store.events_after(&id, after, 500) {
                     Ok(EventPage::Events(ev)) => {
-                        let inner = json!({"status": "ok", "events": ev});
+                        let inner = if is_ui_queue_query {
+                            json!({
+                                "status": "ok",
+                                "events": ev,
+                                "head": Value::Null,
+                                "dispatch": Value::Null
+                            })
+                        } else {
+                            json!({"status": "ok", "events": ev})
+                        };
                         let payload = if paired_events {
                             wrap_paired_envelope(&store, host_id, inner)
                         } else {
@@ -1861,11 +1875,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         earliest_retained_seq,
                         latest_seq,
                     }) => {
-                        let inner = json!({
-                            "status": "resync_required",
-                            "earliest_retained_seq": earliest_retained_seq,
-                            "latest_seq": latest_seq
-                        });
+                        let inner = if is_ui_queue_query {
+                            json!({
+                                "status": "resync_required",
+                                "earliest_retained_seq": earliest_retained_seq,
+                                "latest_seq": latest_seq,
+                                "head": Value::Null,
+                                "dispatch": Value::Null
+                            })
+                        } else {
+                            json!({
+                                "status": "resync_required",
+                                "earliest_retained_seq": earliest_retained_seq,
+                                "latest_seq": latest_seq
+                            })
+                        };
                         let payload = if paired_events {
                             wrap_paired_envelope(&store, host_id, inner)
                         } else {
@@ -2598,6 +2622,34 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     p.trim_start_matches("/api/chat/conversations/")
                         .trim_end_matches("/cancel"),
                 );
+                if let Some(command_id) = body
+                    .get("command_id")
+                    .or_else(|| body.get("commandId"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let _ = store.set_kv(
+                        &format!("cancelled_ui_command:{id}:{command_id}"),
+                        &json!({
+                            "command_id": command_id,
+                            "request_digest": body.get("request_digest").cloned().unwrap_or(Value::Null),
+                            "cancelled_at_ms": now_ms()
+                        }),
+                    );
+                    let inner = json!({
+                        "cancelled": true,
+                        "command_id": command_id
+                    });
+                    let payload =
+                        if raw_path.starts_with("/api/mobile/") || has_expected_host_id(&body) {
+                            wrap_paired_envelope(&store, host_id, inner)
+                        } else {
+                            inner
+                        };
+                    let _ = respond_api_json(req, 200, &payload, crypto_tok);
+                    return;
+                }
                 if is_paired_task_cancellation_body(&body) {
                     let receipt = handle_paired_task_cancellation(
                         &store,
@@ -2907,7 +2959,55 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let llm = LlmClient::new(120).ok();
                 let route = resolve_model_route(&cfg).ok();
                 match compact_session_now(&store, llm.as_ref(), route.as_ref(), &conv_id) {
-                    Ok(report) => {
+                    Ok(mut report) => {
+                        let before_msgs = report
+                            .get("before_messages")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let after_msgs = report
+                            .get("after_messages")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let replaced_item_count = before_msgs.saturating_sub(after_msgs);
+                        let remaining_item_count = after_msgs;
+                        let compacted = replaced_item_count > 0;
+                        let used_tokens = report
+                            .get("tokens_after")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let context_window_tokens = route
+                            .as_ref()
+                            .map(|r| r.context_window as u64)
+                            .unwrap_or(128_000)
+                            .max(1);
+                        let usage_percent = ((used_tokens as f64 / context_window_tokens as f64)
+                            * 100.0)
+                            .clamp(0.0, 100.0);
+                        let rev_key = format!("conv_compact_rev:{conv_id}");
+                        let prev_rev = store
+                            .get_kv(&rev_key)
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let checkpoint_revision = prev_rev.saturating_add(1).max(1);
+                        let _ = store.set_kv(&rev_key, &json!(checkpoint_revision));
+                        let committed_at_ms = now_ms().max(1);
+                        if let Some(obj) = report.as_object_mut() {
+                            obj.insert("compacted".into(), json!(compacted));
+                            obj.insert("checkpoint_revision".into(), json!(checkpoint_revision));
+                            obj.insert("committed_at_ms".into(), json!(committed_at_ms));
+                            obj.insert(
+                                "context".into(),
+                                json!({
+                                    "used_tokens": used_tokens,
+                                    "context_window_tokens": context_window_tokens,
+                                    "usage_percent": usage_percent,
+                                    "replaced_item_count": replaced_item_count,
+                                    "remaining_item_count": remaining_item_count
+                                }),
+                            );
+                        }
                         let payload = wrap_paired_result(&store, host_id, &body, report);
                         let _ = respond_api_json(req, 200, &payload, crypto_tok);
                     }
@@ -3252,10 +3352,67 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     } else {
                         Vec::new()
                     };
+                    let journal_identity = json!({
+                        "source_store_epoch": epoch,
+                        "conversation_id": conv_id,
+                        "run_id": run_id,
+                        "assistant_message_id": asst_id
+                    });
+                    let admission_digest = sha256_hex(
+                        format!("{epoch}:{conv_id}:{run_id}:{asst_id}:admission:1").as_bytes(),
+                    );
+                    let admission_cursor = json!({
+                        "identity": journal_identity,
+                        "sequence": "1",
+                        "record_digest": admission_digest
+                    });
                     let (status_str, worker_state, recovery_str, can_submit, terminal_seal) =
                         if active {
                             ("running", "running", "observe", false, Value::Null)
                         } else {
+                            let latest_seq = match store.events_after(&conv_id, 0, 500) {
+                                Ok(EventPage::Events(ev)) => {
+                                    ev.last().map(|e| e.seq.max(1) as u64).unwrap_or(1)
+                                }
+                                _ => 1,
+                            };
+                            let seq_str = latest_seq.to_string();
+                            let completed_at_ms = store
+                                .get_session(&conv_id)
+                                .ok()
+                                .flatten()
+                                .map(|s| s.updated_at_ms.max(1))
+                                .unwrap_or_else(|| now_ms().max(1));
+                            let run_result = json!({
+                                "result_id": format!("res-{run_id}"),
+                                "run_id": run_id,
+                                "conversation_id": conv_id,
+                                "originating_submission_id": run_id,
+                                "input": {
+                                    "watermark": "0",
+                                    "applications_digest": "e0aeaeba0c6a61c02edcc186902f9b41dd82835d01b780eb0e479cc513ea66dd"
+                                },
+                                "decided_at_revision": "1",
+                                "decision_event_cursor": seq_str,
+                                "requirement_revision": "0",
+                                "evidence_frontier": seq_str,
+                                "value": {
+                                    "kind": "answered",
+                                    "answer_part_refs": [format!("{asst_id}:part:0")]
+                                }
+                            });
+                            let result_digest = sha256_hex(
+                                serde_json::to_string(&run_result)
+                                    .unwrap_or_default()
+                                    .as_bytes(),
+                            );
+                            let manifest_digest = sha256_hex(
+                                format!("{epoch}:{conv_id}:{run_id}:manifest:1").as_bytes(),
+                            );
+                            let seal_digest = sha256_hex(
+                                format!("{epoch}:{conv_id}:{run_id}:{result_digest}:{manifest_digest}")
+                                    .as_bytes(),
+                            );
                             (
                                 "sealed",
                                 "absent",
@@ -3263,16 +3420,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 true,
                                 json!({
                                     "protocol_version": 1,
-                                    "identity": {
-                                        "conversation_id": conv_id,
-                                        "run_id": run_id,
-                                        "assistant_message_id": asst_id,
-                                        "source_store_epoch": epoch
-                                    },
-                                    "result": {
-                                        "conversation_id": conv_id,
-                                        "run_id": run_id
-                                    }
+                                    "admission": admission_cursor,
+                                    "identity": journal_identity,
+                                    "core_session_id": conv_id,
+                                    "transition_id": format!("tr-{run_id}"),
+                                    "checkpoint_revision": "1",
+                                    "core_revision": "1",
+                                    "event_cursor": seq_str,
+                                    "result": run_result,
+                                    "result_digest": result_digest,
+                                    "completed_at_ms": completed_at_ms,
+                                    "entry_count": "1",
+                                    "heads_count": "1",
+                                    "child_receipt_count": "0",
+                                    "manifest_digest": manifest_digest,
+                                    "seal_digest": seal_digest
                                 }),
                             )
                         };
@@ -3294,7 +3456,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             "recovery": recovery_str,
                             "permissions": perms,
                             "can_submit": can_submit,
-                            "admission": Value::Null,
+                            "admission": admission_cursor,
                             "terminal_seal": terminal_seal,
                             "context_usage": Value::Null,
                             "submission_receipt": Value::Null
@@ -3639,7 +3801,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         &query_args,
                     ) {
                         Ok(window) => {
-                            let payload = if is_mobile || has_expected_host_id(&body) {
+                            let payload = if is_mobile
+                                || has_expected_host_id(&body)
+                                || is_paired_journal_operation(&body)
+                            {
                                 wrap_paired_envelope(&store, host_id, window)
                             } else {
                                 window
@@ -3750,7 +3915,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let id = percent_decode_path(p.trim_start_matches("/api/chat/conversations/"));
                 if method == Method::Post
                     && body.get("identity").is_some_and(|v| v.is_object())
-                    && body.get("request_digest").is_some_and(|v| v.is_string())
+                    && (body.get("request_digest").is_some_and(|v| v.is_string())
+                        || body.get("operation").and_then(|v| v.as_str()) == Some("prepare"))
                 {
                     let is_mobile = raw_path.starts_with("/api/mobile/");
                     let receipt = handle_remote_submission_reconciliation(
@@ -3760,7 +3926,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         &id,
                         &body,
                     );
-                    let payload = if is_mobile || has_expected_host_id(&body) {
+                    let payload = if is_mobile
+                        || has_expected_host_id(&body)
+                        || is_paired_journal_operation(&body)
+                    {
                         wrap_paired_envelope(&store, host_id, receipt)
                     } else {
                         receipt
@@ -3966,12 +4135,15 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 if let Err(e) = save_applied_config(&store, &cfg) {
                     let _ = respond_api_json(req, 400, &json!({"error": e}), crypto_tok);
                 } else {
+                    sync_web_model_profiles_cache(&store);
                     let _ = respond_api_json(req, 200, &build_model_profiles_response(&store), crypto_tok);
                 }
             }
             (Method::Post, "/api/model-profiles/catalog/replace") => {
                 if let Some(endpoints) = body.get("endpoints").and_then(|v| v.as_array()) {
                     let mut cfg = load_active_config(&store);
+                    let prev_default = cfg.llm.default_model.clone();
+                    let prev_conns_full = cfg.llm.connections.clone();
                     let prev_conns: BTreeMap<_, _> = cfg
                         .llm
                         .connections
@@ -3983,6 +4155,54 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             )
                         })
                         .collect();
+                    let existing_managed_profile_ids: HashSet<String> = store
+                        .get_kv("web_model_profiles")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|p| {
+                            let has_conn_id = p
+                                .get("connectionId")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| !s.trim().is_empty());
+                            if has_conn_id {
+                                p.pointer("/endpoint/id")
+                                    .and_then(|v| v.as_str())
+                                    .map(ToString::to_string)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let managed_record_ids: HashSet<String> = suite
+                        .list_records::<Value>("model_connection")
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|rec| {
+                            let id = rec
+                                .get("id")
+                                .or_else(|| rec.pointer("/connection/id"))
+                                .and_then(|v| v.as_str())?
+                                .to_string();
+                            let src = rec
+                                .get("source")
+                                .or_else(|| rec.pointer("/connection/source"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("custom");
+                            (src != "manual_legacy").then_some(id)
+                        })
+                        .collect();
+                    let is_managed_connection = |c: &ConnectionConfig| -> bool {
+                        c.id.starts_with("local:")
+                            || c.provider.as_deref().is_some_and(|p| {
+                                !p.is_empty() && p != "manual_legacy" && p != "openai-compatible"
+                            })
+                            || managed_record_ids.contains(&c.id)
+                            || existing_managed_profile_ids.contains(&c.id)
+                    };
+
                     let mut new_conns = Vec::new();
                     let mut new_conn_ids: HashSet<String> = HashSet::new();
                     let mut flattened_profiles = Vec::new();
@@ -4193,6 +4413,23 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             api_key_env: prev_env,
                             models: conn_models,
                         });
+                        if !ep_name.trim().is_empty() && ep_name != ep_id {
+                            cfg.connection_extras
+                                .entry(ep_id.clone())
+                                .or_default()
+                                .name = Some(ep_name);
+                        }
+                    }
+
+                    // Preserve managed / imported / local connections not included in legacy editable endpoints
+                    // and NEVER delete their Vault secrets!
+                    let mut preserved_ids: HashSet<String> = HashSet::new();
+                    for old_conn in prev_conns_full {
+                        if !new_conn_ids.contains(&old_conn.id) && is_managed_connection(&old_conn) {
+                            preserved_ids.insert(old_conn.id.clone());
+                            new_conn_ids.insert(old_conn.id.clone());
+                            new_conns.push(old_conn);
+                        }
                     }
 
                     if let Some((_, ref def_conn, ref def_model)) = best_default {
@@ -4207,6 +4444,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                                 p["selected"] = json!(true);
                             }
                         }
+                    } else if let Some(ref prev_def) = prev_default {
+                        if preserved_ids.contains(&prev_def.connection) {
+                            cfg.llm.default_model = Some(prev_def.clone());
+                        } else {
+                            cfg.llm.default_model = None;
+                        }
                     } else {
                         cfg.llm.default_model = None;
                     }
@@ -4215,7 +4458,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         let _ = respond_api_json(req, 400, &json!({"error": e}), crypto_tok);
                         return;
                     }
-                    // Delete orphaned Vault keys for removed endpoints!
+                    // Delete orphaned Vault keys ONLY for removed legacy endpoints (never managed/local ones).
                     if let Ok(vault) = Vault::open(resolve_vault_path_for_store(&store)) {
                         for old_id in prev_conns.keys() {
                             if !new_conn_ids.contains(old_id) {
@@ -4356,16 +4599,84 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .get("engine")
                     .and_then(|v| v.as_str())
                     .unwrap_or("llama.cpp");
+                let src = body
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("huggingface");
                 let mirror = body
                     .get("mirror")
                     .or_else(|| body.get("mirror_base"))
                     .and_then(|v| v.as_str());
+                let hw = probe_hardware();
                 match search_hub_models(q, eng, mirror) {
                     Ok(results) => {
+                        let candidates: Vec<Value> = results
+                            .iter()
+                            .map(|item| {
+                                let repo = item
+                                    .get("repository")
+                                    .or_else(|| item.get("id"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let download_bytes = item
+                                    .get("downloadBytes")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let est_mem = item
+                                    .get("estimatedMemoryBytes")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(download_bytes);
+                                let ctx_tokens = item
+                                    .get("contextTokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(32_768);
+                                let plan = item
+                                    .get("plan")
+                                    .filter(|v| v.is_object())
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        json!({
+                                            "engine": eng,
+                                            "source": src,
+                                            "repository": repo,
+                                            "device": if hw.get("unifiedMemory").and_then(|v| v.as_bool()) == Some(true) { "unified" } else { "cpu" }
+                                        })
+                                    });
+                                let mut cand = item.clone();
+                                if let Some(obj) = cand.as_object_mut() {
+                                    obj.entry("repository".to_string()).or_insert_with(|| json!(repo));
+                                    obj.entry("revision".to_string()).or_insert_with(|| json!("main"));
+                                    obj.entry("downloadBytes".to_string()).or_insert_with(|| json!(download_bytes));
+                                    obj.entry("estimatedMemoryBytes".to_string()).or_insert_with(|| json!(est_mem));
+                                    obj.entry("contextTokens".to_string()).or_insert_with(|| json!(ctx_tokens));
+                                    obj.insert("plan".into(), plan);
+                                }
+                                cand
+                            })
+                            .collect();
+                        let rec_source = if results
+                            .iter()
+                            .any(|r| r.get("offlineFallback").and_then(|v| v.as_bool()) == Some(false))
+                        {
+                            "hub"
+                        } else {
+                            "mixed"
+                        };
                         let _ = respond_api_json(
                             req,
                             200,
-                            &json!({"ok": true, "query": q, "engine": eng, "results": results, "models": results}),
+                            &json!({
+                                "ok": true,
+                                "query": q,
+                                "engine": eng,
+                                "source": src,
+                                "hardware": hw,
+                                "candidates": candidates,
+                                "recommendationSource": rec_source,
+                                "results": results,
+                                "models": results
+                            }),
                             crypto_tok,
                         );
                     }
@@ -4713,7 +5024,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .get("port")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(8081) as u16;
-                let extra_args: Vec<String> = body
+                let mut extra_args: Vec<String> = body
                     .get("extra_args")
                     .or_else(|| body.get("args"))
                     .and_then(|v| v.as_array())
@@ -4723,6 +5034,19 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .collect()
                     })
                     .unwrap_or_default();
+                let saved_params = body
+                    .get("parameters")
+                    .filter(|v| v.is_object())
+                    .or_else(|| rec.as_ref().and_then(|r| r.get("parameters")).filter(|v| v.is_object()));
+                if let Some(params) = saved_params {
+                    if engine.eq_ignore_ascii_case("llama.cpp") || engine.eq_ignore_ascii_case("llama") {
+                        let param_args = LocalModelProcessManager::llama_server_args_from_parameters(
+                            params,
+                            &extra_args,
+                        );
+                        extra_args.extend(param_args);
+                    }
+                }
                 match LocalModelProcessManager::global()
                     .start_local_model(&id, engine, model_path, port_num, &extra_args)
                 {
@@ -4815,6 +5139,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     model: model_name,
                 });
                 let _ = save_applied_config(&store, &cfg);
+                sync_web_model_profiles_cache(&store);
                 let _ = respond_api_json(
                     req,
                     200,
@@ -4894,35 +5219,57 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .unwrap_or("");
                 let mut cfg = load_active_config(&store);
                 if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
-                    let models = discover_endpoint_models(conn);
-                    for mid in &models {
-                        if !conn.models.iter().any(|m| m.id == *mid) {
-                            conn.models.push(ModelEntry {
-                                id: mid.clone(),
-                                context_window: None,
-                                max_output_tokens: None,
-                                temperature: None,
-                                top_p: None,
-                                reasoning_effort: None,
-                                capabilities: None,
-                            });
+                    match discover_endpoint_models(conn) {
+                        Ok(models) => {
+                            for mid in &models {
+                                if !conn.models.iter().any(|m| m.id == *mid) {
+                                    conn.models.push(ModelEntry {
+                                        id: mid.clone(),
+                                        context_window: None,
+                                        max_output_tokens: None,
+                                        temperature: None,
+                                        top_p: None,
+                                        reasoning_effort: None,
+                                        capabilities: None,
+                                    });
+                                }
+                            }
+                            if !models.is_empty() {
+                                let _ = save_applied_config(&store, &cfg);
+                                sync_web_model_profiles_cache(&store);
+                            }
+                            let inventory = build_model_connections_inventory(&store, &suite);
+                            let _ = respond_api_json(
+                                req,
+                                200,
+                                &json!({
+                                    "ok": true,
+                                    "connection_id": conn_id,
+                                    "models": models,
+                                    "inventory": inventory
+                                }),
+                                crypto_tok,
+                            );
+                        }
+                        Err(err) => {
+                            let status = if err.contains("empty") || err.contains("invalid") {
+                                400
+                            } else {
+                                502
+                            };
+                            let _ = respond_api_json(
+                                req,
+                                status,
+                                &json!({
+                                    "ok": false,
+                                    "error": "model_discovery_failed",
+                                    "message": err,
+                                    "connection_id": conn_id
+                                }),
+                                crypto_tok,
+                            );
                         }
                     }
-                    if !models.is_empty() {
-                        let _ = save_applied_config(&store, &cfg);
-                    }
-                    let inventory = build_model_connections_inventory(&store, &suite);
-                    let _ = respond_api_json(
-                        req,
-                        200,
-                        &json!({
-                            "ok": true,
-                            "connection_id": conn_id,
-                            "models": models,
-                            "inventory": inventory
-                        }),
-                        crypto_tok,
-                    );
                 } else {
                     let _ = respond_api_json(
                         req,
@@ -5016,6 +5363,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         &format!("model_conn_selections:{conn_id}"),
                         &json!({"enabled": enabled_ids}),
                     );
+                    sync_web_model_profiles_cache(&store);
                 } else {
                     let conn_id = body
                         .get("id")
@@ -5069,6 +5417,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         }
                         let _ = save_applied_config(&store, &cfg);
                     }
+                    sync_web_model_profiles_cache(&store);
                 }
                 let inventory = build_model_connections_inventory(&store, &suite);
                 let _ = respond_api_json(req, 200, &inventory, crypto_tok);
@@ -5119,105 +5468,203 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .trim();
-                let mut candidates: Vec<Value> = Vec::new();
-                if !path_str.is_empty() {
-                    let target_path = Path::new(path_str);
-                    // SEC-7: Reject sensitive paths (~/.ssh, ~/.nola/vault*, .env, etc.) and symlinks/>1MiB!
-                    if is_sensitive_local_path(target_path) {
+                let include_credentials = body
+                    .get("include_credentials")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let allow_environment = body
+                    .get("allow_environment")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let cred_path_str = body
+                    .get("credential_path")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+
+                if path_str.is_empty() {
+                    let _ = respond_api_json(
+                        req,
+                        400,
+                        &json!({"error": "import_path_required", "message": "import file path is required"}),
+                        crypto_tok,
+                    );
+                    return;
+                }
+                let target_path = Path::new(path_str);
+                // SEC-7: Reject sensitive paths (~/.ssh, ~/.nola/vault*, .env, etc.) and symlinks/>1MiB!
+                if is_sensitive_local_path(target_path) {
+                    let _ = respond_api_json(
+                        req,
+                        403,
+                        &json!({"error": "forbidden_path", "message": "refusing to read sensitive local path"}),
+                        crypto_tok,
+                    );
+                    return;
+                }
+                let raw = match read_config_file_safe(target_path) {
+                    Ok(content) => content,
+                    Err(e) => {
                         let _ = respond_api_json(
                             req,
-                            403,
-                            &json!({"error": "forbidden_path", "message": "refusing to read sensitive local path"}),
+                            400,
+                            &json!({"error": "invalid_import_file", "message": e}),
                             crypto_tok,
                         );
                         return;
                     }
-                    match read_config_file_safe(target_path) {
-                        Ok(raw) => {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
-                                if let Some(providers) =
-                                    parsed.get("provider").and_then(|v| v.as_object())
-                                {
-                                    for (prov_id, prov_val) in providers {
-                                        let base_url = prov_val
-                                            .pointer("/options/baseURL")
-                                            .or_else(|| prov_val.get("baseURL"))
-                                            .or_else(|| prov_val.get("base_url"))
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        if base_url.is_empty() {
-                                            continue;
-                                        }
-                                        let models: Vec<Value> = prov_val
-                                            .get("models")
-                                            .and_then(|v| v.as_object())
-                                            .map(|m_map| {
-                                                m_map
-                                                    .keys()
-                                                    .map(|mid| {
-                                                        json!({
-                                                            "model_id": mid,
-                                                            "display_name": mid,
-                                                            "protocol": "chat_completions",
-                                                            "context_window": Value::Null,
-                                                            "modalities": ["text"],
-                                                            "reasoning_levels": []
-                                                        })
-                                                    })
-                                                    .collect()
-                                            })
-                                            .unwrap_or_default();
-                                        candidates.push(json!({
-                                            "candidate_id": format!("imp-{prov_id}"),
-                                            "connection": {
-                                                "id": prov_id,
-                                                "display_name": prov_id,
-                                                "base_url": base_url,
-                                                "protocols": ["chat_completions"],
-                                                "source": source,
-                                                "source_id": Value::Null,
-                                                "account_id": Value::Null,
-                                                "enabled": true
-                                            },
-                                            "models": models,
-                                            "credential_status": "not_requested",
-                                            "issue": Value::Null,
-                                            "existing_revision": Value::Null
-                                        }));
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) if e.contains("symlink") || e.contains("size limit") => {
+                };
+                let credential_raw = if include_credentials {
+                    if let Some(cp) = cred_path_str {
+                        let cred_path = Path::new(cp);
+                        if is_sensitive_local_path(cred_path) {
                             let _ = respond_api_json(
                                 req,
-                                400,
-                                &json!({"error": "invalid_import_file", "message": e}),
+                                403,
+                                &json!({"error": "forbidden_path", "message": "refusing to read sensitive credential path"}),
                                 crypto_tok,
                             );
                             return;
                         }
-                        Err(_) => {}
+                        match read_config_file_safe(cred_path) {
+                            Ok(c) => Some(c),
+                            Err(e) => {
+                                let _ = respond_api_json(
+                                    req,
+                                    400,
+                                    &json!({"error": "invalid_credential_file", "message": e}),
+                                    crypto_tok,
+                                );
+                                return;
+                            }
+                        }
+                    } else {
+                        None
                     }
+                } else {
+                    None
+                };
+
+                let parsed_candidates = match parse_model_import_candidates(
+                    source,
+                    path_str,
+                    &raw,
+                    credential_raw.as_deref(),
+                    include_credentials,
+                    allow_environment,
+                ) {
+                    Ok(list) => list,
+                    Err(e) => {
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"error": "import_parse_failed", "message": e}),
+                            crypto_tok,
+                        );
+                        return;
+                    }
+                };
+
+                let cfg = load_active_config(&store);
+                let existing_conn_revs: BTreeMap<String, i64> = {
+                    let mut map = BTreeMap::new();
+                    for c in &cfg.llm.connections {
+                        map.insert(c.id.clone(), 1);
+                    }
+                    for rec in suite.list_records::<Value>("model_connection").unwrap_or_default() {
+                        if let Some(cid) = rec.get("id").and_then(|v| v.as_str()) {
+                            let rev = rec.get("revision").and_then(|v| v.as_i64()).unwrap_or(1);
+                            map.insert(cid.to_string(), rev);
+                        }
+                    }
+                    map
+                };
+
+                let mut candidates: Vec<Value> = Vec::new();
+                let mut internal_secrets = serde_json::Map::new();
+                for cand in parsed_candidates {
+                    let candidate_id = format!("imp-{}", cand.id);
+                    let has_cred = cand.api_key.is_some() || cand.api_key_env.is_some();
+                    let credential_status = if !include_credentials {
+                        "not_requested"
+                    } else if has_cred {
+                        "available"
+                    } else {
+                        "unavailable"
+                    };
+                    if has_cred {
+                        internal_secrets.insert(
+                            candidate_id.clone(),
+                            json!({
+                                "api_key": cand.api_key,
+                                "api_key_env": cand.api_key_env
+                            }),
+                        );
+                    }
+                    let existing_revision = existing_conn_revs
+                        .get(&cand.id)
+                        .copied()
+                        .map(|r| json!(r))
+                        .unwrap_or(Value::Null);
+                    let models: Vec<Value> = cand
+                        .models
+                        .iter()
+                        .map(|m| {
+                            let caps = infer_model_capabilities(&m.model_id, None);
+                            let mut modalities = vec!["text".to_string()];
+                            if caps.image_input {
+                                modalities.push("image".to_string());
+                            }
+                            json!({
+                                "model_id": m.model_id,
+                                "display_name": m.display_name,
+                                "protocol": m.protocol,
+                                "context_window": m.context_window,
+                                "modalities": modalities,
+                                "reasoning_levels": caps.supported_reasoning_levels
+                            })
+                        })
+                        .collect();
+                    candidates.push(json!({
+                        "candidate_id": candidate_id,
+                        "connection": {
+                            "id": cand.id,
+                            "display_name": cand.display_name,
+                            "base_url": cand.base_url,
+                            "protocols": [cand.protocol],
+                            "source": cand.source,
+                            "source_id": Value::Null,
+                            "account_id": Value::Null,
+                            "enabled": true
+                        },
+                        "models": models,
+                        "credential_status": credential_status,
+                        "issue": Value::Null,
+                        "existing_revision": existing_revision
+                    }));
                 }
-                let plan = json!({
+
+                let public_plan = json!({
                     "plan_id": plan_id,
                     "expires_at_ms": expires_at_ms,
                     "candidates": candidates
                 });
-                let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &plan);
-                let _ = respond_api_json(req, 200, &plan, crypto_tok);
+                let stored_plan = json!({
+                    "plan_id": plan_id,
+                    "expires_at_ms": expires_at_ms,
+                    "candidates": candidates,
+                    "internal_secrets": Value::Object(internal_secrets)
+                });
+                let _ = store.set_kv(&format!("model_import_plan:{plan_id}"), &stored_plan);
+                let _ = respond_api_json(req, 200, &public_plan, crypto_tok);
             }
             (Method::Post, "/api/model-import/commit") => {
                 let plan_id = body
                     .get("plan_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let plan = store
-                    .get_kv(&format!("model_import_plan:{plan_id}"))
-                    .ok()
-                    .flatten();
+                let plan_key = format!("model_import_plan:{plan_id}");
+                let plan = store.get_kv(&plan_key).ok().flatten();
                 let Some(plan_val) = plan else {
                     let _ = respond_api_json(
                         req,
@@ -5227,9 +5674,26 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     );
                     return;
                 };
+                if let Some(exp) = plan_val.get("expires_at_ms").and_then(|v| v.as_i64()) {
+                    if now_ms() >= exp {
+                        let _ = store.set_kv(&plan_key, &Value::Null);
+                        let _ = respond_api_json(
+                            req,
+                            400,
+                            &json!({"error": "import_plan_expired"}),
+                            crypto_tok,
+                        );
+                        return;
+                    }
+                }
                 let candidates = plan_val
                     .get("candidates")
                     .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let internal_secrets = plan_val
+                    .get("internal_secrets")
+                    .and_then(|v| v.as_object())
                     .cloned()
                     .unwrap_or_default();
                 let selections = body
@@ -5239,11 +5703,26 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .unwrap_or_default();
                 let mut cfg = load_active_config(&store);
                 let mut results: Vec<Value> = Vec::new();
+                let mut any_imported = false;
                 for sel in selections {
                     let cid = sel
                         .get("candidate_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
+                    let update_existing = sel
+                        .get("update_existing")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let enable_models = sel
+                        .get("enable_models")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let display_override = sel
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+
                     if let Some(cand) = candidates
                         .iter()
                         .find(|c| c.get("candidate_id").and_then(|v| v.as_str()) == Some(cid))
@@ -5253,52 +5732,164 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .and_then(|v| v.as_str())
                             .unwrap_or(cid)
                             .to_string();
+                        let display_name = display_override
+                            .or_else(|| cand.pointer("/connection/display_name").and_then(|v| v.as_str()))
+                            .unwrap_or(&conn_id)
+                            .to_string();
                         let base_url = cand
                             .pointer("/connection/base_url")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        let models: Vec<ModelEntry> = cand
+                        let wire_proto = cand
+                            .pointer("/connection/protocols/0")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("chat_completions")
+                            .to_string();
+                        let rust_proto = match wire_proto.as_str() {
+                            "anthropic" => "anthropic",
+                            "responses" | "openai_responses" => "openai_responses",
+                            "gemini" | "google_gemini" => "gemini",
+                            _ => "openai_chat",
+                        };
+                        let conn_source = cand
+                            .pointer("/connection/source")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("import")
+                            .to_string();
+
+                        let already_exists = cfg.llm.connections.iter().any(|c| c.id == conn_id)
+                            || suite
+                                .get_record::<Value>("model_connection", &conn_id)
+                                .ok()
+                                .flatten()
+                                .is_some();
+                        if already_exists && !update_existing && cand.get("existing_revision").is_some_and(|v| !v.is_null()) {
+                            results.push(json!({
+                                "candidate_id": cid,
+                                "connection_id": conn_id,
+                                "status": "skipped",
+                                "error": "connection_already_exists"
+                            }));
+                            continue;
+                        }
+
+                        let sec_entry = internal_secrets.get(cid);
+                        let imported_api_key = sec_entry
+                            .and_then(|s| s.get("api_key"))
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string);
+                        let imported_api_key_env = sec_entry
+                            .and_then(|s| s.get("api_key_env"))
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string);
+
+                        let raw_models = cand
                             .get("models")
                             .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|m| {
-                                        m.get("model_id").and_then(|v| v.as_str()).map(|id| {
-                                            ModelEntry {
-                                                id: id.to_string(),
-                                                context_window: None,
-                                                max_output_tokens: None,
-                                                temperature: None,
-                                                top_p: None,
-                                                reasoning_effort: None,
-                                                capabilities: None,
-                                            }
-                                        })
-                                    })
-                                    .collect()
-                            })
+                            .cloned()
                             .unwrap_or_default();
+                        let models: Vec<ModelEntry> = raw_models
+                            .iter()
+                            .filter_map(|m| {
+                                m.get("model_id").and_then(|v| v.as_str()).map(|id| {
+                                    ModelEntry {
+                                        id: id.to_string(),
+                                        context_window: m
+                                            .get("context_window")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|n| n as usize),
+                                        max_output_tokens: None,
+                                        temperature: None,
+                                        top_p: None,
+                                        reasoning_effort: None,
+                                        capabilities: None,
+                                    }
+                                })
+                            })
+                            .collect();
+
                         if let Some(existing) =
                             cfg.llm.connections.iter_mut().find(|c| c.id == conn_id)
                         {
-                            existing.endpoint = base_url;
-                            for m in models {
+                            existing.endpoint = base_url.clone();
+                            existing.protocol = Some(rust_proto.into());
+                            existing.provider = Some(conn_source.clone());
+                            if let Some(k) = imported_api_key.clone() {
+                                existing.api_key = Some(k);
+                            }
+                            if let Some(env_k) = imported_api_key_env.clone() {
+                                existing.api_key_env = Some(env_k);
+                            }
+                            for m in &models {
                                 if !existing.models.iter().any(|e| e.id == m.id) {
-                                    existing.models.push(m);
+                                    existing.models.push(m.clone());
                                 }
                             }
                         } else {
                             cfg.llm.connections.push(ConnectionConfig {
                                 id: conn_id.clone(),
-                                endpoint: base_url,
-                                protocol: Some("chat_completions".into()),
-                                provider: Some("import".into()),
-                                api_key: None,
-                                api_key_env: None,
-                                models,
+                                endpoint: base_url.clone(),
+                                protocol: Some(rust_proto.into()),
+                                provider: Some(conn_source.clone()),
+                                api_key: imported_api_key,
+                                api_key_env: imported_api_key_env,
+                                models: models.clone(),
                             });
                         }
+
+                        // Upsert `model_connection` record alongside `cfg.llm.connections`
+                        let prev_rec_rev = suite
+                            .get_record::<Value>("model_connection", &conn_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|r| r.get("revision").and_then(|v| v.as_i64()))
+                            .unwrap_or(0);
+                        let conn_record = json!({
+                            "id": conn_id,
+                            "display_name": display_name,
+                            "base_url": base_url,
+                            "endpoint": base_url,
+                            "protocol": wire_proto,
+                            "protocols": [wire_proto],
+                            "source": conn_source,
+                            "source_id": Value::Null,
+                            "account_id": Value::Null,
+                            "enabled": true,
+                            "revision": prev_rec_rev + 1,
+                            "catalog": {
+                                "observed_at_ms": now_ms(),
+                                "models": raw_models
+                            },
+                            "capability_assessments": [],
+                            "updated_at_ms": now_ms()
+                        });
+                        let _ = suite.upsert_record("model_connection", &conn_id, &conn_record);
+
+                        let enabled_keys: Vec<String> = if enable_models {
+                            models
+                                .iter()
+                                .map(|m| format!("{wire_proto}:{}", m.id))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        if enable_models {
+                            let _ = store.set_kv(
+                                &format!("model_conn_selections:{conn_id}"),
+                                &json!({"enabled": enabled_keys}),
+                            );
+                            if cfg.llm.default_model.is_none() {
+                                if let Some(first_m) = models.first() {
+                                    cfg.llm.default_model = Some(DefaultModelSelection {
+                                        connection: conn_id.clone(),
+                                        model: first_m.id.clone(),
+                                    });
+                                }
+                            }
+                        }
+
+                        any_imported = true;
                         results.push(json!({
                             "candidate_id": cid,
                             "connection_id": conn_id,
@@ -5314,9 +5905,12 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         }));
                     }
                 }
-                if !results.is_empty() {
+                if any_imported {
                     let _ = save_applied_config(&store, &cfg);
+                    sync_web_model_profiles_cache(&store);
                 }
+                // Clear stored plan (including any ephemeral credentials) after commit
+                let _ = store.set_kv(&plan_key, &Value::Null);
                 let _ = respond_api_json(req, 200, &Value::Array(results), crypto_tok);
             }
             (Method::Post, p)
@@ -5328,8 +5922,28 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 );
                 let cfg = load_active_config(&store);
                 if let Some(conn) = cfg.llm.connections.iter().find(|c| c.id == ep_id) {
-                    let models = discover_endpoint_models(conn);
-                    let _ = respond_api_json(req, 200, &json!({"models": models}), crypto_tok);
+                    match discover_endpoint_models(conn) {
+                        Ok(models) => {
+                            let _ = respond_api_json(req, 200, &json!({"models": models}), crypto_tok);
+                        }
+                        Err(err) => {
+                            let status = if err.contains("empty") || err.contains("invalid") {
+                                400
+                            } else {
+                                502
+                            };
+                            let _ = respond_api_json(
+                                req,
+                                status,
+                                &json!({
+                                    "ok": false,
+                                    "error": "model_discovery_failed",
+                                    "message": err
+                                }),
+                                crypto_tok,
+                            );
+                        }
+                    }
                 } else {
                     let _ = respond_api_json(req, 404, &json!({"error": "endpoint_not_found"}), crypto_tok);
                 }
@@ -6126,6 +6740,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 match store.upsert_mcp_server(&cfg) {
                     Ok(()) => {
                         mcp_manager.evict(&cfg.id);
+                        sync_agent_settings_mcp_servers(&store);
                         let _ = respond_api_json(req, 200, &json!({"ok": true, "server": cfg}), crypto_tok);
                     }
                     Err(e) => {
@@ -6141,6 +6756,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 match store.upsert_mcp_server(&cfg) {
                     Ok(()) => {
                         mcp_manager.evict(&cfg.id);
+                        sync_agent_settings_mcp_servers(&store);
                         let _ = respond_api_json(req, 200, &json!({"ok": true, "server": cfg}), crypto_tok);
                     }
                     Err(e) => {
@@ -6155,6 +6771,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 mcp_manager.disconnect(&id);
                 match store.delete_mcp_server(&id) {
                     Ok(deleted) => {
+                        sync_agent_settings_mcp_servers(&store);
                         let _ = respond_api_json(
                             req,
                             200,
@@ -7368,12 +7985,18 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                             .or_else(|| result.get("expert"))
                             .or_else(|| result.get("submission"))
                             .cloned();
+                        let req_client_id = body
+                            .get("client_id")
+                            .or_else(|| cmd.get("client_id"))
+                            .cloned()
+                            .unwrap_or(Value::Null);
                         let _ = respond_api_json(
                             req,
                             200,
                             &json!({
                                 "ok": true,
                                 "host_id": host_id,
+                                "client_id": req_client_id,
                                 "source_store_epoch": source_store_epoch,
                                 "source_matches": true,
                                 "result": result,

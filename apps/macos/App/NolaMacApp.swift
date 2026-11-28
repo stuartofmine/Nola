@@ -853,6 +853,10 @@ struct MacSettingsView: View {
     @State private var managedServerTailcatError: String?
     @State private var hostVerificationRevision = 0
     @State private var hostVerificationTask: Task<Void, Never>?
+    @State private var providerEndpointCount = 0
+    @State private var providerChatModelCount = 0
+    @State private var providerSummaryGeneration = 0
+    @State private var providerSummaryTask: Task<Void, Never>?
     @State private var showsRemoveHostConfirmation = false
     @State private var settingsError: String?
     @State private var serverCopyFeedback: String?
@@ -953,7 +957,8 @@ struct MacSettingsView: View {
         }
         .task(id: selectedCategory.rawValue) {
             if selectedCategory == .providers {
-                defaultChatModel.reload()
+                defaultChatModel.scheduleReload()
+                await refreshProviderSummary()
             }
             if selectedCategory == .connections, !skipsAutomaticHostVerification, hostVerificationRevision == 0 {
                 let task = startHostVerification(saved: true)
@@ -963,11 +968,25 @@ struct MacSettingsView: View {
                 await synchronizeNotificationAuthorization()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .nolaMacConfigurationDidChange)) { _ in
+            guard selectedCategory == .providers else { return }
+            defaultChatModel.scheduleReload()
+            scheduleProviderSummaryRefresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in
+            guard selectedCategory == .providers else { return }
+            defaultChatModel.scheduleReload()
+            scheduleProviderSummaryRefresh()
+        }
         .onChange(of: selectedCategory) { old, _ in
             if old == .connections { leaveHostVerification() }
         }
         .background { MacWindowCloseObserver(onClose: leaveHostVerification).frame(width: 0, height: 0) }
-        .onDisappear(perform: leaveHostVerification)
+        .onDisappear {
+            providerSummaryTask?.cancel()
+            providerSummaryTask = nil
+            leaveHostVerification()
+        }
         .confirmationDialog(
             macSettingsText("mac.settings.host.remove.confirm.title", "Remove Nola Server connection?"),
             isPresented: $showsRemoveHostConfirmation
@@ -1778,6 +1797,57 @@ struct MacSettingsView: View {
         }
     }
 
+    private func scheduleProviderSummaryRefresh() {
+        providerSummaryTask?.cancel()
+        providerSummaryTask = Task { @MainActor in
+            await refreshProviderSummary()
+        }
+    }
+
+    private func refreshProviderSummary() async {
+        providerSummaryGeneration &+= 1
+        let generation = providerSummaryGeneration
+        let counts = await Task.detached(priority: .userInitiated) { () -> (endpoints: Int, chatModels: Int) in
+            let port = MacApplicationPort.shared
+            let configStore = MacAppleChatConfigurationStore(applicationPort: port)
+            let profiles = (try? port.listModelProfiles()) ?? []
+            let legacyEndpoints = (try? configStore.endpointSnapshot(from: profiles, includeCredentials: false).endpoints) ?? []
+            let managedConnections = (try? MacModelConnectionService(application: port).connections()) ?? []
+            var distinctKeys = Set<String>()
+            var managedIDs = Set<String>()
+            var managedURLs = Set<String>()
+            for connection in managedConnections {
+                let id = connection.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !id.isEmpty {
+                    distinctKeys.insert("conn:\(id)")
+                    managedIDs.insert(id)
+                }
+                let normalizedURL = connection.document.connection.base_url
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    .lowercased()
+                if !normalizedURL.isEmpty {
+                    managedURLs.insert(normalizedURL)
+                }
+            }
+            for endpoint in legacyEndpoints {
+                let normalizedURL = endpoint.baseURL
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    .lowercased()
+                if managedIDs.contains(endpoint.id) || (!normalizedURL.isEmpty && managedURLs.contains(normalizedURL)) {
+                    continue
+                }
+                distinctKeys.insert("legacy:\(endpoint.id)")
+            }
+            let models = configStore.configuredModels(from: profiles)
+            return (distinctKeys.count, models.count)
+        }.value
+        guard !Task.isCancelled, providerSummaryGeneration == generation else { return }
+        providerEndpointCount = counts.endpoints
+        providerChatModelCount = counts.chatModels
+    }
+
     private func importHostConnectionSetupFromPasteboard() {
         guard let text = connectionPasteboard.string(forType: .string),
               let setup = MacNolaServerConnectionSetup.decode(text) else {
@@ -1823,15 +1893,11 @@ struct MacSettingsView: View {
                 ))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                let legacyEndpoints = MacAppleChatConfigurationStore.shared.endpoints()
-                let managedConnections = (try? MacModelConnectionService(application: .shared).connections()) ?? []
-                let endpointCount = legacyEndpoints.count + managedConnections.count
-                let models = MacAppleChatConfigurationStore.shared.configuredModels()
                 LabeledContent(macSettingsText("mac.settings.provider.endpoints", "Endpoints")) {
-                    Text(endpointCount, format: .number)
+                    Text(providerEndpointCount, format: .number)
                 }
                 LabeledContent(macSettingsText("mac.settings.provider.chat_models", "Chat models")) {
-                    Text(models.count, format: .number)
+                    Text(providerChatModelCount, format: .number)
                 }
                 MacSettingsDefaultChatModelSummary(preference: defaultChatModel) { remoteProfileID in
                     if let openModels { openModels(remoteProfileID) }

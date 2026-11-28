@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(nola_model_privacy_test LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Only headers are required. Studio's bundled runtime can lack a development kit.
 set(JDK "$ENV{JAVA_HOME}")
 if(APPLE AND NOT EXISTS "${JDK}/include/jni.h")
@@ -8,7 +10,7 @@ endif()
 find_path(JNI_INCLUDE jni.h HINTS "${JDK}/include" REQUIRED)
 find_path(JNI_PLATFORM_INCLUDE jni_md.h HINTS "${JNI_INCLUDE}"
     PATH_SUFFIXES darwin linux win32 REQUIRED)
-add_library(nola_privacy_test SHARED ../../main/cpp/model_privacy_jni.cpp)
+add_library(nola_privacy_test SHARED ../../main/cpp/model_privacy_jni.cpp ../../main/cpp/nola_core_jni.cpp)
 target_include_directories(nola_privacy_test PRIVATE "${JNI_INCLUDE}" "${JNI_PLATFORM_INCLUDE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../../crates/nola-app/include")
 find_library(CORE_PRIVACY NAMES nola_app nola_app.dll

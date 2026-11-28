@@ -200,6 +200,20 @@ pub(super) fn is_assistant_journal_operation(body: &Value) -> bool {
     }
 }
 
+pub(super) fn is_paired_journal_operation(body: &Value) -> bool {
+    if is_assistant_journal_operation(body) {
+        return true;
+    }
+    let Some(op) = body.get("operation").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if op == "task_child_window" {
+        return true;
+    }
+    matches!(op, "prepare" | "observe" | "cancel")
+        && body.get("identity").is_some_and(|v| v.is_object())
+}
+
 pub(super) fn handle_assistant_journal_http(
     store: &Store,
     suite: &ModulesSuite,
@@ -233,7 +247,7 @@ pub(super) fn handle_assistant_journal_http(
         }
     };
     let result = crate::daemon::dispatch_command(store, suite, daemon_cmd, body)?;
-    if is_mobile || has_expected_host_id(body) {
+    if is_mobile || has_expected_host_id(body) || is_paired_journal_operation(body) {
         Ok(wrap_paired_envelope(store, host_id, result))
     } else {
         Ok(result)
@@ -462,7 +476,7 @@ pub(super) fn handle_remote_submission_reconciliation(
         .and_then(|v| v.as_str())
         .unwrap_or("observe");
     let identity = body.get("identity").cloned().unwrap_or_else(|| json!({}));
-    let request_digest = body
+    let raw_digest = body
         .get("request_digest")
         .and_then(|v| v.as_str())
         .unwrap_or("");
@@ -475,6 +489,35 @@ pub(super) fn handle_remote_submission_reconciliation(
         .and_then(|v| v.as_str())
         .unwrap_or("assistant");
     let key = format!("remote_sub_server_receipt:{conv_id}:{sub_id}");
+
+    if op == "prepare" {
+        let computed_digest = if raw_digest.len() == 64
+            && raw_digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            raw_digest.to_string()
+        } else {
+            let req_canon = serde_json::to_string(
+                body.get("request").unwrap_or(&Value::Null),
+            )
+            .unwrap_or_default();
+            let id_canon = serde_json::to_string(&identity).unwrap_or_default();
+            sha256_hex(format!("{conv_id}:{id_canon}:{req_canon}").as_bytes())
+        };
+        let receipt = json!({
+            "protocol_version": 1,
+            "identity": identity,
+            "request_digest": computed_digest,
+            "phase": "prepared",
+            "admission": Value::Null,
+            "rejection_code": Value::Null
+        });
+        let _ = store.set_kv(&key, &receipt);
+        return receipt;
+    }
+
+    let request_digest = raw_digest;
 
     if op == "cancel" {
         if let Some(flag) = active_cancels.lock().unwrap().get(conv_id) {

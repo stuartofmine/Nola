@@ -1726,6 +1726,9 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
 
     private func readSummaryJournalCommand(_ command: AgentCoreJSONValue,
         owner: IOSAssistantJournalIdentity) async throws -> AgentCoreJSONValue {
+        guard let expectedHostId = config.expectedHostId, !expectedHostId.isEmpty else {
+            throw IOSApplicationRuntimeError.rejected("Journal requires a paired authenticated Host")
+        }
         guard case .object(var fields) = command, case .string(let type)? = fields.removeValue(forKey: "type") else {
             throw IOSApplicationRuntimeError.rejected("Invalid summary journal read")
         }
@@ -1742,6 +1745,7 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
             from: JSONEncoder().encode(at)).identity == owner else {
             throw IOSApplicationRuntimeError.rejected("Summary journal request escaped its admitted root")
         }
+        fields["expected_host_id"] = .string(expectedHostId)
         fields["operation"] = .string(operation)
         return try await pairedReadRequest(AgentCoreJSONValue.object(fields), path: "chat/conversations/\(owner.conversation_id)/messages")
     }
@@ -2181,8 +2185,12 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     }
 
     func taskChildWindow(_ query: AppleTaskChildWindowRequest) async throws -> IOSConversationProjectionWindowV1 {
+        guard let expectedHostId = config.expectedHostId, !expectedHostId.isEmpty else {
+            throw IOSApplicationRuntimeError.rejected("Journal requires a paired authenticated Host")
+        }
         guard case .object(var fields) = try JSONDecoder().decode(AgentCoreJSONValue.self,
             from: JSONEncoder().encode(query)) else { throw IOSApplicationRuntimeError.invalidResponse }
+        fields["expected_host_id"] = .string(expectedHostId)
         fields["operation"] = .string("task_child_window")
         return try await pairedReadRequest(AgentCoreJSONValue.object(fields), path: "chat/conversations/\(query.destination.parentConversationID)/messages",
             responseByteLimit: 4 * 1024 * 1024)
@@ -2504,11 +2512,13 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
     }
 
     func submissionReceipt(identity: IOSRemoteSubmissionIdentity, digest: String, cancel: Bool) async throws -> IOSSourceSubmissionReceipt? {
-        struct Query: Encodable { let operation: String; let identity: IOSRemoteSubmissionIdentity; let request_digest: String }
-        guard identity.source_host_id == config.expectedHostId, identity.client_id == config.clientId else {
+        struct Query: Encodable { let expected_host_id: String; let operation: String; let identity: IOSRemoteSubmissionIdentity; let request_digest: String }
+        guard let expectedHostId = config.expectedHostId,
+              identity.source_host_id == expectedHostId,
+              identity.client_id == config.clientId else {
             throw IOSApplicationRuntimeError.rejected("Submission source identity changed")
         }
-        let receipt: IOSSourceSubmissionReceipt? = try await pairedReadRequest(Query(operation: cancel ? "cancel" : "observe",
+        let receipt: IOSSourceSubmissionReceipt? = try await pairedReadRequest(Query(expected_host_id: expectedHostId, operation: cancel ? "cancel" : "observe",
             identity: identity, request_digest: digest), path: "chat/conversations/\(identity.conversation_id)")
         guard receipt == nil || (receipt?.identity == identity && receipt?.request_digest == digest) else {
             throw IOSApplicationRuntimeError.rejected("Submission receipt owner changed")
@@ -3613,10 +3623,19 @@ public struct WebAgentProvider: LLMClient, LLMRemoteAuxiliaryInvocationProviding
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
-    public static func fetchHostResource(from url: URL, pinnedCertificateSHA256: String? = nil) async throws -> Data {
+    public static func fetchHostResource(
+        from url: URL,
+        token: String? = nil,
+        pinnedCertificateSHA256: String? = nil
+    ) async throws -> Data {
         var request = URLRequest(url: url)
+        request.httpMethod = "GET"
         request.timeoutInterval = 20
         request.setValue("*/*", forHTTPHeaderField: "Accept")
+        if let trimmedToken = token?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !trimmedToken.isEmpty {
+            applyMobileAuth(to: &request, token: trimmedToken)
+        }
 
         let session = makeURLSession(pinnedCertificateSHA256: Config.normalizedFingerprint(pinnedCertificateSHA256))
         defer {

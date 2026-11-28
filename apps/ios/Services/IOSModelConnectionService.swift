@@ -340,16 +340,15 @@ nonisolated final class IOSModelConnectionService: Sendable {
     /// Explicitly configure another API route. Never replace the old route or
     /// reuse a credential at a different endpoint; the new route gets its own
     /// protocol-scoped credential reference through the ordinary create path.
-    @MainActor
     func configureProtocol(for model: ModelInfo, wireProtocol: ModelWireProtocol) throws -> ModelInfo {
         guard !model.isLocal, !model.isWebBackend,
-              wireProtocol == .responses || wireProtocol == .chatCompletions,
+              wireProtocol == .responses || wireProtocol == .chatCompletions || wireProtocol == .anthropic,
               let stored = try application.modelProfile(id: model.id), stored.enabled, stored.deletedAtMs == nil,
               let current = ModelSelectionManager.modelInfo(from: stored),
               current.baseURL == model.baseURL, current.wireProtocol == model.wireProtocol,
               current.effectiveUpstreamModelId == model.effectiveUpstreamModelId,
               let endpoint = current.baseURL, let originalWire = current.wireProtocol,
-              originalWire == .responses || originalWire == .chatCompletions,
+              originalWire == .responses || originalWire == .chatCompletions || originalWire == .anthropic,
               let source = try JSONSerialization.jsonObject(with: Data(stored.sourceJSON.utf8)) as? [String: Any],
               source["sourceKind"] as? String != "nola_chatgpt" else {
             throw IOSCloudCredentialError.invalidReference

@@ -29,6 +29,53 @@ nonisolated struct MacCanonicalModelProfile: Codable, Equatable, Sendable {
         case updatedAtMs = "updated_at_ms"
         case deletedAtMs = "deleted_at_ms"
     }
+
+    init(
+        id: String,
+        displayName: String,
+        provider: String,
+        modelName: String,
+        runtime: String,
+        sourceJSON: String,
+        parametersJSON: String,
+        selected: Bool,
+        enabled: Bool,
+        revision: Int64,
+        createdAtMs: Int64,
+        updatedAtMs: Int64,
+        deletedAtMs: Int64?
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.provider = provider
+        self.modelName = modelName
+        self.runtime = runtime
+        self.sourceJSON = sourceJSON
+        self.parametersJSON = parametersJSON
+        self.selected = selected
+        self.enabled = enabled
+        self.revision = revision
+        self.createdAtMs = createdAtMs
+        self.updatedAtMs = updatedAtMs
+        self.deletedAtMs = deletedAtMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName) ?? id
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? modelName
+        provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? "openai-compatible"
+        runtime = try container.decodeIfPresent(String.self, forKey: .runtime) ?? "remote"
+        sourceJSON = try container.decodeIfPresent(String.self, forKey: .sourceJSON) ?? "{}"
+        parametersJSON = try container.decodeIfPresent(String.self, forKey: .parametersJSON) ?? "{}"
+        selected = try container.decodeIfPresent(Bool.self, forKey: .selected) ?? false
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        revision = try container.decodeIfPresent(Int64.self, forKey: .revision) ?? 1
+        createdAtMs = try container.decodeIfPresent(Int64.self, forKey: .createdAtMs) ?? 0
+        updatedAtMs = try container.decodeIfPresent(Int64.self, forKey: .updatedAtMs) ?? createdAtMs
+        deletedAtMs = try container.decodeIfPresent(Int64.self, forKey: .deletedAtMs)
+    }
 }
 
 /// Application use cases needed to select a local model and edit its parameters.

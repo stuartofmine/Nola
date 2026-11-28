@@ -726,9 +726,13 @@ final class MacWorkspaceModel {
         } else {
             guard let repository = canonicalRepository,
                   let projection = try await repository.sessionProjectionAsync(conversationID: conversationID) else { return nil }
-            let port = try MacApplicationPort(databaseURL: repository.databaseURL)
+            let port = repository.databaseURL.standardizedFileURL == modelApplication.databaseURL.standardizedFileURL
+                ? modelApplication
+                : try MacApplicationPort(databaseURL: repository.databaseURL)
             var object = try JSONSerialization.jsonObject(with: projection.goalProjection) as? [String: Any] ?? [:]
-            let observation = try port.goalControlObservation(conversationID: conversationID)
+            let observation = try await Task.detached(priority: .utility) {
+                try port.goalControlObservation(conversationID: conversationID)
+            }.value
             object["control_token"] = observation?.controlToken as Any? ?? NSNull()
             object["can_submit"] = observation?.canSubmit as Any? ?? true
             if let observation, let active = object["active"] as? [String: Any],
@@ -1802,12 +1806,30 @@ final class MacWorkspaceModel {
             return
         }
         modelConfigurationPendingOwners.insert(conversation.id)
+        // Optimistically update inline model overrides (such as reasoning effort) immediately
+        // so the composer pill updates on the click frame with zero layout jump or flicker.
+        if let edit = overrideEdit,
+           let optIndex = conversations.firstIndex(where: { $0.id == conversation.id }) {
+            var optimistic = conversations[optIndex].modelOverrides ?? [:]
+            optimistic[edit.key] = edit.value
+            conversations[optIndex].modelOverrides = optimistic
+            refreshModelConfiguration()
+        }
         repository.enqueueModelConfiguration(conversation: conversation, selectionID: selectionID,
             host: host, changesSelection: changesSelection,
             overrideEdit: overrideEdit) { [weak self] result in
             guard let self else { return }
             self.modelConfigurationPendingOwners.remove(conversation.id)
-            if case .failure(let error) = result { self.modelConfigurationErrors[conversation.id] = error }
+            if case .failure(let error) = result {
+                self.modelConfigurationErrors[conversation.id] = error
+                if let edit = overrideEdit,
+                   let rollbackIndex = self.conversations.firstIndex(where: { $0.id == conversation.id }) {
+                    var restored = self.conversations[rollbackIndex].modelOverrides ?? [:]
+                    restored[edit.key] = edit.baseline
+                    self.conversations[rollbackIndex].modelOverrides = restored
+                    self.refreshModelConfiguration()
+                }
+            }
             defer { self.resumeConfigurationWaitersIfSettled(conversation.id) }
             guard let index = self.conversations.firstIndex(where: { $0.id == conversation.id }) else { return }
             switch result {
@@ -1820,7 +1842,7 @@ final class MacWorkspaceModel {
                 self.conversations[index].executionHostRawValue = receipt.executionHostRawValue
                 self.conversations[index].configurationRevision = receipt.revision
                 self.refreshModelConfiguration()
-                if self.selectedConversationID == conversation.id {
+                if self.selectedConversationID == conversation.id && overrideEdit == nil {
                     self.updateActivity(title: "Model", detail: displayName, state: .completed)
                 }
             case .failure(let error):
@@ -1930,6 +1952,11 @@ final class MacWorkspaceModel {
     var reasoningConfiguration: MacReasoningConfiguration {
         guard executionBackend.id == "nola", selectedModelOption?.isLocal != true else { return .init() }
         var result = selectedRemoteConfiguration?.reasoning ?? .init()
+        if result.control == .automatic,
+           selectedRemoteConfiguration?.executionCapabilities.reasoning == true {
+            result.control = .effort
+            result.efforts = ["none", "low", "medium", "high"]
+        }
         result.responses = effectiveWireProtocol.usesResponsesTransport
         result.outputLimit = effectiveModelParameters.maxOutputTokens
         return result
@@ -2918,9 +2945,7 @@ final class MacWorkspaceModel {
             isPlanMode: isPlanMode,
             permissionConfigurationState: selectedPermissionConfigurationState,
             activePermissionMode: selectedPermissionActiveMode, isSubmissionBlocked: blocked,
-            submissionBlockReason: selectedModelConfigurationPending || selectedPermissionHasUncommittedChanges
-                    ? String(localized: "Conversation configuration is still being saved. Your message draft is retained.", table: "Chat")
-                : selectedKnowledgeHasPendingChanges
+            submissionBlockReason: selectedKnowledgeHasPendingChanges
                     ? String(localized: "Save conversation knowledge before sending. Your message draft is retained.", table: "Chat")
                 : isRunning && !ownsRun
                     ? selectedConversationID.flatMap { submissionResourceWaits[$0] }
@@ -2936,7 +2961,7 @@ final class MacWorkspaceModel {
     @discardableResult
     func selectComposerReasoningPreference(_ preference: String, conversationID: String) -> Bool {
         guard !conversationID.isEmpty, selectedConversationID == conversationID, executionHost == .local,
-              !selectedModelConfigurationPending, !selectedComposerState.isRunning,
+              !selectedComposerState.isRunning,
               !reasoningConfiguration.options.isEmpty,
               preference == "automatic" || reasoningConfiguration.options.contains(preference) else { return false }
         var overrides = conversationModelOverride
@@ -5693,11 +5718,25 @@ final class MacWorkspaceModel {
         request: MacRemotePermissionRequest,
         conversationID: String
     ) throws {
-        guard let resource = permissionProjectionsByConversation[conversationID]?
+        let projectedResource = permissionProjectionsByConversation[conversationID]?
             .pending
             .first(where: { $0.requestID == request.id })?
             .resource
-            .trimmingCharacters(in: .whitespacesAndNewlines),
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackResource: String? = {
+            if let data = request.arguments.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for key in ["resource", "path", "file_path", "directory", "cwd", "url", "endpoint", "command"] {
+                    if let value = obj[key] as? String {
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { return String(trimmed.prefix(512)) }
+                    }
+                }
+            }
+            let tool = request.toolName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return tool.isEmpty ? nil : tool
+        }()
+        guard let resource = (projectedResource?.isEmpty == false ? projectedResource : fallbackResource),
               !resource.isEmpty else {
             throw NSError(
                 domain: "NolaMac.PermissionGrant",

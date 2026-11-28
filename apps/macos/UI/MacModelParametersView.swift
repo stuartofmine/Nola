@@ -318,6 +318,65 @@ enum MacModelParameterValidation {
 }
 
 struct MacModelParametersView: View {
+    private nonisolated struct RemoteParameterSnapshot: Sendable {
+        let parameters: ModelParameters
+        let profile: MacCanonicalModelProfile
+        let revision: UInt64
+    }
+
+    private nonisolated enum LoadedSnapshot: Sendable {
+        case local(MacLocalModelConfigurationStore.ParameterSnapshot)
+        case remote(RemoteParameterSnapshot)
+    }
+
+    private nonisolated static func loadSnapshotOffMainActor(route: MacModelParametersRoute) throws -> LoadedSnapshot {
+        if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) {
+            return .local(try MacLocalModelConfigurationStore.loadParameterSnapshot(for: profile))
+        }
+        let port = MacApplicationPort.shared
+        let profile: MacCanonicalModelProfile?
+        if let exact = try port.modelProfile(route.modelName) {
+            profile = exact
+        } else {
+            let matches = try port.listModelProfiles().filter { $0.modelName == route.modelName && $0.deletedAtMs == nil }
+            guard matches.count == 1 else { throw MacApplicationServiceError.invalidResponse }
+            profile = matches.first
+        }
+        guard let profile, profile.deletedAtMs == nil, profile.revision >= 0,
+              let data = profile.parametersJSON.data(using: .utf8) else {
+            throw MacApplicationServiceError.invalidResponse
+        }
+        return .remote(RemoteParameterSnapshot(
+            parameters: try JSONDecoder().decode(ModelParameters.self, from: data),
+            profile: profile,
+            revision: UInt64(profile.revision)
+        ))
+    }
+
+    private nonisolated static func saveRemoteParametersOffMainActor(
+        _ params: ModelParameters,
+        snapshot: RemoteParameterSnapshot
+    ) throws -> RemoteParameterSnapshot {
+        let profile = snapshot.profile
+        let input = MacCanonicalModelProfile(
+            id: profile.id,
+            displayName: profile.displayName,
+            provider: profile.provider,
+            modelName: profile.modelName,
+            runtime: profile.runtime,
+            sourceJSON: profile.sourceJSON,
+            parametersJSON: String(decoding: try JSONEncoder().encode(params), as: UTF8.self),
+            selected: false,
+            enabled: true,
+            revision: 0,
+            createdAtMs: profile.createdAtMs,
+            updatedAtMs: Int64(Date().timeIntervalSince1970 * 1_000),
+            deletedAtMs: nil
+        )
+        let revision = try MacApplicationPort.shared.configureModelParameters(input, expectedRevision: snapshot.revision)
+        return RemoteParameterSnapshot(parameters: params, profile: input, revision: revision)
+    }
+
     let route: MacModelParametersRoute
 
     @Environment(\.dismiss) private var dismiss
@@ -326,13 +385,16 @@ struct MacModelParametersView: View {
     @State private var savedParameters: ModelParameters
     @State private var savedSeedText: String
     @State private var saved = false
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var loadGeneration = 0
     @State private var feedbackID = UUID()
     @State private var showsDiscardConfirmation = false
     @State private var reloadAfterDiscard = false
     @State private var allowsDiscardClose = false
     @State private var saveError: String?
     @State private var localRevision: UInt64?
-    @State private var remoteSnapshot: ModelParametersStore.ParameterSnapshot?
+    @State private var remoteSnapshot: RemoteParameterSnapshot?
     @State private var selectedPreset: MacModelParameterPreset
     @State private var numericText: [String: String] = [:]
     @State private var invalidNumericFields: Set<String> = []
@@ -340,37 +402,12 @@ struct MacModelParametersView: View {
 
     init(route: MacModelParametersRoute) {
         self.route = route
-        let value: ModelParameters
-        var revision: UInt64?
-        var remote: ModelParametersStore.ParameterSnapshot?
-        var loadError: String?
-        if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) {
-            do {
-                let snapshot = try MacLocalModelConfigurationStore.shared.parameterSnapshot(for: profile)
-                value = snapshot.parameters
-                revision = snapshot.revision
-            } catch {
-                value = .localDefaults
-                loadError = error.localizedDescription
-            }
-        } else {
-            do {
-                let snapshot = try ModelParametersStore.shared.parameterSnapshot(for: route.modelName)
-                remote = snapshot
-                value = snapshot.parameters
-            } catch {
-                value = ModelParameters.defaults(isLocal: route.isLocal)
-                loadError = error.localizedDescription
-            }
-        }
-        _parameters = State(initialValue: value)
-        _localRevision = State(initialValue: revision)
-        _remoteSnapshot = State(initialValue: remote)
-        _saveError = State(initialValue: loadError)
-        _seedText = State(initialValue: value.seed.map(String.init) ?? "")
-        _savedParameters = State(initialValue: value)
-        _savedSeedText = State(initialValue: value.seed.map(String.init) ?? "")
-        _selectedPreset = State(initialValue: MacModelParameterPreset.matching(value))
+        let defaults = ModelParameters.defaults(isLocal: route.isLocal)
+        _parameters = State(initialValue: defaults)
+        _seedText = State(initialValue: defaults.seed.map(String.init) ?? "")
+        _savedParameters = State(initialValue: defaults)
+        _savedSeedText = State(initialValue: defaults.seed.map(String.init) ?? "")
+        _selectedPreset = State(initialValue: MacModelParameterPreset.matching(defaults))
     }
 
     var body: some View {
@@ -413,9 +450,10 @@ struct MacModelParametersView: View {
                 .padding(.vertical, MacDesignTokens.Spacing.xl)
                 .frame(maxWidth: .infinity)
             }
-            .disabled(localRevision == nil && remoteSnapshot == nil)
+            .disabled(isLoading || isSaving || (localRevision == nil && remoteSnapshot == nil))
         }
         .background(MacPageBackground())
+        .task(id: route) { await loadParameters() }
         .background(MacEditorWindowCloseGuard(
             shouldPreventClose: { hasUnsavedChanges && !allowsDiscardClose },
             onCloseAttempt: requestDismiss
@@ -475,11 +513,11 @@ struct MacModelParametersView: View {
     private var headerActions: some View {
         parameterStatus
         Button(String(localized: "mac.model_parameters.reset")) { reset() }
-            .disabled(localRevision == nil && remoteSnapshot == nil)
+            .disabled(isLoading || isSaving || (localRevision == nil && remoteSnapshot == nil))
         Button(String(localized: "mac.model_parameters.save")) { save() }
             .buttonStyle(.nolaProminent)
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(!hasUnsavedChanges || validationMessage != nil || (localRevision == nil && remoteSnapshot == nil))
+            .disabled(isLoading || isSaving || !hasUnsavedChanges || validationMessage != nil || (localRevision == nil && remoteSnapshot == nil))
         Button(String(localized: "mac.model_parameters.done")) { requestDismiss() }
             .keyboardShortcut(.cancelAction)
     }
@@ -741,42 +779,58 @@ struct MacModelParametersView: View {
     }
 
     private func save() {
-        guard validationMessage == nil else { return }
-        parameters.seed = Int(seedText.trimmingCharacters(in: .whitespacesAndNewlines))
-        parameters.customSystemPrompt = parameters.customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) {
+        guard !isSaving, !isLoading, validationMessage == nil else { return }
+        var normalized = parameters
+        normalized.seed = Int(seedText.trimmingCharacters(in: .whitespacesAndNewlines))
+        normalized.customSystemPrompt = normalized.customSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let capturedSeedText = seedText
+        let route = self.route
+        let expectedLocalRevision = localRevision
+        let capturedRemoteSnapshot = remoteSnapshot
+        isSaving = true
+        saveError = nil
+        Task { @MainActor in
+            defer { isSaving = false }
             do {
-                guard let localRevision else {
-                    throw MacApplicationServiceError.invalidResponse
+                if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) {
+                    guard let expectedLocalRevision else {
+                        throw MacApplicationServiceError.invalidResponse
+                    }
+                    let nextRevision = try await Task.detached(priority: .userInitiated) {
+                        try MacLocalModelConfigurationStore.persistParameters(
+                            normalized,
+                            for: profile,
+                            expectedRevision: expectedLocalRevision
+                        )
+                    }.value
+                    self.localRevision = nextRevision
+                } else {
+                    guard let capturedRemoteSnapshot else {
+                        throw MacApplicationServiceError.invalidResponse
+                    }
+                    let nextSnapshot = try await Task.detached(priority: .userInitiated) {
+                        try Self.saveRemoteParametersOffMainActor(normalized, snapshot: capturedRemoteSnapshot)
+                    }.value
+                    self.remoteSnapshot = nextSnapshot
                 }
-                self.localRevision = try MacLocalModelConfigurationStore.shared.saveParameters(
-                    parameters, for: profile, expectedRevision: localRevision
-                )
+                parameters = normalized
+                savedParameters = normalized
+                numericText = [:]
+                invalidNumericFields = []
+                seedText = capturedSeedText
+                savedSeedText = capturedSeedText
+                NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
+                saved = true
+                feedbackID = UUID()
+                let feedback = feedbackID
+                Task {
+                    do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
+                    guard feedbackID == feedback else { return }
+                    saved = false
+                }
             } catch {
                 saveError = error.localizedDescription
-                return
             }
-        } else {
-            do {
-                guard let remoteSnapshot else { throw MacApplicationServiceError.invalidResponse }
-                self.remoteSnapshot = try ModelParametersStore.shared.saveParameters(parameters, snapshot: remoteSnapshot)
-            } catch {
-                saveError = error.localizedDescription
-                return
-            }
-        }
-        savedParameters = parameters
-        numericText = [:]
-        invalidNumericFields = []
-        savedSeedText = seedText
-        NotificationCenter.default.post(name: .nolaMacConfigurationDidChange, object: nil)
-        saved = true
-        feedbackID = UUID()
-        let feedback = feedbackID
-        Task {
-            do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
-            guard feedbackID == feedback else { return }
-            saved = false
         }
     }
 
@@ -837,16 +891,36 @@ struct MacModelParametersView: View {
     }
 
     private func reloadParameters() {
+        Task { @MainActor in
+            await loadParameters()
+        }
+    }
+
+    private func loadParameters() async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let route = self.route
+        isLoading = true
+        defer {
+            if loadGeneration == generation {
+                isLoading = false
+            }
+        }
         do {
+            let loaded = try await Task.detached(priority: .userInitiated) {
+                try Self.loadSnapshotOffMainActor(route: route)
+            }.value
+            guard !Task.isCancelled, loadGeneration == generation else { return }
             let refreshed: ModelParameters
-            if route.isLocal, let profile = MacLocalModelProfile.resolve(route.modelName) {
-                let snapshot = try MacLocalModelConfigurationStore.shared.parameterSnapshot(for: profile)
+            switch loaded {
+            case .local(let snapshot):
                 refreshed = snapshot.parameters
                 localRevision = snapshot.revision
-            } else {
-                let snapshot = try ModelParametersStore.shared.parameterSnapshot(for: route.modelName)
+                remoteSnapshot = nil
+            case .remote(let snapshot):
                 refreshed = snapshot.parameters
                 remoteSnapshot = snapshot
+                localRevision = nil
             }
             parameters = refreshed
             savedParameters = refreshed
@@ -858,6 +932,7 @@ struct MacModelParametersView: View {
             saveError = nil
             saved = false
         } catch {
+            guard !Task.isCancelled, loadGeneration == generation else { return }
             // Keep the entire draft and original revision when a read fails.
             saveError = error.localizedDescription
         }

@@ -29,9 +29,13 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.net.URI
@@ -81,6 +85,14 @@ class WebHostApiServiceImpl @Inject constructor(
         return runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: JsonObject(emptyMap())
     }
 
+    private fun decryptErrorText(text: String, token: String): String {
+        if (token.isBlank()) return text
+        return runCatching {
+            val envelope = json.decodeFromString<EncryptedEnvelope>(text)
+            MobileCrypto.decryptJsonObject(envelope, token).toString()
+        }.getOrDefault(text)
+    }
+
     private suspend fun postV2Json(
         hostBaseUrl: String,
         token: String,
@@ -106,7 +118,7 @@ class WebHostApiServiceImpl @Inject constructor(
         }
         val text = response.body<String>()
         if (response.status.value !in 200..299) {
-            error("WebHost v2 rejected $path (${response.status.value}): $text")
+            error("WebHost v2 rejected $path (${response.status.value}): ${decryptErrorText(text, token)}")
         }
         return decryptOrParseJsonObject(text, token)
     }
@@ -140,7 +152,7 @@ class WebHostApiServiceImpl @Inject constructor(
             if (onRoute != null) {
                 throw WebHostStatusException(response.status.value, verificationRoute = route)
             }
-            error("WebHost v2 GET $path failed (${response.status.value}): $text")
+            error("WebHost v2 GET $path failed (${response.status.value}): ${decryptErrorText(text, token)}")
         }
         if (route != null) onRoute?.invoke(route)
         return decryptOrParseJsonObject(text, token)
@@ -183,29 +195,14 @@ class WebHostApiServiceImpl @Inject constructor(
         }
     }
 
-    override fun v2StreamMessage(
+    private fun streamV2Payload(
         hostBaseUrl: String,
         token: String,
         conversationId: String,
-        content: String,
+        payload: JsonObject,
         pinnedCertificateSha256: String,
-        attachments: kotlinx.serialization.json.JsonArray?,
-        modelId: String?,
-        reasoningEffort: String?,
-        permissionProfile: String?,
-        selectedExperts: kotlinx.serialization.json.JsonArray?,
-        deviceBridge: JsonObject?,
     ): Flow<SseEvent> {
         val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$conversationId/messages")
-        val payload = buildJsonObject {
-            put("content", content)
-            if (attachments != null && attachments.isNotEmpty()) put("attachments", attachments)
-            if (!modelId.isNullOrBlank()) put("modelId", modelId)
-            if (!reasoningEffort.isNullOrBlank()) put("reasoningEffort", reasoningEffort)
-            if (!permissionProfile.isNullOrBlank()) put("permissionProfile", permissionProfile)
-            if (selectedExperts != null && selectedExperts.isNotEmpty()) put("selected_experts", selectedExperts)
-            if (deviceBridge != null) put("device_bridge", deviceBridge)
-        }
         val useMobileCrypto = token.isNotBlank()
         val wireBodyJson = if (useMobileCrypto) {
             json.encodeToString(MobileCrypto.encryptJsonObject(payload, token))
@@ -227,6 +224,31 @@ class WebHostApiServiceImpl @Inject constructor(
             mobileCryptoToken = token.takeIf { useMobileCrypto },
             requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
         )
+    }
+
+    override fun v2StreamMessage(
+        hostBaseUrl: String,
+        token: String,
+        conversationId: String,
+        content: String,
+        pinnedCertificateSha256: String,
+        attachments: kotlinx.serialization.json.JsonArray?,
+        modelId: String?,
+        reasoningEffort: String?,
+        permissionProfile: String?,
+        selectedExperts: kotlinx.serialization.json.JsonArray?,
+        deviceBridge: JsonObject?,
+    ): Flow<SseEvent> {
+        val payload = buildJsonObject {
+            put("content", content)
+            if (attachments != null && attachments.isNotEmpty()) put("attachments", attachments)
+            if (!modelId.isNullOrBlank()) put("modelId", modelId)
+            if (!reasoningEffort.isNullOrBlank()) put("reasoningEffort", reasoningEffort)
+            if (!permissionProfile.isNullOrBlank()) put("permissionProfile", permissionProfile)
+            if (selectedExperts != null && selectedExperts.isNotEmpty()) put("selected_experts", selectedExperts)
+            if (deviceBridge != null) put("device_bridge", deviceBridge)
+        }
+        return streamV2Payload(hostBaseUrl, token, conversationId, payload, pinnedCertificateSha256)
     }
 
     override suspend fun v2CancelConversation(
@@ -377,7 +399,14 @@ class WebHostApiServiceImpl @Inject constructor(
     override suspend fun expertMessageCommand(hostBaseUrl: String, token: String, operation: String, request: JsonObject,
         pinnedCertificateSha256: String): JsonObject {
         require(operation in setOf("parent", "admit", "manifest"))
-        return postV2Json(hostBaseUrl, token, "agent-rooms", request, pinnedCertificateSha256)
+        val payload = buildJsonObject {
+            request.forEach { (k, v) -> put(k, v) }
+            put("operation", operation)
+            if (!request.containsKey("type")) {
+                put("type", operation)
+            }
+        }
+        return postV2Json(hostBaseUrl, token, "agent-rooms", payload, pinnedCertificateSha256)
     }
 
     private fun extractConversationId(request: JsonObject): String {
@@ -479,11 +508,37 @@ class WebHostApiServiceImpl @Inject constructor(
 
     override fun resumeRemoteConversation(hostBaseUrl: String, token: String, request: JsonObject,
         pinnedCertificateSha256: String): Flow<SseEvent> {
-        val convId = (request["conversation_id"] as? JsonPrimitive)?.content
-            ?: (request["conversationId"] as? JsonPrimitive)?.content
-            ?: ""
-        val prompt = (request["content"] as? JsonPrimitive)?.content.orEmpty()
-        return v2StreamMessage(hostBaseUrl, token, convId, prompt, pinnedCertificateSha256)
+        val convId = extractConversationId(request)
+        require(convId.isNotBlank()) { "Missing conversation_id for remote conversation resume" }
+        val queryParts = buildList {
+            fun addQueryParam(key: String) {
+                val value = (request[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+                if (value != null) {
+                    add("$key=${java.net.URLEncoder.encode(value, "UTF-8")}")
+                }
+            }
+            addQueryParam("expected_host_id")
+            addQueryParam("client_id")
+            addQueryParam("expected_run_id")
+            addQueryParam("assistant_message_id")
+        }
+        val querySuffix = if (queryParts.isEmpty()) "" else "?${queryParts.joinToString("&")}"
+        val url = webHostV2ApiUrl(hostBaseUrl, "chat/conversations/$convId/observe$querySuffix")
+        val useMobileCrypto = token.isNotBlank()
+        val headers = buildMap {
+            put("X-Nola-Client", "android")
+            put("Accept", "text/event-stream, application/json")
+            if (useMobileCrypto) {
+                putAll(mobileAuthHeaders(token, "GET", url))
+                put("X-Nola-Mobile-Crypto", "aes-gcm-v1")
+            }
+        }
+        return sseClient.streamGet(
+            url = url,
+            headers = headers,
+            mobileCryptoToken = token.takeIf { useMobileCrypto },
+            requestClient = httpClientFactory.clientFor(hostBaseUrl, pinnedCertificateSha256),
+        )
     }
 
     override suspend fun requestWebManagementUrl(
@@ -671,36 +726,134 @@ class WebHostApiServiceImpl @Inject constructor(
         submission: FrozenRemoteSubmission,
         pinnedCertificateSha256: String,
     ): Flow<SseEvent> {
-        val lastMessage = (submission.request["messages"] as? kotlinx.serialization.json.JsonArray)
-            ?.lastOrNull() as? JsonObject
-        val prompt = lastMessage
-            ?.get("content")
-            ?.let { (it as? JsonPrimitive)?.content }
-            .orEmpty()
-        val attachments = (submission.request["attachments"] as? kotlinx.serialization.json.JsonArray)
-            ?: (lastMessage?.get("attachments") as? kotlinx.serialization.json.JsonArray)
-        val modelId = (submission.request["modelId"] as? JsonPrimitive)?.content
-            ?: (submission.request["model_id"] as? JsonPrimitive)?.content
-            ?: ((submission.request["model_intent"] as? JsonObject)?.get("model_id") as? JsonPrimitive)?.content
-        val reasoningEffort = (submission.request["reasoningEffort"] as? JsonPrimitive)?.content
-            ?: (submission.request["reasoning_effort"] as? JsonPrimitive)?.content
-        val permissionProfile = (submission.request["permissionProfile"] as? JsonPrimitive)?.content
-            ?: (submission.request["permission_profile"] as? JsonPrimitive)?.content
-        val selectedExperts = submission.request["selected_experts"] as? kotlinx.serialization.json.JsonArray
-        val deviceBridge = submission.request["device_bridge"] as? JsonObject
-        return v2StreamMessage(
+        val payload = buildBoundAgentStreamPayload(submission)
+        return streamV2Payload(
             hostBaseUrl = hostBaseUrl,
             token = token,
             conversationId = submission.identity.conversationId,
-            content = prompt,
+            payload = payload,
             pinnedCertificateSha256 = pinnedCertificateSha256,
-            attachments = attachments,
-            modelId = modelId,
-            reasoningEffort = reasoningEffort,
-            permissionProfile = permissionProfile,
-            selectedExperts = selectedExperts,
-            deviceBridge = deviceBridge,
         )
+    }
+}
+
+internal fun buildBoundAgentStreamPayload(submission: FrozenRemoteSubmission): JsonObject {
+    val req = submission.request
+    val messages = req["messages"] as? JsonArray
+    val lastUserMessage = messages
+        ?.lastOrNull { (it as? JsonObject)?.get("role")?.let { r -> (r as? JsonPrimitive)?.contentOrNull } == "user" }
+        as? JsonObject
+        ?: (messages?.lastOrNull() as? JsonObject)
+
+    val contentElement = lastUserMessage?.get("content")
+    val extractedText = when (contentElement) {
+        is JsonPrimitive -> contentElement.contentOrNull.orEmpty()
+        is JsonArray -> contentElement.mapNotNull { part ->
+            val obj = part as? JsonObject ?: return@mapNotNull null
+            (obj["text"] as? JsonPrimitive)?.contentOrNull
+                ?: (obj["content"] as? JsonPrimitive)?.contentOrNull
+        }.joinToString("\n")
+        else -> ""
+    }
+    val prompt = extractedText.ifEmpty {
+        (req["content"] as? JsonPrimitive)?.contentOrNull
+            ?: (req["prompt"] as? JsonPrimitive)?.contentOrNull
+            ?: ""
+    }
+
+    val mergedAttachments = buildList<JsonElement> {
+        val seenDataUrls = mutableSetOf<String>()
+        fun addAttachment(element: JsonElement) {
+            val obj = element as? JsonObject
+            val dataUrl = (obj?.get("dataUrl") as? JsonPrimitive)?.contentOrNull
+                ?: (obj?.get("data_url") as? JsonPrimitive)?.contentOrNull
+            if (dataUrl != null && !seenDataUrls.add(dataUrl)) return
+            add(element)
+        }
+        (req["attachments"] as? JsonArray)?.forEach(::addAttachment)
+        (lastUserMessage?.get("attachments") as? JsonArray)?.forEach(::addAttachment)
+        if (contentElement is JsonArray) {
+            var imageIndex = 0
+            for (part in contentElement) {
+                val obj = part as? JsonObject ?: continue
+                val type = (obj["type"] as? JsonPrimitive)?.contentOrNull
+                if (type != "image_url" && obj["image_url"] == null) continue
+                val url = ((obj["image_url"] as? JsonObject)?.get("url") as? JsonPrimitive)?.contentOrNull
+                    ?: (obj["url"] as? JsonPrimitive)?.contentOrNull
+                    ?: continue
+                if (url.isBlank() || !seenDataUrls.add(url)) continue
+                imageIndex++
+                val mimeType = if (url.startsWith("data:")) {
+                    url.removePrefix("data:").substringBefore(';').substringBefore(',').trim().takeIf { it.isNotEmpty() }
+                } else null
+                val ext = mimeType?.substringAfter('/')?.substringBefore('+')?.takeIf { it.isNotBlank() } ?: "png"
+                val name = (obj["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: "image-$imageIndex.$ext"
+                add(buildJsonObject {
+                    put("name", name)
+                    put("dataUrl", url)
+                    if (mimeType != null) put("mimeType", mimeType)
+                })
+            }
+        }
+    }
+
+    val modelIntent = req["model_intent"] as? JsonObject
+    val modelId = (req["modelId"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (req["model_id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (modelIntent?.get("profile_id") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (modelIntent?.get("model_id") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (modelIntent?.get("modelId") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    val reasoningEffort = (req["reasoningEffort"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (req["reasoning_effort"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    val permissionProfile = (req["permissionProfile"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        ?: (req["permission_profile"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+    val selectedExperts = req["selected_experts"] as? JsonArray
+    val deviceBridge = req["device_bridge"] as? JsonObject
+
+    return buildJsonObject {
+        put("content", prompt)
+        if (messages != null && messages.isNotEmpty()) put("messages", messages)
+        if (mergedAttachments.isNotEmpty()) put("attachments", JsonArray(mergedAttachments))
+        if (!modelId.isNullOrBlank()) put("modelId", modelId)
+        if (!reasoningEffort.isNullOrBlank()) put("reasoningEffort", reasoningEffort)
+        if (!permissionProfile.isNullOrBlank()) put("permissionProfile", permissionProfile)
+        if (selectedExperts != null && selectedExperts.isNotEmpty()) put("selected_experts", selectedExperts)
+        if (deviceBridge != null) put("device_bridge", deviceBridge)
+        if (modelIntent != null) put("model_intent", modelIntent)
+
+        put("submission_id", req["submission_id"] ?: JsonPrimitive(submission.identity.submissionId))
+        put("user_message_id", req["user_message_id"] ?: JsonPrimitive(submission.identity.userMessageId))
+        put("assistant_message_id", req["assistant_message_id"] ?: JsonPrimitive(submission.identity.assistantMessageId))
+        put("expected_host_id", req["expected_host_id"] ?: JsonPrimitive(submission.identity.sourceHostId))
+        put("client_id", req["client_id"] ?: JsonPrimitive(submission.identity.clientId))
+        put("request_digest", JsonPrimitive(submission.requestDigest))
+
+        val passthroughKeys = listOf(
+            "queued_user_command_id",
+            "tool_plan_ref",
+            "custom_system_prompt",
+            "response_style",
+            "execution_backend",
+            "external_session_id",
+            "expected_configuration_revision",
+            "expected_parent_message_id",
+            "current_user_display_text",
+            "expert_mentions",
+            "expected_source_store_epoch",
+            "allow_local_dev_tools",
+            "max_iterations",
+            "timezone",
+            "language",
+            "agent_mode",
+            "native_app_host_id",
+        )
+        for (key in passthroughKeys) {
+            val value = req[key]
+            if (value != null && value !is JsonNull) {
+                put(key, value)
+            }
+        }
     }
 }
 

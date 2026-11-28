@@ -204,6 +204,15 @@ impl ToolExecutionMiddleware {
         args: &Value,
         workspace_root: &std::path::Path,
     ) {
+        // Never persist permanent durable grants for bash commands touching sensitive paths
+        // or Nola's own internal database/config directories.
+        if spec.schema.name == "bash" {
+            if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
+                if crate::policy::bash_command_sensitive_reason(cmd).is_some() {
+                    return;
+                }
+            }
+        }
         let resource_pattern = primary_resource_pattern(&spec.schema.name, args, workspace_root);
         let grant = DurablePermissionGrant::for_approval(
             self.session_id.clone(),

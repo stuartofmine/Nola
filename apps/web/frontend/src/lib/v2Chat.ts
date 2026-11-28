@@ -320,6 +320,7 @@ export interface V2ModelChoice {
 
 export interface V2SendOptions {
     modelId?: string;
+    modelSource?: string;
     permissionProfile?: V2PermissionProfile;
     reasoningEffort?: Exclude<V2ReasoningEffort, 'automatic'>;
     attachments?: V2Attachment[];
@@ -655,6 +656,7 @@ export async function patchV2ConversationConfiguration(
         reasoningEffort?: V2ReasoningEffort;
         knowledge?: string | { keyPointsMarkdown?: string; wikiMarkdown?: string; summary?: string };
         selectedModelId?: string;
+        selectedModelSource?: string;
     },
     signal?: AbortSignal,
 ): Promise<{ status: string; snapshot?: Record<string, unknown> }> {
@@ -1154,6 +1156,9 @@ export async function streamV2ChatMessage(
         body: JSON.stringify({
             content,
             ...(options.modelId ? { modelId: options.modelId } : {}),
+            ...(options.modelSource !== undefined
+                ? { selectedModelSource: options.modelSource, modelSource: options.modelSource }
+                : {}),
             ...(options.permissionProfile ? { permissionProfile: options.permissionProfile } : {}),
             ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
             ...(options.attachments?.length ? { attachments: options.attachments } : {}),

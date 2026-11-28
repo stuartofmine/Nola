@@ -13,10 +13,20 @@ struct MacChatModelCatalog {
     let entries: [Entry]
     var candidates: [MacChatModelCandidate] { entries.map(\.candidate) }
 
+    nonisolated static func fetchProfiles(application: MacApplicationPort = .shared) throws -> [MacCanonicalModelProfile] {
+        try application.prepare()
+        return try application.listModelProfiles()
+    }
+
     static func load(application: MacApplicationPort = .shared) throws -> Self {
+        let profiles = try fetchProfiles(application: application)
+        return try build(from: profiles, application: application)
+    }
+
+    static func build(from profiles: [MacCanonicalModelProfile], application: MacApplicationPort = .shared) throws -> Self {
         let remote = MacAppleChatConfigurationStore(applicationPort: application)
-        let endpoints = try remote.endpointSnapshot(includeCredentials: false).endpoints
-        let configuredModels = remote.configuredModels()
+        let endpoints = try remote.endpointSnapshot(from: profiles, includeCredentials: false).endpoints
+        let configuredModels = remote.configuredModels(from: profiles)
         let automaticOrder = configuredModels.map(\.profileID)
         let capabilityStatuses = Dictionary(uniqueKeysWithValues: configuredModels.map {
             ($0.profileID, $0.executionCapabilityStatus)
@@ -44,8 +54,9 @@ struct MacChatModelCatalog {
             (automaticOrder.firstIndex(of: $0.candidate.profileID) ?? Int.max)
                 < (automaticOrder.firstIndex(of: $1.candidate.profileID) ?? Int.max)
         }
-        let local = MacLocalModelConfigurationStore(applicationPort: application)
-        let profiles = try application.listModelProfiles()
+        let local = application === MacApplicationPort.shared
+            ? MacLocalModelConfigurationStore.shared
+            : MacLocalModelConfigurationStore(applicationPort: application)
         let stored = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
         entries += MacLocalModelProfile.available.map { profile in
             Entry(option: MacChatModelOption(source: .local, modelID: profile.id,

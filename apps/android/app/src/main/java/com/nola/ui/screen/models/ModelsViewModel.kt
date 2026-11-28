@@ -803,9 +803,9 @@ class ModelsViewModel @Inject constructor(
             val snapshot = try {
                 if (model.source == ModelInfo.ModelSource.Local) {
                     val contextWindow = installedLocalRecords.firstOrNull { it.id == model.id }?.contextWindow ?: 4096
-                    modelParametersStore.localParameterSnapshot(model.id, model.name, contextWindow)
+                    modelParametersStore.loadLocalParameterSnapshot(model.id, model.name, contextWindow)
                 } else {
-                    modelParametersStore.parameterSnapshot(model.parameterProfileId)
+                    modelParametersStore.loadParameterSnapshot(model.parameterProfileId)
                 }
             } catch (error: Exception) {
                 publishStatus(error.localizedMessage ?: context.getString(R.string.models_error_model_unavailable), false)
@@ -888,9 +888,9 @@ class ModelsViewModel @Inject constructor(
             try {
                 val refreshed = if (target.source == ModelInfo.ModelSource.Local) {
                     val contextWindow = installedLocalRecords.firstOrNull { it.id == target.id }?.contextWindow ?: 4096
-                    modelParametersStore.localParameterSnapshot(target.id, target.name, contextWindow)
+                    modelParametersStore.loadLocalParameterSnapshot(target.id, target.name, contextWindow)
                 } else {
-                    modelParametersStore.parameterSnapshot(target.parameterProfileId)
+                    modelParametersStore.loadParameterSnapshot(target.parameterProfileId)
                 }
                 _uiState.update { state ->
                     state.acceptParameterReload(baseline, refreshed)

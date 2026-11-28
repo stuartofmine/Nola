@@ -535,16 +535,13 @@ impl AgentEngine {
             if let Some(val) = self.store.get_kv(&state_key)? {
                 if let Ok(saved) = serde_json::from_value::<PersistedSessionState>(val) {
                     let mut merged_policy = saved.policy;
-                    // Never silently escalate on resume, while always honoring stricter overrides
-                    // (e.g. tightening a session from AcceptEdits -> Cautious).
-                    let profile_rank = |p: nola_types::PermissionProfile| match p {
-                        nola_types::PermissionProfile::Cautious => 0u8,
-                        nola_types::PermissionProfile::AcceptEdits => 1u8,
-                        nola_types::PermissionProfile::AllowAll => 2u8,
-                    };
-                    if profile_rank(cfg.policy.profile) < profile_rank(merged_policy.profile) {
-                        merged_policy.profile = cfg.policy.profile;
-                    }
+                    // Always honor the caller's explicit current permission profile and workspace
+                    // trust (so switching between Cautious <-> AllowAll in the composer or CLI
+                    // immediately takes effect on the next turn), while retaining stricter
+                    // User/CliOverride rules and network restrictions.
+                    merged_policy.profile = cfg.policy.profile;
+                    merged_policy.workspace_trusted = cfg.policy.workspace_trusted;
+                    merged_policy.plan_mode = cfg.policy.plan_mode;
                     merged_policy.network_allowed =
                         merged_policy.network_allowed && cfg.policy.network_allowed;
                     for r in &cfg.policy.rules {
@@ -1260,7 +1257,8 @@ impl AgentEngine {
                 // `tool_output` at the catalog tail so the model can immediately inspect slices!
                 let mut full_output_ref: Option<String> = None;
                 let effective_payload = if tc.name != "tool_output" {
-                    if let Some((compact, meta)) = run_ctx.output_store.maybe_spill_payload(
+                    if let Some((compact, meta)) = run_ctx.output_store.maybe_spill_payload_scoped(
+                        &session_id,
                         &tc.name,
                         &out.result.payload,
                         nola_tools::DEFAULT_SPILL_THRESHOLD_BYTES,

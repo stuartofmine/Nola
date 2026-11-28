@@ -73,9 +73,54 @@ final class MacLocalModelConfigurationStore {
         return profile.defaultParameters
     }
 
-    struct ParameterSnapshot {
+    nonisolated struct ParameterSnapshot: Sendable {
         let parameters: ModelParameters
         let revision: UInt64
+    }
+
+    nonisolated static func loadParameterSnapshot(
+        for profile: MacLocalModelProfile,
+        applicationPort: MacApplicationPort = .shared
+    ) throws -> ParameterSnapshot {
+        guard let stored = try applicationPort.modelProfile(profile.id) else {
+            return ParameterSnapshot(parameters: profile.defaultParameters, revision: 0)
+        }
+        guard let revision = UInt64(exactly: stored.revision),
+              let data = stored.parametersJSON.data(using: .utf8) else {
+            throw MacApplicationServiceError.invalidResponse
+        }
+        return ParameterSnapshot(
+            parameters: try JSONDecoder().decode(ModelParameters.self, from: data),
+            revision: revision
+        )
+    }
+
+    @discardableResult
+    nonisolated static func persistParameters(
+        _ parameters: ModelParameters,
+        for profile: MacLocalModelProfile,
+        expectedRevision: UInt64? = nil,
+        applicationPort: MacApplicationPort = .shared
+    ) throws -> UInt64 {
+        let expected: UInt64
+        if let expectedRevision {
+            expected = expectedRevision
+        } else {
+            let stored = try applicationPort.modelProfile(profile.id)
+            guard let revision = UInt64(exactly: stored?.revision ?? 0) else {
+                throw MacApplicationServiceError.invalidResponse
+            }
+            expected = revision
+        }
+        return try applicationPort.configureModelParameters(
+            buildModelRecord(
+                profile: profile,
+                selected: false,
+                parameters: parameters,
+                createdAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            ),
+            expectedRevision: expected
+        )
     }
 
     func parameterSnapshot(for profile: MacLocalModelProfile) throws -> ParameterSnapshot {
@@ -104,7 +149,7 @@ final class MacLocalModelConfigurationStore {
             }
             expected = revision
         }
-        let revision = try modelClient.configureModelParameters(modelRecord(
+        let revision = try modelClient.configureModelParameters(Self.buildModelRecord(
             profile: profile, selected: false, parameters: parameters,
             createdAtMs: Int64(Date().timeIntervalSince1970 * 1_000)
         ), expectedRevision: expected)
@@ -120,13 +165,13 @@ final class MacLocalModelConfigurationStore {
         let store = modelClient
         let existing = try store.modelProfile(profile.id)
         let effectiveParameters = parameters ?? self.parameters(for: profile)
-        try store.upsertModelProfile(modelRecord(
+        try store.upsertModelProfile(Self.buildModelRecord(
             profile: profile, selected: selected, parameters: effectiveParameters,
             createdAtMs: existing?.createdAtMs ?? Int64(Date().timeIntervalSince1970 * 1_000)
         ))
     }
 
-    private func modelRecord(
+    private nonisolated static func buildModelRecord(
         profile: MacLocalModelProfile,
         selected: Bool,
         parameters: ModelParameters,
@@ -158,7 +203,7 @@ final class MacLocalModelConfigurationStore {
         )
     }
 
-    private enum ConfigurationError: LocalizedError {
+    private nonisolated enum ConfigurationError: LocalizedError {
         case invalidEncodedState
         case unknownModel(String)
 

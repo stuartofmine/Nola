@@ -164,7 +164,10 @@ import UIKit
         guard !apiKey.isEmpty || model.cloudCredential == .anonymous else {
             throw NolaError.llm(.notConfigured)
         }
-        guard model.wireProtocol == nil || model.wireProtocol == .chatCompletions || model.wireProtocol == .responses else {
+        guard model.wireProtocol == nil
+            || model.wireProtocol == .chatCompletions
+            || model.wireProtocol == .responses
+            || model.wireProtocol == .anthropic else {
             throw NolaError.llm(.invalidInput(reason: "This iOS provider does not support the selected model's wire protocol."))
         }
         let stopSequences = parameters.stopSequences

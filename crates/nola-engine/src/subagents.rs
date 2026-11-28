@@ -832,6 +832,9 @@ pub fn register_subagent_tools(mgr: &Arc<SubagentManager>, registry: &mut ToolRe
     registry.register(Arc::new(SpawnAgentTool {
         mgr: Arc::clone(mgr),
     }));
+    registry.register(Arc::new(ListExpertsTool {
+        mgr: Arc::clone(mgr),
+    }));
     registry.register(Arc::new(DelegateExpertTool {
         mgr: Arc::clone(mgr),
     }));
@@ -915,6 +918,73 @@ impl ToolHandler for SpawnAgentTool {
     }
 }
 
+struct ListExpertsTool {
+    mgr: Arc<SubagentManager>,
+}
+
+impl ToolHandler for ListExpertsTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            schema: ToolSchema {
+                name: "list_experts".into(),
+                description: "List all saved ExpertPeer personas stored in Nola (name, id, role, description, and whether a custom system prompt is configured).".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+            },
+            tier: ToolTier::Deferred,
+            domain: CapabilityDomain::System,
+            read_only: true,
+        }
+    }
+
+    fn execute(&self, _ctx: &ToolContext, _args: Value) -> ToolExecutionResult {
+        let raw_records = self
+            .mgr
+            .store
+            .list_module_records::<Value>("expert_peer")
+            .unwrap_or_default();
+        let experts: Vec<Value> = raw_records
+            .into_iter()
+            .filter(|v| {
+                v.get("availability")
+                    .and_then(|a| a.as_str())
+                    .is_none_or(|a| !a.eq_ignore_ascii_case("disabled"))
+            })
+            .map(|v| {
+                let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                let role = v.get("role").and_then(|x| x.as_str()).unwrap_or("specialist");
+                let description = v.get("description").and_then(|x| x.as_str()).unwrap_or("");
+                let system_prompt = v.get("system_prompt").and_then(|x| x.as_str()).unwrap_or("");
+                json!({
+                    "id": id,
+                    "name": name,
+                    "role": role,
+                    "description": description,
+                    "has_system_prompt": !system_prompt.trim().is_empty(),
+                    "model_override": v.get("model_override").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        let summary = if experts.is_empty() {
+            "No saved ExpertPeer personas found.".to_string()
+        } else {
+            let names: Vec<&str> = experts
+                .iter()
+                .filter_map(|e| e.get("name").and_then(|v| v.as_str()))
+                .collect();
+            format!("Found {} saved expert(s): {}", experts.len(), names.join(", "))
+        };
+        ToolExecutionResult::ok_structured(
+            json!({ "count": experts.len(), "experts": experts }),
+            summary,
+        )
+    }
+}
+
 struct DelegateExpertTool {
     mgr: Arc<SubagentManager>,
 }
@@ -924,7 +994,7 @@ impl ToolHandler for DelegateExpertTool {
         ToolSpec {
             schema: ToolSchema {
                 name: "delegate_expert".into(),
-                description: "Delegate a task to a saved ExpertPeer persona stored in Nola, optionally in an isolated git worktree.".into(),
+                description: "Delegate a task to a saved ExpertPeer persona stored in Nola, optionally in an isolated git worktree. Call list_experts first if you need to discover saved expert names.".into(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -950,20 +1020,64 @@ impl ToolHandler for DelegateExpertTool {
         let Some(prompt) = args.get("prompt").and_then(|v| v.as_str()) else {
             return ToolExecutionResult::err_structured("missing_param", "missing 'prompt'", None);
         };
-        let experts = self
+        let raw_records = self
             .mgr
             .store
-            .list_module_records::<ExpertPeer>("expert_peer")
+            .list_module_records::<Value>("expert_peer")
             .unwrap_or_default();
-        let Some(expert) = experts
-            .into_iter()
-            .find(|e| e.name.eq_ignore_ascii_case(name) || e.id == name)
-        else {
+        let normalized_target = name.trim().trim_start_matches('@');
+        let found_raw = raw_records.iter().find(|v| {
+            let ename = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let eid = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+            ename.eq_ignore_ascii_case(normalized_target)
+                || ename == normalized_target
+                || eid == normalized_target
+        });
+        let Some(raw) = found_raw else {
+            let available: Vec<&str> = raw_records
+                .iter()
+                .filter_map(|v| v.get("name").and_then(|x| x.as_str()))
+                .filter(|s| !s.is_empty())
+                .collect();
+            let detail = if available.is_empty() {
+                format!("expert peer '{name}' not found (no saved experts exist)")
+            } else {
+                format!(
+                    "expert peer '{name}' not found; available experts: {}",
+                    available.join(", ")
+                )
+            };
+            return ToolExecutionResult::err_structured("expert_not_found", detail, None);
+        };
+        let Ok(expert) = serde_json::from_value::<ExpertPeer>(raw.clone()) else {
             return ToolExecutionResult::err_structured(
-                "expert_not_found",
-                format!("expert peer '{name}' not found"),
+                "expert_invalid",
+                format!("expert peer '{name}' record is malformed"),
                 None,
             );
+        };
+        let description = raw
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        let effective_system_prompt = if !expert.system_prompt.trim().is_empty() {
+            expert.system_prompt.clone()
+        } else if !description.is_empty() {
+            format!(
+                "You are the saved Nola expert persona '{}' (role: {}).\nResponsibilities & persona:\n{}\nRespond directly in this expert's voice and area of expertise.",
+                expert.name, expert.role, description
+            )
+        } else {
+            format!(
+                "You are the saved Nola expert persona '{}' (role: {}).\nRespond directly, helpfully, and authentically from the perspective and expertise of '{}'.",
+                expert.name, expert.role, expert.name
+            )
+        };
+        let allowed_tools = if expert.allowed_tools.is_empty() {
+            None
+        } else {
+            Some(expert.allowed_tools)
         };
         let bg = args
             .get("background")
@@ -977,13 +1091,13 @@ impl ToolHandler for DelegateExpertTool {
         match self.mgr.spawn_with_full_options(
             ctx,
             expert.name.clone(),
-            expert.system_prompt,
+            effective_system_prompt,
             prompt.to_string(),
             bg,
             24,
             SubagentSpawnOptions {
                 model_override: expert.model_override,
-                allowed_tools: Some(expert.allowed_tools),
+                allowed_tools,
                 worktree,
                 timeout_secs,
             },

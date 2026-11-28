@@ -184,7 +184,8 @@
         const version = ++searchVersion;
         looking = true; searchError = ''; results = undefined;
         try {
-            const value = await reads.run(signal => api('/api/local-models/recommend', {
+            const endpoint = selection.query ? '/api/local-models/search' : '/api/local-models/recommend';
+            const value = await reads.run(signal => api(endpoint, {
                 method: 'POST', body: JSON.stringify(selection), signal,
             }));
             if (value) {

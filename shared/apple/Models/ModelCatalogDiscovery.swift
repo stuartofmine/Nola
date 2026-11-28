@@ -13,15 +13,15 @@ nonisolated final class AppleModelCatalogTransport: NSObject, URLSessionDataDele
     private var finished = false
     private let limit = 2 * 1024 * 1024
 
-    static func fetch(_ request: URLRequest, configuration: URLSessionConfiguration = .ephemeral) async throws -> (Data, URLResponse) {
+    static func fetch(_ request: URLRequest, configuration: URLSessionConfiguration = .ephemeral, timeout: TimeInterval = 10) async throws -> (Data, URLResponse) {
         try Task.checkCancellation()
         guard budget.acquire() else { throw URLError(.resourceUnavailable) }
         defer { budget.release() }
         configuration.urlCredentialStorage = nil
         configuration.httpCookieStorage = nil
         configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 10
-        configuration.timeoutIntervalForResource = 10
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
         let transport = AppleModelCatalogTransport()
         // Consume bounded data chunks on URLSession's delegate queue. Iterating
         // millions of individual AsyncBytes could keep the model picker busy
@@ -166,16 +166,44 @@ nonisolated enum AppleModelCatalogDiscovery {
         }
     }
 
+    enum DiscoveryError: LocalizedError {
+        case httpStatus(Int, String?)
+        case responseTooLarge(Int)
+        case invalidPayload
+        case localNetworkProhibited(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .httpStatus(let code, let detail):
+                if let detail, !detail.isEmpty {
+                    return "HTTP \(code): \(detail)"
+                }
+                return "HTTP \(code) \(HTTPURLResponse.localizedString(forStatusCode: code))"
+            case .responseTooLarge(let bytes):
+                return "Model catalog response exceeded size limit (\(bytes) bytes)"
+            case .invalidPayload:
+                return "Endpoint did not return a valid OpenAI/Anthropic model list (expected JSON with 'data' array)"
+            case .localNetworkProhibited(let host):
+                return "macOS blocked local network access to \(host) (Local network prohibited). Enable Nola in System Settings → Privacy & Security → Local Network, then try again."
+            }
+        }
+    }
+
     static func request(endpoint: String, wireProtocol: String, secret: String) throws -> URLRequest {
         guard let base = URL(string: endpoint),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
             throw URLError(.badURL)
         }
         let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        components.path = (path.isEmpty ? "" : "/" + path) + "/models"
+        let basePath = path.isEmpty ? "" : "/" + path
+        if wireProtocol == "anthropic", path != "v1", !path.hasSuffix("/v1") {
+            components.path = basePath + "/v1/models"
+        } else {
+            components.path = basePath + "/models"
+        }
         guard let url = components.url else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 10
+        request.timeoutInterval = 15
         if wireProtocol == "anthropic" {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
@@ -187,11 +215,20 @@ nonisolated enum AppleModelCatalogDiscovery {
     }
 
     static func parse(data: Data, response: URLResponse) throws -> [Model] {
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
-              data.count <= 2 * 1024 * 1024,
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = object["data"] as? [[String: Any]] else {
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let detail = extractErrorMessage(from: data)
+            throw DiscoveryError.httpStatus(httpResponse.statusCode, detail)
+        }
+        let maxCatalogBytes = 8 * 1024 * 1024
+        guard data.count <= maxCatalogBytes else {
+            throw DiscoveryError.responseTooLarge(data.count)
+        }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["data"] as? [[String: Any]] else {
+            throw DiscoveryError.invalidPayload
         }
         return models.compactMap {
             guard let id = $0["id"] as? String, !id.isEmpty else { return nil }
@@ -205,16 +242,61 @@ nonisolated enum AppleModelCatalogDiscovery {
                    !effort.isEmpty, !levels.contains(effort) { levels.append(effort) }
             }
             let limits = entry["limit"] as? [String: Any] ?? [:]
+            let topProvider = entry["top_provider"] as? [String: Any] ?? [:]
+            let architecture = entry["architecture"] as? [String: Any] ?? [:]
             let modes = (entry["modalities"] as? [String: Any])?["input"] as? [String]
-                ?? entry["modalities"] as? [String] ?? []
+                ?? entry["modalities"] as? [String]
+                ?? architecture["input_modalities"] as? [String]
+                ?? []
+            let supportedParameters = entry["supported_parameters"] as? [String] ?? []
+            let inferredTools: Bool? = boolean(entry["tool_call"])
+                ?? (supportedParameters.isEmpty ? nil : supportedParameters.contains("tools"))
+            let supportsReasoningParam = supportedParameters.contains("reasoning")
+                || supportedParameters.contains("include_reasoning")
+                || supportedParameters.contains("reasoning_effort")
+            let inferredReasoning: Bool? = boolean(entry["reasoning"])
+                ?? (supportsReasoningParam ? true : nil)
+            if levels.isEmpty, supportsReasoningParam {
+                levels = ["none", "low", "medium", "high"]
+            }
+            let inferredSampling: Bool? = boolean(entry["temperature"])
+                ?? (supportedParameters.isEmpty ? nil : supportedParameters.contains("temperature"))
             return Model(id: id, displayName: entry["display_name"] as? String ?? entry["name"] as? String ?? id,
                 reasoningLevels: levels,
-                contextWindow: integer(entry["context_window"] ?? limits["context"] ?? entry["context_length"]),
-                outputLimit: integer(entry["max_output_tokens"] ?? limits["output"]),
-                modalities: modes, reasoningSupported: boolean(entry["reasoning"]),
+                contextWindow: integer(
+                    entry["context_window"]
+                        ?? limits["context"]
+                        ?? entry["context_length"]
+                        ?? entry["max_model_len"]
+                        ?? entry["max_context_length"]
+                        ?? topProvider["context_length"]
+                ),
+                outputLimit: integer(
+                    entry["max_output_tokens"]
+                        ?? limits["output"]
+                        ?? topProvider["max_completion_tokens"]
+                ),
+                modalities: modes, reasoningSupported: inferredReasoning,
                 summarySupported: boolean(entry["supports_reasoning_summary_parameter"]),
-                toolCalls: boolean(entry["tool_call"]), samplingParameters: boolean(entry["temperature"]))
+                toolCalls: inferredTools, samplingParameters: inferredSampling)
         }
+    }
+
+    private static func extractErrorMessage(from data: Data) -> String? {
+        guard !data.isEmpty, data.count <= 64 * 1024 else { return nil }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let errObj = json["error"] as? [String: Any],
+               let msg = errObj["message"] as? String, !msg.isEmpty {
+                return String(msg.prefix(240))
+            }
+            if let msg = json["message"] as? String, !msg.isEmpty {
+                return String(msg.prefix(240))
+            }
+            if let msg = json["error"] as? String, !msg.isEmpty {
+                return String(msg.prefix(240))
+            }
+        }
+        return nil
     }
 
     private static func boolean(_ value: Any?) -> Bool? {
@@ -229,9 +311,112 @@ nonisolated enum AppleModelCatalogDiscovery {
         return integer
     }
 
+    /// Build a best-effort `/props` request for llama.cpp / Strata compatible servers.
+    static func propsRequest(endpoint: String, secret: String) -> URLRequest? {
+        guard let base = URL(string: endpoint),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        var segments = components.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        if segments.last == "models" { segments.removeLast() }
+        if segments.last == "v1" { segments.removeLast() }
+        components.path = segments.isEmpty ? "/props" : "/" + segments.joined(separator: "/") + "/props"
+        components.query = nil
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+        if !secret.isEmpty {
+            request.setValue("Bearer " + secret, forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// Enrich discovered OpenAI-compatible models with capabilities declared by llama.cpp / Strata `/props`.
+    static func enrichWithProps(models: [Model], data: Data, response: URLResponse) -> [Model] {
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return models
+        }
+        let templateCaps = object["chat_template_caps"] as? [String: Any] ?? [:]
+        let modalitiesObj = object["modalities"] as? [String: Any] ?? [:]
+        let genSettings = object["default_generation_settings"] as? [String: Any] ?? [:]
+        let genParams = genSettings["params"] as? [String: Any] ?? [:]
+        let chatTemplate = object["chat_template"] as? String ?? ""
+        let modelAlias = (object["model_alias"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let supportsReasoning: Bool? = {
+            if let preserve = boolean(templateCaps["supports_preserve_reasoning"]) {
+                return preserve
+            }
+            if chatTemplate.contains("enable_thinking") || chatTemplate.contains("<think>") {
+                return true
+            }
+            return nil
+        }()
+        let supportsTools: Bool? = boolean(templateCaps["supports_tool_calls"])
+            ?? boolean(templateCaps["supports_tools"])
+        let supportsVision = boolean(modalitiesObj["vision"]) == true
+        let supportsAudio = boolean(modalitiesObj["audio"]) == true
+        let propsContext = integer(genSettings["n_ctx"])
+        let propsOutput = integer(genParams["n_predict"])
+
+        return models.map { original in
+            let matchesTarget = models.count == 1
+                || (modelAlias != nil && !modelAlias!.isEmpty && original.id.caseInsensitiveCompare(modelAlias!) == .orderedSame)
+            guard matchesTarget else { return original }
+            var updated = original
+            if updated.contextWindow == nil, let propsContext {
+                updated.contextWindow = propsContext
+            }
+            if updated.outputLimit == nil, let propsOutput {
+                updated.outputLimit = propsOutput
+            }
+            if updated.toolCalls == nil, let supportsTools {
+                updated.toolCalls = supportsTools
+            }
+            if supportsVision {
+                if updated.modalities.isEmpty { updated.modalities = ["text"] }
+                if !updated.modalities.contains("image") { updated.modalities.append("image") }
+            }
+            if supportsAudio {
+                if updated.modalities.isEmpty { updated.modalities = ["text"] }
+                if !updated.modalities.contains("audio") { updated.modalities.append("audio") }
+            }
+            if let supportsReasoning {
+                if updated.reasoningSupported == nil {
+                    updated.reasoningSupported = supportsReasoning
+                }
+                if supportsReasoning, updated.reasoningLevels.isEmpty {
+                    updated.reasoningLevels = ["none", "low", "medium", "high"]
+                }
+            }
+            return updated
+        }
+    }
+
     static func discover(endpoint: String, wireProtocol: String, secret: String) async throws -> [Model] {
         let request = try request(endpoint: endpoint, wireProtocol: wireProtocol, secret: secret)
-        let (data, response) = try await AppleModelCatalogTransport.fetch(request)
-        return try parse(data: data, response: response)
+        do {
+            let (data, response) = try await AppleModelCatalogTransport.fetch(request)
+            var models = try parse(data: data, response: response)
+            if wireProtocol != "anthropic",
+               !models.isEmpty,
+               models.contains(where: { $0.reasoningLevels.isEmpty || $0.outputLimit == nil || $0.toolCalls == nil }),
+               let propsReq = propsRequest(endpoint: endpoint, secret: secret) {
+                if let (propsData, propsResponse) = try? await AppleModelCatalogTransport.fetch(propsReq, timeout: 3) {
+                    models = enrichWithProps(models: models, data: propsData, response: propsResponse)
+                }
+            }
+            return models
+        } catch {
+            if String(describing: error).localizedCaseInsensitiveContains("local network prohibited") {
+                let host = request.url?.host ?? endpoint
+                throw DiscoveryError.localNetworkProhibited(host)
+            }
+            throw error
+        }
     }
 }

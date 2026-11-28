@@ -80,11 +80,44 @@ pub fn is_sensitive_path(path: &str) -> Option<&'static str> {
         if comp.contains("mobile-access-token") {
             return Some("mobile-access-token");
         }
-        if comp == "vault.enc" || comp.ends_with(".vault.enc") {
-            return Some("vault.enc");
+        if comp == "vault.enc" || comp.ends_with(".vault.enc") || comp == "vault.json" {
+            return Some("vault");
+        }
+        if comp == ".nola" {
+            return Some(".nola");
+        }
+        if comp.starts_with("nola") && (comp.ends_with(".db") || comp.ends_with(".db-wal") || comp.ends_with(".db-shm")) {
+            return Some("nola_database");
         }
         if comp.contains("keychain") {
             return Some("keychain");
+        }
+    }
+    if normalized.contains("application support/nola/state")
+        || normalized.contains("application support/nola/configuration")
+    {
+        return Some("nola_internal_state");
+    }
+    None
+}
+
+/// Inspect a shell command string for tokens targeting sensitive paths or Nola's own internal DB/state.
+pub fn bash_command_sensitive_reason(cmd: &str) -> Option<&'static str> {
+    let lower = cmd.replace('\\', "/").to_ascii_lowercase();
+    if lower.contains("application support/nola/state")
+        || lower.contains("application support/nola/configuration")
+    {
+        return Some("nola_internal_state");
+    }
+    for raw_tok in cmd.split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')')) {
+        let tok = raw_tok.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | ','));
+        if tok.is_empty() {
+            continue;
+        }
+        if tok.contains('/') || tok.starts_with('.') || tok.ends_with(".db") || tok.ends_with(".enc") || tok.ends_with(".pem") || tok.ends_with(".key") {
+            if let Some(reason) = is_sensitive_path(tok) {
+                return Some(reason);
+            }
         }
     }
     None
@@ -427,7 +460,18 @@ impl EffectivePolicy {
         }
         let resources = extract_resources(tool_name, args, workspace_root);
         let file_paths = extract_file_paths(tool_name, args, workspace_root);
-        let sensitive_reason = file_paths.iter().find_map(|p| is_sensitive_path(p));
+        let sensitive_reason = file_paths
+            .iter()
+            .find_map(|p| is_sensitive_path(p))
+            .or_else(|| {
+                if tool_name == "bash" {
+                    args.get("command")
+                        .and_then(|v| v.as_str())
+                        .and_then(bash_command_sensitive_reason)
+                } else {
+                    None
+                }
+            });
         let external_send = is_external_send(spec, args);
         let write_paths = if domain == CapabilityDomain::FilesWrite || is_git_worktree_write {
             extract_write_target_paths(tool_name, args, workspace_root)
@@ -539,7 +583,7 @@ impl EffectivePolicy {
             }
         }
 
-        // Outbound external-send guard: NEVER auto-allow outbound send/POST under Cautious/AcceptEdits.
+        // Outbound external-send guard: NEVER auto-allow outbound send/POST under Cautious.
         if external_send && self.profile != PermissionProfile::AllowAll {
             return PermissionDecision {
                 action: PermissionAction::Ask,
@@ -578,21 +622,6 @@ impl EffectivePolicy {
                 reason: "allow_all profile".into(),
                 domain,
             },
-            PermissionProfile::AcceptEdits => {
-                if domain == CapabilityDomain::FilesWrite {
-                    PermissionDecision {
-                        action: PermissionAction::Allow,
-                        reason: "accept_edits allows workspace file mutations".into(),
-                        domain,
-                    }
-                } else {
-                    PermissionDecision {
-                        action: PermissionAction::Ask,
-                        reason: format!("accept_edits requires approval for {domain:?}"),
-                        domain,
-                    }
-                }
-            }
             PermissionProfile::Cautious => PermissionDecision {
                 action: PermissionAction::Ask,
                 reason: format!("cautious profile requires approval for {tool_name}"),

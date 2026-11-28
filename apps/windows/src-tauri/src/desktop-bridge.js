@@ -38,8 +38,10 @@ if (window.top === window && location.protocol === "http:" && location.hostname 
         }
         const existing = document.getElementById("nola-desktop-error-banner");
         if (existing) existing.remove();
-        const isDark = document.documentElement.dataset.theme === "dark"
-            || (document.documentElement.dataset.theme !== "light"
+        const explicitTheme = document.documentElement.dataset.appearance
+            || document.documentElement.dataset.theme;
+        const isDark = explicitTheme === "dark"
+            || (explicitTheme !== "light"
                 && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
         const banner = document.createElement("div");
         banner.id = "nola-desktop-error-banner";

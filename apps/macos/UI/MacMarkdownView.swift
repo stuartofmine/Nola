@@ -92,7 +92,7 @@ final class MacResponseSelectionTextView: NSTextView {
 /// Shares immutable inline parsing, not transcript ownership or appearance.
 /// Eviction only causes reparsing; text and layout never depend on a cache hit.
 @MainActor
-private enum MacInlineMarkdownCache {
+enum MacInlineMarkdownCache {
     enum Mode: Int {
         case literal, streaming, document
     }
@@ -151,11 +151,62 @@ private enum MacInlineMarkdownCache {
         return value
     }
 
-    private static let mathImages: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 128
+    private final class RenderedMath: @unchecked Sendable {
+        let image: NSImage
+        let baselineOffset: CGFloat
+        init(image: NSImage, baselineOffset: CGFloat) {
+            self.image = image
+            self.baselineOffset = baselineOffset
+        }
+    }
+
+    private static let mathCache: NSCache<NSString, RenderedMath> = {
+        let cache = NSCache<NSString, RenderedMath>()
+        cache.countLimit = 256
         return cache
     }()
+
+    /// Renders LaTeX using SwiftMath's exact typographic ascent/descent metrics (`MathImage.LayoutInfo`)
+    /// so inline equations align seamlessly with surrounding SF Pro / CJK text baselines.
+    static func renderMath(latex: String, display: Bool) -> (image: NSImage, baselineOffset: CGFloat)? {
+        let key = "\(display ? "D" : "I"):\(latex)" as NSString
+        if let cached = mathCache.object(forKey: key) {
+            return (cached.image, cached.baselineOffset)
+        }
+        let fontSize: CGFloat = display ? 19.5 : 15.5
+        let insets = MTEdgeInsets(
+            top: display ? 4 : 1,
+            left: display ? 4 : 1.5,
+            bottom: display ? 4 : 1,
+            right: display ? 4 : 1.5
+        )
+        var mathImage = MathImage(
+            latex: latex,
+            fontSize: fontSize,
+            textColor: NSColor.black,
+            labelMode: display ? .display : .text,
+            textAlignment: display ? .center : .left
+        )
+        mathImage.contentInsets = insets
+        let (error, image, layoutInfo) = mathImage.asImage()
+        guard error == nil, let image else {
+            return nil
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = latex
+
+        let baselineOffset: CGFloat
+        if let layout = layoutInfo {
+            let availableHeight = max(0, image.size.height - insets.bottom - insets.top)
+            let contentHeight = max(layout.ascent + layout.descent, fontSize / 2)
+            let baselineY = (availableHeight - contentHeight) / 2 + layout.descent + insets.bottom
+            baselineOffset = -baselineY
+        } else {
+            baselineOffset = -3
+        }
+        mathCache.setObject(RenderedMath(image: image, baselineOffset: baselineOffset), forKey: key)
+        return (image, baselineOffset)
+    }
 
     static func text(_ source: String, mode: Mode) -> Text {
         content(source, mode: mode).text(reveals: [])
@@ -174,19 +225,16 @@ private enum MacInlineMarkdownCache {
             case .math(let latex, let display, let original):
                 let placeholder = "\(marker)\(replacements.count)\u{E001}"
                 template += placeholder
-                let key = "\(display): \(latex)" as NSString
-                let image = mathImages.object(forKey: key) ?? MTMathImage(
-                    latex: latex, fontSize: display ? 18 : 15, textColor: .black,
-                    labelMode: display ? .display : .text, textAlignment: .left
-                ).asImage().1
-                guard let image else {
+                guard let rendered = renderMath(latex: latex, display: display) else {
                     // Unsupported/incomplete LaTeX remains readable and copyable.
-                    replacements.append((placeholder, Text(original).font(.system(size: 13, design: .monospaced))))
+                    replacements.append((placeholder, Text(original).font(.system(size: 13.5, design: .monospaced))))
                     continue
                 }
-                image.accessibilityDescription = latex
-                mathImages.setObject(image, forKey: key)
-                replacements.append((placeholder, Text(Image(nsImage: image).renderingMode(.template)).baselineOffset(-3)))
+                replacements.append((
+                    placeholder,
+                    Text(Image(nsImage: rendered.image).renderingMode(.template))
+                        .baselineOffset(rendered.baselineOffset)
+                ))
             }
         }
         // Parse emphasis/links once across math boundaries, not as unrelated
@@ -291,7 +339,7 @@ enum MacMarkdownTextBlockCache {
     }
 }
 
-private struct MacInlineMarkdownContent {
+struct MacInlineMarkdownContent {
     enum Piece {
         case attributed(AttributedString)
         case attachment(Text)
@@ -658,6 +706,9 @@ private struct MacMarkdownDocumentView: View {
         case .mermaid(let source):
             MacMermaidBlockView(source: source, isStreaming: repairsIncompleteInlineSyntax)
 
+        case .mathBlock(let latex):
+            MacMathBlockView(latex: latex)
+
         case .divider:
             Divider()
                 .opacity(0.55)
@@ -919,6 +970,7 @@ enum MacMarkdownFileLinkifier {
 nonisolated indirect enum MacMarkdownTextBlock: Equatable {
     case heading(level: Int, text: String)
     case paragraph(String)
+    case mathBlock(String)
     case listItem(marker: String, children: [MacMarkdownTextBlock])
     case footnote(label: String, text: String)
     case quote([MacMarkdownTextBlock])
@@ -926,6 +978,72 @@ nonisolated indirect enum MacMarkdownTextBlock: Equatable {
     case mermaid(String)
     case divider
     case table(headers: [String], rows: [[String]])
+}
+
+private struct MacMathBlockView: View {
+    let latex: String
+    @State private var copied = false
+    @State private var isHovered = false
+
+    private var mathContent: some View {
+        Group {
+            if let rendered = MacInlineMarkdownCache.renderMath(latex: latex, display: true) {
+                Image(nsImage: rendered.image)
+                    .renderingMode(.template)
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel(latex)
+            } else {
+                Text(latex)
+                    .font(.system(size: 14, design: .monospaced))
+                    .foregroundStyle(.primary)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ViewThatFits(in: .horizontal) {
+                mathContent
+                    .frame(maxWidth: .infinity, alignment: .center)
+                ScrollView(.horizontal, showsIndicators: true) {
+                    mathContent
+                }
+            }
+            .frame(maxWidth: MacDesignTokens.Layout.chatProseMaxWidth)
+            .background(
+                Color.primary.opacity(0.028),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 0.75)
+            }
+
+            if isHovered || copied {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(latex, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        copied = false
+                    }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .help("Copy LaTeX")
+            }
+        }
+        .onHover { isHovered = $0 }
+        .padding(.vertical, 2)
+    }
 }
 
 enum MacMarkdownBlock: Equatable {

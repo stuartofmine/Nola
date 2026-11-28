@@ -126,12 +126,19 @@ pub struct AgentRoom {
 /// Registered data source (local folder, SQLite/Postgres URI, HTTP feed, etc.).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DataSourceRecord {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
     pub location: String,
+    #[serde(default)]
     pub metadata: Value,
+    #[serde(default)]
     pub usage_count: u64,
+    #[serde(default)]
     pub updated_at_ms: i64,
 }
 

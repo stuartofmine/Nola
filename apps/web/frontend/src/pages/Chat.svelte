@@ -263,6 +263,18 @@
         error = '';
         try {
             await cancelV2Turn(targetId);
+            // Wait briefly for the host run to release its active turn lock so an
+            // immediate follow-up send does not collide with HTTP 409 conversation_busy.
+            const settleDeadline = Date.now() + 3000;
+            while (serial === generation && streaming && Date.now() < settleDeadline) {
+                try {
+                    const obs = await observeV2ConversationProgress(targetId);
+                    if (!obs.active) break;
+                } catch {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
             if (serial === generation) {
                 detachStream();
             }
@@ -588,14 +600,30 @@
         }
     }
 
+    function resolveModelSource(modelId: string): string {
+        if (!modelId) return '';
+        const choice = modelChoices.find(m => m.id === modelId);
+        if (!choice) return '';
+        if (choice.source === 'local') return 'local';
+        return choice.endpointId || '';
+    }
+
     async function handleModelChange(nextModelId: string) {
         selectedModelId = nextModelId;
+        const nextModelSource = resolveModelSource(nextModelId);
         if (!active) return;
         const targetId = active.conversationId;
         try {
-            await patchV2ConversationConfiguration(targetId, { selectedModelId: nextModelId });
+            await patchV2ConversationConfiguration(targetId, {
+                selectedModelId: nextModelId,
+                selectedModelSource: nextModelSource,
+            });
             if (active?.conversationId === targetId) {
-                active = { ...active, selectedModelId: nextModelId };
+                active = {
+                    ...active,
+                    selectedModelId: nextModelId,
+                    selectedModelSource: nextModelSource,
+                };
             }
         } catch (cause) {
             if (active?.conversationId === targetId) {
@@ -780,7 +808,12 @@
     async function ensureActiveConversation(): Promise<ChatConversation> {
         if (active) return active;
         const created = await createV2Conversation({
-            ...(selectedModelId ? { selectedModelId } : {}),
+            ...(selectedModelId
+                ? {
+                      selectedModelId,
+                      selectedModelSource: resolveModelSource(selectedModelId),
+                  }
+                : {}),
             permissionProfile,
             reasoningEffort,
         });
@@ -1129,6 +1162,7 @@
                 controller.signal,
                 {
                     modelId: selectedModelId || undefined,
+                    modelSource: selectedModelId ? resolveModelSource(selectedModelId) : undefined,
                     permissionProfile,
                     reasoningEffort: reasoningEffort === 'automatic' ? undefined : reasoningEffort,
                     attachments: sentAttachments,

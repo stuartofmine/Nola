@@ -377,14 +377,16 @@ final class MacDataSourceRegistry {
     }
 
     @discardableResult
-    func ensureOwnedResource(_ sourceID: String) -> MacDataSourceAccessRecord {
+    func ensureOwnedResource(_ sourceID: String, persist: Bool = true) -> MacDataSourceAccessRecord {
         if let existing = accessRecords[sourceID] { return existing }
         let record = MacDataSourceAccessRecord(
             ownerID: MacCoreResourceAccess.localPrincipal(),
             revision: 1
         )
         accessRecords[sourceID] = record
-        persistSourceSafely(sourceID)
+        if persist {
+            persistSourceSafely(sourceID)
+        }
         return record
     }
 
@@ -423,7 +425,33 @@ final class MacDataSourceRegistry {
         observedAt: Date?,
         defaultPolicy: MacDataSourceAccessPolicy = .conversationOptIn
     ) {
-        ensureOwnedResource(sourceID)
+        let clampedCount = max(0, recordCount)
+        let clampedMaxAge = max(1, maximumAgeMinutes)
+        let targetState: MacDataSourceValidationState = clampedCount == 0 ? .verifiedEmpty : .verified
+        if let existing = contracts[sourceID],
+           accessRecords[sourceID] != nil,
+           policies[sourceID] != nil,
+           existing.connectorID == connectorID,
+           existing.readerDescription == readerDescription,
+           existing.schemaFields == schemaFields,
+           existing.redactedSample == redactedSample,
+           existing.recordCount == clampedCount,
+           existing.maximumAgeMinutes == clampedMaxAge,
+           existing.validationState == targetState,
+           existing.errorMessage == nil {
+            let freshnessWindow = Double(max(60, min(clampedMaxAge * 30, 300)))
+            let validatedRecently = Date().timeIntervalSince(existing.validatedAt) < freshnessWindow
+            let observedUnchanged: Bool
+            switch (existing.observedAt, observedAt) {
+            case (nil, nil): observedUnchanged = true
+            case let (lhs?, rhs?): observedUnchanged = abs(rhs.timeIntervalSince(lhs)) < freshnessWindow
+            default: observedUnchanged = false
+            }
+            if validatedRecently && observedUnchanged {
+                return
+            }
+        }
+        ensureOwnedResource(sourceID, persist: false)
         let method: MacDataSourceReadMethod = connectorID == "mac.web.http"
             ? .httpGet
             : .platformAPI
@@ -443,9 +471,9 @@ final class MacDataSourceRegistry {
             ),
             schemaFields: schemaFields,
             redactedSample: redactedSample,
-            recordCount: max(0, recordCount),
-            maximumAgeMinutes: max(1, maximumAgeMinutes),
-            validationState: recordCount == 0 ? .verifiedEmpty : .verified,
+            recordCount: clampedCount,
+            maximumAgeMinutes: clampedMaxAge,
+            validationState: targetState,
             validatedAt: .now,
             observedAt: observedAt,
             errorMessage: nil
@@ -464,7 +492,17 @@ final class MacDataSourceRegistry {
         error: String,
         defaultPolicy: MacDataSourceAccessPolicy = .conversationOptIn
     ) {
-        ensureOwnedResource(sourceID)
+        if let existing = contracts[sourceID],
+           accessRecords[sourceID] != nil,
+           policies[sourceID] != nil,
+           existing.connectorID == connectorID,
+           existing.readerDescription == readerDescription,
+           existing.validationState == .failed,
+           existing.errorMessage == error,
+           Date().timeIntervalSince(existing.validatedAt) < 300 {
+            return
+        }
+        ensureOwnedResource(sourceID, persist: false)
         let previous = contracts[sourceID]
         contracts[sourceID] = MacDataSourceContract(
             sourceID: sourceID,

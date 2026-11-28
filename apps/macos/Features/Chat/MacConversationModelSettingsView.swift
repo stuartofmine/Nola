@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import SwiftUI
 
-@MainActor
-enum MacConversationReasoningAdmission {
+nonisolated enum MacConversationReasoningAdmission {
     @discardableResult
     static func validate(
         declaration: MacReasoningConfiguration?, protocol wireProtocol: MacModelWireProtocol,
@@ -24,6 +23,9 @@ struct MacConversationModelSettingsView: View {
     @Bindable var model: MacWorkspaceModel
     @State private var draft: MacConversationModelOverride
     @State private var validationError: String?
+    @State private var reasoningValidationError: String?
+    @State private var reasoningValidationGeneration = 0
+    @State private var isSaving = false
     @State private var promptTemplateID: UUID?
     @ObservedObject private var promptTemplates = MacPromptLibrary.service
     private let initialPromptTemplateID: UUID?
@@ -86,18 +88,50 @@ struct MacConversationModelSettingsView: View {
         }
     }
 
-    private func validateSelectedReasoningPreference() throws {
-        guard model.executionHost != .remote else { return }
-        try MacConversationReasoningAdmission.validate(
-            declaration: draftReasoning, protocol: draftProtocol,
-            outputLimit: draft.maxOutputTokens ?? inheritedParameters.maxOutputTokens,
-            supportsReasoning: model.selectedRemoteConfiguration?.executionCapabilities.reasoning ?? false,
-            preference: draft.reasoningPreference ?? inheritedParameters.reasoningPreference ?? "automatic")
+    private nonisolated struct ReasoningValidationInput: Equatable, Sendable {
+        let isRemoteHost: Bool
+        let declaration: MacReasoningConfiguration
+        let wireProtocol: MacModelWireProtocol
+        let outputLimit: Int
+        let supportsReasoning: Bool
+        let preference: String
     }
 
-    private var reasoningValidationError: String? {
-        do { try validateSelectedReasoningPreference(); return nil }
-        catch { return error.localizedDescription }
+    private var reasoningValidationInput: ReasoningValidationInput {
+        ReasoningValidationInput(
+            isRemoteHost: model.executionHost == .remote,
+            declaration: draftReasoning,
+            wireProtocol: draftProtocol,
+            outputLimit: draft.maxOutputTokens ?? inheritedParameters.maxOutputTokens,
+            supportsReasoning: model.selectedRemoteConfiguration?.executionCapabilities.reasoning ?? false,
+            preference: draft.reasoningPreference ?? inheritedParameters.reasoningPreference ?? "automatic"
+        )
+    }
+
+    private func evaluateReasoningValidationError(_ input: ReasoningValidationInput) async -> String? {
+        guard !input.isRemoteHost else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                try MacConversationReasoningAdmission.validate(
+                    declaration: input.declaration,
+                    protocol: input.wireProtocol,
+                    outputLimit: input.outputLimit,
+                    supportsReasoning: input.supportsReasoning,
+                    preference: input.preference
+                )
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }.value
+    }
+
+    private func refreshReasoningValidation(_ input: ReasoningValidationInput) async {
+        reasoningValidationGeneration &+= 1
+        let generation = reasoningValidationGeneration
+        let error = await evaluateReasoningValidationError(input)
+        guard !Task.isCancelled, reasoningValidationGeneration == generation else { return }
+        reasoningValidationError = error
     }
 
     private var samplingAvailable: Bool {
@@ -221,7 +255,7 @@ struct MacConversationModelSettingsView: View {
                     else { dismiss() }
                 }.keyboardShortcut(.cancelAction)
                 Button(String(localized: "Save")) {
-                    guard invalidNumericFields.isEmpty else { return }
+                    guard !isSaving, invalidNumericFields.isEmpty else { return }
                     let resolved = draft.applying(to: inheritedParameters)
                     if let error = MacModelParameterValidation.message(
                         parameters: resolved,
@@ -232,21 +266,28 @@ struct MacConversationModelSettingsView: View {
                         validationError = error
                         return
                     }
-                    do {
-                        try validateSelectedReasoningPreference()
-                    } catch {
-                        validationError = error.localizedDescription
-                        return
+                    let validationInput = reasoningValidationInput
+                    isSaving = true
+                    Task { @MainActor in
+                        defer { isSaving = false }
+                        if let error = await evaluateReasoningValidationError(validationInput) {
+                            reasoningValidationError = error
+                            validationError = error
+                            return
+                        }
+                        if model.executionHost == .remote { draft.wireProtocol = nil }
+                        model.conversationModelOverride = draft
+                        if promptTemplateID != initialPromptTemplateID { model.selectPromptTemplate(promptTemplateID) }
+                        dismiss()
                     }
-                    if model.executionHost == .remote { draft.wireProtocol = nil }
-                    model.conversationModelOverride = draft
-                    if promptTemplateID != initialPromptTemplateID { model.selectPromptTemplate(promptTemplateID) }
-                    dismiss()
                 }.keyboardShortcut(.defaultAction)
-                    .disabled(!invalidNumericFields.isEmpty)
+                    .disabled(!invalidNumericFields.isEmpty || isSaving)
             }
         }.padding(24).frame(minWidth: 440, idealWidth: 520, maxWidth: 680)
             .background(MacDesignColor.canvas)
+            .task(id: reasoningValidationInput) {
+                await refreshReasoningValidation(reasoningValidationInput)
+            }
             .onChange(of: draft.wireProtocol) { _, _ in
                 normalizeReasoningPreferenceForCurrentConfiguration()
             }

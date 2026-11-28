@@ -434,6 +434,80 @@ impl LocalModelProcessManager {
         GLOBAL.get_or_init(LocalModelProcessManager::new)
     }
 
+    /// Build `llama-server` CLI flags from persisted local model `parameters`
+    /// (`contextTokens`, `gpuLayers`, `threads`, `batchSize`, `flashAttention`),
+    /// skipping any flag already supplied in `existing_args`.
+    pub fn llama_server_args_from_parameters(
+        params: &Value,
+        existing_args: &[String],
+    ) -> Vec<String> {
+        let Some(obj) = params.as_object() else {
+            return Vec::new();
+        };
+        let has_flag = |names: &[&str]| -> bool {
+            existing_args.iter().any(|arg| {
+                names
+                    .iter()
+                    .any(|flag| arg == flag || arg.starts_with(&format!("{flag}=")))
+            })
+        };
+        let mut out = Vec::new();
+        if !has_flag(&["--ctx-size", "-c"]) {
+            if let Some(ctx) = obj
+                .get("contextTokens")
+                .or_else(|| obj.get("context_tokens"))
+                .or_else(|| obj.get("ctxSize"))
+                .and_then(|v| v.as_u64())
+                .filter(|&n| n > 0)
+            {
+                out.push("--ctx-size".to_string());
+                out.push(ctx.to_string());
+            }
+        }
+        if !has_flag(&["--n-gpu-layers", "-ngl"]) {
+            if let Some(ngl) = obj
+                .get("gpuLayers")
+                .or_else(|| obj.get("gpu_layers"))
+                .and_then(|v| v.as_i64())
+                .filter(|&n| n >= 0)
+            {
+                out.push("--n-gpu-layers".to_string());
+                out.push(ngl.to_string());
+            }
+        }
+        if !has_flag(&["--threads", "-t"]) {
+            if let Some(threads) = obj
+                .get("threads")
+                .and_then(|v| v.as_u64())
+                .filter(|&n| n > 0)
+            {
+                out.push("--threads".to_string());
+                out.push(threads.to_string());
+            }
+        }
+        if !has_flag(&["--batch-size", "-b"]) {
+            if let Some(batch) = obj
+                .get("batchSize")
+                .or_else(|| obj.get("batch_size"))
+                .and_then(|v| v.as_u64())
+                .filter(|&n| n > 0)
+            {
+                out.push("--batch-size".to_string());
+                out.push(batch.to_string());
+            }
+        }
+        if !has_flag(&["--flash-attn", "-fa"])
+            && obj
+                .get("flashAttention")
+                .or_else(|| obj.get("flash_attention"))
+                .and_then(|v| v.as_bool())
+                == Some(true)
+        {
+            out.push("--flash-attn".to_string());
+        }
+        out
+    }
+
     pub fn start_local_model(
         &self,
         id: &str,

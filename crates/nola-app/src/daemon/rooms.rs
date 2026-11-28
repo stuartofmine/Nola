@@ -607,7 +607,18 @@ pub(crate) fn dispatch_agent_room_command(
                     .or_else(|| payload.get("system_prompt"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
-                    .or_else(|| prev.as_ref().map(|e| e.system_prompt.clone()))
+                    .or_else(|| {
+                        prev.as_ref()
+                            .map(|e| e.system_prompt.clone())
+                            .filter(|s| !s.trim().is_empty())
+                    })
+                    .or_else(|| {
+                        description
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(ToString::to_string)
+                    })
                     .unwrap_or_default(),
                 model_override,
                 allowed_tools: input
@@ -1538,7 +1549,18 @@ pub(crate) fn dispatch_agent_room_command(
                     .or_else(|| payload.get("system_prompt"))
                     .and_then(|v| v.as_str())
                     .map(ToString::to_string)
-                    .or_else(|| prev.as_ref().map(|e| e.system_prompt.clone()))
+                    .or_else(|| {
+                        prev.as_ref()
+                            .map(|e| e.system_prompt.clone())
+                            .filter(|s| !s.trim().is_empty())
+                    })
+                    .or_else(|| {
+                        description
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(ToString::to_string)
+                    })
                     .unwrap_or_default(),
                 model_override,
                 allowed_tools: input
@@ -1581,6 +1603,118 @@ pub(crate) fn dispatch_agent_room_command(
                 .map_err(|e| ("storage_error", e.to_string()))?;
             Ok(json!({"ok": true, "deleted": deleted, "id": id}))
         }
+        "parent" => {
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let room = suite
+                .list_records::<Value>("agent_room")
+                .unwrap_or_default()
+                .into_iter()
+                .find(|r| {
+                    !conv_id.is_empty()
+                        && (r.get("conversation_id").and_then(|v| v.as_str()) == Some(conv_id)
+                            || r.get("id").and_then(|v| v.as_str()) == Some(conv_id))
+                })
+                .unwrap_or_else(|| {
+                    json!({
+                        "id": if conv_id.is_empty() { new_id() } else { conv_id.to_string() },
+                        "conversation_id": conv_id,
+                        "participants": [],
+                        "revision": 1
+                    })
+                });
+            Ok(json!({
+                "ok": true,
+                "operation": "parent",
+                "conversation_id": conv_id,
+                "room": room
+            }))
+        }
+        "admit" => {
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let msg_id = input
+                .get("message_id")
+                .or_else(|| input.get("user_message_id"))
+                .or_else(|| payload.get("message_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let room = suite
+                .list_records::<Value>("agent_room")
+                .unwrap_or_default()
+                .into_iter()
+                .find(|r| {
+                    !conv_id.is_empty()
+                        && (r.get("conversation_id").and_then(|v| v.as_str()) == Some(conv_id)
+                            || r.get("id").and_then(|v| v.as_str()) == Some(conv_id))
+                })
+                .unwrap_or_else(|| {
+                    json!({
+                        "id": if conv_id.is_empty() { new_id() } else { conv_id.to_string() },
+                        "conversation_id": conv_id,
+                        "participants": [],
+                        "revision": 1
+                    })
+                });
+            let entries = input
+                .get("selected_participants")
+                .or_else(|| input.get("participants"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let manifest = json!({
+                "version": 1,
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "input": input,
+                "entries": entries
+            });
+            if !conv_id.is_empty() && !msg_id.is_empty() {
+                let _ = store.set_kv(&format!("expert_manifest:{conv_id}:{msg_id}"), &manifest);
+            }
+            Ok(json!({
+                "ok": true,
+                "operation": "admit",
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "room": room,
+                "manifest": manifest
+            }))
+        }
+        "manifest" | "load_manifest" => {
+            let conv_id = input
+                .get("conversation_id")
+                .or_else(|| payload.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let msg_id = input
+                .get("message_id")
+                .or_else(|| payload.get("message_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let manifest = if !conv_id.is_empty() && !msg_id.is_empty() {
+                store
+                    .get_kv(&format!("expert_manifest:{conv_id}:{msg_id}"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
+            Ok(json!({
+                "ok": true,
+                "operation": "manifest",
+                "conversation_id": conv_id,
+                "message_id": msg_id,
+                "manifest": manifest
+            }))
+        }
         other => Err((
             "unsupported_command",
             format!("unsupported agent_room operation '{other}'"),
@@ -1615,7 +1749,21 @@ pub(super) fn dispatch_expert_template_command(
     suite: &ModulesSuite,
     args: &Value,
 ) -> Result<Value, (&'static str, String)> {
-    let (op, payload) = extract_sub_command(args);
+    let op_obj = args
+        .get("operation")
+        .filter(|v| v.is_object())
+        .or_else(|| args.get("command").filter(|v| v.is_object()));
+    let (op, payload) = if let Some(obj) = op_obj {
+        let k = obj
+            .get("kind")
+            .or_else(|| obj.get("type"))
+            .or_else(|| obj.get("operation"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        (k, obj)
+    } else {
+        extract_sub_command(args)
+    };
     let mut builtins: Vec<Value> = built_in_role_templates()
         .into_iter()
         .map(|mut t| {
@@ -1651,6 +1799,460 @@ pub(super) fn dispatch_expert_template_command(
                 None
             };
             Ok(found.unwrap_or(Value::Null))
+        }
+        "readable_templates" => {
+            let custom: Vec<Value> = suite
+                .list_records::<Value>("expert_template")
+                .unwrap_or_default()
+                .into_iter()
+                .map(|v| sanitize_template_record(&v))
+                .collect();
+            builtins.extend(custom);
+            let rev = builtins
+                .iter()
+                .filter_map(|t| t.get("revision").and_then(|v| v.as_i64()))
+                .max()
+                .unwrap_or(1)
+                .max(1);
+            Ok(json!({
+                "revision": rev,
+                "templates": builtins
+            }))
+        }
+        "load_prepared_resend" => {
+            let conv_id = payload
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if conv_id.is_empty() {
+                return Ok(Value::Null);
+            }
+            let found = suite
+                .store
+                .get_kv(&format!("prepared_expert_resend:{conv_id}"))
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    suite
+                        .store
+                        .get_kv(&format!("prepared_edited_resend:{conv_id}"))
+                        .ok()
+                        .flatten()
+                });
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "prepare_edited_resend" => {
+            let input = payload.get("input").unwrap_or(payload);
+            let source_conv = input
+                .get("source_conversation_id")
+                .or_else(|| input.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let target_conv = input
+                .get("target_conversation_id")
+                .or_else(|| input.get("conversation_id"))
+                .or_else(|| input.get("source_conversation_id"))
+                .and_then(|v| v.as_str())
+                .ok_or(("invalid_argument", "missing target_conversation_id".into()))?;
+            let source_msg = input
+                .get("source_message_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let op_id = input
+                .get("operation_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let room_id = suite
+                .store
+                .get_kv(&format!("conv_room_assoc:{source_conv}"))
+                .ok()
+                .flatten()
+                .and_then(|v| v.get("room_id").and_then(|r| r.as_str()).map(ToString::to_string))
+                .unwrap_or_else(|| format!("room-{source_conv}"));
+            let prepared_expert = json!({
+                "input": input,
+                "source_submission_id": op_id,
+                "room_id": room_id,
+                "parent_message_id": source_msg,
+                "entries": []
+            });
+            suite
+                .store
+                .set_kv(&format!("prepared_expert_resend:{target_conv}"), &prepared_expert)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(prepared_expert)
+        }
+        "load_child_instructions" => {
+            let conv_id = payload
+                .get("conversation_id")
+                .or_else(|| args.get("conversation_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let run_id = payload
+                .get("expected_run_id")
+                .or_else(|| payload.get("run_id"))
+                .or_else(|| args.get("expected_run_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if conv_id.is_empty() {
+                return Ok(Value::Null);
+            }
+            let found = if !run_id.is_empty() {
+                suite
+                    .store
+                    .get_kv(&format!("expert_child_instructions:{conv_id}:{run_id}"))
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+            .or_else(|| {
+                suite
+                    .store
+                    .get_kv(&format!("expert_child_instructions:{conv_id}"))
+                    .ok()
+                    .flatten()
+            });
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "derive_peer_authority" => {
+            if let Some(auth) = payload.get("authority").filter(|v| v.is_object()) {
+                return Ok(auth.clone());
+            }
+            let request = payload.get("request").unwrap_or(payload);
+            let host_id = request
+                .get("host_id")
+                .and_then(|v| v.as_str())
+                .map(|s| json!(s))
+                .unwrap_or(Value::Null);
+            Ok(json!({
+                "actor": {
+                    "kind": "local_user",
+                    "id": "local"
+                },
+                "request_host_id": host_id
+            }))
+        }
+        "peer_directory" => {
+            let source_ctx = payload
+                .get("source_context_id")
+                .or_else(|| args.get("source_context_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let rooms: Vec<Value> = suite
+                .list_records::<Value>("agent_room")
+                .unwrap_or_default();
+            let mut peers = Vec::new();
+            for room in rooms {
+                if let Some(parts) = room.get("participants").and_then(|v| v.as_array()) {
+                    let belongs = source_ctx.is_empty()
+                        || parts.iter().any(|p| {
+                            p.get("context_conversation_id").and_then(|v| v.as_str())
+                                == Some(source_ctx)
+                        });
+                    if belongs {
+                        for p in parts {
+                            if p.get("context_conversation_id").and_then(|v| v.as_str())
+                                != Some(source_ctx)
+                            {
+                                peers.push(p.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(json!({
+                "revision": 1,
+                "peers": peers,
+                "participants": peers
+            }))
+        }
+        "prepare_peer_task" => {
+            let exchange_id = payload
+                .get("exchange_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let ts = now_ms();
+            let rec = json!({
+                "exchange_id": exchange_id,
+                "status": "prepared",
+                "request": payload.get("request").cloned().unwrap_or(Value::Null),
+                "target_configuration": payload.get("target_configuration").cloned().unwrap_or(Value::Null),
+                "target_invocation": payload.get("target_invocation").cloned().unwrap_or(Value::Null),
+                "project_root": payload.get("project_root").cloned().unwrap_or(Value::Null),
+                "prepared_at_ms": ts
+            });
+            suite
+                .store
+                .set_kv(&format!("peer_task:{exchange_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(json!({
+                "ok": true,
+                "exchange_id": exchange_id,
+                "status": "prepared",
+                "task": rec
+            }))
+        }
+        "abort_peer_task_preparation" => {
+            let exchange_id = payload
+                .get("exchange_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !exchange_id.is_empty() {
+                let _ = suite.store.set_kv(&format!("peer_task:{exchange_id}"), &Value::Null);
+            }
+            Ok(json!({
+                "ok": true,
+                "exchange_id": exchange_id,
+                "aborted": true
+            }))
+        }
+        "load_peer_for_effect" => {
+            let req = payload.get("request").unwrap_or(payload);
+            let exchange_id = payload
+                .get("exchange_id")
+                .or_else(|| req.pointer("/payload/input/exchange_id"))
+                .or_else(|| req.get("effect_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if exchange_id.is_empty() {
+                return Ok(Value::Null);
+            }
+            let found = suite
+                .store
+                .get_kv(&format!("peer_exchange:{exchange_id}"))
+                .ok()
+                .flatten()
+                .filter(|v| !v.is_null());
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "peer_task_action" => {
+            let req = payload.get("request").unwrap_or(payload);
+            let input = req.pointer("/payload/input").unwrap_or(req);
+            let action = input
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("read");
+            let exchange_id = input
+                .get("exchange_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match action {
+                "directory" => {
+                    let peers: Vec<Value> = suite
+                        .list_records::<Value>("agent_room")
+                        .unwrap_or_default()
+                        .into_iter()
+                        .flat_map(|r| {
+                            r.get("participants")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    Ok(json!({"action": "directory", "peers": peers, "participants": peers}))
+                }
+                _ => {
+                    let found = if !exchange_id.is_empty() {
+                        suite
+                            .store
+                            .get_kv(&format!("peer_exchange:{exchange_id}"))
+                            .ok()
+                            .flatten()
+                            .filter(|v| !v.is_null())
+                    } else {
+                        None
+                    };
+                    Ok(json!({
+                        "action": action,
+                        "exchange_id": exchange_id,
+                        "status": found.as_ref().and_then(|v| v.get("status").and_then(|s| s.as_str())).unwrap_or("idle"),
+                        "exchange": found.unwrap_or(Value::Null)
+                    }))
+                }
+            }
+        }
+        "preview_peer" => {
+            let input = payload.get("input").unwrap_or(payload);
+            let target_pid = input
+                .get("target_participant_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let source_ctx = input
+                .get("source_context_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let rooms: Vec<Value> = suite
+                .list_records::<Value>("agent_room")
+                .unwrap_or_default();
+            let mut matched_part: Option<Value> = None;
+            for room in rooms {
+                if let Some(parts) = room.get("participants").and_then(|v| v.as_array()) {
+                    if let Some(p) = parts
+                        .iter()
+                        .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(target_pid))
+                    {
+                        matched_part = Some(p.clone());
+                        break;
+                    }
+                }
+            }
+            let part = matched_part.unwrap_or_else(|| {
+                json!({
+                    "id": target_pid,
+                    "agent_id": target_pid,
+                    "agent_revision": 1,
+                    "context_conversation_id": if source_ctx.is_empty() { target_pid } else { source_ctx }
+                })
+            });
+            let pid = part.get("id").and_then(|v| v.as_str()).unwrap_or(target_pid);
+            let aid = part.get("agent_id").and_then(|v| v.as_str()).unwrap_or(pid);
+            let arev = part.get("agent_revision").and_then(|v| v.as_i64()).unwrap_or(1);
+            let ctx_cid = part
+                .get("context_conversation_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(pid);
+            Ok(json!({
+                "participants": [{
+                    "participant": {
+                        "participant_id": pid,
+                        "agent_id": aid,
+                        "agent_revision": arev,
+                        "context_conversation_id": ctx_cid
+                    },
+                    "context_configuration_revision": 1,
+                    "defaults": {},
+                    "client_model_presentation": {},
+                    "model_declaration": {
+                        "profile_id": "default",
+                        "profile_revision": 1,
+                        "provider": "openai-compatible",
+                        "model_name": "default",
+                        "runtime": "remote",
+                        "parameters": {}
+                    },
+                    "effective_parameters": {}
+                }]
+            }))
+        }
+        "admit_peer" => {
+            let input = payload.get("input").unwrap_or(payload);
+            let exchange_id = input
+                .get("exchange_id")
+                .or_else(|| input.get("call_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(new_id);
+            let room_id = input
+                .get("room_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("default");
+            let ts = now_ms();
+            let rec = json!({
+                "exchange_id": exchange_id,
+                "room_id": room_id,
+                "status": "admitted",
+                "input": input,
+                "context": payload.get("context").cloned().unwrap_or(Value::Null),
+                "clarifications": [],
+                "admitted_at_ms": ts
+            });
+            suite
+                .store
+                .set_kv(&format!("peer_exchange:{exchange_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            suite
+                .store
+                .set_kv(&format!("peer_exchange:{room_id}:{exchange_id}"), &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(rec)
+        }
+        "load_peer_for_submission" | "load_peer" => {
+            let room_id = payload
+                .get("room_id")
+                .or_else(|| args.get("room_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let exchange_id = payload
+                .get("exchange_id")
+                .or_else(|| args.get("exchange_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if exchange_id.is_empty() {
+                return Ok(Value::Null);
+            }
+            let found = if !room_id.is_empty() {
+                suite
+                    .store
+                    .get_kv(&format!("peer_exchange:{room_id}:{exchange_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null())
+            } else {
+                None
+            }
+            .or_else(|| {
+                suite
+                    .store
+                    .get_kv(&format!("peer_exchange:{exchange_id}"))
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.is_null())
+            });
+            Ok(found.unwrap_or(Value::Null))
+        }
+        "clarify_peer" => {
+            let exchange_id = payload
+                .get("exchange_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .ok_or(("invalid_argument", "missing 'exchange_id'".into()))?;
+            let text = payload
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let key = format!("peer_exchange:{exchange_id}");
+            let mut rec = suite
+                .store
+                .get_kv(&key)
+                .ok()
+                .flatten()
+                .filter(|v| v.is_object())
+                .unwrap_or_else(|| {
+                    json!({
+                        "exchange_id": exchange_id,
+                        "status": "clarified",
+                        "clarifications": []
+                    })
+                });
+            let ts = now_ms();
+            if let Some(obj) = rec.as_object_mut() {
+                obj.insert("status".into(), json!("clarified"));
+                obj.insert("updated_at_ms".into(), json!(ts));
+                let arr = obj
+                    .entry("clarifications".to_string())
+                    .or_insert_with(|| json!([]));
+                if let Some(list) = arr.as_array_mut() {
+                    list.push(json!({
+                        "call_id": payload.get("call_id").cloned().unwrap_or(Value::Null),
+                        "source_context_id": payload.get("source_context_id").cloned().unwrap_or(Value::Null),
+                        "source_run_id": payload.get("source_run_id").cloned().unwrap_or(Value::Null),
+                        "text": text,
+                        "at_ms": ts
+                    }));
+                }
+            }
+            suite
+                .store
+                .set_kv(&key, &rec)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            Ok(rec)
         }
         "preview" | "preview_capture" | "admit" => Err((
             "requires_main_agent_turn",

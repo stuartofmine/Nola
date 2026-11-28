@@ -111,9 +111,11 @@ struct MacLocalModelManagerView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .nolaMacLocalModelRuntimeDidChange)) { _ in
             runtimeRefreshID = UUID()
-            preference.reload()
+            if showsHeader { preference.reload() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in preference.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .macDefaultChatModelDidChange)) { _ in
+            if showsHeader { preference.reload() }
+        }
         .sheet(isPresented: $showsAcquisition) {
             MacModelAcquisitionSheet(acquisition: acquisition, source: $hubSource)
         }

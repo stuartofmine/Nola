@@ -6,7 +6,7 @@ import Foundation
 import Observation
 import CryptoKit
 
-struct MacAutomationOccurrence: Hashable, Sendable {
+nonisolated struct MacAutomationOccurrence: Hashable, Sendable {
     let automationID: UUID
     let occurrenceKey: String
     let trigger: String
@@ -14,13 +14,13 @@ struct MacAutomationOccurrence: Hashable, Sendable {
 }
 
 /// A committed mutation remains observable even if its independent readback fails.
-struct MacAutomationMutationVerification: Sendable {
+nonisolated struct MacAutomationMutationVerification: Sendable {
     let committed: MacCanonicalAutomation
     let verificationError: String?
     let submittedExecutionSpecDigest: String
 }
 
-struct MacClaimedAutomationRun: Sendable {
+nonisolated struct MacClaimedAutomationRun: Sendable {
     let lease: MacAutomationExecutionLease
     let identity: MacAutomationExecutionIdentity
     let executionSpec: MacAutomationExecutionSpec
@@ -255,16 +255,22 @@ final class MacAutomationStore {
         self.fileManager = fileManager
         self.appEnvironment = appEnvironment
         self.supportDirectory = resolvedSupportDirectory
-        self.canonicalDatabaseURL = baseDirectory == nil
+        let defaultDatabaseURL = baseDirectory == nil
             ? appEnvironment.databaseURL
             : resolvedSupportDirectory.appendingPathComponent(
                 MacAppEnvironment.canonicalStoreFileName,
                 isDirectory: false
             )
-        let resolvedApplicationPort = baseDirectory == nil
-            && appEnvironment.supportRoot == MacAppEnvironment.shared.supportRoot
-            ? MacApplicationPort.shared
-            : try MacApplicationPort(databaseURL: canonicalDatabaseURL)
+        let resolvedApplicationPort: MacApplicationPort
+        if let injectedPort = automationClient as? MacApplicationPort {
+            resolvedApplicationPort = injectedPort
+        } else if baseDirectory == nil
+            && appEnvironment.supportRoot == MacAppEnvironment.shared.supportRoot {
+            resolvedApplicationPort = MacApplicationPort.shared
+        } else {
+            resolvedApplicationPort = try MacApplicationPort(databaseURL: defaultDatabaseURL)
+        }
+        self.canonicalDatabaseURL = resolvedApplicationPort.databaseURL
         self.automationClient = automationClient ?? resolvedApplicationPort
         self.applicationPort = resolvedApplicationPort
         self.runtime = runtime
@@ -390,13 +396,116 @@ final class MacAutomationStore {
         synchronize(automations[index])
     }
 
+    @discardableResult
+    func upsertAsync(_ automation: MacAutomation) async -> Bool {
+        guard isAuthorized(automation) else {
+            errorMessage = String(localized: "Choose an authorized workspace before saving this automation.")
+            return false
+        }
+        var candidate = automations
+        if let index = candidate.firstIndex(where: { $0.id == automation.id }) {
+            candidate[index] = automation
+        } else {
+            candidate.append(automation)
+        }
+        sortAutomationsByCachedNextRun(&candidate)
+        guard await persistAsync(candidate) else { return false }
+        refreshNextRuns()
+        synchronize(automation)
+        errorMessage = nil
+        return true
+    }
+
+    func setEnabledAsync(_ enabled: Bool, for automation: MacAutomation) async {
+        guard let index = automations.firstIndex(where: { $0.id == automation.id }) else { return }
+        var candidate = automations
+        candidate[index].isEnabled = enabled
+        guard await persistAsync(candidate) else { return }
+        if let updated = automations.first(where: { $0.id == automation.id }) {
+            synchronize(updated)
+        }
+    }
+
+    func deleteAsync(_ automation: MacAutomation) async {
+        guard await persistAsync(automations.filter { $0.id != automation.id }) else { return }
+        nextRunsByID.removeValue(forKey: automation.id)
+        unload(automation)
+        Self.removeLegacyFiles([
+            externalContextURL(for: automation),
+            runnerURL(for: automation),
+            hostRequestURL(for: automation),
+        ])
+    }
+
+    func runNowAsync(_ automation: MacAutomation) async {
+        guard !runningAutomationIDs.contains(automation.id) else { return }
+        guard isAuthorized(automation) else {
+            errorMessage = String(localized: "This automation no longer has access to its workspace.")
+            return
+        }
+        runningAutomationIDs.insert(automation.id)
+        runningAutomationDetails[automation.id] = String(
+            localized: "Preparing data and workspace",
+            table: "AutomationCenter"
+        )
+        let nowMs = epochMilliseconds(Date())
+        let occurrence = MacAutomationOccurrence(
+            automationID: automation.id,
+            occurrenceKey: "manual:\(UUID().uuidString.lowercased())",
+            trigger: "manual",
+            scheduledForMs: nowMs
+        )
+        let expectedSpec = executionSpec(for: automation)
+        let client = self.automationClient
+        do {
+            let outcome = try await Task.detached(priority: .userInitiated) {
+                try Self.claimRunOffMainActor(
+                    automation: automation,
+                    expectedSpec: expectedSpec,
+                    occurrence: occurrence,
+                    nowMs: nowMs,
+                    client: client
+                )
+            }.value
+            switch outcome {
+            case .claimed(let claim):
+                execute(automation, claim: claim)
+            case .alreadyBound(let runID, let observation):
+                runningAutomationIDs.remove(automation.id)
+                runningAutomationDetails.removeValue(forKey: automation.id)
+                if observation.terminal == nil {
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        do {
+                            try await self.resumeBoundExecution(observation)
+                            if let receipt = self.reconcileBoundOccurrence(runID) {
+                                await self.deliverNotification(name: automation.name, receipt: receipt)
+                            }
+                        } catch { self.errorMessage = error.localizedDescription }
+                    }
+                }
+                errorMessage = String(localized: "This automation is already running.")
+            case .notClaimed:
+                runningAutomationIDs.remove(automation.id)
+                runningAutomationDetails.removeValue(forKey: automation.id)
+                errorMessage = String(localized: "This automation is already running.")
+            }
+        } catch {
+            runningAutomationIDs.remove(automation.id)
+            runningAutomationDetails.removeValue(forKey: automation.id)
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func delete(_ automation: MacAutomation) {
         guard persist(automations.filter { $0.id != automation.id }) else { return }
         nextRunsByID.removeValue(forKey: automation.id)
         unload(automation)
-        try? fileManager.removeItem(at: externalContextURL(for: automation))
-        try? fileManager.removeItem(at: runnerURL(for: automation))
-        try? fileManager.removeItem(at: hostRequestURL(for: automation))
+        Self.removeLegacyFiles([
+            externalContextURL(for: automation),
+            runnerURL(for: automation),
+            hostRequestURL(for: automation),
+        ])
     }
 
     @discardableResult
@@ -426,10 +535,10 @@ final class MacAutomationStore {
         refreshNextRuns()
         for automation in previous {
             unload(automation)
-            try? fileManager.removeItem(at: externalContextURL(for: automation))
-            try? fileManager.removeItem(at: runnerURL(for: automation))
-            try? fileManager.removeItem(at: hostRequestURL(for: automation))
         }
+        Self.removeLegacyFiles(previous.flatMap {
+            [externalContextURL(for: $0), runnerURL(for: $0), hostRequestURL(for: $0)]
+        })
         synchronizeLaunchAgents()
     }
 
@@ -472,7 +581,7 @@ final class MacAutomationStore {
         occurrences: [MacAutomationOccurrence],
         providerOverride: MacAppleChatConfiguration? = nil
     ) async -> Bool {
-        guard let provider = providerOverride ?? MacAppleChatConfigurationStore.shared.load() else {
+        guard let provider = providerOverride ?? MacAppleChatConfigurationStore(applicationPort: applicationPort).load() else {
             errorMessage = "\(String(localized: "Model")): \(String(localized: "Not configured"))"
             return false
         }
@@ -554,7 +663,7 @@ final class MacAutomationStore {
         let startedAt = Date()
         var activityLogURL: URL?
         let heartbeat = heartbeatTask(for: claim)
-        guard let provider = MacAppleChatConfigurationStore.shared.load() else {
+        guard let provider = MacAppleChatConfigurationStore(applicationPort: applicationPort).load() else {
             heartbeat.cancel()
             let failure = NSError(domain: "MacAutomationPreparation", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Model not configured"])
@@ -599,6 +708,67 @@ final class MacAutomationStore {
                 await self.deliverNotification(name: automation.name, receipt: receipt)
             }
         }
+    }
+
+    private nonisolated enum ClaimRunOutcome: Sendable {
+        case claimed(MacClaimedAutomationRun)
+        case alreadyBound(runID: String, observation: MacAutomationExecutionObservation)
+        case notClaimed
+    }
+
+    private nonisolated static func claimRunOffMainActor(
+        automation: MacAutomation,
+        expectedSpec: MacAutomationExecutionSpec,
+        occurrence: MacAutomationOccurrence,
+        nowMs: Int64,
+        client: any MacAutomationApplicationClient
+    ) throws -> ClaimRunOutcome {
+        guard let definition = try client.listAutomations().first(where: {
+            $0.id == automation.id.uuidString.lowercased()
+        }) else { throw CocoaError(.fileReadNoSuchFile) }
+        let run = try client.enqueueAutomationRun(MacCanonicalAutomationRun(
+            id: "automation-run-\(UUID().uuidString.lowercased())",
+            automationID: automation.id.uuidString.lowercased(),
+            definitionRevision: definition.revision,
+            occurrenceKey: occurrence.occurrenceKey,
+            trigger: occurrence.trigger,
+            status: "queued",
+            attempt: 0,
+            workerID: nil,
+            leaseToken: nil,
+            leaseUntilMs: nil,
+            scheduledForMs: occurrence.scheduledForMs,
+            startedAtMs: nil,
+            finishedAtMs: nil,
+            nextRetryAtMs: nil,
+            resultJSON: nil,
+            errorJSON: nil,
+            createdAtMs: nowMs,
+            updatedAtMs: nowMs
+        ))
+        let token = UUID().uuidString.lowercased()
+        let observation = try client.observeAutomationExecution(occurrenceID: run.id)
+        guard observation.binding == nil else {
+            return .alreadyBound(runID: run.id, observation: observation)
+        }
+        guard case .agent(let canonicalSpec) = definition.executionSpec,
+              canonicalSpec == expectedSpec else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        let workerID = "mac:\(ProcessInfo.processInfo.processIdentifier)"
+        let claimed = try client.claimAutomationRun(
+            id: run.id,
+            workerID: workerID,
+            leaseToken: token,
+            nowMs: nowMs,
+            leaseUntilMs: nowMs + 5 * 60 * 1_000
+        )
+        guard claimed else { return .notClaimed }
+        return .claimed(MacClaimedAutomationRun(
+            lease: .init(occurrenceID: run.id, definitionRevision: run.definitionRevision, workerID: workerID, leaseToken: token),
+            identity: observation.identity,
+            executionSpec: canonicalSpec
+        ))
     }
 
     private func claimRun(
@@ -939,7 +1109,10 @@ final class MacAutomationStore {
     }
 
     func revealLog(_ automation: MacAutomation) -> URL? {
-        try? automationLogURL(for: automation)
+        let url = supportDirectory
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("\(automation.id.uuidString.lowercased()).log")
+        return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
     /// Exact occurrence lookup for diagnostic/acceptance callers, never "latest".
@@ -1042,6 +1215,50 @@ final class MacAutomationStore {
     }
 
     @discardableResult
+    private func persistAsync(_ candidate: [MacAutomation]) async -> Bool {
+        do {
+            let now = Int64(Date().timeIntervalSince1970 * 1_000)
+            let definitions = try candidate.map { automation in
+                let spec = executionSpec(for: automation)
+                try Self.validateExecutionSpec(spec, for: automation)
+                return MacCanonicalAutomationInput(
+                    id: automation.id.uuidString.lowercased(),
+                    name: automation.name,
+                    scheduleFormat: "nola.mac.automation.v1",
+                    enabled: automation.isEnabled,
+                    revision: 0,
+                    executionSpec: .agent(spec),
+                    metadataJSON: try presentationMetadata(for: automation, executionSpecDigest: Self.executionSpecDigest(spec)),
+                    createdAtMs: Int64(automation.createdAt.timeIntervalSince1970 * 1_000),
+                    updatedAtMs: now,
+                    deletedAtMs: nil
+                )
+            }
+            let supportDir = supportDirectory
+            let client = automationClient
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+                _ = try client.reconcileAutomations(
+                    MacCanonicalReconcileAutomationsInput(
+                        inputs: definitions,
+                        reconciledAtMs: now
+                    )
+                )
+            }.value
+            automations = zip(candidate, definitions).map { automation, definition in
+                var value = automation
+                if case .agent(let spec) = definition.executionSpec { value.executionSpec = spec }
+                return value
+            }
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
     private func persist(_ candidate: [MacAutomation]) -> Bool {
         do {
             try fileManager.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
@@ -1095,15 +1312,19 @@ final class MacAutomationStore {
     private func synchronize(_ automation: MacAutomation) {
         unload(automation)
         guard automation.isEnabled else {
-            try? fileManager.removeItem(at: externalContextURL(for: automation))
-            try? fileManager.removeItem(at: runnerURL(for: automation))
-            try? fileManager.removeItem(at: hostRequestURL(for: automation))
+            Self.removeLegacyFiles([
+                externalContextURL(for: automation),
+                runnerURL(for: automation),
+                hostRequestURL(for: automation),
+            ])
             return
         }
         guard isAuthorized(automation) else {
-            try? fileManager.removeItem(at: externalContextURL(for: automation))
-            try? fileManager.removeItem(at: runnerURL(for: automation))
-            try? fileManager.removeItem(at: hostRequestURL(for: automation))
+            Self.removeLegacyFiles([
+                externalContextURL(for: automation),
+                runnerURL(for: automation),
+                hostRequestURL(for: automation),
+            ])
             errorMessage = String(localized: "This automation no longer has access to its workspace.")
             return
         }
@@ -1112,10 +1333,20 @@ final class MacAutomationStore {
     private func unload(_ automation: MacAutomation) {
         let plist = plistURL(for: automation)
         guard synchronizeSystemJobs else {
-            try? fileManager.removeItem(at: plist)
+            Self.removeLegacyFiles([plist])
             return
         }
         Self.cleanupLegacyLaunchAgents([(label: automation.label, plistURL: plist)])
+    }
+
+    private nonisolated static func removeLegacyFiles(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        launchctlQueue.async {
+            let fileManager = FileManager.default
+            for url in urls {
+                try? fileManager.removeItem(at: url)
+            }
+        }
     }
 
     private nonisolated static func cleanupLegacyLaunchAgents(_ targets: [(label: String, plistURL: URL)]) {

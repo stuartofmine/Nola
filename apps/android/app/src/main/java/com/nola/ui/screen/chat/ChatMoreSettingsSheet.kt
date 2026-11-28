@@ -112,13 +112,11 @@ private fun compactChatTokenCount(value: Int): String = when {
 
 private fun permissionModeLabel(mode: AndroidAgentPermissionMode): Int = when (mode) {
     AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious
-    AndroidAgentPermissionMode.AcceptEdits -> R.string.chat_permission_mode_accept_edits
     AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all
 }
 
 private fun permissionModeDescription(mode: AndroidAgentPermissionMode): Int = when (mode) {
     AndroidAgentPermissionMode.Cautious -> R.string.chat_permission_mode_cautious_detail
-    AndroidAgentPermissionMode.AcceptEdits -> R.string.chat_permission_mode_accept_edits_detail
     AndroidAgentPermissionMode.AllowAll -> R.string.chat_permission_mode_allow_all_detail
 }
 

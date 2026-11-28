@@ -87,7 +87,7 @@ struct IOSAgentRoomsView: View {
                 }
             }
         }
-        .onAppear(perform: reloadEditorData)
+        .task { await reloadEditorDataAsync() }
         .onChange(of: configuration.modelID) { _, _ in
             refreshReasoningEfforts()
         }
@@ -263,7 +263,7 @@ struct IOSAgentRoomsView: View {
                 Spacer()
             }.frame(minHeight: 44).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("experts.templates.manage")
-        Button { perform { try saveAgent() } } label: {
+        Button { saveAgentAsync() } label: {
             Group {
                 if editing == nil { Text(String(localized: "room.create_agent")) }
                 else { Text(String(localized: "experts.save")) }
@@ -293,15 +293,36 @@ struct IOSAgentRoomsView: View {
         }
     }
 
-    private func reloadEditorData() {
+    @MainActor
+    private func reloadEditorDataAsync() async {
         error = nil
+        let service = self.service
+        let runtime = container.applicationRuntime
         do {
-            agents = try service.directory().agents
-            models = try ModelSelectionManager.availableModels(using: container.applicationRuntime).filter { !$0.isWebBackend }
-            do { roleCatalog = try service.roleTemplates() }
-            catch { roleCatalog = nil; self.error = String(localized: "experts.configuration.unsupported") }
+            let loaded = try await Task.detached(priority: .userInitiated) {
+                let directory = try service.directory().agents
+                let available = try ModelSelectionManager.availableModels(using: runtime).filter { !$0.isWebBackend }
+                let catalog: AppleExpertRoleTemplateCatalog?
+                let catalogError: String?
+                do {
+                    catalog = try service.roleTemplates()
+                    catalogError = nil
+                } catch {
+                    catalog = nil
+                    catalogError = String(localized: "experts.configuration.unsupported")
+                }
+                return (directory, available, catalog, catalogError)
+            }.value
+            guard !Task.isCancelled else { return }
+            agents = loaded.0
+            models = loaded.1
+            roleCatalog = loaded.2
+            if let catalogError = loaded.3 { self.error = catalogError }
             refreshReasoningEfforts()
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.error = error.localizedDescription
+        }
     }
 
     private var selectedRole: AppleExpertRoleTemplate? {
@@ -310,16 +331,25 @@ struct IOSAgentRoomsView: View {
 
     private func refreshReasoningEfforts() {
         guard supportsExpertReasoning else { reasoningEfforts = []; return }
-        let selected = configuration.modelID.isEmpty
-            ? (try? ModelSelectionManager.lastSelectedModel(using: container.applicationRuntime))
-            : models.first { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }
-        guard let model = selected, !model.isWebBackend,
-              let snapshot = try? ModelParametersStore.shared.parameterSnapshot(for: model.id),
-              let efforts = try? ModelParametersStore.shared.reasoningEfforts(for: snapshot) else {
-            reasoningEfforts = []
-            return
+        let targetModelID = configuration.modelID
+        let runtime = container.applicationRuntime
+        let availableModels = models
+        let store = ModelParametersStore.shared
+        Task { @MainActor in
+            let efforts: [String] = await Task.detached(priority: .userInitiated) {
+                let selected = targetModelID.isEmpty
+                    ? (try? ModelSelectionManager.lastSelectedModel(using: runtime))
+                    : availableModels.first { IOSConversationGenerationOverride.modelKey(for: $0) == targetModelID }
+                guard let model = selected, !model.isWebBackend,
+                      let snapshot = try? store.parameterSnapshot(for: model.id),
+                      let values = try? store.reasoningEfforts(for: snapshot) else {
+                    return []
+                }
+                return values.filter { $0 != "automatic" }
+            }.value
+            guard configuration.modelID == targetModelID else { return }
+            reasoningEfforts = efforts
         }
-        reasoningEfforts = efforts.filter { $0 != "automatic" }
     }
 
     private func requestEditorAction(_ action: PendingEditorAction) {
@@ -329,15 +359,32 @@ struct IOSAgentRoomsView: View {
     }
 
     private func performEditorAction(_ action: PendingEditorAction) {
-        perform {
-            switch action {
-            case .edit(let agent): try installEditor(agent)
-            case .close: dismiss()
-            case .archive:
-                guard let editing else { return }
-                agents = try service.updateAgent(editing, name: editing.name, description: editing.description,
-                    availability: editing.availability == "active" ? "archived" : "active", directory: service.directory()).agents
-                try installEditor(agents.first { $0.id == editing.id })
+        switch action {
+        case .edit(let agent):
+            perform { try installEditor(agent) }
+        case .close:
+            dismiss()
+        case .archive:
+            guard let editing else { return }
+            let service = self.service
+            let nextAvailability = editing.availability == "active" ? "archived" : "active"
+            Task { @MainActor in
+                do {
+                    let updated = try await Task.detached(priority: .userInitiated) {
+                        try service.updateAgent(
+                            editing,
+                            name: editing.name,
+                            description: editing.description,
+                            availability: nextAvailability,
+                            directory: service.directory()
+                        ).agents
+                    }.value
+                    agents = updated
+                    try installEditor(updated.first { $0.id == editing.id })
+                    error = nil
+                } catch {
+                    self.error = error.localizedDescription
+                }
             }
         }
     }
@@ -357,44 +404,68 @@ struct IOSAgentRoomsView: View {
         do { try action(); error = nil } catch { self.error = error.localizedDescription }
     }
 
-    private func saveAgent() throws {
+    private func saveAgentAsync() {
         focusedField = nil
-        let original = editing?.defaults ?? .object([:])
-        let saved = try AppleExpertConfigurationDraft(defaults: original)
-        if configuration.reasoningEffort != saved.reasoningEffort || configuration.modelID != saved.modelID {
-            if configuration.reasoningEffort != "automatic" {
-                guard supportsExpertReasoning else {
+        do {
+            let original = editing?.defaults ?? .object([:])
+            let saved = try AppleExpertConfigurationDraft(defaults: original)
+            if configuration.reasoningEffort != saved.reasoningEffort || configuration.modelID != saved.modelID {
+                if configuration.reasoningEffort != "automatic" {
+                    guard supportsExpertReasoning else {
+                        throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+                    }
+                    guard reasoningEfforts.contains(configuration.reasoningEffort) else {
+                        throw IOSApplicationRuntimeError.rejected(String(localized: "experts.reasoning.selectSupported"))
+                    }
+                } else if configuration.reasoningEffort != saved.reasoningEffort && !supportsExpertReasoning {
                     throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
                 }
-                guard reasoningEfforts.contains(configuration.reasoningEffort) else {
-                    throw IOSApplicationRuntimeError.rejected(String(localized: "experts.reasoning.selectSupported"))
+            }
+            if configuration.modelID != saved.modelID, !configuration.modelID.isEmpty,
+               !models.contains(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) {
+                throw IOSApplicationRuntimeError.rejected(String(localized: "room.select_model"))
+            }
+            if configuration.templateID != saved.templateID, !configuration.templateID.isEmpty, selectedRole == nil {
+                guard let id = UUID(uuidString: configuration.templateID), let promptService = container.promptTemplates else {
+                    throw IOSApplicationRuntimeError.rejected(String(localized: "experts.templateUnavailable"))
                 }
-            } else if configuration.reasoningEffort != saved.reasoningEffort && !supportsExpertReasoning {
-                throw IOSApplicationRuntimeError.rejected(String(localized: "experts.configuration.unsupported"))
+                _ = try promptService.requireReadableTemplate(id: id)
             }
-        }
-        if configuration.modelID != saved.modelID, !configuration.modelID.isEmpty,
-           !models.contains(where: { IOSConversationGenerationOverride.modelKey(for: $0) == configuration.modelID }) {
-            throw IOSApplicationRuntimeError.rejected(String(localized: "room.select_model"))
-        }
-        if configuration.templateID != saved.templateID, !configuration.templateID.isEmpty, selectedRole == nil {
-            guard let id = UUID(uuidString: configuration.templateID), let service = container.promptTemplates else {
-                throw IOSApplicationRuntimeError.rejected(String(localized: "experts.templateUnavailable"))
+            let nextDefaults = try configuration.applying(to: original, removingModelOverrides: removedModelOverrides)
+            let trimmedName = agentName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedDescription = agentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            let service = self.service
+            let editingSnapshot = self.editing
+            Task { @MainActor in
+                do {
+                    let updated: [IOSPersistentAgent] = try await Task.detached(priority: .userInitiated) {
+                        if let editingSnapshot {
+                            return try service.updateAgent(
+                                editingSnapshot,
+                                name: trimmedName,
+                                description: trimmedDescription,
+                                availability: editingSnapshot.availability,
+                                directory: service.directory(),
+                                defaults: nextDefaults
+                            ).agents
+                        }
+                        return try service.createAgent(
+                            name: trimmedName,
+                            description: trimmedDescription,
+                            defaults: nextDefaults,
+                            directory: service.directory()
+                        ).agents
+                    }.value
+                    agents = updated
+                    try installEditor(editingSnapshot.flatMap { target in updated.first { $0.id == target.id } })
+                    error = nil
+                } catch {
+                    self.error = error.localizedDescription
+                }
             }
-            _ = try service.requireReadableTemplate(id: id)
+        } catch {
+            self.error = error.localizedDescription
         }
-        let nextDefaults = try configuration.applying(to: original, removingModelOverrides: removedModelOverrides)
-        if let editing {
-            agents = try service.updateAgent(editing, name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
-                description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
-                availability: editing.availability, directory: service.directory(), defaults: nextDefaults).agents
-            try installEditor(agents.first { $0.id == editing.id })
-            return
-        }
-        agents = try service.createAgent(name: agentName.trimmingCharacters(in: .whitespacesAndNewlines),
-            description: agentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
-            defaults: nextDefaults, directory: service.directory()).agents
-        try installEditor(nil)
     }
 }
 

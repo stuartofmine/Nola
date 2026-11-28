@@ -65,17 +65,7 @@ struct ModelParametersView: View {
         self.modelID = modelID
         self.displayName = displayName
         self.isLocal = isLocal
-        var loadedSnapshot: ModelParametersStore.ParameterSnapshot?
-        var loadedEfforts: [String] = []
-        var loadedError: String?
-        do {
-            let snapshot = try ModelParametersStore.shared.parameterSnapshot(for: modelID)
-            loadedEfforts = try ModelParametersStore.shared.reasoningEfforts(for: snapshot)
-            loadedSnapshot = snapshot
-        } catch {
-            loadedError = error.localizedDescription
-        }
-        let params = loadedSnapshot?.parameters ?? ModelParameters.defaults(isLocal: isLocal)
+        let params = ModelParameters.defaults(isLocal: isLocal)
         let topKValue = Double(LocalSamplingSettings(parameters: params).topK)
         let repetitionValue = LocalSamplingSettings(parameters: params).repetitionPenalty
         let seedValue = params.seed.map(String.init) ?? ""
@@ -91,31 +81,14 @@ struct ModelParametersView: View {
         _seedText = State(initialValue: seedValue)
         _stopSequences = State(initialValue: params.stopSequences)
         _reasoningPreference = State(initialValue: reasoningValue)
-        _reasoningEfforts = State(initialValue: loadedEfforts)
+        _reasoningEfforts = State(initialValue: [])
         _showThinking = State(initialValue: params.showThinking)
         _streamOutput = State(initialValue: params.streamOutput)
         _responseStyle = State(initialValue: params.responseStyle)
         _customSystemPrompt = State(initialValue: params.customSystemPrompt)
-        _editingSnapshot = State(initialValue: loadedSnapshot)
-        _saveError = State(initialValue: loadedError)
-        _initialSignature = State(initialValue: loadedSnapshot == nil ? nil : Self.signature(
-            maxContextLength: params.maxContextLength,
-            maxOutputTokens: params.maxOutputTokens,
-            topK: topKValue,
-            topP: params.topP,
-            temperature: params.temperature,
-            presencePenalty: params.presencePenalty,
-            frequencyPenalty: params.frequencyPenalty,
-            repetitionPenalty: repetitionValue,
-            seedText: seedValue,
-            stopSequences: params.stopSequences,
-            reasoningPreference: reasoningValue,
-            showThinking: params.showThinking,
-            streamOutput: params.streamOutput,
-            responseStyle: params.responseStyle,
-            customSystemPrompt: params.customSystemPrompt,
-            numericText: [:]
-        ))
+        _editingSnapshot = State(initialValue: nil)
+        _saveError = State(initialValue: nil)
+        _initialSignature = State(initialValue: nil)
     }
 
     var body: some View {
@@ -161,6 +134,9 @@ struct ModelParametersView: View {
         .navigationTitle(L10n.format("model.parameters.navigation_title_format", displayName))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        .task(id: modelID) {
+            await reloadParametersAsync()
+        }
         .interactiveDismissDisabled(hasUnsavedChanges)
         .confirmationDialog(
             NSLocalizedString("model.parameters.discard.title", value: "Discard parameter changes?", comment: "Discard model parameter changes title"),
@@ -520,15 +496,27 @@ struct ModelParametersView: View {
     }
 
     private func reloadParameters() {
+        Task { await reloadParametersAsync() }
+    }
+
+    @MainActor
+    private func reloadParametersAsync() async {
+        let targetID = modelID
+        let store = ModelParametersStore.shared
         do {
-            let snapshot = try ModelParametersStore.shared.parameterSnapshot(for: modelID)
-            let values = try ModelParametersStore.shared.reasoningEfforts(for: snapshot)
-            editingSnapshot = snapshot
-            reasoningEfforts = values
-            apply(snapshot.parameters)
+            let loaded = try await Task.detached(priority: .userInitiated) {
+                let snapshot = try store.parameterSnapshot(for: targetID)
+                let values = try store.reasoningEfforts(for: snapshot)
+                return (snapshot, values)
+            }.value
+            guard !Task.isCancelled else { return }
+            editingSnapshot = loaded.0
+            reasoningEfforts = loaded.1
+            apply(loaded.0.parameters)
             initialSignature = parameterSignature
             saveError = nil
         } catch {
+            guard !Task.isCancelled else { return }
             saveError = error.localizedDescription
         }
     }

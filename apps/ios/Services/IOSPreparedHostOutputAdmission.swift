@@ -29,8 +29,9 @@ enum IOSPreparedHostOutputAdmission {
         case .responses:
             wireProtocol = "responses"
             field = "max_output_tokens"
-        default:
-            throw IOSApplicationRuntimeError.rejected("Unsupported local-host model protocol")
+        case .anthropic:
+            wireProtocol = "anthropic"
+            field = "max_tokens"
         }
         // Core verifies canonical URL spelling. Do not decode/re-encode path
         // escapes to imitate WHATWG normalization or conceal a different route.

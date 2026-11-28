@@ -401,31 +401,31 @@ nonisolated public protocol ChatMemoryProfileStore: AnyObject {
     func saveUploadedDocuments(_ items: [UserUploadedContextItem], expected: ChatMemoryProfile) throws -> ChatMemoryProfile
 }
 
-nonisolated protocol ChatSkillEditingStore: AnyObject {
+nonisolated protocol ChatSkillEditingStore: AnyObject, Sendable {
     func loadSkillEditor(id: UUID) throws -> IOSCanonicalSkillEditor
     func saveSkill(_ item: UserUploadedContextItem, expected: IOSCanonicalSkillEditor?) throws -> IOSCanonicalSkillEditor
     func setSkillEnabled(_ enabled: Bool, expected: IOSCanonicalSkillEditor) throws -> IOSCanonicalSkillEditor
     func deleteSkill(expected: IOSCanonicalSkillEditor) throws -> Bool
 }
 
-nonisolated struct ChatCapabilityLibrarySnapshot {
+nonisolated struct ChatCapabilityLibrarySnapshot: Sendable {
     let uploadedSkills: [UserUploadedContextItem]
     let mcpServers: [UserMCPServer]
     static let empty = ChatCapabilityLibrarySnapshot(uploadedSkills: [], mcpServers: [])
 }
 
-nonisolated protocol ChatCapabilityLibraryStore: AnyObject {
+nonisolated protocol ChatCapabilityLibraryStore: AnyObject, Sendable {
     func loadCapabilityLibrary() throws -> ChatCapabilityLibrarySnapshot
 }
 
-nonisolated protocol ChatMCPEditingStore: AnyObject {
+nonisolated protocol ChatMCPEditingStore: AnyObject, Sendable {
     func loadMCPEditor(id: UUID) throws -> IOSCanonicalMCPServer
     func saveMCP(_ item: UserMCPServer, expected: IOSCanonicalMCPServer?) throws -> IOSCanonicalMCPServer
     func setMCPEnabled(_ enabled: Bool, expected: IOSCanonicalMCPServer) throws -> IOSCanonicalMCPServer
     func deleteMCP(expected: IOSCanonicalMCPServer) throws -> Bool
 }
 
-nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfileStore, ChatSkillEditingStore, ChatMCPEditingStore, ChatCapabilityLibraryStore {
+nonisolated public final class CanonicalChatMemoryProfileStore: ChatMemoryProfileStore, ChatSkillEditingStore, ChatMCPEditingStore, ChatCapabilityLibraryStore, @unchecked Sendable {
     private struct StoredDocument: Decodable {
         let item: UserUploadedContextItem
         init(from decoder: Decoder) throws {

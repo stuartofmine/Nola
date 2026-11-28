@@ -747,6 +747,35 @@ public final class ModelDownloader: ObservableObject {
         
         logger.log(.info, "ModelDownloader", "Model deleted", metadata: ["model": model.rawValue])
     }
+
+    /// Delete a downloaded model off the main actor so multi-GB directory removal never blocks UI.
+    @MainActor
+    public func deleteModelAsync(_ model: ModelType) async throws {
+        let modelPath = getModelPath(for: model)
+        let deleted = try await Task.detached(priority: .userInitiated) {
+            guard FileManager.default.fileExists(atPath: modelPath.path) else { return false }
+            try FileManager.default.removeItem(at: modelPath)
+            return true
+        }.value
+
+        guard deleted else {
+            logger.log(.warn, "ModelDownloader", "Model not found for deletion")
+            return
+        }
+
+        downloadedModels.remove(model)
+        incompleteModels.remove(model)
+        #if os(iOS)
+        ModelSelectionManager.removeModel(model.canonicalModelInfo)
+        #endif
+
+        if downloadedModels.isEmpty {
+            state = .notDownloaded
+        }
+
+        scheduleDiskUsageUpdate(reason: "removeModel")
+        logger.log(.info, "ModelDownloader", "Model deleted", metadata: ["model": model.rawValue])
+    }
     
     /// Cancel ongoing download
     public func cancelDownload() {

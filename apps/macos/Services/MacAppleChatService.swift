@@ -648,7 +648,15 @@ nonisolated final class MacAppleChatConfigurationStore: @unchecked Sendable {
     /// and profile revisions a subsequent replacement must compare atomically.
     func endpointSnapshot(includeCredentials: Bool = true) throws -> MacRemoteEndpointSnapshot {
         try applicationPort.prepare()
-        let profiles = try applicationPort.listModelProfiles().filter {
+        let allProfiles = try applicationPort.listModelProfiles()
+        return try endpointSnapshot(from: allProfiles, includeCredentials: includeCredentials)
+    }
+
+    func endpointSnapshot(
+        from allProfiles: [MacCanonicalModelProfile],
+        includeCredentials: Bool = true
+    ) throws -> MacRemoteEndpointSnapshot {
+        let profiles = allProfiles.filter {
             $0.provider == Self.provider && $0.runtime == Self.runtime && $0.deletedAtMs == nil
         }
         guard profiles.allSatisfy(\.enabled) else { throw MacApplicationServiceError.invalidResponse }
@@ -722,7 +730,22 @@ nonisolated final class MacAppleChatConfigurationStore: @unchecked Sendable {
         for capability: MacRemoteModelCapability = .chat
     ) -> [MacRemoteModelOption] {
         let records = (try? decodedProfilesThrowing()) ?? []
-        return records.compactMap { record in
+        return configuredModels(fromDecoded: records, for: capability)
+    }
+
+    func configuredModels(
+        from allProfiles: [MacCanonicalModelProfile],
+        for capability: MacRemoteModelCapability = .chat
+    ) -> [MacRemoteModelOption] {
+        let records = decodeProfiles(allProfiles)
+        return configuredModels(fromDecoded: records, for: capability)
+    }
+
+    private func configuredModels(
+        fromDecoded records: [(profile: MacCanonicalModelProfile, source: RemoteSource)],
+        for capability: MacRemoteModelCapability
+    ) -> [MacRemoteModelOption] {
+        records.compactMap { record in
             let source = record.source
             let capabilities = Set(source.capabilities)
             guard source.endpointEnabled,
@@ -1175,7 +1198,11 @@ nonisolated final class MacAppleChatConfigurationStore: @unchecked Sendable {
 
     private func decodedProfilesThrowing() throws -> [(profile: MacCanonicalModelProfile, source: RemoteSource)] {
         try applicationPort.prepare()
-        return try applicationPort.listModelProfiles()
+        return decodeProfiles(try applicationPort.listModelProfiles())
+    }
+
+    private func decodeProfiles(_ allProfiles: [MacCanonicalModelProfile]) -> [(profile: MacCanonicalModelProfile, source: RemoteSource)] {
+        allProfiles
             .filter { ($0.provider == Self.provider || $0.provider == "nola-chatgpt") && $0.runtime == Self.runtime && $0.enabled && $0.deletedAtMs == nil }
             .compactMap { profile in
                 guard let source = decodeSource(profile.sourceJSON) else { return nil }

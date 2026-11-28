@@ -289,7 +289,7 @@ public final class ModelParametersStore: ObservableObject {
     }
     #endif
 
-    public func loadParameters(for modelID: String, isLocal: Bool? = nil) -> ModelParameters {
+    nonisolated public func loadParameters(for modelID: String, isLocal: Bool? = nil) -> ModelParameters {
         let defaultParams = isLocal.map { ModelParameters.defaults(isLocal: $0) } ?? ModelParameters.localDefaults
         #if os(macOS)
         let profile = (try? applicationPort.modelProfile(modelID)) ??
@@ -366,7 +366,7 @@ public final class ModelParametersStore: ObservableObject {
         return ParameterSnapshot(parameters: params, profile: input, revision: revision)
     }
     #else
-    struct ParameterSnapshot {
+    nonisolated struct ParameterSnapshot: Sendable {
         let parameters: ModelParameters
         fileprivate let profile: IOSCanonicalModelProfile
         var offersReasoningTiers: Bool {
@@ -379,7 +379,7 @@ public final class ModelParametersStore: ObservableObject {
         }
     }
 
-    func reasoningEfforts(for snapshot: ParameterSnapshot) throws -> [String] {
+    nonisolated func reasoningEfforts(for snapshot: ParameterSnapshot) throws -> [String] {
         guard snapshot.offersReasoningTiers else { return [] }
         let source = try JSONSerialization.jsonObject(with: Data(snapshot.profile.sourceJSON.utf8)) as? [String: Any]
         guard let reasoning = source?["reasoning"] as? [String: Any] else { return [] }
@@ -395,7 +395,7 @@ public final class ModelParametersStore: ObservableObject {
         return reasoning["efforts"] as? [String] ?? []
     }
 
-    func parameterSnapshot(for modelID: String) throws -> ParameterSnapshot {
+    nonisolated func parameterSnapshot(for modelID: String) throws -> ParameterSnapshot {
         guard let profile = try applicationPort.modelProfile(id: modelID), profile.revision >= 0 else {
             throw IOSApplicationRuntimeError.invalidResponse
         }

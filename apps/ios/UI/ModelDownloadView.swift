@@ -273,27 +273,60 @@ struct ModelDownloadView: View {
 
     private func deleteModel(_ model: ModelDownloader.ModelType) {
         operationError = nil
-        do {
-            try downloader.deleteModel(model)
-        } catch {
-            operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + error.localizedDescription
-            // Keep the failed model visible and report the operation inline.
-            Logger.shared.log(.warn, "ModelDownloadView", NSLocalizedString("autogen.ModelDownloadView.238c0cc1", comment: "AUTOGEN: localized text"), metadata: [
-                "error": String(describing: error)
-            ])
-        }
         modelToDelete = nil
+        Task { @MainActor in
+            do {
+                try await downloader.deleteModelAsync(model)
+                reconcileSelectionAfterDeleting([model.rawValue])
+            } catch {
+                operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + error.localizedDescription
+                // Keep the failed model visible and report the operation inline.
+                Logger.shared.log(.warn, "ModelDownloadView", NSLocalizedString("autogen.ModelDownloadView.238c0cc1", comment: "AUTOGEN: localized text"), metadata: [
+                    "error": String(describing: error)
+                ])
+            }
+        }
     }
     
     private func deleteAllModels() {
         operationError = nil
-        var failed: [String] = []
-        for model in downloader.downloadedModels {
-            do { try downloader.deleteModel(model) }
-            catch { failed.append(model.displayName) }
+        let targets = Array(downloader.downloadedModels)
+        Task { @MainActor in
+            var failed: [String] = []
+            var deletedIDs: Set<String> = []
+            for model in targets {
+                do {
+                    try await downloader.deleteModelAsync(model)
+                    deletedIDs.insert(model.rawValue)
+                } catch {
+                    failed.append(model.displayName)
+                }
+            }
+            if !deletedIDs.isEmpty {
+                reconcileSelectionAfterDeleting(deletedIDs)
+            }
+            if !failed.isEmpty {
+                operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + failed.joined(separator: ", ")
+            }
         }
-        if !failed.isEmpty {
-            operationError = NSLocalizedString("model.delete.failed", value: "The model could not be deleted. Try again.", comment: "Local model deletion failed") + " " + failed.joined(separator: ", ")
+    }
+
+    @MainActor
+    private func reconcileSelectionAfterDeleting(_ deletedIDs: Set<String>) {
+        if let currentID = selectedModelID, deletedIDs.contains(currentID) {
+            selectedModelID = nil
+        }
+        if let selected = container.chatManager.selectedModelInfo,
+           selected.isLocal,
+           deletedIDs.contains(selected.id) {
+            let remaining = ModelSelectionManager.getAvailableModels()
+            if let fallback = remaining.first {
+                container.chatManager.selectModel(fallback)
+                selectedModelID = fallback.isLocal ? fallback.id : nil
+            } else {
+                container.chatManager.selectedModelInfo = nil
+                selectedModelID = nil
+            }
         }
     }
     

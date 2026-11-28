@@ -1305,7 +1305,7 @@ pub(super) fn dispatch_reduce_and_accept_host_response(
                 let perm_profile = run
                     .pointer("/core_config/permission_profile")
                     .and_then(|v| v.as_str())
-                    .filter(|s| matches!(*s, "cautious" | "accept_edits" | "allow_all"))
+                    .filter(|s| matches!(*s, "cautious" | "allow_all"))
                     .unwrap_or("cautious")
                     .to_string();
                 if decision.starts_with("allow") || decision == "approved" {
@@ -1616,7 +1616,7 @@ pub(super) fn dispatch_reduce_and_accept_host_response(
                         let perm_profile = run
                             .pointer("/core_config/permission_profile")
                             .and_then(|v| v.as_str())
-                            .filter(|s| matches!(*s, "cautious" | "accept_edits" | "allow_all"))
+                            .filter(|s| matches!(*s, "cautious" | "allow_all"))
                             .unwrap_or("cautious")
                             .to_string();
                         let host_req = json!({
@@ -1891,7 +1891,40 @@ pub(super) fn dispatch_reduce_and_commit_active_submission(
     let next_seq = run.get("sequence").and_then(|v| v.as_u64()).unwrap_or(1) + 1;
     run["sequence"] = json!(next_seq);
 
-    if sub_type == "permission_response" {
+    if sub_type == "interrupt" || sub_type == "cancel" {
+        let cancellation_id = submission
+            .get("cancellation_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let reason = submission
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("interrupted")
+            .to_string();
+        run["turn_status"] = json!("cancelled");
+        run["interrupted"] = json!(true);
+        run["cancellation_id"] = json!(cancellation_id);
+        run["cancellation_reason"] = json!(reason);
+        run["interrupted_at_ms"] = json!(input
+            .get("committed_at_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or_else(now_ms));
+        if let Some(p_arr) = run.get_mut("pending_permissions").and_then(|v| v.as_array_mut()) {
+            p_arr.clear();
+        }
+        if !conv_id.is_empty() {
+            let _ = store.set_kv(
+                &format!("cancel_requested:{conv_id}"),
+                &json!({
+                    "run_id": run_id,
+                    "cancellation_id": run["cancellation_id"],
+                    "reason": run["cancellation_reason"],
+                    "requested_at_ms": run["interrupted_at_ms"]
+                }),
+            );
+        }
+    } else if sub_type == "permission_response" {
         let req_id = submission
             .get("request_id")
             .or_else(|| submission.get("permission_request_id"))

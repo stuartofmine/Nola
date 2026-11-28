@@ -1879,7 +1879,7 @@ struct MacJournalProcessView<Content: View>: View {
     @State private var hovering = false
     private var expanded: Bool {
         AppleMessagePartFlow.isExpanded(choices: partIDs.compactMap { (owner?.processChoices ?? localChoices)[$0] },
-            defaultExpanded: hasTasks)
+            defaultExpanded: hasTasks || delivery == .running)
     }
 
     private var heading: String {

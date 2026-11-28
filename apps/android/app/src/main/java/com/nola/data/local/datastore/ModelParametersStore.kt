@@ -5,9 +5,12 @@ import com.nola.data.local.CanonicalModelProfile
 import com.nola.domain.model.ModelParameters
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 
@@ -35,13 +38,24 @@ class ModelParametersStore @Inject constructor(
 
     fun getParameters(modelID: String): Flow<ModelParameters> = revision.map {
         loadParametersNow(modelID)
-    }
+    }.flowOn(Dispatchers.IO)
 
     suspend fun saveParameters(modelID: String, params: ModelParameters) {
-        saveParameters(parameterSnapshot(modelID), params)
+        withContext(Dispatchers.IO) {
+            saveParametersNow(parameterSnapshot(modelID), params)
+        }
     }
 
     data class ParameterSnapshot(val parameters: ModelParameters, internal val profile: CanonicalModelProfile, val reasoningEfforts: List<String> = emptyList())
+
+    suspend fun loadParameterSnapshot(modelID: String): ParameterSnapshot = withContext(Dispatchers.IO) {
+        parameterSnapshot(modelID)
+    }
+
+    suspend fun loadLocalParameterSnapshot(modelID: String, modelName: String, contextWindow: Int): ParameterSnapshot =
+        withContext(Dispatchers.IO) {
+            localParameterSnapshot(modelID, modelName, contextWindow)
+        }
 
     fun parameterSnapshot(modelID: String): ParameterSnapshot {
         val profile = checkNotNull(applicationRuntime.modelProfile(modelID)) { "Model profile is unavailable: $modelID" }
@@ -65,7 +79,12 @@ class ModelParametersStore @Inject constructor(
         return ParameterSnapshot(parameters, profile, efforts)
     }
 
-    suspend fun saveParameters(snapshot: ParameterSnapshot, params: ModelParameters): ParameterSnapshot {
+    suspend fun saveParameters(snapshot: ParameterSnapshot, params: ModelParameters): ParameterSnapshot =
+        withContext(Dispatchers.IO) {
+            saveParametersNow(snapshot, params)
+        }
+
+    private fun saveParametersNow(snapshot: ParameterSnapshot, params: ModelParameters): ParameterSnapshot {
         // configure_parameters preserves the stored selection. A true flag in the
         // command requests a selection change and is rejected by Core.
         val input = snapshot.profile.copy(parametersJson = json.encodeToString(params),
@@ -76,14 +95,16 @@ class ModelParametersStore @Inject constructor(
             revision = committed, updatedAtMs = input.updatedAtMs))
     }
 
-    suspend fun loadParameters(modelID: String): ModelParameters = loadParametersNow(modelID)
+    suspend fun loadParameters(modelID: String): ModelParameters = withContext(Dispatchers.IO) {
+        loadParametersNow(modelID)
+    }
 
-    suspend fun loadLocalParameters(modelID: String, contextWindow: Int): ModelParameters {
+    suspend fun loadLocalParameters(modelID: String, contextWindow: Int): ModelParameters = withContext(Dispatchers.IO) {
         val profile = applicationRuntime.modelProfile(modelID)
         val raw = profile?.let { json.decodeFromString<ModelParameters>(it.parametersJson) }
             ?: defaultParameters.copy(maxContextTokens = contextWindow.coerceIn(2048, 8192))
         val maxContext = contextWindow.coerceAtLeast(512)
-        return raw.copy(maxContextTokens = raw.maxContextTokens.coerceIn(512, maxContext))
+        raw.copy(maxContextTokens = raw.maxContextTokens.coerceIn(512, maxContext))
     }
 
     fun localParameterSnapshot(modelID: String, modelName: String, contextWindow: Int): ParameterSnapshot {
@@ -116,7 +137,7 @@ class ModelParametersStore @Inject constructor(
         return ParameterSnapshot(params, synthetic, emptyList())
     }
 
-    suspend fun clearAll() {
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
         applicationRuntime.resetModelParameters(
             profileIds = applicationRuntime.listModelProfiles().map { it.id },
             parametersJson = json.encodeToString(defaultParameters),
@@ -125,8 +146,10 @@ class ModelParametersStore @Inject constructor(
         revision.value += 1
     }
 
-    suspend fun exportSnapshot(): Map<String, ModelParameters> = applicationRuntime.listModelProfiles()
-        .associate { profile -> profile.id to json.decodeFromString<ModelParameters>(profile.parametersJson) }
+    suspend fun exportSnapshot(): Map<String, ModelParameters> = withContext(Dispatchers.IO) {
+        applicationRuntime.listModelProfiles()
+            .associate { profile -> profile.id to json.decodeFromString<ModelParameters>(profile.parametersJson) }
+    }
 
     private fun loadParametersNow(modelID: String): ModelParameters = applicationRuntime
         .modelProfile(modelID)

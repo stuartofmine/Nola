@@ -163,6 +163,7 @@ struct ChatView: View {
     @State private var composerReasoningEfforts: [String] = []
     @State private var composerReasoningPreference = "automatic"
     @State private var composerReasoningError: String?
+    @State private var cachedPairedHostIdentity: String? = nil
 
     var readingPositions: ChatReadingPositions? = nil
     var expertHistoryContinuation: IOSExpertHistoryContinuation? = nil
@@ -617,10 +618,7 @@ struct ChatView: View {
                 contextUsage: currentContextUsage,
                 hostComputerUseStatus: currentHostComputerUseStatus,
                 hostNativeBrowserStatus: currentHostNativeBrowserStatus,
-                pairedHostIdentity: selectedModel
-                    .flatMap { $0.baseURL }
-                    .flatMap { URL(string: $0) }
-                    .flatMap { ModelSelectionManager.pairedWebHostIdentity(for: $0) },
+                pairedHostIdentity: cachedPairedHostIdentity,
                 conversationGenerationOverride: parameterEditorOwner?.baseline ?? .init(),
                 onSaveGenerationOverride: { value in
                     guard let owner = parameterEditorOwner,
@@ -1090,6 +1088,17 @@ struct ChatView: View {
                       expertRemoteSource?.owner != container.chatManager.currentConversationId || expertRemoteSource == nil else { return }
                 await reloadExpertDirectory()
             }
+            .task(id: selectedModel?.baseURL) {
+                guard let rawBaseURL = selectedModel?.baseURL, let url = URL(string: rawBaseURL) else {
+                    cachedPairedHostIdentity = nil
+                    return
+                }
+                let identity = await Task.detached(priority: .userInitiated) {
+                    ModelSelectionManager.pairedWebHostIdentity(for: url)
+                }.value
+                guard !Task.isCancelled else { return }
+                cachedPairedHostIdentity = identity
+            }
             .task(id: container.chatManager.currentConversationId) {
                 guard let id = container.chatManager.currentConversationId else { return }
                 prepareExpertWorkspace()
@@ -1100,19 +1109,32 @@ struct ChatView: View {
                 if let association = expertSubmission?.conversationAssociation {
                     do {
                         try agentRoomWorkspace.open(association.room, container: container)
-                        let stored = try container.conversationStore?.getMessages(conversationId: id, limit: 1000) ?? []
-                        expertMessageTimes = Dictionary(uniqueKeysWithValues: stored.map {
-                            ($0.id, Int64($0.createdAt.timeIntervalSince1970 * 1000))
-                        })
+                        if let store = container.conversationStore {
+                            let stored = try await Task.detached(priority: .userInitiated) {
+                                try store.getMessages(conversationId: id, limit: 1000)
+                            }.value
+                            guard !Task.isCancelled, container.chatManager.currentConversationId == id else { return }
+                            expertMessageTimes = Dictionary(uniqueKeysWithValues: stored.map {
+                                ($0.id, Int64($0.createdAt.timeIntervalSince1970 * 1000))
+                            })
+                        }
                     } catch { expertSendError = error.localizedDescription }
                 }
             }
             .onChange(of: messages.map(\.id)) { _, _ in
-                guard let id = container.chatManager.currentConversationId,
-                      let stored = try? container.conversationStore?.getMessages(conversationId: id, limit: 1000) else { return }
-                expertMessageTimes = Dictionary(uniqueKeysWithValues: stored.map {
-                    ($0.id, Int64($0.createdAt.timeIntervalSince1970 * 1000))
-                })
+                guard expertSubmission?.conversationAssociation != nil || !expertSelection.isEmpty,
+                      let id = container.chatManager.currentConversationId,
+                      let store = container.conversationStore else { return }
+                Task { @MainActor in
+                    let times: [UUID: Int64]? = await Task.detached(priority: .utility) {
+                        guard let stored = try? store.getMessages(conversationId: id, limit: 1000) else { return nil }
+                        return Dictionary(uniqueKeysWithValues: stored.map {
+                            ($0.id, Int64($0.createdAt.timeIntervalSince1970 * 1000))
+                        })
+                    }.value
+                    guard container.chatManager.currentConversationId == id, let times else { return }
+                    expertMessageTimes = times
+                }
             }
             .onChange(of: container.chatManager.currentConversationId) { oldOwner, newOwner in
                 let transfersSubmittedDraft = oldOwner == nil && newOwner == activeResponseConversationID
@@ -3472,15 +3494,11 @@ private struct IOSV2UISurfaceCard: View {
     let snapshotValue: AgentCoreJSONValue
     let conversationID: String
     let onSubmit: (String, [String: Any]) async throws -> [String: Any]
+    @State private var decodedSnapshot: AppleUISnapshot<AgentCoreJSONValue>?
     @State private var committedSnapshot: AppleUISnapshot<AgentCoreJSONValue>?
     @State private var fieldValues: [String: String] = [:]
     @State private var isSubmitting = false
     @State private var submissionError: String?
-
-    private var decodedSnapshot: AppleUISnapshot<AgentCoreJSONValue>? {
-        guard let data = try? JSONEncoder().encode(snapshotValue) else { return nil }
-        return try? JSONDecoder().decode(AppleUISnapshot<AgentCoreJSONValue>.self, from: data)
-    }
 
     var body: some View {
         Group {
@@ -3529,6 +3547,15 @@ private struct IOSV2UISurfaceCard: View {
             } else if case .object(let root) = snapshotValue {
                 rawSurfaceBody(root: root)
             }
+        }
+        .task(id: snapshotValue) {
+            let raw = snapshotValue
+            let decoded: AppleUISnapshot<AgentCoreJSONValue>? = await Task.detached(priority: .userInitiated) {
+                guard let data = try? JSONEncoder().encode(raw) else { return nil }
+                return try? JSONDecoder().decode(AppleUISnapshot<AgentCoreJSONValue>.self, from: data)
+            }.value
+            guard !Task.isCancelled else { return }
+            decodedSnapshot = decoded
         }
         .padding(12)
         .background(DesignTokens.surfaceColor, in: RoundedRectangle(cornerRadius: DesignTokens.radius_md, style: .continuous))

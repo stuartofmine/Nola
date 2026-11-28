@@ -403,15 +403,18 @@ struct SettingsView: View {
             defer { isExporting = false }
             await Task.yield()
             do {
-                guard let data = container.dataManager.exportData() else {
+                guard let data = await container.dataManager.exportDataAsync() else {
                     throw CocoaError(.fileWriteUnknown)
                 }
-                let directory = FileManager.default.temporaryDirectory
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-                let url = directory.appendingPathComponent("Nola-Export-\(formatter.string(from: Date())).json")
-                try data.write(to: url, options: .atomic)
+                let url: URL = try await Task.detached(priority: .userInitiated) {
+                    let directory = FileManager.default.temporaryDirectory
+                    let formatter = DateFormatter()
+                    formatter.locale = Locale(identifier: "en_US_POSIX")
+                    formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+                    let targetURL = directory.appendingPathComponent("Nola-Export-\(formatter.string(from: Date())).json")
+                    try data.write(to: targetURL, options: .atomic)
+                    return targetURL
+                }.value
                 exportedFileURL = url
                 showingExportSheet = true
                 refreshLocalDataSize()
@@ -505,18 +508,82 @@ struct SettingsView: View {
     @discardableResult
     static func clearLocalData(container: ServiceContainer) async -> Bool {
         var completelyCleared = true
-        container.dataManager.clearAllData()
-        if let store = container.conversationStore {
+        await container.dataManager.clearAllDataAsync()
+
+        let conversationStore = container.conversationStore
+        let runtime = container.applicationRuntime
+        let localJSONStorage = container.localJSONStorage
+        let logger = container.logger
+        let clearedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
+
+        let storeCleared = await Task.detached(priority: .userInitiated) {
+            var ok = true
+            if let store = conversationStore {
+                do {
+                    let conversations = try store.getAllConversations()
+                    for conversation in conversations {
+                        try store.deleteConversation(conversationId: conversation.id)
+                    }
+                } catch {
+                    ok = false
+                    logger.log(.warn, "SettingsView", "Failed to clear conversations", metadata: ["error": error.localizedDescription])
+                }
+            }
+            if !runtime.clearIntelligence() {
+                ok = false
+                logger.log(.warn, "SettingsView", "Failed to clear PersonalIntelligenceCore store")
+            }
             do {
-                let conversations = try store.getAllConversations()
-                for conversation in conversations {
-                    try store.deleteConversation(conversationId: conversation.id)
+                _ = try runtime.deleteProductSetting(key: "assistant.uploaded_documents")
+            } catch {
+                ok = false
+                logger.log(.warn, "SettingsView", "Failed to clear uploaded documents", metadata: ["error": error.localizedDescription])
+            }
+            do {
+                let memories = try runtime.listMemories(limit: 1_000)
+                if !memories.isEmpty {
+                    _ = try runtime.replaceMemories(
+                        expected: memories,
+                        candidates: [],
+                        deletedAtMs: clearedAtMs
+                    )
                 }
             } catch {
-                completelyCleared = false
-                container.logger.log(.warn, "SettingsView", "Failed to clear conversations", metadata: ["error": error.localizedDescription])
+                ok = false
+                logger.log(.warn, "SettingsView", "Failed to clear memories", metadata: ["error": error.localizedDescription])
             }
-        }
+            do {
+                let userSkills = try runtime.listSkills().filter { $0.source != "built_in" }
+                for skill in userSkills {
+                    _ = try runtime.deleteUserSkill(id: skill.id, deletedAtMs: clearedAtMs)
+                }
+            } catch {
+                ok = false
+                logger.log(.warn, "SettingsView", "Failed to clear user skills", metadata: ["error": error.localizedDescription])
+            }
+            do {
+                for server in try runtime.listMCPServers() {
+                    _ = try runtime.deleteMCPServer(id: server.id, deletedAtMs: clearedAtMs)
+                }
+            } catch {
+                ok = false
+                logger.log(.warn, "SettingsView", "Failed to clear MCP servers", metadata: ["error": error.localizedDescription])
+            }
+            if let storage = localJSONStorage {
+                do {
+                    let tasks = try storage.getAllUserTasks()
+                    for task in tasks {
+                        try storage.deleteUserTask(id: task.id)
+                    }
+                } catch {
+                    ok = false
+                    logger.log(.warn, "SettingsView", "Failed to clear user tasks", metadata: ["error": error.localizedDescription])
+                }
+            }
+            return ok
+        }.value
+        if !storeCleared { completelyCleared = false }
+
         container.chatManager.currentConversationId = nil
         container.chatManager.reset()
         if let fetcher = container.urlFetcher {
@@ -532,47 +599,6 @@ struct SettingsView: View {
             if !fetcher.sources.isEmpty {
                 completelyCleared = false
             }
-        }
-        let clearedAtMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        if !container.applicationRuntime.clearIntelligence() {
-            completelyCleared = false
-            container.logger.log(.warn, "SettingsView", "Failed to clear PersonalIntelligenceCore store")
-        }
-        do {
-            _ = try container.applicationRuntime.deleteProductSetting(key: "assistant.uploaded_documents")
-        } catch {
-            completelyCleared = false
-            container.logger.log(.warn, "SettingsView", "Failed to clear uploaded documents", metadata: ["error": error.localizedDescription])
-        }
-        do {
-            let memories = try container.applicationRuntime.listMemories(limit: 1_000)
-            if !memories.isEmpty {
-                _ = try container.applicationRuntime.replaceMemories(
-                    expected: memories,
-                    candidates: [],
-                    deletedAtMs: clearedAtMs
-                )
-            }
-        } catch {
-            completelyCleared = false
-            container.logger.log(.warn, "SettingsView", "Failed to clear memories", metadata: ["error": error.localizedDescription])
-        }
-        do {
-            let userSkills = try container.applicationRuntime.listSkills().filter { $0.source != "built_in" }
-            for skill in userSkills {
-                _ = try container.applicationRuntime.deleteUserSkill(id: skill.id, deletedAtMs: clearedAtMs)
-            }
-        } catch {
-            completelyCleared = false
-            container.logger.log(.warn, "SettingsView", "Failed to clear user skills", metadata: ["error": error.localizedDescription])
-        }
-        do {
-            for server in try container.applicationRuntime.listMCPServers() {
-                _ = try container.applicationRuntime.deleteMCPServer(id: server.id, deletedAtMs: clearedAtMs)
-            }
-        } catch {
-            completelyCleared = false
-            container.logger.log(.warn, "SettingsView", "Failed to clear MCP servers", metadata: ["error": error.localizedDescription])
         }
         if let notificationManager = container.notificationManager {
             do {
@@ -593,26 +619,18 @@ struct SettingsView: View {
                 }
             }
         }
-        if let storage = container.localJSONStorage {
+        for localModel in Array(container.modelDownloader.downloadedModels) {
             do {
-                let tasks = try storage.getAllUserTasks()
-                for task in tasks {
-                    try storage.deleteUserTask(id: task.id)
-                }
-            } catch {
-                completelyCleared = false
-                container.logger.log(.warn, "SettingsView", "Failed to clear user tasks", metadata: ["error": error.localizedDescription])
-            }
-        }
-        for localModel in container.modelDownloader.downloadedModels {
-            do {
-                try container.modelDownloader.deleteModel(localModel)
+                try await container.modelDownloader.deleteModelAsync(localModel)
             } catch {
                 completelyCleared = false
                 container.logger.log(.warn, "SettingsView", "Failed to delete local model", metadata: ["error": error.localizedDescription])
             }
         }
-        for model in ModelSelectionManager.getAvailableModels() {
+        let remainingModels = await Task.detached(priority: .userInitiated) {
+            ModelSelectionManager.getAvailableModels()
+        }.value
+        for model in remainingModels {
             ModelSelectionManager.removeModel(model)
         }
         container.summaryStorage.clearAllSummaries()

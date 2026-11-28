@@ -14,6 +14,7 @@ struct ModelPickerSheet: View {
     let availableModels: [ModelInfo]
     var onSelected: ((ModelInfo) -> Void)?
     @State private var showParametersFor: ModelInfo? = nil
+    @State private var configuredWebHostIDs: [String: Bool] = [:]
 
     private var localModels: [ModelInfo] { availableModels.filter(\.isLocal) }
     private var hostModels: [ModelInfo] { availableModels.filter(\.isWebBackend) }
@@ -67,6 +68,19 @@ struct ModelPickerSheet: View {
                 NavigationStack {
                     ModelParametersView(modelID: model.id, displayName: model.name, isLocal: model.isLocal)
                 }
+            }
+            .task(id: availableModels.map(\.id)) {
+                let webModels = availableModels.filter(\.isWebBackend)
+                let resolved = await Task.detached(priority: .userInitiated) {
+                    var status: [String: Bool] = [:]
+                    for model in webModels {
+                        let hasBase = model.baseURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                        let hasKey = model.resolvedAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                        status[model.id] = hasBase && hasKey
+                    }
+                    return status
+                }.value
+                configuredWebHostIDs = resolved
             }
         }
     }
@@ -140,8 +154,11 @@ struct ModelPickerSheet: View {
 
     private func isConfigured(_ model: ModelInfo) -> Bool {
         guard model.isWebBackend else { return true }
+        if let cached = configuredWebHostIDs[model.id] {
+            return cached
+        }
         return model.baseURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && model.resolvedAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && model.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private func executionLabel(_ model: ModelInfo) -> String {

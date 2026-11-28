@@ -8,7 +8,7 @@
     type Method = {provider: string; method: number; binding: string; declaration: {type: string; label: string; prompts: Prompt[]}};
     type Owner = {account_id: string; revision: number; display_name: string; origin: string; directory: string};
     type Connected = {account: {revision: number; account: {id: string}}; origin: string; directory: string; methods: Method[]};
-    type Login = {request_id: string; provider: string; method: number; state: string; authorization_url: string | null; callback_mode: string | null; instructions: string | null};
+    type Login = {request_id: string; provider: string; method: number; state: string; oauth_state?: string | null; state_token?: string | null; authorization_url: string | null; callback_mode: string | null; instructions: string | null};
     let owners = $state<Owner[]>([]), ownerID = $state(''), connected = $state<Connected | null>(null);
     let origin = $state(''), directory = $state(''), username = $state('opencode'), password = $state('');
     let consent = $state(false), loginConsent = $state(false), callbackConsent = $state(false);
@@ -68,7 +68,8 @@
     async function finish(forget: boolean) {if (!login) return; const current = login;
         await run(async () => {
             if (!forget) login = {...current, state: 'unknown', authorization_url: null, instructions: null};
-            const result = await post<Login>(forget ? 'forget' : 'callback', {...reference(), request_id: current.request_id, code: forget ? null : code || null, acknowledge_provider_login_changes: !forget && callbackConsent});
+            const oauthState = current.oauth_state ?? current.state_token ?? undefined;
+            const result = await post<Login>(forget ? 'forget' : 'callback', {...reference(), request_id: current.request_id, ...(forget ? {} : { state: oauthState }), code: forget ? null : code || null, acknowledge_provider_login_changes: !forget && callbackConsent});
             if (alive) {login = forget ? null : result; code = ''; loginConsent = false; callbackConsent = false;}
         });
     }
@@ -107,7 +108,7 @@
         <p>{t($locale, 'sourceAccounts.providerStatus', {provider: login.provider, state: t($locale, sourceAccountStateKey(login.state))})}</p>
         {#if authorizationLink}<a href={authorizationLink.href} target="_blank" rel="noopener noreferrer">{t($locale, 'sourceAccounts.openAuthorization', {host: authorizationLink.host})}</a>{/if}
         {#if login.instructions}<p class="instructions">{login.instructions}</p>{/if}
-        {#if login.state === 'pending'}
+        {#if login.state === 'pending' || login.state === 'awaiting_authorization'}
             {#if login.callback_mode === 'code'}<label>{t($locale, 'sourceAccounts.code')} <input type="password" bind:value={code} autocomplete="off" disabled={busy} /></label>{/if}
             <label><input type="checkbox" bind:checked={callbackConsent} disabled={busy} /> {t($locale, 'sourceAccounts.callbackConsent')}</label>
             <button type="button" onclick={() => finish(false)} disabled={busy || !callbackConsent || (login.callback_mode === 'code' && !code)}>{t($locale, 'sourceAccounts.confirmCallback')}</button>
