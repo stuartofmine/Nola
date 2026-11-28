@@ -446,28 +446,60 @@ fn redact_string_in_place(
     count
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsonContext {
+    WireRequest,
+    ResponseText,
+    Schema,
+    Data,
+}
+
 fn redact_tool_data(
+    value: &mut Value,
+    secrets: &[&str],
+    options: RedactionOptions,
+    depth: usize,
+) -> usize {
+    redact_value(value, secrets, options, depth, JsonContext::Data)
+}
+
+// A property named "password" in a tool schema describes a field. The same
+// name in a tool result contains a value that must be removed.
+fn redact_value(
     value: &mut Value,
     extra_secrets: &[&str],
     options: RedactionOptions,
     embedded_depth: usize,
+    context: JsonContext,
 ) -> usize {
     match value {
         Value::Object(fields) => {
             let mut count = 0usize;
             let mut renames = Vec::new();
             for (key, child) in fields.iter_mut() {
-                if secret_field(key) {
+                if context != JsonContext::Schema && secret_field(key) {
                     if child.as_str() != Some("[CREDENTIAL]") {
                         *child = Value::from("[CREDENTIAL]");
                         count = count.saturating_add(1);
                     }
                 } else {
-                    count = count.saturating_add(redact_tool_data(
+                    let child_context = match (context, key.as_str()) {
+                        (JsonContext::WireRequest, "text") => JsonContext::ResponseText,
+                        (JsonContext::WireRequest, "tools" | "response_format")
+                        | (JsonContext::ResponseText, "format") => JsonContext::Schema,
+                        (
+                            JsonContext::Schema,
+                            "default" | "examples" | "example" | "const" | "enum",
+                        ) => JsonContext::Data,
+                        (JsonContext::Schema, _) => JsonContext::Schema,
+                        _ => JsonContext::Data,
+                    };
+                    count = count.saturating_add(redact_value(
                         child,
                         extra_secrets,
                         options,
                         embedded_depth,
+                        child_context,
                     ));
                 }
                 let mut masked = key.clone();
@@ -493,11 +525,12 @@ fn redact_tool_data(
         Value::Array(list) => {
             let mut count = 0usize;
             for child in list {
-                count = count.saturating_add(redact_tool_data(
+                count = count.saturating_add(redact_value(
                     child,
                     extra_secrets,
                     options,
                     embedded_depth,
+                    context,
                 ));
             }
             count
@@ -622,7 +655,7 @@ impl PrivacyRedactor {
         let options = RedactionOptions {
             redact_pii: should_redact_pii(endpoint),
         };
-        redact_tool_data(value, extra_secrets, options, 0)
+        redact_value(value, extra_secrets, options, 0, JsonContext::WireRequest)
     }
 
     /// Full wire text redaction for a target `endpoint` with explicit `extra_secrets`.
@@ -658,6 +691,19 @@ impl PrivacyRedactor {
             redact_pii: should_redact_pii(endpoint),
         };
         let mut out = req.clone();
+        for tool in &mut out.prefix_stable_tools {
+            redact_string_in_place(&mut tool.description, extra_secrets, options);
+            redact_value(
+                &mut tool.parameters,
+                extra_secrets,
+                options,
+                0,
+                JsonContext::Schema,
+            );
+        }
+        if let Some(schema) = &mut out.json_schema {
+            redact_value(schema, extra_secrets, options, 0, JsonContext::Schema);
+        }
         for block in &mut out.frozen_system_prefix {
             redact_string_in_place(&mut block.text, extra_secrets, options);
         }
@@ -665,6 +711,11 @@ impl PrivacyRedactor {
             redact_string_in_place(&mut rem.text, extra_secrets, options);
         }
         for msg in &mut out.history {
+            if let HistoryMessage::User { media, .. } | HistoryMessage::Tool { media, .. } = msg {
+                for file in media {
+                    redact_string_in_place(&mut file.filename, extra_secrets, options);
+                }
+            }
             match msg {
                 HistoryMessage::User { content, .. } => {
                     redact_string_in_place(content, extra_secrets, options);

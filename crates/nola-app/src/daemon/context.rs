@@ -573,6 +573,9 @@ pub(super) fn build_conversation_projection_response(
         .unwrap_or(1)
         .max(1);
     let settings_json = load_conversation_settings_str(store, &sess.id);
+    // Read the cursor before the transcript so a racing append cannot stamp an
+    // older snapshot with a newer cursor. A rewind also advances this cursor.
+    let history_cursor = store.latest_event_sequence(&sess.id).unwrap_or(0);
     let (raw_messages, events) = crate::web_api::reconstruct_v2_messages(store, &sess.id);
     let total_message_count = raw_messages.len() as i64;
     let raw_event_sequence = events
@@ -583,7 +586,7 @@ pub(super) fn build_conversation_projection_response(
         store,
         &projection_event_scope_key("conversation", Some(&sess.id)),
     ) as i64;
-    let event_sequence = raw_event_sequence.max(proj_sequence);
+    let event_sequence = raw_event_sequence.max(history_cursor).max(proj_sequence);
 
     let (sliced, has_more, next_before_ordinal): (Vec<Value>, bool, Option<i64>) =
         if let Some(before) = before_ordinal {
@@ -644,12 +647,18 @@ pub(super) fn build_conversation_projection_response(
                 .unwrap_or_default();
             let part_id = format!("{msg_id}:text");
             let ordinal = (idx + 1) as i64;
+            let state = match m["status"].as_str() {
+                Some("failed") => "failed",
+                Some("cancelled") => "cancelled",
+                _ => "completed",
+            };
+            let failure = m["error"].as_str().map(ToOwned::to_owned);
             if let Some(obj) = m.as_object_mut() {
                 obj.insert("id".into(), json!(msg_id));
                 obj.insert("message_id".into(), json!(msg_id));
                 obj.insert("role".into(), json!(role));
-                obj.insert("state".into(), json!("completed"));
-                obj.insert("status".into(), json!("completed"));
+                obj.insert("state".into(), json!(state));
+                obj.insert("status".into(), json!(state));
                 obj.insert("ordinal".into(), json!(ordinal));
                 obj.insert("revision".into(), json!(1));
                 obj.insert("created_at_ms".into(), json!(created_at_ms));
@@ -717,13 +726,24 @@ pub(super) fn build_conversation_projection_response(
                                 "affected_resources": []
                             }));
                         }
-                        parts.push(json!({
-                            "kind": "text",
-                            "part_id": part_id,
-                            "revision": 1,
-                            "markdown": content,
-                            "is_final": true
-                        }));
+                        if failure.as_deref() != Some(content.as_str()) {
+                            parts.push(json!({
+                                "kind": "text", "part_id": part_id, "revision": 1,
+                                "markdown": content, "is_final": true
+                            }));
+                        }
+                        if let Some(detail) = failure {
+                            let (code, display_key) = if state == "cancelled" {
+                                ("run_cancelled", "Response cancelled")
+                            } else {
+                                ("run_failed", "Response failed")
+                            };
+                            parts.push(json!({
+                                "kind": "error", "part_id": format!("{msg_id}:error"),
+                                "revision": 1, "code": code, "display_key": display_key,
+                                "message": detail, "recoverable": false
+                            }));
+                        }
                         Value::Array(parts)
                     } else {
                         json!([{
@@ -830,12 +850,22 @@ pub(super) fn build_conversation_projection_response(
         "surface": surface
     });
 
-    let assistant_journal_heads = store
+    let visible_assistants: HashSet<&str> = canonical_messages
+        .iter()
+        .filter(|message| message["role"] == "assistant")
+        .filter_map(|message| message["message_id"].as_str().or_else(|| message["id"].as_str()))
+        .collect();
+    let mut assistant_journal_heads = store
         .get_kv(&format!("journal_heads_by_conv:{}", sess.id))
         .ok()
         .flatten()
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default();
+    assistant_journal_heads.retain(|head| {
+        head["identity"]["assistant_message_id"]
+            .as_str()
+            .is_some_and(|id| visible_assistants.contains(id))
+    });
 
     json!({
         "contract_version": 1,

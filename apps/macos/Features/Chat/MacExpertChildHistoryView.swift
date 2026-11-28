@@ -96,7 +96,7 @@ struct MacExpertChildHistoryView: View {
                 let parent = presentation.parentID, child = presentation.child.id
                 let value = MacExpertChildHistoryReader(parentID: parent, childID: child, databaseURL: database) { before in
                     try await Task.detached {
-                        try MacAgentRoomService(runtime: MacApplicationPort(databaseURL: database))
+                        try MacAgentRoomService(runtime: MacApplicationPort.pooled(databaseURL: database))
                             .childHistory(parentID: parent, childID: child, before: before)
                     }.value
                 }

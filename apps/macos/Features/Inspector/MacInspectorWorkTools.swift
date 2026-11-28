@@ -41,50 +41,72 @@ struct MacInspectorArtifactRow: View {
     let isLocalHost: Bool
     let inspectFile: (MacCodeReference) -> Void
     @Environment(\.openURL) private var openURL
+    @State private var thumbnail: NSImage?
 
     static func destination(url: URL, canReadLocalFiles: Bool, isLocalHost: Bool) -> MacJournalArtifactDestination? {
         MacJournalArtifactDestination.resolve(url.absoluteString, localJournal: canReadLocalFiles && isLocalHost)
     }
 
+    static func isImageArtifact(url: URL, type: String) -> Bool {
+        if type.lowercased().hasPrefix("image/") { return true }
+        return ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp", "svg"]
+            .contains(url.pathExtension.lowercased())
+    }
+
     var body: some View {
         let destination = Self.destination(url: url, canReadLocalFiles: canReadLocalFiles, isLocalHost: isLocalHost)
+        let isImage = Self.isImageArtifact(url: url, type: type)
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 switch destination {
                 case .web(let url): openURL(url)
-                case .localFile(let url): inspectFile(.init(url: url, line: nil, column: nil))
+                case .localFile(let url):
+                    inspectFile(.init(url: url, line: nil, column: nil))
                 case nil: break
                 }
             } label: {
-                HStack(alignment: .center, spacing: 9) {
-                    Image(systemName: url.isFileURL ? "doc" : "link")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(
-                            Color.primary.opacity(0.05),
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(name)
-                            .font(.system(size: 13, weight: .medium))
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 4) {
-                            Text(source, style: .date)
-                            if !type.isEmpty {
-                                Text("·")
-                                Text(type)
+                VStack(alignment: .leading, spacing: 6) {
+                    if isImage, let thumbnail {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: 140, alignment: .leading)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
                             }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 8)
-                    Image(systemName: url.isFileURL ? "doc.text.magnifyingglass" : "arrow.up.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .accessibilityHidden(true)
+                    HStack(alignment: .center, spacing: 9) {
+                        Image(systemName: isImage ? "photo" : (url.isFileURL ? "doc" : "link"))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(name)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack(spacing: 4) {
+                                Text(source, style: .date)
+                                if !type.isEmpty {
+                                    Text("·")
+                                    Text(type)
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: isImage ? "eye" : (url.isFileURL ? "doc.text.magnifyingglass" : "arrow.up.right"))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -92,11 +114,22 @@ struct MacInspectorArtifactRow: View {
             .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true))
             .disabled(destination == nil)
             .help(name)
+            .task(id: destination) {
+                guard isImage, case .some(.localFile(let localURL)) = destination else {
+                    thumbnail = nil
+                    return
+                }
+                thumbnail = await Task.detached(priority: .utility) {
+                    let accessed = localURL.startAccessingSecurityScopedResource()
+                    defer { if accessed { localURL.stopAccessingSecurityScopedResource() } }
+                    return NSImage(contentsOf: localURL)
+                }.value
+            }
             .contextMenu {
                 switch destination {
                 case .localFile(let localURL):
-                    Button(String(localized: "Quick Look")) {
-                        MacQuickLookController.shared.preview([localURL])
+                    Button(String(localized: "Preview")) {
+                        inspectFile(.init(url: localURL, line: nil, column: nil))
                     }
                     Button(String(localized: "Reveal in Finder")) {
                         NSWorkspace.shared.activateFileViewerSelecting([localURL])
@@ -267,6 +300,7 @@ enum MacWorkspaceFileBrowser {
 struct MacInspectorReviewView: View {
     @Bindable var model: MacWorkspaceModel
     let openReview: (URL) -> Void
+    @Environment(\.macOpenFileReference) private var openFileReference
     @State private var snapshot: MacGitWorkspaceSnapshot?
     @State private var isNotRepository = false
     @State private var workspaceFiles: [MacWorkspaceFileEntry] = []
@@ -334,7 +368,7 @@ struct MacInspectorReviewView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(workspaceFiles) { entry in
                                 Button {
-                                    MacQuickLookController.shared.preview([entry.url])
+                                    openFileReference(.init(url: entry.url, line: nil, column: nil))
                                 } label: {
                                     HStack(alignment: .center, spacing: 9) {
                                         Image(systemName: "doc")
@@ -367,8 +401,8 @@ struct MacInspectorReviewView: View {
                                 .buttonStyle(MacHorizontalBarButtonStyle(isSubtle: true))
                                 .help(entry.relativePath)
                                 .contextMenu {
-                                    Button(String(localized: "Quick Look")) {
-                                        MacQuickLookController.shared.preview([entry.url])
+                                    Button(String(localized: "Preview")) {
+                                        openFileReference(.init(url: entry.url, line: nil, column: nil))
                                     }
                                     Button(String(localized: "Reveal in Finder")) {
                                         NSWorkspace.shared.activateFileViewerSelecting([entry.url])

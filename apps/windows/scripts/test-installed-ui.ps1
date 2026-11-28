@@ -166,6 +166,22 @@ try {
     $actual = Draft-Value $editor
     if ($actual -ne $draft) { throw "Restored draft differs, expected '$draft', received '$actual'" }
     Save-StepImage '07-restored-draft-and-attachment'
+    if ($env:NOLA_REAL_LLM_E2E -eq '1') {
+        $marker = 'WIN_' + [Guid]::NewGuid().ToString('N')
+        $editor.SetFocus()
+        [Windows.Forms.SendKeys]::SendWait('^a')
+        Paste-Text "Reply with exactly $marker"
+        Click-Control (Find-Control name 'Send')
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        do {
+            $transcript = Invoke-RestMethod "$after/api/chat/conversations/$($saved[0].conversationId)/messages"
+            $reply = $transcript.messages | Where-Object { $_.role -eq 'assistant' -and $_.content -like "*$marker*" }
+            if ($reply) { break }
+            Start-Sleep -Milliseconds 300
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (!$reply) { throw 'Installed desktop did not persist the expected model reply' }
+        Save-StepImage '08-real-model-reply'
+    }
     if ($env:NOLA_DESKTOP_RESTART_EVIDENCE) {
         $proof = @{platform='win32';beforeOrigin=$before;afterOrigin=$after;draft=$actual;attachment=$attached}
         [IO.File]::WriteAllText($env:NOLA_DESKTOP_RESTART_EVIDENCE, ($proof | ConvertTo-Json))

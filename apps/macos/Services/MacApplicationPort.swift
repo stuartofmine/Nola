@@ -1122,10 +1122,11 @@ nonisolated struct MacCanonicalConversationProjectionV1: Decodable, Equatable, S
         let revision: UInt64
         let code: String
         let displayKey: String
+        let message: String?
         let recoverable: Bool
 
         private enum CodingKeys: String, CodingKey {
-            case revision, code, recoverable
+            case revision, code, message, recoverable
             case partID = "part_id"
             case displayKey = "display_key"
         }
@@ -2436,6 +2437,33 @@ nonisolated final class MacApplicationPort:
     static let defaultDatabaseURL = MacAppEnvironment.shared.databaseURL
     static let shared = MacApplicationPort(deferredDatabaseURL: defaultDatabaseURL)
 
+    private static let poolLock = NSLock()
+    private static var portPool: [URL: MacApplicationPort] = [:]
+    private static var portPoolOrder: [URL] = []
+
+    /// Reuses open SQLite connections by canonical database URL across chat,
+    /// inspector, reader, UI surfaces, and expert rooms instead of opening a
+    /// new connection on every read or interaction.
+    static func pooled(databaseURL: URL) throws -> MacApplicationPort {
+        let canonical = databaseURL.standardizedFileURL
+        if canonical == shared.databaseURL {
+            return shared
+        }
+        poolLock.lock()
+        defer { poolLock.unlock() }
+        if let existing = portPool[canonical] {
+            return existing
+        }
+        let created = try MacApplicationPort(databaseURL: canonical)
+        portPool[canonical] = created
+        portPoolOrder.append(canonical)
+        while portPoolOrder.count > 12 {
+            let evicted = portPoolOrder.removeFirst()
+            portPool.removeValue(forKey: evicted)
+        }
+        return created
+    }
+
     private let lock = NSLock()
     private let serviceClient: MacApplicationServiceClient
     let databaseURL: URL
@@ -3213,6 +3241,12 @@ nonisolated final class MacApplicationPort:
         )
         var expectedSequence = currentSequence
         for event in suffix.events {
+            if suffix.resyncRequired == true, suffix.events.count == 1,
+               case .invalidateProjection(let revision) = event.mutation,
+               event.conversationID == conversationID, revision == event.sequence, revision > currentSequence {
+                expectedSequence = revision
+                break
+            }
             guard expectedSequence < UInt64.max,
                   event.conversationID == conversationID,
                   event.sequence == expectedSequence + 1 else {
@@ -4726,10 +4760,12 @@ nonisolated final class MacApplicationPort:
     private struct ProjectionEventSuffix: Decodable {
         let events: [MacCanonicalConversationProjectionEvent]
         let nextCursor: ProjectionCursor
+        let resyncRequired: Bool?
         let hasMore: Bool
 
         private enum CodingKeys: String, CodingKey {
             case events
+            case resyncRequired = "resync_required"
             case nextCursor = "next_cursor"
             case hasMore = "has_more"
         }

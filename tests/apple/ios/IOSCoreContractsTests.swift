@@ -18,6 +18,26 @@ final class IOSCoreContractsTests: XCTestCase {
 
     // MARK: - 1. Unsupported v1 / corrupt store rejection without destroying user data
 
+    func testMarkdownRevisionsKeepParagraphsAndMessagePartsInOrder() {
+        var buffer = AppleStreamingMarkdownBuffer()
+        let prefix = "First paragraph.\n\n"
+        for (text, streaming) in [("OK", false), ("OK_IOS", true), ("OK_IOS_EDITED_ROOT", false)] {
+            buffer.receive(prefix + text, isStreaming: streaming, reduceMotion: true)
+            let blocks = buffer.renderBlocks(settleTail: !streaming)
+            XCTAssertEqual(blocks.map(\.markdown), [prefix, text])
+            XCTAssertEqual(blocks.map(\.ordinal), [0, 1])
+            XCTAssertEqual(blocks.last?.isMutableTail, streaming)
+        }
+        buffer.finish(with: "Corrected.")
+        XCTAssertEqual(buffer.renderBlocks(settleTail: true).map(\.markdown), ["Corrected."])
+
+        let parts: [(String, AppleMessagePartFlowKind)] = [
+            ("intro", .content), ("thought", .reasoning), ("lookup", .tool), ("answer", .content)
+        ]
+        let segments = AppleMessagePartFlow.segments(parts, id: { $0.0 }, kind: { $0.1 })
+        XCTAssertEqual(segments.map { $0.parts.map { $0.0 } }, [["intro"], ["thought", "lookup"], ["answer"]])
+    }
+
     func testUnsupportedV1AndCorruptStoreRejectedWithoutDestroyingData() throws {
         let root = try makeTempDirectory("unsupported-store")
 
@@ -426,10 +446,10 @@ final class IOSCoreContractsTests: XCTestCase {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
 
         // Seed a conversation and an automation run
-        let convID = "conv-ios-ffi-\(UUID().uuidString.lowercased())"
         let store = try LocalConversationStore(applicationRuntime: runtime)
         let createdConv = try store.createConversation(title: "iOS FFI Activity Check", language: "en")
         let actualConvID = createdConv.id.uuidString
+        let convID = actualConvID
 
         let autoRunID = "auto-run-\(UUID().uuidString.lowercased())"
         _ = try runtime.enqueueAutomationRun(IOSCanonicalAutomationRun(
@@ -489,26 +509,55 @@ final class IOSCoreContractsTests: XCTestCase {
         // 6d. Begin an active run and test interrupt cancellation via reduce_and_commit_active_submission
         let runID = "run-ios-ffi-\(UUID().uuidString.lowercased())"
         let assistantMsgID = "\(runID):assistant"
-        let beginResult = try runtime.executeAgentCommand(.object([
-            "type": .string("begin_assistant_turn"),
-            "input": .object([
-                "conversation_id": .string(convID),
-                "conversation_title": .string("Interruptible Run"),
-                "user_message_id": .string("\(runID):user"),
-                "assistant_message_id": .string(assistantMsgID),
-                "user_text": .string("Start a run that will be interrupted"),
-                "created_at_ms": .signedInteger(nowMs),
-                "core_config": .object([
-                    "session_id": .string(convID),
-                    "model": .string("qwen3.8-flash-next-iq3_s"),
+        func beginRun(_ runID: String, assistantMsgID: String) throws -> AgentCoreJSONValue {
+            try runtime.executeAgentCommand(.object([
+                "type": .string("begin_assistant_turn"),
+                "input": .object([
+                    "conversation_id": .string(convID),
+                    "conversation_title": .string("Interruptible Run"),
+                    "user_message_id": .string("\(runID):user"),
+                    "assistant_message_id": .string(assistantMsgID),
+                    "user_text": .string("Start a run that will be interrupted"),
+                    "created_at_ms": .signedInteger(nowMs),
+                    "core_config": .object([
+                        "session_id": .string(convID),
+                        "model": .string("qwen3.8-flash-next-iq3_s"),
+                    ]),
+                    "submission": .object([
+                        "submission_id": .string(runID),
+                        "type": .string("user_message"),
+                    ]),
                 ]),
-                "submission": .object([
-                    "submission_id": .string(runID),
-                    "type": .string("user_message"),
+            ]))
+        }
+        XCTAssertNotEqual(try beginRun(runID, assistantMsgID: assistantMsgID), .null)
+
+        // Normal progress re-observes the same outstanding lease. Only expiry
+        // authorizes a fresh physical delivery of this outstanding request.
+        func modelClaims(at time: Int64, run: String? = nil) throws -> [AgentCoreJSONValue] {
+            let snapshot = try runtime.executeAgentCommand(.object([
+                "type": .string("claim_committed_host_requests"),
+                "input": .object([
+                    "run_id": .string(run ?? runID),
+                    "claimed_at_ms": .signedInteger(time),
+                    "lease_expires_at_ms": .signedInteger(time + 1_000),
                 ]),
-            ]),
-        ]))
-        XCTAssertNotEqual(beginResult, .null)
+            ]))
+            guard case .array(let requests)? = snapshot.objectFields?["requests"] else {
+                throw IOSApplicationRuntimeError.invalidResponse
+            }
+            return requests
+        }
+        var seenLeases: Set<String> = []
+        let first = try modelClaims(at: nowMs)
+        XCTAssertThrowsError(try DeviceAgentCoordinator.newHostDeliveries(first + [.null], seen: &seenLeases))
+        XCTAssertTrue(seenLeases.isEmpty)
+        XCTAssertEqual(try DeviceAgentCoordinator.newHostDeliveries(first + first, seen: &seenLeases).count, 1)
+        let repeated = try modelClaims(at: nowMs + 1)
+        XCTAssertEqual(first, repeated)
+        XCTAssertTrue(try DeviceAgentCoordinator.newHostDeliveries(repeated, seen: &seenLeases).isEmpty)
+        let reclaimed = try modelClaims(at: nowMs + 1_001)
+        XCTAssertEqual(try DeviceAgentCoordinator.newHostDeliveries(reclaimed, seen: &seenLeases).count, 1)
 
         let interruptResult = try runtime.executeAgentCommand(.object([
             "type": .string("reduce_and_commit_active_submission"),
@@ -525,6 +574,36 @@ final class IOSCoreContractsTests: XCTestCase {
         ]))
         let controlFields = try XCTUnwrap(interruptResult.objectFields?["control"]?.objectFields)
         XCTAssertEqual(controlFields["turn_status"]?.stringScalar, "cancelled")
+
+        // An older interrupted run can be closed from the recovery card. No model
+        // retry or physical-stop confirmation is implied by ending the wait.
+        let inspection = try XCTUnwrap(runtime.inspectUnknownEffectRecovery(conversationID: convID,
+            runID: runID, assistantMessageID: assistantMsgID))
+        XCTAssertFalse(inspection.retry_allowed)
+        XCTAssertEqual(inspection.targets.count, 1)
+        XCTAssertTrue(try modelClaims(at: nowMs + 2_002).isEmpty)
+        let original = try XCTUnwrap(first.first)
+        let effect = try XCTUnwrap(original.objectFields?["effect_id"])
+        let stale = try DeviceAgentCoordinator.hostResponseEnvelope(request: original, payload: .object([
+            "type": .string("cancellation_confirmed"), "target_effect_id": effect,
+        ]), sequence: 2)
+        XCTAssertThrowsError(try runtime.executeAgentCommand(.object([
+            "type": .string("reduce_and_accept_host_response"),
+            "input": .object(["run_id": .string(runID), "conversation_id": .string(convID), "response": stale]),
+        ])))
+        let decision = try inspection.confirmed(choice: .keepUnknownBlocked, reason: "keep provider outcome unknown")
+        let reply = try runtime.resolveUnknownEffectRecovery(decision, requestID: UUID().uuidString.lowercased())
+        XCTAssertEqual(reply.outcome, .unknownPreservedBlocked)
+        let terminal = try runtime.executeAgentCommand(.object(["type": .string("canonical_run_terminal"),
+            "conversation_id": .string(convID), "run_id": .string(runID)]))
+        let value = terminal.objectFields?["result"]?.objectFields?["value"]?.objectFields
+        XCTAssertEqual(value?["kind"], .string("blocked"))
+        XCTAssertEqual(value?["blocking_fact_refs"], .array([.string(inspection.targets[0].effect_id)]))
+
+        XCTAssertNil(try runtime.loadConversationProjectionV1(id: convID).activeRun)
+        let nextID = "next-\(UUID().uuidString)"
+        XCTAssertNotEqual(try beginRun(nextID, assistantMsgID: "\(nextID):assistant"), .null)
+        XCTAssertEqual(try runtime.loadConversationProjectionV1(id: convID).activeRun?.runID, nextID)
 
         // 6e. load_exact_run_trace_replay
         let tracePage = try runtime.executeAgentCommand(.object([
@@ -548,14 +627,21 @@ final class IOSCoreContractsTests: XCTestCase {
         let orphanResult = try runtime.executeAgentCommand(.object([
             "type": .string("recover_observed_orphaned_run"),
             "conversation_id": .string(convID),
-            "expected_run_id": .string(runID),
+            "expected_run_id": .string(nextID),
             "interrupted_at_ms": .signedInteger(nowMs + 1_000),
         ]))
         let orphanFields = try XCTUnwrap(orphanResult.objectFields)
         XCTAssertEqual(orphanFields["ok"], .bool(true))
         XCTAssertEqual(orphanFields["recovered"], .bool(true))
-        XCTAssertEqual(orphanFields["run_id"]?.stringScalar, runID)
+        XCTAssertEqual(orphanFields["run_id"]?.stringScalar, nextID)
         XCTAssertEqual(orphanFields["status"]?.stringScalar, "interrupted")
+
+        // The second run was interrupted before any lease was issued.
+        XCTAssertTrue(try modelClaims(at: nowMs + 2_003, run: nextID).isEmpty)
+        let unissued = try runtime.executeAgentCommand(.object(["type": .string("canonical_run_terminal"),
+            "conversation_id": .string(convID), "run_id": .string(nextID)]))
+        XCTAssertEqual(unissued.objectFields?["result"]?.objectFields?["value"]?.objectFields?["kind"], .string("cancelled"))
+        XCTAssertNil(try runtime.loadConversationProjectionV1(id: convID).activeRun)
 
         // 6g. query_claimable_memory_jobs
         let claimableJobs = try runtime.executeAgentCommand(.object([
@@ -733,5 +819,27 @@ final class IOSCoreContractsTests: XCTestCase {
         XCTAssertEqual(messages[2]["role"] as? String, "user")
         let toolResultBlocks = try XCTUnwrap(messages[2]["content"] as? [[String: Any]])
         XCTAssertTrue(toolResultBlocks.contains(where: { $0["type"] as? String == "tool_result" && $0["tool_use_id"] as? String == "call_weather_1" }))
+    }
+
+    @MainActor
+    func testIOSMathRendererHandlesCJKInLatexWithoutTofu() {
+        XCTAssertTrue(IOSMathRenderer.containsNonLatinMathText(#"S_A = \lambda \cdot S_B + (\text{一小坨残差})"#))
+        XCTAssertFalse(IOSMathRenderer.containsNonLatinMathText(#"S_s = \lambda S_t + UV^\top"#))
+
+        let displayImage = IOSMathRenderer.renderCompositeImage(
+            latex: #"S_A = \lambda \cdot S_B + (\text{一小坨残差})"#,
+            display: true,
+            fontSize: 22
+        )
+        XCTAssertNotNil(displayImage, "iOS CJK display LaTeX must render cleanly")
+        XCTAssertGreaterThan(displayImage?.size.width ?? 0, 120)
+
+        let subscriptImage = IOSMathRenderer.renderCompositeImage(
+            latex: #"\mathcal{L}_{\text{总}} = \mathcal{L}_{\text{主}} + \lambda \mathcal{L}_{\text{正则}}"#,
+            display: false,
+            fontSize: 17
+        )
+        XCTAssertNotNil(subscriptImage, "iOS CJK subscript LaTeX must render cleanly")
+        XCTAssertGreaterThan(subscriptImage?.size.width ?? 0, 80)
     }
 }

@@ -1498,4 +1498,6 @@
     <string name="chat_v2_workspace_review_files">Archivos del espacio de trabajo</string>
     <string name="chat_v2_workspace_review_truncated">Salida truncada para vista previa</string>
     <string name="chat_v2_edit_resend_failed">No se pudo truncar y reenviar el mensaje</string>
+    <string name="chat_missing_host_history">Esta conversación no está disponible en el host vinculado. Ábrela en el host o inicia un chat nuevo aquí.</string>
+    <string name="chat_edit_source_changed">La conversación ha cambiado. Vuelve a abrirla antes de editar este mensaje.</string>
 </resources>

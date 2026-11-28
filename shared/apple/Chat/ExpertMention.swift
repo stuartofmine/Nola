@@ -262,7 +262,11 @@ struct AppleExpertEditCandidate: Identifiable {
 struct AppleExpertResendEditor: View {
     @Binding var draft: AppleMessageEditDraft
     let candidates: [AppleExpertEditCandidate]
+    #if os(iOS)
+    @State private var focus = false
+    #else
     @FocusState private var focus: Bool
+    #endif
     @State private var selection: NSRange?
     @State private var composing = false
     @State private var caret: AppleMentionEditor.Caret?
@@ -307,7 +311,7 @@ struct AppleExpertResendEditor: View {
                 mentionCommand: handle, mentionEditor: hooks, editorAccessibilityIdentifier: "mac-message-edit-text")
             #elseif os(iOS)
             ChatPasteAwareEditor(text: textBinding, isEditable: true, focus: $focus,
-                onPasteFiles: { _ in }, onPasteFailure: { _ in }, mentionsVisible: query != nil,
+                onPasteFiles: { _ in }, onPasteFailure: { _ in }, minimumHeight: 180, mentionsVisible: query != nil,
                 mentionCommand: handle, mentionEditor: hooks)
             #endif
         }

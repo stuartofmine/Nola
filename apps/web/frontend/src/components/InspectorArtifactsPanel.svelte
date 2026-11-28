@@ -7,23 +7,24 @@
         type V2Artifact,
         type V2Message,
     } from '../lib/v2Chat';
-    import ChatTextReaderDialog, { type TextReaderSnapshot } from './ChatTextReaderDialog.svelte';
+    import type { InspectorPreviewItem } from '../lib/inspectorPreview';
 
     let {
         conversationId,
         messages,
         refreshToken = 0,
+        onpreview,
     }: {
         conversationId: string;
         messages: V2Message[];
         refreshToken?: number;
+        onpreview?: (item: InspectorPreviewItem) => void;
     } = $props();
 
     let serverArtifacts = $state<V2Artifact[]>([]);
     let loading = $state(false);
     let error = $state('');
     let copiedId = $state<string | null>(null);
-    let readerSnapshot = $state<TextReaderSnapshot | null>(null);
     let disposed = false;
     let controller: AbortController | null = null;
 
@@ -42,7 +43,7 @@
                     kind: att.mimeType.startsWith('image/') ? 'image' : 'attachment',
                     mimeType: att.mimeType,
                     content: att.text,
-                    preview: att.text?.slice(0, 200),
+                    preview: att.dataUrl || att.text?.slice(0, 200),
                     messageId: msg.id,
                 });
             }
@@ -109,12 +110,17 @@
         }
     }
 
-    function openReader(art: V2Artifact) {
-        readerSnapshot = {
+    function openPreview(art: V2Artifact) {
+        const isImage = art.kind === 'image' && Boolean(art.preview?.startsWith('data:image/'));
+        onpreview?.({
             title: art.title,
             subtitle: [art.kind, art.path, art.mimeType].filter(Boolean).join(' · '),
-            text: art.content || art.preview || art.path || '',
-        };
+            kind: isImage ? 'image' : art.kind === 'file' ? 'file' : 'text',
+            mimeType: art.mimeType,
+            path: art.path,
+            imageUrl: isImage ? art.preview : undefined,
+            text: isImage ? undefined : art.content || art.preview || art.path || '',
+        });
     }
 
     function formatSize(bytes?: number): string {
@@ -158,7 +164,11 @@
                             {#if art.createdAt}<span>{art.createdAt}</span>{/if}
                         </div>
                     {/if}
-                    {#if art.preview || art.content}
+                    {#if art.kind === 'image' && art.preview?.startsWith('data:image/')}
+                        <button type="button" class="art-thumb-btn" onclick={() => openPreview(art)} title={art.title}>
+                            <img class="art-thumb" src={art.preview} alt={art.title} />
+                        </button>
+                    {:else if art.preview || art.content}
                         <pre class="art-preview">{(art.preview || art.content || '').slice(0, 240)}</pre>
                     {/if}
                     <div class="art-actions">
@@ -166,7 +176,7 @@
                             {copiedId === art.id ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
                         </button>
                         {#if art.content || art.preview}
-                            <button type="button" class="art-btn" onclick={() => openReader(art)}>
+                            <button type="button" class="art-btn" onclick={() => openPreview(art)}>
                                 {t($locale, 'chatPage.openTextReader')}
                             </button>
                         {/if}
@@ -176,10 +186,6 @@
         </ul>
     {/if}
 </section>
-
-{#if readerSnapshot}
-    <ChatTextReaderDialog snapshot={readerSnapshot} onclose={() => (readerSnapshot = null)} />
-{/if}
 
 <style>
     .artifacts-panel {
@@ -243,6 +249,22 @@
     }
     .art-meta code {
         overflow-wrap: anywhere;
+    }
+    .art-thumb-btn {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+    }
+    .art-thumb {
+        width: 100%;
+        max-height: 150px;
+        object-fit: contain;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--panel);
     }
     .art-preview {
         margin: 0;

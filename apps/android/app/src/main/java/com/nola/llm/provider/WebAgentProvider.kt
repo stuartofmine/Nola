@@ -590,6 +590,10 @@ class WebAgentProvider @Inject constructor(
         )
     }
 
+    suspend fun v2ChatHistory(localId: String, remoteId: String, cfg: Config, checkExists: Boolean) =
+        webHostApi.v2ChatHistory(cfg.hostBaseUrl, cfg.token, localId, remoteId, cfg.expectedHostId,
+            cfg.pinnedCertificateSha256, checkExists)
+
     suspend fun v2CreateConversation(title: String = "Chat", configuration: Config? = config): String {
         val cfg = checkNotNull(configuration) { "Web Agent Host is not configured" }.copy()
         return webHostApi.v2CreateConversation(

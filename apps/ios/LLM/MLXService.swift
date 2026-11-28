@@ -201,7 +201,7 @@ class MLXService {
         let modelContainer = try await load(model: model)
 
         let body: [String: String] = ["prompt": prompt, "system": systemPrompt ?? ""]
-        let wire = try redactedModelRequestBody(JSONEncoder().encode(body), credential: "")
+        let wire = try redactedModelRequestBody(JSONEncoder().encode(body), credential: "", endpoint: "http://localhost")
         let filtered = try JSONDecoder().decode([String: String].self, from: wire)
         guard let safePrompt = filtered["prompt"], let safeSystem = filtered["system"] else {
             throw NolaError.llm(.invalidInput(reason: "Model request privacy filter unavailable."))

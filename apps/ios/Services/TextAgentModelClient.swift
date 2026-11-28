@@ -332,24 +332,16 @@ public final class TextAgentModelClient: AgentModelCancellationClient, AgentInde
                         }
                     }
                     let events: AsyncThrowingStream<LLMStreamEvent, Error>
-                    let registeredProducer: LLMStreamProducerControl?
                     if let controlled = eventClient as? LLMControlledEventStreamingClient {
                         let operation = controlled.generateControlledEventStream(input: input)
-                        registeredProducer = operation.producer
                         controlledRequest.withLock { $0 = (request.sessionId, request.turnId, request.iteration, operation.producer) }
                         events = operation.events
                     } else {
-                        registeredProducer = nil
                         controlledRequest.withLock { $0 = nil }
                         events = eventClient.generateEventStream(input: input)
                     }
-                    defer {
-                        if let registeredProducer {
-                            controlledRequest.withLock { current in
-                                if current?.producer === registeredProducer { current = nil }
-                            }
-                        }
-                    }
+                    // Keep the exact producer until cancellation joins it or the next request replaces it.
+                    // The adapter stream can end before the underlying URLSession task stops.
                     for try await event in events {
                         try Task.checkCancellation()
                         if try applyEvent(event, includeTextChannels: true) {

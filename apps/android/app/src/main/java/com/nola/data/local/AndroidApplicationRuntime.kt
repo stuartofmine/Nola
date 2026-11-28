@@ -1457,7 +1457,7 @@ class AndroidApplicationRuntime(
     }
 
     /** Only a first-message title can follow an edited first turn. Unknown existing titles belong to the user. */
-    internal fun updateFirstMessageTitle(id: String, firstMessageId: String, title: String): Boolean {
+    internal fun updateFirstMessageTitle(id: String, firstMessageId: String, title: String, verifiedHostHistory: Boolean = false): Boolean {
         val conversation = loadConversation(id) ?: return false
         val source = conversation.settingsJson?.let { json.parseToJsonElement(it).jsonObject["titleSource"] }?.jsonPrimitive?.content
         val followsFirstMessage = when (source) {
@@ -1466,7 +1466,7 @@ class AndroidApplicationRuntime(
             else -> false
         }
         if (!followsFirstMessage || title.isBlank() || title == conversation.title) return false
-        if (conversation.messages.firstOrNull { it.role == "user" }?.id != firstMessageId) return false
+        if (!verifiedHostHistory && conversation.messages.firstOrNull { it.role == "user" }?.id != firstMessageId) return false
         return try {
             submitMutation(buildJsonObject {
                 put("type", "rename_conversation")

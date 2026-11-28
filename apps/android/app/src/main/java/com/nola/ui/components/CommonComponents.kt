@@ -408,17 +408,60 @@ fun ThinkingBlock(
                 enter = nolaDisclosureEnter(reduceMotion),
                 exit = nolaDisclosureExit(reduceMotion)
             ) {
-                ThinkingBody(thinking, Modifier.padding(start = 20.dp, end = 6.dp, bottom = 10.dp))
+                ThinkingBody(
+                    thinking = thinking,
+                    finished = finished,
+                    modifier = Modifier.padding(start = 20.dp, end = 6.dp, bottom = 10.dp)
+                )
             }
         }
     }
 }
 
-/** Shared public reasoning body. Disclosure belongs to its owning presentation. */
+internal fun formatLiveThinkingPreview(
+    thinking: String,
+    finished: Boolean,
+    maxChars: Int = 2400,
+    maxLines: Int = 18
+): String {
+    val trimmed = thinking.trim()
+    if (trimmed.isEmpty()) return ""
+    if (finished) return trimmed
+    val tail = if (trimmed.length > maxChars) trimmed.takeLast(maxChars) else trimmed
+    val lines = tail.split('\n')
+    return when {
+        lines.size > maxLines -> "…\n" + lines.takeLast(maxLines).joinToString("\n")
+        trimmed.length > maxChars -> "…$tail"
+        else -> tail
+    }
+}
+
+/** Shared public reasoning body. Bounded height with rolling bottom scroll during live runs. */
 @Composable
-internal fun ThinkingBody(thinking: String, modifier: Modifier = Modifier) {
-    Text(text = thinking, modifier = modifier, style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f))
+internal fun ThinkingBody(
+    thinking: String,
+    modifier: Modifier = Modifier,
+    finished: Boolean = true
+) {
+    val scrollState = rememberScrollState()
+    val displayText = remember(thinking, finished) { formatLiveThinkingPreview(thinking, finished) }
+    LaunchedEffect(displayText.length, finished) {
+        if (!finished && scrollState.maxValue > 0) {
+            scrollState.scrollTo(scrollState.maxValue)
+        }
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(max = if (finished) 240.dp else 180.dp)
+            .verticalScroll(scrollState)
+    ) {
+        Text(
+            text = displayText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
+        )
+    }
 }
 
 @Composable

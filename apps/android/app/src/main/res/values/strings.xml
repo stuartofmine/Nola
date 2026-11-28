@@ -1508,4 +1508,6 @@
     <string name="chat_v2_workspace_review_files">Workspace files</string>
     <string name="chat_v2_workspace_review_truncated">Output truncated for preview</string>
     <string name="chat_v2_edit_resend_failed">Could not truncate and resend message</string>
+    <string name="chat_missing_host_history">This conversation is unavailable on the paired host. Open the original conversation on the host, or start a new chat here.</string>
+    <string name="chat_edit_source_changed">The conversation changed. Reopen it before editing this message.</string>
 </resources>

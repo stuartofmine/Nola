@@ -32,6 +32,14 @@ struct MacNativeDocumentPreview: NSViewRepresentable {
         private var key = ""
         private var observers: [NSObjectProtocol] = []
         private(set) var generation: UInt64 = 0
+        private var hasClosedQuickLook = false
+
+        func closeQuickLookIfNeeded(_ view: QLPreviewView) {
+            guard !hasClosedQuickLook else { return }
+            hasClosedQuickLook = true
+            view.previewItem = nil
+            view.close()
+        }
 
         func capture() {
             guard let view, let document = view.document,
@@ -116,6 +124,11 @@ struct MacNativeDocumentPreview: NSViewRepresentable {
     }
     private static func quickLook(for url: URL) -> NSView {
         guard let view = QLPreviewView(frame: .zero, style: .normal) else { return failureView() }
+        // SwiftUI owns the view lifecycle via `dismantleNSView(_:coordinator:)`.
+        // Keeping the default `shouldCloseWithWindow = true` causes Quick Look to
+        // auto-deactivate when its window closes (and reject `close()` before window
+        // activation), crashing in `-[QLPreviewView deactivate]`.
+        view.shouldCloseWithWindow = false
         view.autostarts = true
         view.previewItem = url as NSURL
         return view
@@ -138,7 +151,9 @@ struct MacNativeDocumentPreview: NSViewRepresentable {
     }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
         coordinator.detach()
-        (view as? QLPreviewView)?.close()
+        if let preview = view as? QLPreviewView {
+            coordinator.closeQuickLookIfNeeded(preview)
+        }
     }
 }
 

@@ -2139,3 +2139,47 @@ fn real_scenario_large_pdf_read_file_spills_and_recovers_via_session_scoped_tool
     assert!(denied.is_error);
     assert!(denied.payload.to_model_string().contains("unknown output_id"));
 }
+
+#[test]
+fn web_fetch_fake_ip_policy_blocks_literals_and_private_ips_while_allowing_public_domain_tun() {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    // Literal 198.18.x.x URLs MUST still be blocked (SSRF protection)
+    let literal = crate::web::resolve_and_validate_public_url("http://198.18.0.15/secret");
+    assert!(literal.is_err(), "literal 198.18.0.15 must be rejected");
+    let loopback = crate::web::resolve_and_validate_public_url("http://127.0.0.1:8080/");
+    assert!(loopback.is_err(), "loopback must be rejected");
+    let metadata = crate::web::resolve_and_validate_public_url("http://169.254.169.254/latest");
+    assert!(metadata.is_err(), "metadata IP must be rejected");
+
+    // Helper checks: RFC 2544 benchmark / TUN Fake-IP detection
+    assert!(crate::web::is_fake_ip_benchmark(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1))));
+    assert!(crate::web::is_fake_ip_benchmark(IpAddr::V4(Ipv4Addr::new(198, 19, 255, 254))));
+    assert!(!crate::web::is_fake_ip_benchmark(IpAddr::V4(Ipv4Addr::new(198, 20, 0, 1))));
+    assert!(!crate::web::is_fake_ip_benchmark(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+
+    // Public domain detection rejects literals, localhost, .local, .internal
+    assert!(crate::web::is_public_domain_name("arxiv.org"));
+    assert!(crate::web::is_public_domain_name("openreview.net"));
+    assert!(!crate::web::is_public_domain_name("198.18.0.15"));
+    assert!(!crate::web::is_public_domain_name("localhost"));
+    assert!(!crate::web::is_public_domain_name("myhost.local"));
+    assert!(!crate::web::is_public_domain_name("db.internal"));
+}
+
+#[test]
+fn web_search_query_relaxation_strips_quotes_and_boolean_operators() {
+    assert_eq!(
+        crate::web_search::relax_search_query(r#""Sibling-Conditioned State Transfer" OR "DFD-R" arxiv"#).as_deref(),
+        Some("Sibling-Conditioned State Transfer DFD-R arxiv")
+    );
+    assert_eq!(
+        crate::web_search::relax_search_query("simple query"),
+        None,
+        "simple short query without quotes/OR should not spuriously relax"
+    );
+    let long = crate::web_search::relax_search_query(
+        "one two three four five six seven eight nine ten",
+    );
+    assert_eq!(long.as_deref(), Some("one two three four five six seven"));
+}

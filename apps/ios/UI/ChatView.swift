@@ -287,6 +287,7 @@ struct ChatView: View {
     @State private var showSkillsSheet: Bool = false
     @State private var showMoreSettingsSheet: Bool = false
     @State private var conversationInspectorPane: IOSConversationInspectorPane?
+    @State private var inspectorPreviewURL: URL?
     @State private var initialGoalObjective = ""
     private struct WorkToolsPresentation: Identifiable {
         let id = UUID()
@@ -395,7 +396,9 @@ struct ChatView: View {
     @State private var hostSkillsLastSuccessAt: Date?
     @State private var hostSkillsLastFailureKey: String?
     @State private var hostSkillsLastFailureAt: Date?
-    @FocusState private var composerFocused: Bool
+    // UIKit owns the text responder. A delayed SwiftUI focus dismissal from the
+    // composer can otherwise dismiss the keyboard of a newly opened edit sheet.
+    @State private var composerFocused = false
     private let hostSkillsSuccessCooldownSeconds: TimeInterval = 60
     private let hostSkillsFailureBackoffSeconds: TimeInterval = 30
 
@@ -1150,6 +1153,7 @@ struct ChatView: View {
                 if workToolsPresentation?.owner != newOwner {
                     workToolsPresentation = nil
                 }
+                inspectorPreviewURL = nil
                 showExpertPicker = false
                 refreshExpertSourceOwner()
             }
@@ -1187,6 +1191,32 @@ struct ChatView: View {
             chatPrimaryContent
             .environment(\.expertMentionProfile, mentionProfile)
             .environment(\.iosSourceAllowsMessageEditing, expertSourceOwner == .local)
+            .environment(\.iosOpenAttachmentPreview) { url in
+                inspectorPreviewURL = url
+            }
+            .inspector(isPresented: Binding(
+                get: { inspectorPreviewURL != nil },
+                set: { if !$0 { inspectorPreviewURL = nil } }
+            )) {
+                if let url = inspectorPreviewURL {
+                    NavigationStack {
+                        ChatAttachmentQuickLook(url: url)
+                            .id(url)
+                            .ignoresSafeArea(.container, edges: .bottom)
+                            .navigationTitle(url.lastPathComponent)
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button(L10n.close) {
+                                        inspectorPreviewURL = nil
+                                    }
+                                    .accessibilityIdentifier("chat.inspector.preview.close")
+                                }
+                            }
+                    }
+                    .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
+                }
+            }
             .sheet(item: $mentionHistory) { selection in
                 IOSExpertChildHistory(parentID: selection.parent, roomID: selection.room, child: selection.child, runtime: container.applicationRuntime, remoteSource: selection.source) { request in
                     mentionHistory = nil

@@ -892,6 +892,9 @@
         }
       }
     },
+    "Auto" : {
+
+    },
     "Available" : {
       "localizations" : {
         "de" : {
@@ -3654,6 +3657,7 @@
       }
     },
     "Conversation configuration is still being saved. Your message draft is retained." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

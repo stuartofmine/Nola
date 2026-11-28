@@ -109,9 +109,28 @@ impl ToolHandler for WebSearchTool {
             }
         }
 
-        // 3. Default keyless DuckDuckGo HTML search
+        // 3. Default keyless DuckDuckGo HTML search (with automatic query relaxation on 0 hits)
         match search_duckduckgo_html(&client, query, limit) {
             Ok(results) => {
+                if results.is_empty() {
+                    if let Some(relaxed) = relax_search_query(query) {
+                        if let Ok(fallback) = search_duckduckgo_html(&client, &relaxed, limit) {
+                            if !fallback.is_empty() {
+                                let count = fallback.len();
+                                return ToolExecutionResult::ok_structured(
+                                    json!({
+                                        "query": query,
+                                        "relaxed_query": relaxed,
+                                        "provider": "duckduckgo",
+                                        "count": count,
+                                        "results": fallback
+                                    }),
+                                    format!("Web search returned {count} result(s) for '{query}' (via relaxed query '{relaxed}')"),
+                                );
+                            }
+                        }
+                    }
+                }
                 let count = results.len();
                 ToolExecutionResult::ok_structured(
                     json!({"query": query, "provider": "duckduckgo", "count": count, "results": results}),
@@ -226,6 +245,34 @@ fn decode_ddg_href(href: &str) -> String {
         }
     }
     normalized
+}
+
+pub(crate) fn relax_search_query(query: &str) -> Option<String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let has_quotes_or_bool = trimmed.contains('"')
+        || trimmed.contains('“')
+        || trimmed.contains('”')
+        || trimmed.split_whitespace().any(|t| t == "OR" || t == "AND");
+    let stripped = trimmed
+        .replace(['"', '“', '”', '(', ')'], " ");
+    let mut terms: Vec<&str> = stripped
+        .split_whitespace()
+        .filter(|t| !matches!(*t, "OR" | "AND"))
+        .collect();
+    if terms.len() > 7 {
+        terms.truncate(7);
+    } else if !has_quotes_or_bool {
+        return None;
+    }
+    let candidate = terms.join(" ");
+    if candidate.is_empty() || candidate == trimmed {
+        None
+    } else {
+        Some(candidate)
+    }
 }
 
 fn search_duckduckgo_html(

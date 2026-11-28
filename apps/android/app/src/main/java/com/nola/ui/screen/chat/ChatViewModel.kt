@@ -1582,6 +1582,7 @@ class ChatViewModel @Inject constructor(
             runCatching { withContext(Dispatchers.IO) {
                 CanonicalConversationProjector.project(applicationRuntime.loadConversationProjectionWindowV1(id, null, 2, 4096).projection)
                     .lastOrNull { it.text.isNotBlank() }?.text.orEmpty().replace("\n", " ")
+                    .ifBlank { hostSessionReference(id)?.get("preview")?.jsonPrimitive?.contentOrNull.orEmpty() }
             } }.onSuccess { preview -> conversationPreviews.update { it + (id to preview) } }
             // Read the existing association only; opening a list must never create a room.
             try {
@@ -2210,8 +2211,13 @@ class ChatViewModel @Inject constructor(
                             remoteObservationInitialKey = null
                             remoteObservationVisibleHeads = window.assistantJournalHeads
                             _uiState.update { if (currentWindow()) it.copy(processingState = ProcessingState.BuildingContext) else it }
+                            val session = executionSession
+                            session.directHostHistory = conv.agentRoomOwner == null && childOwner == null &&
+                                window.assistantJournalHeads.isEmpty() &&
+                                withContext(Dispatchers.IO) { conversationRepo.readRemoteSubmissionIntent(convId) } == null
+                            if (!currentWindow()) return@launch
                             startRemoteConversationObservation(convId)
-                            observeRemoteAgentTasks(convId)
+                            if (!session.directHostHistory) observeRemoteAgentTasks(convId)
                             val hostSettingsGeneration = modelSelectionGeneration
                             viewModelScope.launch {
                                 refreshHostAgentSettings(convId, hostSettingsGeneration)
@@ -2226,7 +2232,9 @@ class ChatViewModel @Inject constructor(
                             error = failure.message ?: context.getString(R.string.chat_agent_error)) }
                     }
                 }
-                loadConversationExpertReplies(convId)
+                // Direct Web Host transcripts already include their expert replies. Only canonical
+                // conversation owners can resolve separate per-message admission manifests.
+                if (!executionSession.directHostHistory) loadConversationExpertReplies(convId)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -2276,6 +2284,90 @@ class ChatViewModel @Inject constructor(
         // reconciliation stays with its owner, including unknown ACK windows.
     }
 
+    private fun hostSessionKey(localId: String) = "web_host_chat_session/$localId"
+
+    private fun hostSessionReference(localId: String): JsonObject? =
+        applicationRuntime.productSetting(hostSessionKey(localId))?.let { Json.parseToJsonElement(it.valueJson).jsonObject }
+
+    private suspend fun readHostSession(hostId: String, localId: String): String? = withContext(Dispatchers.IO) {
+        hostSessionReference(localId)?.let {
+            require(it["host"] == JsonPrimitive(hostId)) { context.getString(R.string.chat_error_host_identity_changed) }
+            it.getValue("session").jsonPrimitive.content
+        }
+    }
+
+    private suspend fun rememberHostSession(hostId: String, localId: String, remoteId: String,
+        messages: List<ConversationMessage> = emptyList()) = withContext(Dispatchers.IO) {
+        require(remoteId.isNotBlank())
+        val previous = hostSessionReference(localId)
+        require(previous == null || previous["host"] == JsonPrimitive(hostId) && previous["session"] == JsonPrimitive(remoteId))
+        val preview = messages.lastOrNull { it.text.isNotBlank() }?.text?.replace("\n", " ")?.take(240)
+        val reference = buildJsonObject {
+            put("host", hostId)
+            put("session", remoteId)
+            (preview ?: previous?.get("preview")?.jsonPrimitive?.contentOrNull)?.let { put("preview", it) }
+        }
+        if (previous != reference) {
+            applicationRuntime.putProductSetting(hostSessionKey(localId), reference.toString(), System.currentTimeMillis())
+            if (preview != null) conversationPreviews.update { it + (localId to preview) }
+        }
+        val first = messages.firstOrNull { it.role == ChatRole.user }
+        if (first != null && applicationRuntime.updateFirstMessageTitle(localId, first.id, first.text.trim().take(80), verifiedHostHistory = true)) {
+            loadConversations()
+        }
+    }
+
+    private fun observeDirectHostHistory(localId: String, configuration: WebAgentProvider.Config) {
+        val session = executionSession
+        if (session.directHistoryJob?.isActive == true || session.runtime.hasOutstandingGeneration()) return
+        fun current() = !session.retired && _uiState.value.conversationId == localId &&
+            remoteObservationConfiguration === configuration && !session.runtime.hasOutstandingGeneration()
+        session.directHistoryJob = executionScope.launch {
+            try {
+                val saved = readHostSession(configuration.expectedHostId, localId)
+                val knownId = saved ?: _uiState.value.v2SessionId
+                session.directHistoryMissing = knownId == null
+                val remoteId = knownId ?: localId
+                var checkExists = true
+                while (current()) {
+                    val snapshot = webAgentProvider.v2ChatHistory(localId, remoteId, configuration, checkExists)
+                    if (!current()) return@launch
+                    if (snapshot == null) {
+                        // Earlier builds kept the direct Host session ID in memory only.
+                        // A transcript from another session must never be attached by title.
+                        session.directHistoryMissing = true
+                        _uiState.update { it.copy(processingState = ProcessingState.Error,
+                            error = context.getString(R.string.chat_missing_host_history)) }
+                        return@launch
+                    }
+                    if (!snapshot.active || saved == null && checkExists) {
+                        rememberHostSession(configuration.expectedHostId, localId, remoteId, snapshot.messages)
+                    }
+                    if (!current()) return@launch
+                    checkExists = false
+                    session.directHistoryMissing = false
+                    session.permissionSourceUnconfirmed = false
+                    permissionSession.setHostRequest(null)
+                    _uiState.update { it.copy(v2SessionId = remoteId, messages = snapshot.messages,
+                        v2UiSurfaces = snapshot.surfaces, processingState = if (snapshot.active) ProcessingState.Streaming else ProcessingState.Idle,
+                        activeResponseId = null, activeResponseStartedAt = null, currentResponse = "", thinking = "",
+                        thinkingFinished = !snapshot.active, toolEvents = emptyList(), pendingUserQuestion = null,
+                        permissionRequest = null, pendingPermissionRequests = emptyList(), error = null) }
+                    if (!snapshot.active) {
+                        refreshPermissionOwnerProjection(session)
+                        return@launch
+                    }
+                    snapshot.pending.forEach { handleAgentEvent(it, localId) }
+                    delay(1_000)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (current()) _uiState.update { it.copy(processingState = ProcessingState.Error, error = failure.message) }
+            }
+        }
+    }
+
     private fun startRemoteConversationObservation(convId: String) {
         if (runRegistry.current == null) {
             if (displayedState.value.conversationId != convId) return
@@ -2286,6 +2378,10 @@ class ChatViewModel @Inject constructor(
         }
         val configuration = remoteObservationConfiguration ?: return
         if (executionSession.retired || _uiState.value.conversationId != convId) return
+        if (executionSession.directHostHistory) {
+            observeDirectHostHistory(convId, configuration)
+            return
+        }
         // One owner refresh per explicit foreground/reconnect subscription.
         // Failed hydration can retry here; unchanged periodic observations do not query authority.
         executionSession.permissionObservedIdentity = null
@@ -3625,7 +3721,7 @@ class ChatViewModel @Inject constructor(
                         ?: remoteObservationConfiguration
                         ?: webAgentProvider.config
                         ?: error("Web Agent Host is not configured")
-                    webAgentProvider.v2CompactConversation(convId, cfg)
+                    webAgentProvider.v2CompactConversation(state.v2SessionId ?: convId, cfg)
                 } else {
                     applicationRuntime.v2CompactConversation(convId)
                 }
@@ -3673,6 +3769,7 @@ class ChatViewModel @Inject constructor(
                     val branchedRemoteId = branchedObj?.get("id")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                         ?: result["conversationId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                         ?: result["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: error("WebHost returned no branched conversation ID")
                     val sourceTitle = state.conversations.firstOrNull { it.id == convId }?.title?.takeIf { it.isNotBlank() } ?: "Chat"
                     val branchedTitle = branchedObj?.get("title")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                         ?: "$sourceTitle (copy)"
@@ -3683,11 +3780,9 @@ class ChatViewModel @Inject constructor(
                             hostBinding = state.executionHostBinding,
                         )
                     }
+                    rememberHostSession(cfg.expectedHostId, localCopy.id, branchedRemoteId)
                     loadConversations()
                     loadConversation(localCopy.id)
-                    if (branchedRemoteId != null) {
-                        _uiState.update { it.copy(v2SessionId = branchedRemoteId, error = null) }
-                    }
                 } else {
                     val result = withContext(Dispatchers.IO) {
                         applicationRuntime.v2BranchConversation(convId)
@@ -3750,44 +3845,41 @@ class ChatViewModel @Inject constructor(
         _uiState.update { it.copy(v2WorkspaceReview = null) }
     }
 
-    fun truncateAndResendV2Message(message: ConversationMessage, editedText: String) {
-        val trimmed = editedText.trim()
-        if (trimmed.isEmpty()) return
+    suspend fun truncateAndResendV2Message(message: ConversationMessage, editedText: String): Boolean {
         val state = _uiState.value
-        if (state.processingState.blocksInput) return
-        val convId = state.conversationId ?: return
-        val isRemote = state.currentModel?.source == ModelInfo.ModelSource.WebHost || state.executionHostBinding != null
+        val convId = state.conversationId ?: return false
+        val trimmed = editedText.trim()
         val boundaryIndex = state.messages.indexOfFirst { it.id == message.id }
-        val fromSeq = message.meta?.get("nola.v2Seq")?.toLongOrNull()
-            ?: (boundaryIndex.takeIf { it >= 0 }?.plus(1)?.toLong() ?: 1L)
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    if (isRemote) {
-                        val remoteConvId = state.v2SessionId?.takeIf { it.isNotBlank() } ?: convId
-                        val cfg = state.executionHostBinding?.let { resolveBoundHost(it) }
-                            ?: remoteObservationConfiguration
-                            ?: webAgentProvider.config
-                            ?: error("Web Agent Host is not configured")
-                        webAgentProvider.v2TruncateConversation(remoteConvId, fromSeq, cfg)
-                    } else {
-                        applicationRuntime.v2TruncateConversation(convId, fromSeq)
-                    }
-                }
-                if (boundaryIndex >= 0) {
-                    _uiState.update { current ->
-                        if (current.conversationId != convId) current
-                        else current.copy(messages = current.messages.take(boundaryIndex), error = null)
-                    }
-                }
-                sendMessage(trimmed)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                _uiState.update {
-                    it.copy(error = error.localizedMessage ?: error.message ?: context.getString(R.string.chat_v2_edit_resend_failed))
-                }
+        if (trimmed.isEmpty() || state.processingState.blocksInput || state.executionTeardownPending ||
+            message.conversationId != convId || message.role != ChatRole.user || boundaryIndex < 0) return false
+        val sourceChanged = context.getString(R.string.chat_edit_source_changed)
+        return try {
+            val cfg = state.executionHostBinding?.let { resolveBoundHost(it) }
+                ?: checkNotNull(remoteObservationConfiguration)
+            val remoteId = readHostSession(cfg.expectedHostId, convId) ?: checkNotNull(state.v2SessionId)
+            val history = checkNotNull(webAgentProvider.v2ChatHistory(convId, remoteId, cfg, checkExists = true)) { sourceChanged }
+            check(!history.active && history.messages.size == state.messages.size &&
+                history.messages.zip(state.messages).all { (remote, shown) -> remote.role == shown.role && remote.text == shown.text }) { sourceChanged }
+            val target = history.messages[boundaryIndex]
+            val seq = checkNotNull(target.meta?.get("nola.v2Seq")?.toLongOrNull()) { sourceChanged }
+            check(message.meta?.get("nola.v2Seq")?.let { it == seq.toString() && message.id == target.id } != false) { sourceChanged }
+            check(_uiState.value.conversationId == convId && !_uiState.value.processingState.blocksInput) { sourceChanged }
+            webAgentProvider.v2TruncateConversation(remoteId, seq, cfg)
+            if (_uiState.value.conversationId != convId) {
+                composerDrafts.forConversation(convId).restoreRetryTextIfEmpty(trimmed)
+                return false
             }
+            _uiState.update { it.copy(messages = history.messages.take(boundaryIndex), error = null) }
+            sendMessage(trimmed).also { accepted ->
+                if (!accepted) composerDrafts.forConversation(convId).restoreRetryTextIfEmpty(trimmed)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            if (_uiState.value.conversationId == convId) {
+                _uiState.update { it.copy(error = error.localizedMessage ?: context.getString(R.string.chat_v2_edit_resend_failed)) }
+            }
+            false
         }
     }
 
@@ -4574,6 +4666,10 @@ class ChatViewModel @Inject constructor(
             _uiState.update { it.copy(error = "Waiting for the device execution resource. Your draft is retained.") }
             return false
         }
+        if (runRegistry.find(executionOwner)?.directHistoryMissing == true && state.currentModel?.source == ModelInfo.ModelSource.WebHost) {
+            _uiState.update { it.copy(error = context.getString(R.string.chat_missing_host_history)) }
+            return false
+        }
         val session = runRegistry.beginExecution(executionOwner, state)
         try {
             if (state.currentModel?.source == ModelInfo.ModelSource.Local) check(runRegistry.acquireLocal(session))
@@ -4999,17 +5095,18 @@ class ChatViewModel @Inject constructor(
         remoteJournalTurn = owner
         executionSession.v2TurnCompleted = false
         executionSession.dispatchStarted = true
-        val remoteConvId = _uiState.value.v2SessionId?.takeIf { it.isNotBlank() }
-            ?: runCatching {
-                val title = withContext(Dispatchers.IO) {
-                    conversationRepo.getConversation(convId)?.title?.takeIf { it.isNotBlank() }
-                } ?: "Chat"
-                webAgentProvider.v2CreateConversation(title = title, configuration = configuration)
-            }.getOrElse { convId }
-        if (_uiState.value.v2SessionId != remoteConvId) {
-            _uiState.update { it.copy(v2SessionId = remoteConvId) }
-        }
-        val selectedModelId = _uiState.value.currentModel?.id?.takeIf { it.isNotBlank() }
+        check(!executionSession.directHistoryMissing) { context.getString(R.string.chat_missing_host_history) }
+        executionSession.directHistoryJob?.cancel()
+        val remoteConvId = _uiState.value.v2SessionId ?: readHostSession(hostId, convId)
+            ?: webAgentProvider.v2CreateConversation(conversationRepo.getConversation(convId)?.title ?: "Chat", configuration).also {
+                // Persist the server-issued identity before the first message can reach the Host.
+                rememberHostSession(hostId, convId, it)
+            }
+        executionSession.directHostHistory = true
+        _uiState.update { it.copy(v2SessionId = remoteConvId) }
+        // The Host row selects an execution provider. Let that Host resolve its own model.
+        val selectedModelId = _uiState.value.currentModel?.takeUnless { it.source == ModelInfo.ModelSource.WebHost }
+            ?.id?.takeIf { it.isNotBlank() }
         val permissionProfile = when (_uiState.value.permissionMode) {
             com.nola.core.AndroidAgentPermissionMode.AllowAll -> "allow_all"
             com.nola.core.AndroidAgentPermissionMode.Cautious -> "cautious"
@@ -5401,6 +5498,11 @@ class ChatViewModel @Inject constructor(
                         pendingUserQuestion = null,
                     )
                 }
+                resolvedSessionId?.let { remoteId ->
+                    remoteObservationConfiguration?.let { cfg -> rememberHostSession(cfg.expectedHostId, convId, remoteId, _uiState.value.messages) }
+                }
+                executionSession.permissionSourceUnconfirmed = false
+                refreshPermissionOwnerProjection(executionSession)
             }
             is SseEvent.TurnLifecycle -> {
                 // Core lifecycle is only a hint; exact Run seal proves completion.
@@ -5828,7 +5930,7 @@ class ChatViewModel @Inject constructor(
                     } else {
                         val cfg = capturedConfiguration ?: webAgentProvider.config
                         if (cfg != null) {
-                            webAgentProvider.v2CancelConversation(convId, cfg)
+                            webAgentProvider.v2CancelConversation(readHostSession(cfg.expectedHostId, convId) ?: convId, cfg)
                         }
                         _uiState.update {
                             if (it.conversationId == convId) it.copy(processingState = ProcessingState.Idle) else it

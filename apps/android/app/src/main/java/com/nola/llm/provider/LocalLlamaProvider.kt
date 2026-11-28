@@ -188,7 +188,7 @@ class LocalLlamaProvider @Inject constructor(
         val wire = ModelRequestPrivacy.redact(JsonObject(mapOf(
             "messages" to JsonArray(input.providerMessages()),
             "tools" to JsonArray(input.tools),
-        )), "")
+        )), "", "http://localhost")
         val filtered = json.parseToJsonElement(wire.decodeToString()).jsonObject
         append("<nola_request>\n")
         append("<messages>")

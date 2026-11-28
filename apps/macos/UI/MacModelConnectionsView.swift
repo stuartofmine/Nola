@@ -783,6 +783,10 @@ struct MacModelConnectionsView: View {
                             )
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        } else if connection.credential_configured == true {
+                            Label(String(localized: "API key provided by configuration", table: "ModelCenter"), systemImage: "key.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else {
                             Label(String(localized: "Anonymous endpoint (no API key)", table: "ModelCenter"), systemImage: "lock.open")
                                 .font(.caption)

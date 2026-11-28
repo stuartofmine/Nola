@@ -7,21 +7,19 @@
 //! 5. Execute trusted `PostToolUse` hooks
 //! 6. Return normalized `MiddlewareOutcome` with full `ToolModelPayload` + `VersionTransition`s.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use nola_store::Store;
 use nola_tools::{ToolContext, ToolRegistry};
 use nola_types::{
-    HookDecision, HookEvent, PermissionAction, PermissionRule, RuntimeReminder,
+    HookDecision, HookEvent, PermissionAction, RuntimeReminder,
     ToolExecutionResult, ToolSpec,
 };
 use serde_json::{json, Value};
 
 use crate::hooks::HookRunner;
 use crate::planning::is_plan_mode;
-use crate::policy::{
-    persist_permission_grant, primary_resource_pattern, DurablePermissionGrant, EffectivePolicy,
-};
+use crate::policy::EffectivePolicy;
 
 /// Optional interactive user approval callback when policy evaluates to `PermissionAction::Ask`.
 pub type ApprovalCallback = Arc<dyn Fn(&ToolSpec, &Value, &str) -> bool + Send + Sync>;
@@ -38,7 +36,6 @@ pub struct ToolExecutionMiddleware {
     pub approval: Option<ApprovalCallback>,
     store: Option<Store>,
     session_id: Option<String>,
-    runtime_grants: Mutex<Vec<PermissionRule>>,
 }
 
 impl ToolExecutionMiddleware {
@@ -53,12 +50,11 @@ impl ToolExecutionMiddleware {
             approval,
             store: None,
             session_id: None,
-            runtime_grants: Mutex::new(Vec::new()),
         }
     }
 
     /// Attach `Store` and `session_id` to enable live Plan Mode checks (`kv["plan_mode:{session_id}"]`)
-    /// and durable permission grant persistence (`Store::put_module_record("permission_grant", ...)`).
+    /// while a tool call is being evaluated.
     pub fn with_persistence(mut self, store: Store, session_id: impl Into<String>) -> Self {
         self.store = Some(store);
         self.session_id = Some(session_id.into());
@@ -188,46 +184,7 @@ impl ToolExecutionMiddleware {
                 effective.plan_mode = is_plan_mode(store, sid);
             }
         }
-        if let Ok(grants) = self.runtime_grants.lock() {
-            for rule in grants.iter() {
-                if !effective.rules.contains(rule) {
-                    effective.rules.push(rule.clone());
-                }
-            }
-        }
         effective
-    }
-
-    fn record_approval_grant(
-        &self,
-        spec: &ToolSpec,
-        args: &Value,
-        workspace_root: &std::path::Path,
-    ) {
-        // Never persist permanent durable grants for bash commands touching sensitive paths
-        // or Nola's own internal database/config directories.
-        if spec.schema.name == "bash" {
-            if let Some(cmd) = args.get("command").and_then(|v| v.as_str()) {
-                if crate::policy::bash_command_sensitive_reason(cmd).is_some() {
-                    return;
-                }
-            }
-        }
-        let resource_pattern = primary_resource_pattern(&spec.schema.name, args, workspace_root);
-        let grant = DurablePermissionGrant::for_approval(
-            self.session_id.clone(),
-            workspace_root,
-            &spec.schema.name,
-            resource_pattern,
-        );
-        if let Ok(mut grants) = self.runtime_grants.lock() {
-            if !grants.contains(&grant.rule) {
-                grants.push(grant.rule.clone());
-            }
-        }
-        if let Some(store) = &self.store {
-            let _ = persist_permission_grant(store, &grant);
-        }
     }
 
     fn enforce_policy(
@@ -259,7 +216,7 @@ impl ToolExecutionMiddleware {
                     .map(|cb| cb(spec, args, &decision.reason))
                     .unwrap_or(false);
                 if approved {
-                    self.record_approval_grant(spec, args, workspace_root);
+                    // A boolean response approves this call only. Clients persist explicit session choices.
                     None
                 } else {
                     Some(ToolExecutionResult::err_structured(

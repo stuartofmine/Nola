@@ -2465,34 +2465,17 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     created_at_ms: now,
                     updated_at_ms: now,
                 };
-                if let Err(e) = store.upsert_session(&sess) {
-                    let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
-                    return;
-                }
-                let boundary_seq = parse_message_seq(&body);
-                if let Ok(EventPage::Events(ev)) = store.events_after(&id, 0, 2000) {
-                    for e in ev {
-                        if let Some(max_seq) = boundary_seq {
-                            if e.seq > max_seq {
-                                break;
-                            }
-                        }
-                        // CRITICAL FIX: pass `50_000` (max_events_per_scope), NEVER `e.created_at_ms`!
-                        let _ = store.append_event(&new_conv_id, &e.kind, e.payload, 50_000);
+                let through = match parse_message_boundary(&body) {
+                    Ok(seq) => seq,
+                    Err(error) => {
+                        let _ = respond_api_json(req, 400, &json!({"error": error}), crypto_tok);
+                        return;
                     }
-                }
-                // Copy session_state, meta, and knowledge from source to branched conversation
-                if let Ok(Some(state_val)) = store.get_kv(&format!("session_state:{id}")) {
-                    let _ = store.set_kv(&format!("session_state:{new_conv_id}"), &state_val);
-                }
-                if boundary_seq.is_some() {
-                    synchronize_session_state_after_truncate(&store, &new_conv_id);
-                }
-                if let Ok(Some(meta_val)) = store.get_kv(&session_meta_key(&id)) {
-                    let _ = store.set_kv(&session_meta_key(&new_conv_id), &meta_val);
-                }
-                if let Ok(Some(k_val)) = store.get_kv(&conversation_knowledge_key(&id)) {
-                    let _ = store.set_kv(&conversation_knowledge_key(&new_conv_id), &k_val);
+                };
+                if let Err(e) = store.branch_session(&id, &sess, through) {
+                    let status = if e.is_missing_row() { 404 } else { 500 };
+                    let _ = respond_api_json(req, status, &json!({"error": e.to_string()}), crypto_tok);
+                    return;
                 }
                 let conv = session_to_conversation_json(&store, &sess);
                 let _ = respond_api_json(req, 200, &json!({"conversation": conv}), crypto_tok);
@@ -2651,7 +2634,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     return;
                 }
                 if is_paired_task_cancellation_body(&body) {
-                    let receipt = handle_paired_task_cancellation(
+                    let (status, receipt) = handle_paired_task_cancellation(
                         &store,
                         &suite,
                         active_cancels,
@@ -2660,7 +2643,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         None,
                         &body,
                     );
-                    let _ = respond_api_json(req, 200, &receipt, crypto_tok);
+                    let _ = respond_api_json(req, status, &receipt, crypto_tok);
                     return;
                 }
                 let cancelled = if let Some(flag) = active_cancels.lock().unwrap().get(&id) {
@@ -2682,7 +2665,10 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let (allow, scope) = parse_permission_resolution(&body);
-                let resolved = pending_interactions.resolve_approval(req_id, allow, scope);
+                let conversation_id = percent_decode_path(
+                    p.trim_start_matches("/api/chat/conversations/").trim_end_matches("/permission"),
+                );
+                let resolved = pending_interactions.resolve_approval(&conversation_id, req_id, allow, scope);
                 let _ = respond_api_json(
                     req,
                     200,
@@ -2913,20 +2899,21 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     );
                     return;
                 }
-                let base_seq = parse_message_seq(&body).unwrap_or(1);
+                let boundary = match parse_message_boundary(&body) {
+                    Ok(Some(seq)) => seq,
+                    outcome => {
+                        let error = outcome.err().unwrap_or("missing_message_boundary");
+                        let _ = respond_api_json(req, 400, &json!({"error": error}), crypto_tok);
+                        return;
+                    }
+                };
                 let keep_message = body
                     .get("keepMessage")
                     .or_else(|| body.get("keep_message"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let from_seq = if keep_message {
-                    base_seq.saturating_add(1)
-                } else {
-                    base_seq
-                };
-                match store.truncate_events_from(&conv_id, from_seq) {
-                    Ok(deleted) => {
-                        synchronize_session_state_after_truncate(&store, &conv_id);
+                match store.truncate_at(&conv_id, boundary, keep_message) {
+                    Ok((from_seq, deleted)) => {
                         let _ = respond_api_json(
                             req,
                             200,
@@ -2935,7 +2922,8 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                         );
                     }
                     Err(e) => {
-                        let _ = respond_api_json(req, 500, &json!({"error": e.to_string()}), crypto_tok);
+                        let status = if e.is_missing_row() { 404 } else { 500 };
+                        let _ = respond_api_json(req, status, &json!({"error": e.to_string()}), crypto_tok);
                     }
                 }
             }
@@ -3170,49 +3158,15 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 if let Some((raw_conv, raw_task)) = rest.split_once("/tasks/") {
                     let conv_id = percent_decode_path(raw_conv);
                     let task_id = percent_decode_path(raw_task);
-                    if is_paired_task_cancellation_body(&body)
-                        || raw_path.starts_with("/api/mobile/")
-                    {
-                        let receipt = handle_paired_task_cancellation(
-                            &store,
-                            &suite,
-                            active_cancels,
-                            host_id,
-                            &conv_id,
-                            Some(&task_id),
-                            &body,
-                        );
-                        let _ = respond_api_json(req, 200, &receipt, crypto_tok);
-                        return;
-                    }
-                    let cancelled = if let Some(flag) = active_cancels.lock().unwrap().get(&conv_id) {
-                        flag.store(true, Ordering::SeqCst);
-                        true
-                    } else {
-                        false
+                    let paired = is_paired_task_cancellation_body(&body) || raw_path.starts_with("/api/mobile/");
+                    let (status, receipt) = handle_paired_task_cancellation(
+                        &store, &suite, active_cancels, host_id, &conv_id, Some(&task_id), &body,
+                    );
+                    let payload = if paired || status != 200 { receipt } else {
+                        json!({"ok": true, "stopped": receipt["terminal"], "cancelled": receipt["state"] == "cancelled",
+                               "cancelRequested": receipt["cancelRequested"], "conversationId": conv_id, "taskId": task_id})
                     };
-                    let _ = store.append_event(
-                        &conv_id,
-                        "task_stopped",
-                        json!({
-                            "task_id": task_id,
-                            "status": "cancelled",
-                            "cancelled": cancelled
-                        }),
-                        50_000,
-                    );
-                    let _ = respond_api_json(
-                        req,
-                        200,
-                        &json!({
-                            "ok": true,
-                            "stopped": true,
-                            "cancelled": cancelled,
-                            "conversationId": conv_id,
-                            "taskId": task_id
-                        }),
-                        crypto_tok,
-                    );
+                    let _ = respond_api_json(req, status, &payload, crypto_tok);
                 } else {
                     let _ = respond_api_json(
                         req,
@@ -3876,6 +3830,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                 let mcp_c = Arc::clone(mcp_manager);
                 let host_id_c = host_id.clone();
                 let crypto_tok_owned = crypto_tok.map(ToString::to_string);
+                let paired_mobile = is_mobile && req_authenticated && header_value(&req, "x-nola-mobile-auth").is_some();
                 handle_sse_chat_turn(
                     req,
                     store_c,
@@ -3888,6 +3843,7 @@ fn handle_http_request(mut req: Request, state: Arc<WebServerState>) {
                     conv_id,
                     body,
                     crypto_tok_owned,
+                    paired_mobile,
                 );
             }
             (Method::Get, p)

@@ -25,7 +25,7 @@ struct MacJournalHistoricalPartView: View {
         let reader: MacHistoricalPartDetailModel.Reader = { selection in
             let read = Task.detached {
                 try Task.checkCancellation()
-                return try MacApplicationPort(databaseURL: databaseURL).readHistoricalPart(selection.owner,
+                return try MacApplicationPort.pooled(databaseURL: databaseURL).readHistoricalPart(selection.owner,
                     expectedConversationRevision: selection.canonicalRevision)
             }
             return try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }

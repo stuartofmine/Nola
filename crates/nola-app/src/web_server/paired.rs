@@ -280,7 +280,7 @@ pub(super) fn handle_paired_task_cancellation(
     conv_id: &str,
     url_task_id: Option<&str>,
     body: &Value,
-) -> Value {
+) -> (u16, Value) {
     let req_host_id = body
         .get("hostId")
         .or_else(|| body.get("expected_host_id"))
@@ -306,61 +306,93 @@ pub(super) fn handle_paired_task_cancellation(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let mut task_rec = suite.get_record::<Value>("runtime_task", task_id).ok().flatten();
-    if !receipt_only {
-        if let Some(flag) = active_cancels.lock().unwrap().get(conv_id) {
-            flag.store(true, Ordering::SeqCst);
-        }
-        let ts = now_ms();
-        if let Some(ref mut task) = task_rec {
-            if let Some(obj) = task.as_object_mut() {
-                obj.insert("cancel_requested".into(), json!(true));
-                obj.insert("updated_at_ms".into(), json!(ts));
-            }
-            let _ = suite.upsert_record("runtime_task", task_id, task);
-        }
-        let _ = store.set_kv(
-            &format!("cancel_requested:{task_id}"),
-            &json!({"task_id": task_id, "cancel_requested": true, "requested_at_ms": ts}),
-        );
+    if req_host_id != host_id
+        || body
+            .get("conversationId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id != conv_id)
+        || body
+            .get("taskId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id != task_id)
+    {
+        return (409, json!({"error": "task_owner_mismatch"}));
     }
-
-    let raw_state = task_rec
-        .as_ref()
-        .and_then(|t| t.get("status").or_else(|| t.get("state")).and_then(|v| v.as_str()))
-        .unwrap_or("cancelled");
-    let state = match raw_state {
-        "completed" | "sealed" => "sealed",
-        "failed" | "error" => "failed",
-        "cancelled" | "canceled" => "cancelled",
-        "queued" => "queued",
-        "running" => "running",
-        "retry_waiting" => "retry_waiting",
-        "waiting_permission" => "waiting_permission",
-        "suspended" => "suspended",
-        "awaiting_reconciliation" => "awaiting_reconciliation",
-        _ => "cancelled",
+    let mut task = match suite.get_record::<Value>("runtime_task", task_id) {
+        Ok(Some(task)) => task,
+        Ok(None) => return (404, json!({"error": "task_not_found"})),
+        Err(err) => return (500, json!({"error": err.to_string()})),
     };
-    let terminal = matches!(state, "sealed" | "failed" | "cancelled");
-    let cancel_requested = if !receipt_only {
-        true
-    } else {
-        task_rec
-            .as_ref()
-            .and_then(|t| t.get("cancel_requested").and_then(|v| v.as_bool()))
-            .unwrap_or_else(|| {
-                store
-                    .get_kv(&format!("cancel_requested:{task_id}"))
-                    .ok()
-                    .flatten()
-                    .and_then(|v| v.get("cancel_requested").and_then(|b| b.as_bool()))
-                    .unwrap_or(terminal)
-            })
-    };
+    let owner = task
+        .get("parent_conversation_id")
+        .or_else(|| task.get("owner_session_id"))
+        .or_else(|| task.get("conversation_id"))
+        .and_then(Value::as_str);
+    let run = task
+        .get("parent_run_id")
+        .or_else(|| task.pointer("/parent_invocation/run_id"))
+        .and_then(Value::as_str);
+    if owner != Some(conv_id)
+        || run.is_some_and(|id| !parent_run_id.is_empty() && id != parent_run_id)
+    {
+        return (409, json!({"error": "task_owner_mismatch"}));
+    }
+    let state = match task
+        .get("status")
+        .or_else(|| task.get("state"))
+        .and_then(Value::as_str)
+    {
+        Some("completed" | "sealed") => "sealed",
+        Some("failed" | "error") => "failed",
+        Some("cancelled" | "canceled") => "cancelled",
+        Some(
+            s @ ("queued"
+            | "running"
+            | "retry_waiting"
+            | "waiting_permission"
+            | "suspended"
+            | "awaiting_reconciliation"),
+        ) => s,
+        _ => return (409, json!({"error": "unknown_task_state"})),
+    }
+    .to_owned();
+    let terminal = matches!(state.as_str(), "sealed" | "failed" | "cancelled");
+    if !receipt_only && !terminal {
+        let child = task
+            .get("child_session_id")
+            .or_else(|| task.get("child_conversation_id"))
+            .and_then(Value::as_str)
+            .unwrap_or(task_id);
+        if child == conv_id {
+            return (409, json!({"error": "task_owner_mismatch"}));
+        }
+        let child = child.to_owned();
+        let ts = now_ms();
+        match store.update_module_record("runtime_task", task_id, |row: &mut Value| {
+            if *row != task {
+                return false;
+            }
+            row["cancel_requested"] = json!(true);
+            row["updated_at_ms"] = json!(ts);
+            true
+        }) {
+            Ok(Some(updated)) => task = updated,
+            Ok(None) => return (409, json!({"error": "task_changed"})),
+            Err(err) => return (500, json!({"error": err.to_string()})),
+        }
+        let request = json!({"cancel_requested": true, "requested_at_ms": ts, "task_id": task_id});
+        if let Err(err) = store.set_kv(&format!("cancel_requested:{child}"), &request) {
+            return (500, json!({"error": err.to_string()}));
+        }
+        if let Some(flag) = active_cancels.lock().unwrap().get(&child) {
+            flag.store(true, Ordering::Release);
+        }
+    }
+    let cancel_requested = task["cancel_requested"].as_bool().unwrap_or(false);
 
     // Strict 8-key RemoteTaskCancellation / AppleTaskCancellationReceipt contract
-    json!({
-        "hostId": req_host_id,
+    (200, json!({
+        "hostId": host_id,
         "conversationId": conv_id,
         "parentRunId": parent_run_id,
         "taskId": task_id,
@@ -368,7 +400,7 @@ pub(super) fn handle_paired_task_cancellation(
         "terminal": terminal,
         "state": state,
         "applicationPending": false
-    })
+    }))
 }
 
 pub(super) fn is_task_guidance_post(body: &Value, accepts_sse: bool) -> bool {

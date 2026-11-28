@@ -10,10 +10,10 @@ internal object ModelRequestPrivacy {
         if (testLibrary == null) System.loadLibrary("nola_core_jni") else System.load(testLibrary)
     }
 
-    private external fun redactJson(body: ByteArray, credential: ByteArray): ByteArray?
+    private external fun redactJson(body: ByteArray, credential: ByteArray, endpoint: String): ByteArray?
 
-    fun redact(body: JsonObject, key: String): ByteArray =
-        checkNotNull(redactJson(body.toString().encodeToByteArray(), key.encodeToByteArray())) {
+    fun redact(body: JsonObject, key: String, endpoint: String): ByteArray =
+        checkNotNull(redactJson(body.toString().encodeToByteArray(), key.encodeToByteArray(), endpoint)) {
             "Model request privacy filter unavailable."
         }
 }

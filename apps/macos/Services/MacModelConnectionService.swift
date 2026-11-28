@@ -27,6 +27,7 @@ nonisolated struct MacModelConnectionSnapshot: Codable, Identifiable, Equatable,
         var base_url: String
         var protocols: [String]
         var account_id: String?
+        var credential_configured: Bool? = nil
         let source: String
         let source_id: String?
         var enabled: Bool
@@ -585,6 +586,7 @@ nonisolated extension MacModelConnectionSnapshot.Connection {
         case protocols
         case `protocol`
         case account_id
+        case credential_configured
         case source
         case source_id
         case enabled
@@ -616,6 +618,7 @@ nonisolated extension MacModelConnectionSnapshot.Connection {
         self.base_url = baseURL
         self.protocols = protocols
         self.account_id = try container.decodeIfPresent(String.self, forKey: .account_id)
+        self.credential_configured = try container.decodeIfPresent(Bool.self, forKey: .credential_configured)
         self.source = try container.decodeIfPresent(String.self, forKey: .source) ?? "manual"
         self.source_id = try container.decodeIfPresent(String.self, forKey: .source_id)
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
@@ -628,6 +631,7 @@ nonisolated extension MacModelConnectionSnapshot.Connection {
         try container.encode(base_url, forKey: .base_url)
         try container.encode(protocols, forKey: .protocols)
         try container.encode(account_id, forKey: .account_id)
+        try container.encodeIfPresent(credential_configured, forKey: .credential_configured)
         try container.encode(source, forKey: .source)
         try container.encode(source_id, forKey: .source_id)
         try container.encode(enabled, forKey: .enabled)

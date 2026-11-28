@@ -1498,4 +1498,6 @@
     <string name="chat_v2_workspace_review_files">Файлы рабочей области</string>
     <string name="chat_v2_workspace_review_truncated">Вывод сокращён для предпросмотра</string>
     <string name="chat_v2_edit_resend_failed">Не удалось обрезать и повторно отправить сообщение</string>
+    <string name="chat_missing_host_history">На сопряжённом хосте этот чат недоступен. Откройте исходный чат на хосте или начните новый здесь.</string>
+    <string name="chat_edit_source_changed">Беседа изменилась. Откройте её заново, прежде чем редактировать сообщение.</string>
 </resources>

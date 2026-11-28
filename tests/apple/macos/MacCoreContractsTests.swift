@@ -2,8 +2,11 @@
 // File Overview:
 // - Purpose: High-signal macOS NolaCore FFI & MacApplicationPort contract tests against isolated temp SQLite stores.
 
+import AppKit
 import Foundation
+import Quartz
 import SQLite3
+import SwiftUI
 import XCTest
 @testable import Nola
 
@@ -1059,5 +1062,102 @@ final class MacCoreContractsTests: XCTestCase {
         )
         XCTAssertGreaterThan(displayEq.image.size.width, 40)
         XCTAssertGreaterThan(displayEq.image.size.height, 14)
+    }
+
+    // MARK: - 8. Quick Look preview lifecycle safety (never assert on dismantle or window close)
+
+    func testQuickLookPreviewLifecycleDoesNotAssertOnDismantleOrWindowClose() throws {
+        let root = try makeTempDirectory("quicklook-lifecycle")
+        let imageA = root.appendingPathComponent("preview-a.png")
+        let imageB = root.appendingPathComponent("preview-b.png")
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 32,
+                pixelsHigh: 32,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+        )
+        let pngData = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try pngData.write(to: imageA)
+        try pngData.write(to: imageB)
+
+        // 8a. Dismantling a QLPreviewView before it is ever attached to a window
+        // (and dismantling it repeatedly) must never trigger QuickLook's
+        // `QLPreviewActivatedInternalState` assertion.
+        let unattachedView = MacNativeDocumentPreview.makePreview(for: imageA)
+        let qlUnattached = try XCTUnwrap(unattachedView as? QLPreviewView)
+        XCTAssertFalse(qlUnattached.shouldCloseWithWindow)
+        let coordinatorA = MacNativeDocumentPreview.Coordinator()
+        MacNativeDocumentPreview.dismantleNSView(qlUnattached, coordinator: coordinatorA)
+        MacNativeDocumentPreview.dismantleNSView(qlUnattached, coordinator: coordinatorA)
+
+        // 8b. Closing the hosting window before dismantleNSView runs must not
+        // auto-deactivate the QLPreviewView behind SwiftUI's back.
+        let windowView = MacNativeDocumentPreview.makePreview(for: imageA)
+        let qlWindow = try XCTUnwrap(windowView as? QLPreviewView)
+        XCTAssertFalse(qlWindow.shouldCloseWithWindow)
+        let coordinatorB = MacNativeDocumentPreview.Coordinator()
+        let directWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        directWindow.isReleasedWhenClosed = false
+        directWindow.contentView = qlWindow
+        directWindow.orderBack(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        directWindow.close()
+        MacNativeDocumentPreview.dismantleNSView(qlWindow, coordinator: coordinatorB)
+
+        // 8c. Right-sidebar inspector preview (`MacCodeReferenceInspector`) mounts & switches
+        // image files cleanly without spawning any popup window or asserting on dismantle.
+        let windowCountBefore = NSApp.windows.count
+        var closedInspector = false
+        let inspectorHost = NSHostingView(
+            rootView: MacCodeReferenceInspector(
+                reference: MacCodeReference(url: imageA, line: nil, column: nil),
+                canReadLocally: true,
+                close: { closedInspector = true }
+            )
+        )
+        let inspectorWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        inspectorWindow.isReleasedWhenClosed = false
+        inspectorWindow.contentView = inspectorHost
+        inspectorWindow.orderBack(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        inspectorHost.rootView = MacCodeReferenceInspector(
+            reference: MacCodeReference(url: imageB, line: nil, column: nil),
+            canReadLocally: true,
+            close: { closedInspector = true }
+        )
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        inspectorWindow.contentView = nil
+        inspectorWindow.close()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertFalse(closedInspector)
+        XCTAssertLessThanOrEqual(NSApp.windows.count, windowCountBefore + 1)
+
+        // 8d. Full SwiftUI NSHostingView + MacQuickLookController open -> reopen -> close lifecycle.
+        MacQuickLookController.shared.preview([imageA, imageB], startingAt: 0)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        MacQuickLookController.shared.preview([imageB], startingAt: 0)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        for win in NSApp.windows where win.title == imageB.lastPathComponent {
+            win.close()
+        }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
     }
 }

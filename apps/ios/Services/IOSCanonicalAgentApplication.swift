@@ -236,7 +236,7 @@ nonisolated final class IOSCanonicalAgentApplication: @unchecked Sendable {
                 "assistant_message_id": .string(descriptor.identity.assistantMessageID)]),
             "control": control,
         ]))
-        guard case .object(let fields) = plan, case .array(let owners)? = fields["target_owners"] else {
+        guard case .object(let fields) = plan, case .array(let owners)? = fields["target_owners"], !owners.isEmpty else {
             throw IOSCanonicalAgentApplicationError.invalidResult("Cancellation process plan is invalid")
         }
         let observations = try owners.map { owner -> AgentCoreJSONValue in
@@ -244,7 +244,11 @@ nonisolated final class IOSCanonicalAgentApplication: @unchecked Sendable {
                   let pid = Int32(exactly: pid), pid > 0 else {
                 throw IOSCanonicalAgentApplicationError.invalidResult("Cancellation process owner is invalid")
             }
-            return .object(["owner": owner, "observation": IOSHostProcessObservation.observe(pid: pid)])
+            let observation = IOSHostProcessObservation.observe(pid: pid)
+            guard case .object(let observed) = observation, observed["state"] == .string("gone") else {
+                throw DeviceAgentCoordinatorError.cancellationOutcomeUnconfirmed
+            }
+            return .object(["owner": owner, "observation": observation])
         }
         let target = try store.executeAgentCommand(.object([
             "type": .string("validate_cancellation_process_observations"), "plan": plan,

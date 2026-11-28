@@ -205,12 +205,23 @@ impl DurablePermissionGrant {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct StoredPermissionGrant {
+    #[serde(flatten)]
+    grant: DurablePermissionGrant,
+    #[serde(default)]
+    explicitly_approved: bool,
+}
+
 /// Persist a durable permission grant in `Store` (`module_records` kind `"permission_grant"`).
 pub fn persist_permission_grant(
     store: &Store,
     grant: &DurablePermissionGrant,
 ) -> Result<(), StoreError> {
-    store.put_module_record("permission_grant", &grant.id, grant)
+    store.put_module_record("permission_grant", &grant.id, &StoredPermissionGrant {
+        grant: grant.clone(),
+        explicitly_approved: true,
+    })
 }
 
 /// Load all active durable permission grants applicable to `(session_id, workspace_root)`.
@@ -224,9 +235,13 @@ pub fn load_active_permission_grants(
         .display()
         .to_string();
     store
-        .list_module_records::<DurablePermissionGrant>("permission_grant")
+        .list_module_records::<StoredPermissionGrant>("permission_grant")
         .unwrap_or_default()
         .into_iter()
+        // Older session records do not distinguish a one-time decision from a session grant.
+        // Workspace grants were always explicitly installed.
+        .filter(|stored| stored.explicitly_approved || stored.grant.session_id.is_none())
+        .map(|stored| stored.grant)
         .filter(|g| {
             g.active
                 && g.workspace_root == canonical_ws
@@ -243,6 +258,22 @@ pub fn primary_resource_pattern(tool_name: &str, args: &Value, workspace_root: &
     } else {
         None
     }
+}
+
+/// Persist an explicitly approved session target only when the policy can match it exactly.
+pub fn persist_session_target_approval(
+    store: &Store, session_id: &str, workspace: &Path, tool: &str, args: &Value,
+) -> Result<(), StoreError> {
+    if tool == "bash" && args["command"].as_str().and_then(bash_command_sensitive_reason).is_some() {
+        return Ok(());
+    }
+    if let Some(resource) = primary_resource_pattern(tool, args, workspace) {
+        let grant = DurablePermissionGrant::for_approval(
+            Some(session_id.to_owned()), workspace, tool, Some(resource),
+        );
+        persist_permission_grant(store, &grant)?;
+    }
+    Ok(())
 }
 
 fn escape_glob_literal(raw: &str) -> String {

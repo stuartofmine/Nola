@@ -1025,7 +1025,7 @@ pub fn resolve_model_route(cfg: &AppliedConfig) -> Result<ModelRouteConfig, Stri
         });
     }
 
-    Err("no model configured; run `nola model apply-config <config.json>` or set NOLA_LLM_ENDPOINT & NOLA_LLM_MODEL".into())
+    Err("no model configured. Run `nola config edit` to set a connection and default model, then retry. Nola reads the file on startup. You can also set NOLA_LLM_ENDPOINT and NOLA_LLM_MODEL.".into())
 }
 
 fn resolve_api_key(conn: &ConnectionConfig) -> String {
@@ -1052,9 +1052,16 @@ fn resolve_api_key(conn: &ConnectionConfig) -> String {
 
 /// Build the immutable Turn-0 frozen system prompt prefix (NEVER mutated mid-session).
 pub fn build_frozen_system_blocks(workspace_root: &Path, cfg: &AppliedConfig) -> Vec<FrozenSystemBlock> {
-    let mut blocks = vec![FrozenSystemBlock {
-        id: "nola_core_v2".into(),
-        text: format!(
+    frozen_system_blocks_for_run(workspace_root, cfg, true)
+}
+
+pub(crate) fn frozen_system_blocks_for_run(
+    workspace_root: &Path,
+    cfg: &AppliedConfig,
+    tools_enabled: bool,
+) -> Vec<FrozenSystemBlock> {
+    let text = if tools_enabled {
+        format!(
             "You are Nola, a local-first personal AI assistant and software engineering agent.\n\
              Workspace root: {}\n\
              Principles:\n\
@@ -1064,8 +1071,11 @@ pub fn build_frozen_system_blocks(workspace_root: &Path, cfg: &AppliedConfig) ->
              - Never use bash, grep, or sqlite3 to probe Nola's own internal application data directories (~/.nola, Application Support/Nola/State, nola*.db, or vault files); use Nola's built-in tools instead.\n\
              - Verify your work with real tests/commands before concluding engineering tasks.",
             workspace_root.display()
-        ),
-    }];
+        )
+    } else {
+        "You are Nola, a local-first personal AI assistant. Tools are disabled for this turn. Answer the user directly using the conversation. If a task requires external access, explain the limitation.".into()
+    };
+    let mut blocks = vec![FrozenSystemBlock { id: "nola_core_v2".into(), text }];
     if !cfg.instructions.is_empty() {
         blocks.push(FrozenSystemBlock {
             id: "host_instructions".into(),

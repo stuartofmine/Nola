@@ -74,6 +74,7 @@
     import ChatConversationManager from '../components/ChatConversationManager.svelte';
     import ConfirmationDialog from '../components/ConfirmationDialog.svelte';
     import ConversationInspector from '../components/ConversationInspector.svelte';
+    import type { InspectorPreviewItem } from '../lib/inspectorPreview';
     import DesktopPluginNavigation from '../components/DesktopPluginNavigation.svelte';
     import ExpertRoomManager from '../components/ExpertRoomManager.svelte';
     import PanelResizeHandle from '../components/PanelResizeHandle.svelte';
@@ -101,8 +102,42 @@
     let draft = $state('');
     const conversationDrafts = new Map<string, string>();
     let attachments = $state<V2Attachment[]>([]);
+    let inspectorPreview = $state<InspectorPreviewItem | null>(null);
     let loading = $state(false);
     let streaming = $state(false);
+
+    function openAttachmentInInspector(att: V2Attachment) {
+        const isImage = Boolean(att.dataUrl) || att.mimeType.toLowerCase().startsWith('image/');
+        inspectorPreview = {
+            title: att.name,
+            subtitle: att.mimeType,
+            kind: isImage ? 'image' : 'text',
+            mimeType: att.mimeType,
+            imageUrl: isImage ? att.dataUrl : undefined,
+            text: isImage ? undefined : att.text || att.name,
+        };
+        inspectorOpen = true;
+    }
+
+    $effect(() => {
+        active?.conversationId;
+        inspectorPreview = null;
+    });
+
+    function stickReasoningToBottom(node: HTMLElement, value: string) {
+        const scroll = (v: string) => {
+            if (!v) return;
+            queueMicrotask(() => {
+                node.scrollTop = node.scrollHeight;
+            });
+        };
+        scroll(value);
+        return {
+            update(next: string) {
+                scroll(next);
+            },
+        };
+    }
     let error = $state('');
     let statusNotice = $state('');
     let needsModelConfig = $state(false);
@@ -1785,20 +1820,27 @@
                                         {#if msg.attachments?.length}
                                             <div class="attachment-chips">
                                                 {#each msg.attachments as att}
-                                                    <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
+                                                    <button
+                                                        type="button"
+                                                        class="attachment-chip attachment-chip-btn"
+                                                        class:has-thumb={Boolean(att.dataUrl)}
+                                                        title={att.name}
+                                                        onclick={() => openAttachmentInInspector(att)}
+                                                    >
                                                         {#if att.dataUrl}
                                                             <img class="attachment-thumb message-thumb" src={att.dataUrl} alt={att.name} />
                                                         {/if}
                                                         <span>{att.name}</span>
-                                                    </span>
+                                                    </button>
                                                 {/each}
                                             </div>
                                         {/if}
 
                                         {#if msg.reasoning}
-                                            <details class="reasoning-box">
+                                            {@const isLiveReasoning = streaming && msgIndex === messages.length - 1 && msg.role === 'assistant' && !msg.content}
+                                            <details class="reasoning-box" open={isLiveReasoning || undefined}>
                                                 <summary>{t($locale, 'chatPage.thinking')}</summary>
-                                                <pre>{msg.reasoning}</pre>
+                                                <pre class="reasoning-scroll" use:stickReasoningToBottom={isLiveReasoning ? msg.reasoning : ''}>{msg.reasoning}</pre>
                                             </details>
                                         {/if}
                                         {#if msg.toolCalls?.length}
@@ -2048,10 +2090,17 @@
                                 {/each}
                                 {#each attachments as att, idx}
                                     <span class="attachment-chip" class:has-thumb={Boolean(att.dataUrl)}>
-                                        {#if att.dataUrl}
-                                            <img class="attachment-thumb" src={att.dataUrl} alt={att.name} />
-                                        {/if}
-                                        <span>{att.name}</span>
+                                        <button
+                                            type="button"
+                                            class="chip-preview-btn"
+                                            title={att.name}
+                                            onclick={() => openAttachmentInInspector(att)}
+                                        >
+                                            {#if att.dataUrl}
+                                                <img class="attachment-thumb" src={att.dataUrl} alt={att.name} />
+                                            {/if}
+                                            <span>{att.name}</span>
+                                        </button>
                                         <button type="button" class="chip-remove" aria-label={t($locale, 'shell.cancel')} onclick={() => removeAttachment(idx)}>×</button>
                                     </span>
                                 {/each}
@@ -2239,7 +2288,12 @@
                             {streaming}
                             width={viewportWidth > 760 ? panelLayout.inspector : undefined}
                             plan={conversationPlan}
-                            onclose={() => (inspectorOpen = false)}
+                            previewItem={inspectorPreview}
+                            onclearpreview={() => (inspectorPreview = null)}
+                            onclose={() => {
+                                inspectorPreview = null;
+                                inspectorOpen = false;
+                            }}
                             onopenPage={openManagementTab}
                             onplanchange={next => (conversationPlan = next)}
                             oncompacted={summary => {
@@ -2658,6 +2712,13 @@
         font-size: 12px;
         color: var(--muted);
     }
+    .reasoning-box pre.reasoning-scroll {
+        max-height: 180px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        line-height: 1.5;
+        padding-right: 4px;
+    }
     .tool-calls,
     .ui-surfaces {
         display: flex;
@@ -2783,6 +2844,28 @@
     .attachment-chip.has-thumb {
         border-radius: 10px;
         padding: 4px 8px 4px 4px;
+    }
+    .attachment-chip-btn {
+        color: var(--content);
+        cursor: pointer;
+        min-width: 0;
+        min-height: 0;
+    }
+    .attachment-chip-btn:hover {
+        border-color: var(--info);
+    }
+    .chip-preview-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        min-width: 0;
+        min-height: 0;
     }
     .attachment-thumb {
         width: 28px;

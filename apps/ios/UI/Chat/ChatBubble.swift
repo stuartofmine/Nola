@@ -121,6 +121,7 @@ struct ChatBubble: View {
     @State private var showAnswerContextDetails: Bool = false
     @State private var showPersonalIntelligence: Bool = false
     @State private var previewAttachment: ChatAttachmentPreviewItem?
+    @Environment(\.iosOpenAttachmentPreview) private var openAttachmentInInspector
     @State private var historicalDetail: IOSHistoricalPartRequest?
     @State private var liveSourceReferences: [ChatSourceReference] = []
     @State private var processReading: [IOSMessagePartReadingKey: Bool] = [:]
@@ -278,7 +279,7 @@ struct ChatBubble: View {
             ForEach(Array(unique.prefix(showsAllSources ? unique.count : 3).enumerated()), id: \.element.id) { index, reference in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Button {
-                        if let fileURL = reference.fileURL { previewAttachment = ChatAttachmentPreviewItem(url: fileURL) }
+                        if let fileURL = reference.fileURL { openAttachmentPreview(fileURL) }
                         else if let webURL = reference.webURL { UIApplication.shared.open(webURL, options: [:]) }
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -360,7 +361,7 @@ struct ChatBubble: View {
                         ForEach(userAttachments) { attachment in
                             Button {
                                 guard let url = attachment.url else { return }
-                                previewAttachment = ChatAttachmentPreviewItem(url: url)
+                                openAttachmentPreview(url)
                             } label: {
                                 HStack(spacing: 9) {
                                     Image(systemName: attachment.iconName)
@@ -745,7 +746,7 @@ struct ChatBubble: View {
                 ChatArtifactImagePreview(uri: attachment.uri, mimeType: attachment.mimeType)
                 if let previewURL {
                     Button {
-                        previewAttachment = ChatAttachmentPreviewItem(url: previewURL)
+                        openAttachmentPreview(previewURL)
                     } label: {
                         HStack(spacing: 9) {
                             Image(systemName: iconName)
@@ -790,6 +791,14 @@ struct ChatBubble: View {
                 }
             }
         case .reasoning, .tool: EmptyView() // Shared flow sends these through the process renderer.
+        }
+    }
+
+    private func openAttachmentPreview(_ url: URL) {
+        if let openAttachmentInInspector {
+            openAttachmentInInspector(url)
+        } else {
+            previewAttachment = ChatAttachmentPreviewItem(url: url)
         }
     }
 
@@ -1239,12 +1248,23 @@ private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
+private struct IOSOpenAttachmentPreviewKey: EnvironmentKey {
+    static let defaultValue: ((URL) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var iosOpenAttachmentPreview: ((URL) -> Void)? {
+        get { self[IOSOpenAttachmentPreviewKey.self] }
+        set { self[IOSOpenAttachmentPreviewKey.self] = newValue }
+    }
+}
+
 private struct ChatAttachmentPreviewItem: Identifiable {
     let id = UUID()
     let url: URL
 }
 
-private struct ChatAttachmentQuickLook: UIViewControllerRepresentable {
+struct ChatAttachmentQuickLook: UIViewControllerRepresentable {
     let url: URL
 
     func makeCoordinator() -> Coordinator {
@@ -2044,7 +2064,267 @@ private struct ChatMarkdownMermaidBlock: View {
     }
 }
 
-private struct ChatMathLabel: UIViewRepresentable {
+/// Renders LaTeX with SwiftMath and seamlessly composites CJK text (`\text{...}`,
+/// `_{\text{...}}`, `^{\text{...}}`, and bare CJK runs) with native iOS PingFang/SF
+/// glyphs on one shared Retina baseline so Chinese formulas never show tofu boxes.
+@MainActor
+enum IOSMathRenderer {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 256
+        return c
+    }()
+
+    static func containsNonLatinMathText(_ latex: String) -> Bool {
+        latex.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x2E80...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFF00...0xFFEF, 0x20000...0x2FA1F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private enum Token {
+        enum ScriptStyle { case normal, subscriptText, superscriptText }
+        case math(String)
+        case text(String, ScriptStyle)
+    }
+
+    private static func tokenize(_ latex: String) -> [Token]? {
+        let textCommands = ["\\text", "\\textrm", "\\mathrm", "\\textbf", "\\operatorname", "\\mbox"]
+        var tokens: [Token] = []
+        var mathBuf = ""
+        var idx = latex.startIndex
+        var depth = 0
+
+        func flushMath() {
+            if !mathBuf.isEmpty { tokens.append(.math(mathBuf)); mathBuf = "" }
+        }
+
+        func readBraced(from open: String.Index) -> (String, String.Index)? {
+            guard open < latex.endIndex, latex[open] == "{" else { return nil }
+            var d = 0
+            var cur = open
+            let inner = latex.index(after: open)
+            while cur < latex.endIndex {
+                let ch = latex[cur]
+                if ch == "\\", latex.index(after: cur) < latex.endIndex {
+                    cur = latex.index(cur, offsetBy: 2)
+                    continue
+                }
+                if ch == "{" { d += 1 }
+                else if ch == "}" {
+                    d -= 1
+                    if d == 0 { return (String(latex[inner..<cur]), latex.index(after: cur)) }
+                }
+                cur = latex.index(after: cur)
+            }
+            return nil
+        }
+
+        while idx < latex.endIndex {
+            let ch = latex[idx]
+            if depth == 0, (ch == "_" || ch == "^") {
+                let next = latex.index(after: idx)
+                if next < latex.endIndex, latex[next] == "{", let outer = readBraced(from: next) {
+                    let trimmed = outer.0.trimmingCharacters(in: .whitespaces)
+                    if let cmd = textCommands.first(where: { trimmed.hasPrefix($0 + "{") }),
+                       let openIdx = trimmed.firstIndex(of: "{"),
+                       let endIdx = trimmed.lastIndex(of: "}"),
+                       endIdx == trimmed.index(before: trimmed.endIndex) {
+                        let body = String(trimmed[trimmed.index(after: openIdx)..<endIdx])
+                        if containsNonLatinMathText(body) {
+                            _ = cmd
+                            flushMath()
+                            tokens.append(.text(body, ch == "_" ? .subscriptText : .superscriptText))
+                            idx = outer.1
+                            continue
+                        }
+                    } else if containsNonLatinMathText(trimmed), !trimmed.contains("\\") {
+                        flushMath()
+                        tokens.append(.text(trimmed, ch == "_" ? .subscriptText : .superscriptText))
+                        idx = outer.1
+                        continue
+                    }
+                }
+            }
+            if depth == 0, ch == "\\" {
+                let tail = latex[idx...]
+                if let cmd = textCommands.first(where: { tail.hasPrefix($0) }) {
+                    var pos = latex.index(idx, offsetBy: cmd.count)
+                    while pos < latex.endIndex, latex[pos].isWhitespace { pos = latex.index(after: pos) }
+                    if let braced = readBraced(from: pos), containsNonLatinMathText(braced.0) {
+                        flushMath()
+                        tokens.append(.text(braced.0, .normal))
+                        idx = braced.1
+                        continue
+                    }
+                }
+            }
+            if depth == 0, containsNonLatinMathText(String(ch)) {
+                flushMath()
+                var end = latex.index(after: idx)
+                while end < latex.endIndex, containsNonLatinMathText(String(latex[end])) || latex[end] == " " {
+                    end = latex.index(after: end)
+                }
+                tokens.append(.text(String(latex[idx..<end]), .normal))
+                idx = end
+                continue
+            }
+            if ch == "\\" {
+                let next = latex.index(after: idx)
+                if next < latex.endIndex {
+                    mathBuf.append(ch); mathBuf.append(latex[next])
+                    idx = latex.index(after: next)
+                    continue
+                }
+            }
+            if ch == "{" { depth += 1 } else if ch == "}" { depth = max(0, depth - 1) }
+            mathBuf.append(ch)
+            idx = latex.index(after: idx)
+        }
+        flushMath()
+        for token in tokens {
+            if case .math(let s) = token, containsNonLatinMathText(s) { return nil }
+        }
+        return tokens
+    }
+
+    static func renderCompositeImage(latex: String, display: Bool, fontSize: CGFloat) -> UIImage? {
+        let key = "\(display ? "D" : "I"):\(Int(fontSize)):\(latex)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+
+        guard let tokens = tokenize(latex), !tokens.isEmpty else {
+            return renderFallbackImage(latex: latex, fontSize: fontSize)
+        }
+
+        struct Piece {
+            let draw: (CGPoint, CGFloat) -> Void
+            let width: CGFloat
+            let ascent: CGFloat
+            let descent: CGFloat
+        }
+
+        let baseTextSize = max(13, fontSize * 0.88)
+        let scriptTextSize = max(10, fontSize * 0.64)
+        let pieceInsets = MTEdgeInsets(top: 1, left: 0.5, bottom: 1, right: 0.5)
+        var pieces: [Piece] = []
+
+        for token in tokens {
+            switch token {
+            case .math(let fragment):
+                if fragment.trimmingCharacters(in: .whitespaces).isEmpty {
+                    pieces.append(Piece(draw: { _, _ in }, width: display ? 5 : 3.5, ascent: baseTextSize * 0.7, descent: baseTextSize * 0.2))
+                    continue
+                }
+                var mathImage = MathImage(
+                    latex: fragment,
+                    fontSize: fontSize,
+                    textColor: UIColor.black,
+                    labelMode: display ? .display : .text,
+                    textAlignment: .left
+                )
+                mathImage.contentInsets = pieceInsets
+                let (error, image, layout) = mathImage.asImage()
+                guard error == nil, let image else {
+                    return renderFallbackImage(latex: latex, fontSize: fontSize)
+                }
+                let ascent = layout.map { $0.ascent + pieceInsets.top } ?? (image.size.height * 0.78)
+                let descent = layout.map { $0.descent + pieceInsets.bottom } ?? (image.size.height * 0.22)
+                pieces.append(Piece(
+                    draw: { origin, baselineY in
+                        let rect = CGRect(x: origin.x, y: baselineY - ascent, width: image.size.width, height: image.size.height)
+                        image.draw(in: rect)
+                    },
+                    width: image.size.width,
+                    ascent: max(1, ascent),
+                    descent: max(0, descent)
+                ))
+            case .text(let value, let style):
+                let font: UIFont
+                let yShift: CGFloat
+                switch style {
+                case .normal:
+                    font = .systemFont(ofSize: baseTextSize, weight: .regular)
+                    yShift = 0
+                case .subscriptText:
+                    font = .systemFont(ofSize: scriptTextSize, weight: .regular)
+                    yShift = baseTextSize * 0.22
+                case .superscriptText:
+                    font = .systemFont(ofSize: scriptTextSize, weight: .regular)
+                    yShift = -baseTextSize * 0.34
+                }
+                let attr = NSAttributedString(string: value, attributes: [
+                    .font: font,
+                    .foregroundColor: UIColor.black
+                ])
+                let size = attr.size()
+                let rawAscent = font.ascender
+                let rawDescent = abs(font.descender)
+                let padX: CGFloat = style == .normal ? 2.0 : 1.0
+                pieces.append(Piece(
+                    draw: { origin, baselineY in
+                        let drawY = baselineY - rawAscent + yShift
+                        attr.draw(at: CGPoint(x: origin.x + padX, y: drawY))
+                    },
+                    width: ceil(size.width) + padX * 2,
+                    ascent: max(1, rawAscent - yShift),
+                    descent: max(0, rawDescent + yShift)
+                ))
+            }
+        }
+
+        let padH: CGFloat = display ? 4 : 2
+        let padV: CGFloat = display ? 4 : 2
+        let maxAscent = pieces.map(\.ascent).max() ?? baseTextSize
+        let maxDescent = pieces.map(\.descent).max() ?? 4
+        let totalWidth = max(1, ceil(pieces.reduce(0) { $0 + $1.width } + padH * 2))
+        let totalHeight = max(1, ceil(maxAscent + maxDescent + padV * 2))
+        let baselineY = padV + maxAscent
+
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: totalWidth, height: totalHeight), format: format)
+        let image = renderer.image { _ in
+            var x = padH
+            for piece in pieces {
+                piece.draw(CGPoint(x: x, y: 0), baselineY)
+                x += piece.width
+            }
+        }.withRenderingMode(.alwaysTemplate)
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    private static func renderFallbackImage(latex: String, fontSize: CGFloat) -> UIImage? {
+        let cleaned = latex
+            .replacingOccurrences(of: "\\text{", with: "")
+            .replacingOccurrences(of: "\\mathrm{", with: "")
+            .replacingOccurrences(of: "\\cdot", with: "·")
+            .replacingOccurrences(of: "\\times", with: "×")
+            .replacingOccurrences(of: "\\lambda", with: "λ")
+            .replacingOccurrences(of: "\\Delta", with: "Δ")
+            .replacingOccurrences(of: "\\approx", with: "≈")
+            .replacingOccurrences(of: "\\le", with: "≤")
+            .replacingOccurrences(of: "\\ge", with: "≥")
+            .replacingOccurrences(of: "{", with: "")
+            .replacingOccurrences(of: "}", with: "")
+        let font = UIFont.systemFont(ofSize: max(13, fontSize * 0.88), weight: .regular)
+        let attr = NSAttributedString(string: cleaned, attributes: [.font: font, .foregroundColor: UIColor.black])
+        let size = attr.size()
+        let pad: CGFloat = 3
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: ceil(size.width + pad * 2), height: ceil(size.height + pad * 2)), format: format)
+        return renderer.image { _ in
+            attr.draw(at: CGPoint(x: pad, y: pad))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+}
+
+private struct ChatSwiftMathUILabel: UIViewRepresentable {
     let equation: String
     let mode: MTMathUILabelMode
     let fontSize: CGFloat
@@ -2066,6 +2346,25 @@ private struct ChatMathLabel: UIViewRepresentable {
         label.fontSize = fontSize
         label.textColor = UIColor.label
         label.backgroundColor = .clear
+    }
+}
+
+private struct ChatMathLabel: View {
+    let equation: String
+    let mode: MTMathUILabelMode
+    let fontSize: CGFloat
+    let alignment: MTTextAlignment
+
+    var body: some View {
+        if IOSMathRenderer.containsNonLatinMathText(equation),
+           let image = IOSMathRenderer.renderCompositeImage(latex: equation, display: mode == .display, fontSize: fontSize) {
+            Image(uiImage: image)
+                .renderingMode(.template)
+                .foregroundStyle(.primary)
+                .accessibilityLabel(equation)
+        } else {
+            ChatSwiftMathUILabel(equation: equation, mode: mode, fontSize: fontSize, alignment: alignment)
+        }
     }
 }
 
@@ -2846,22 +3145,84 @@ private struct ChatCanonicalExecutionProcess: View {
         }
     }
 
+    private var activeReasoningID: String? {
+        let reasoning = parts.filter {
+            if case .reasoning(let r) = $0, !(r.summary ?? "").isEmpty { return true }
+            return false
+        }
+        if isLive {
+            return reasoning.last(where: {
+                if case .reasoning(let r) = $0 { return r.state == .running }
+                return false
+            })?.partID ?? reasoning.last?.partID
+        }
+        return reasoning.count == 1 ? reasoning.first?.partID : nil
+    }
+
+    private static func liveReasoningTail(_ raw: String, maxChars: Int = 1800, maxLines: Int = 14) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let suffixStr = trimmed.count > maxChars ? String(trimmed.suffix(maxChars)) : trimmed
+        let lines = suffixStr.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count > maxLines {
+            return "…\n" + lines.suffix(maxLines).joined(separator: "\n")
+        }
+        return trimmed.count > maxChars ? ("…" + suffixStr) : suffixStr
+    }
+
     var body: some View {
+        let currentReasoningID = activeReasoningID
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(parts, id: \.partID) { part in
                     switch part {
                     case .reasoning(let reasoning):
-                        if !(reasoning.summary ?? "").isEmpty {
-                            ScrollView {
-                                ChatSmoothStreamingMarkdownView(content: reasoning.summary ?? "",
-                                    isStreaming: isLive && reasoning.state == .running)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled).transaction { $0.animation = nil }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .accessibilityIdentifier("chat.assistant.thinking")
+                        if let summary = reasoning.summary, !summary.isEmpty {
+                            let isActiveRound = part.partID == currentReasoningID
+                            if isLive && reasoning.state == .running && isActiveRound {
+                                ScrollViewReader { proxy in
+                                    ScrollView(.vertical, showsIndicators: true) {
+                                        VStack(alignment: .leading, spacing: 0) {
+                                            Text(verbatim: Self.liveReasoningTail(summary))
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .accessibilityIdentifier("chat.assistant.thinking")
+                                            Color.clear.frame(height: 1).id("ios-live-thinking-bottom")
+                                        }
+                                    }
+                                    .frame(maxHeight: 180)
+                                    .onAppear { proxy.scrollTo("ios-live-thinking-bottom", anchor: .bottom) }
+                                    .onChange(of: summary.count) { _, _ in
+                                        proxy.scrollTo("ios-live-thinking-bottom", anchor: .bottom)
+                                    }
+                                }
+                            } else if isActiveRound {
+                                ScrollView {
+                                    Text(verbatim: summary)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .accessibilityIdentifier("chat.assistant.thinking")
+                                }
+                                .frame(maxHeight: 220)
+                            } else {
+                                DisclosureGroup {
+                                    ScrollView {
+                                        Text(verbatim: summary)
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .frame(maxHeight: 200)
+                                } label: {
+                                    Label(L10n.chatThinkingShort, systemImage: "sparkles")
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            .frame(maxHeight: 240)
                         }
                     case .tool(let tool):
                         if let event = events.first(where: { $0.id == tool.toolCallID })

@@ -87,6 +87,7 @@ public actor DeviceAgentCoordinator {
     private var pendingPermissions: [String: IOSAgentPermissionRequest] = [:]
     private var pendingPermissionEnvelopes: [String: AgentCoreJSONValue] = [:]
     private var queuedHostRequests: [AgentCoreJSONValue] = []
+    private var queuedLeaseTokens: Set<String> = []
     private var responseSequences: [String: Int] = [:]
     private var responseAttemptIDs: [String: String] = [:]
     private var responseDeliveries: [String: AgentCoreJSONValue] = [:]
@@ -444,6 +445,7 @@ public actor DeviceAgentCoordinator {
     private func drainCancellation(_ initial: AgentCoreJSONValue, owner: IOSRunExecutionPermit,
                                    sessionID: String) async throws {
         var transition = initial
+        var cancellationLeaseTokens: Set<String> = []
         while true {
             guard executionPermit === owner, cancellingOwner === owner,
                   activeSessionId == sessionID,
@@ -452,9 +454,10 @@ public actor DeviceAgentCoordinator {
                 let snapshot = try clientSnapshot(from: control)
                 guard snapshot.sessionId == sessionID else { throw DeviceAgentCoordinatorError.invalidTransition }
             }
-            guard case .array(let requests)? = fields["host_requests"] else {
+            guard case .array(let claimed)? = fields["host_requests"] else {
                 throw DeviceAgentCoordinatorError.invalidTransition
             }
+            let requests = try Self.newHostDeliveries(claimed, seen: &cancellationLeaseTokens)
             if requests.isEmpty {
                 guard try canonicalApplication.committedTerminalSeal(coreSessionID: sessionID) != nil else {
                     throw DeviceAgentCoordinatorError.cancellationOutcomeUnconfirmed
@@ -474,6 +477,18 @@ public actor DeviceAgentCoordinator {
                 }
                 var response: AgentCoreJSONValue
                 switch type {
+                case "model_stream":
+                    guard claimed.count == 1, let effect = envelope.string("effect_id"),
+                          locallyQuiescentEffects.contains(effect), !unconfirmedPhysicalEffects.contains(effect) else {
+                        throw DeviceAgentCoordinatorError.cancellationOutcomeUnconfirmed
+                    }
+                    let settled = try await submitHostResponse(request, payload: .object([
+                        "type": .string("cancellation_confirmed"), "target_effect_id": .string(effect),
+                    ]))
+                    if case .object(let settledFields) = settled, case .array(let next)? = settledFields["host_requests"] {
+                        successors.append(contentsOf: next)
+                    }
+                    continue
                 case "cancel":
                     let target = try confirmCancellationTarget(envelope)
                     response = .object(["type": .string("cancellation_confirmed"), "target_effect_id": .string(target)])
@@ -1060,8 +1075,24 @@ public actor DeviceAgentCoordinator {
             }
         }
         if case .array(let requests)? = object["host_requests"] {
-            queuedHostRequests.append(contentsOf: requests)
+            let deliveries = try Self.newHostDeliveries(requests, seen: &queuedLeaseTokens)
+            queuedHostRequests.append(contentsOf: deliveries)
         }
+    }
+
+    /// Core returns a snapshot of claimed work, including the worker's current leases
+    /// on each streaming acknowledgement. Dispatch each physical delivery once per run.
+    nonisolated static func newHostDeliveries(
+        _ requests: [AgentCoreJSONValue], seen: inout Set<String>
+    ) throws -> [AgentCoreJSONValue] {
+        var newTokens: Set<String> = []
+        let deliveries = try requests.filter { request in
+            guard let lease = request.objectValue?["delivery"]?.objectValue?.string("lease_token"),
+                  !lease.isEmpty else { throw DeviceAgentCoordinatorError.invalidTransition }
+            return !seen.contains(lease) && newTokens.insert(lease).inserted
+        }
+        seen.formUnion(newTokens)
+        return deliveries
     }
 
     private func runModel(
@@ -2683,6 +2714,7 @@ public actor DeviceAgentCoordinator {
         pendingPermissions.removeAll()
         pendingPermissionEnvelopes.removeAll()
         queuedHostRequests.removeAll()
+        queuedLeaseTokens.removeAll()
         responseSequences.removeAll()
         responseAttemptIDs.removeAll()
         responseDeliveries.removeAll()

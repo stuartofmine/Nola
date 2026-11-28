@@ -128,6 +128,11 @@ interface WebHostApiService {
         error("v2 conversation creation is unavailable")
     }
 
+    suspend fun v2ChatHistory(
+        hostBaseUrl: String, token: String, localId: String, remoteId: String, expectedHostId: String,
+        pinnedCertificateSha256: String, checkExists: Boolean,
+    ): WebHostChatHistory? = error("WebHost history is unavailable")
+
     suspend fun v2DeleteConversation(
         hostBaseUrl: String,
         token: String,

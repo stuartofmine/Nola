@@ -168,13 +168,43 @@ enum MacInlineMarkdownCache {
 
     /// Renders LaTeX using SwiftMath's exact typographic ascent/descent metrics (`MathImage.LayoutInfo`)
     /// so inline equations align seamlessly with surrounding SF Pro / CJK text baselines.
+    /// When the formula contains CJK / non-Latin text (which Latin Modern Math lacks),
+    /// composites SwiftMath math segments with native macOS system-font CJK segments on
+    /// one shared baseline so Chinese labels and subscripts never render missing-glyph boxes.
     static func renderMath(latex: String, display: Bool) -> (image: NSImage, baselineOffset: CGFloat)? {
         let key = "\(display ? "D" : "I"):\(latex)" as NSString
         if let cached = mathCache.object(forKey: key) {
             return (cached.image, cached.baselineOffset)
         }
+        let rendered: (image: NSImage, baselineOffset: CGFloat)?
+        if containsNonLatinMathText(latex) {
+            rendered = renderCompositeMathWithCJK(latex: latex, display: display)
+        } else {
+            rendered = renderPureSwiftMath(latex: latex, display: display)
+        }
+        guard let rendered else { return nil }
+        mathCache.setObject(RenderedMath(image: rendered.image, baselineOffset: rendered.baselineOffset), forKey: key)
+        return rendered
+    }
+
+    private static func containsNonLatinMathText(_ latex: String) -> Bool {
+        latex.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x2E80...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFF00...0xFFEF, 0x20000...0x2FA1F:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func renderPureSwiftMath(
+        latex: String,
+        display: Bool,
+        customInsets: MTEdgeInsets? = nil
+    ) -> (image: NSImage, baselineOffset: CGFloat)? {
         let fontSize: CGFloat = display ? 19.5 : 15.5
-        let insets = MTEdgeInsets(
+        let insets = customInsets ?? MTEdgeInsets(
             top: display ? 4 : 1,
             left: display ? 4 : 1.5,
             bottom: display ? 4 : 1,
@@ -204,7 +234,277 @@ enum MacInlineMarkdownCache {
         } else {
             baselineOffset = -3
         }
-        mathCache.setObject(RenderedMath(image: image, baselineOffset: baselineOffset), forKey: key)
+        return (image, baselineOffset)
+    }
+
+    private enum CompositeMathToken {
+        enum ScriptStyle { case normal, subscriptText, superscriptText }
+        case math(String)
+        case text(String, ScriptStyle)
+    }
+
+    /// Splits a LaTeX expression containing CJK into SwiftMath chunks and native-font
+    /// text chunks (handling `\text{...}`, `\mathrm{...}`, `\textrm{...}`, `\textbf{...}`,
+    /// `\operatorname{...}`, `_{\text{...}}`, `^{\text{...}}`, and bare CJK runs).
+    private static func tokenizeCompositeLatex(_ latex: String) -> [CompositeMathToken]? {
+        let textCommands = ["\\text", "\\textrm", "\\mathrm", "\\textbf", "\\operatorname", "\\mbox"]
+        var tokens: [CompositeMathToken] = []
+        var mathBuffer = ""
+        var index = latex.startIndex
+        var braceDepth = 0
+
+        func flushMath() {
+            if !mathBuffer.isEmpty {
+                tokens.append(.math(mathBuffer))
+                mathBuffer = ""
+            }
+        }
+
+        func readBracedContent(startingAt openBrace: String.Index) -> (content: String, after: String.Index)? {
+            guard openBrace < latex.endIndex, latex[openBrace] == "{" else { return nil }
+            var depth = 0
+            var cursor = openBrace
+            let innerStart = latex.index(after: openBrace)
+            while cursor < latex.endIndex {
+                let ch = latex[cursor]
+                if ch == "\\", latex.index(after: cursor) < latex.endIndex {
+                    cursor = latex.index(cursor, offsetBy: 2)
+                    continue
+                }
+                if ch == "{" { depth += 1 }
+                else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return (String(latex[innerStart..<cursor]), latex.index(after: cursor))
+                    }
+                }
+                cursor = latex.index(after: cursor)
+            }
+            return nil
+        }
+
+        while index < latex.endIndex {
+            let ch = latex[index]
+            // Handle `_{\text{CJK}}` or `^{\text{CJK}}` at top level
+            if braceDepth == 0, (ch == "_" || ch == "^") {
+                let nextIdx = latex.index(after: index)
+                if nextIdx < latex.endIndex, latex[nextIdx] == "{",
+                   let outer = readBracedContent(startingAt: nextIdx) {
+                    let innerTrimmed = outer.content.trimmingCharacters(in: .whitespaces)
+                    if let cmd = textCommands.first(where: { innerTrimmed.hasPrefix($0 + "{") }),
+                       let openIdx = innerTrimmed.firstIndex(of: "{"),
+                       let innerEnd = innerTrimmed.lastIndex(of: "}"),
+                       innerEnd == innerTrimmed.index(before: innerTrimmed.endIndex) {
+                        let textBody = String(innerTrimmed[innerTrimmed.index(after: openIdx)..<innerEnd])
+                        if containsNonLatinMathText(textBody) {
+                            _ = cmd
+                            flushMath()
+                            tokens.append(.text(textBody, ch == "_" ? .subscriptText : .superscriptText))
+                            index = outer.after
+                            continue
+                        }
+                    } else if containsNonLatinMathText(innerTrimmed), !innerTrimmed.contains("\\") {
+                        flushMath()
+                        tokens.append(.text(innerTrimmed, ch == "_" ? .subscriptText : .superscriptText))
+                        index = outer.after
+                        continue
+                    }
+                }
+            }
+
+            // Handle top-level `\text{...}` containing CJK
+            if braceDepth == 0, ch == "\\" {
+                let tail = latex[index...]
+                if let cmd = textCommands.first(where: { tail.hasPrefix($0) }) {
+                    let afterCmd = latex.index(index, offsetBy: cmd.count)
+                    var bracePos = afterCmd
+                    while bracePos < latex.endIndex, latex[bracePos].isWhitespace {
+                        bracePos = latex.index(after: bracePos)
+                    }
+                    if let braced = readBracedContent(startingAt: bracePos),
+                       containsNonLatinMathText(braced.content) {
+                        flushMath()
+                        tokens.append(.text(braced.content, .normal))
+                        index = braced.after
+                        continue
+                    }
+                }
+            }
+
+            // Handle bare CJK scalar runs at top level
+            if braceDepth == 0, containsNonLatinMathText(String(ch)) {
+                flushMath()
+                var end = latex.index(after: index)
+                while end < latex.endIndex,
+                      containsNonLatinMathText(String(latex[end])) || latex[end] == " " {
+                    end = latex.index(after: end)
+                }
+                tokens.append(.text(String(latex[index..<end]), .normal))
+                index = end
+                continue
+            }
+
+            if ch == "\\" {
+                let nextIdx = latex.index(after: index)
+                if nextIdx < latex.endIndex {
+                    mathBuffer.append(ch)
+                    mathBuffer.append(latex[nextIdx])
+                    index = latex.index(after: nextIdx)
+                    continue
+                }
+            }
+            if ch == "{" { braceDepth += 1 }
+            else if ch == "}" { braceDepth = max(0, braceDepth - 1) }
+            mathBuffer.append(ch)
+            index = latex.index(after: index)
+        }
+        flushMath()
+        // If any math token still contains nested CJK (e.g. inside `\frac`), bail to fallback.
+        for token in tokens {
+            if case .math(let src) = token, containsNonLatinMathText(src) {
+                return nil
+            }
+        }
+        return tokens
+    }
+
+    private static func renderCompositeMathWithCJK(
+        latex: String,
+        display: Bool
+    ) -> (image: NSImage, baselineOffset: CGFloat)? {
+        guard let tokens = tokenizeCompositeLatex(latex), !tokens.isEmpty else {
+            return renderPlainFallbackMath(latex: latex, display: display)
+        }
+
+        struct RenderedPiece {
+            let draw: (CGPoint, CGFloat) -> Void
+            let width: CGFloat
+            let ascent: CGFloat
+            let descent: CGFloat
+        }
+
+        let baseFontSize: CGFloat = display ? 17.5 : 14.0
+        let scriptFontSize: CGFloat = display ? 12.5 : 10.5
+        let pieceInsets = MTEdgeInsets(top: 1, left: 0.5, bottom: 1, right: 0.5)
+        var pieces: [RenderedPiece] = []
+
+        for token in tokens {
+            switch token {
+            case .math(let fragment):
+                let trimmed = fragment.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty {
+                    let spaceWidth: CGFloat = display ? 5 : 3.5
+                    pieces.append(RenderedPiece(draw: { _, _ in }, width: spaceWidth, ascent: baseFontSize * 0.7, descent: baseFontSize * 0.2))
+                    continue
+                }
+                guard let rendered = renderPureSwiftMath(latex: fragment, display: display, customInsets: pieceInsets) else {
+                    return renderPlainFallbackMath(latex: latex, display: display)
+                }
+                let img = rendered.image
+                let baselineY = max(0, -rendered.baselineOffset)
+                let ascent = max(1, img.size.height - baselineY)
+                let descent = max(0, baselineY)
+                pieces.append(RenderedPiece(
+                    draw: { origin, baseline in
+                        let rect = CGRect(x: origin.x, y: baseline - descent, width: img.size.width, height: img.size.height)
+                        img.draw(in: rect)
+                    },
+                    width: img.size.width,
+                    ascent: ascent,
+                    descent: descent
+                ))
+            case .text(let text, let style):
+                let font: NSFont
+                let yShift: CGFloat
+                switch style {
+                case .normal:
+                    font = .systemFont(ofSize: baseFontSize, weight: .regular)
+                    yShift = 0
+                case .subscriptText:
+                    font = .systemFont(ofSize: scriptFontSize, weight: .regular)
+                    yShift = -baseFontSize * 0.22
+                case .superscriptText:
+                    font = .systemFont(ofSize: scriptFontSize, weight: .regular)
+                    yShift = baseFontSize * 0.36
+                }
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: NSColor.black
+                ]
+                let attrStr = NSAttributedString(string: text, attributes: attrs)
+                let bounds = attrStr.size()
+                let rawAscent = font.ascender
+                let rawDescent = abs(font.descender)
+                let ascent = max(1, rawAscent + yShift)
+                let descent = max(0, rawDescent - yShift)
+                let padX: CGFloat = style == .normal ? 2.0 : 1.0
+                pieces.append(RenderedPiece(
+                    draw: { origin, baseline in
+                        let drawY = baseline - rawDescent + yShift
+                        attrStr.draw(at: CGPoint(x: origin.x + padX, y: drawY))
+                    },
+                    width: ceil(bounds.width) + padX * 2,
+                    ascent: ascent,
+                    descent: descent
+                ))
+            }
+        }
+
+        let padH: CGFloat = display ? 4 : 1.5
+        let padV: CGFloat = display ? 4 : 1
+        let maxAscent = pieces.map(\.ascent).max() ?? baseFontSize
+        let maxDescent = pieces.map(\.descent).max() ?? 4
+        let totalWidth = max(1, ceil(pieces.reduce(0) { $0 + $1.width } + padH * 2))
+        let totalHeight = max(1, ceil(maxAscent + maxDescent + padV * 2))
+        let baselineY = maxDescent + padV
+
+        let capturedPieces = pieces
+        let composite = NSImage(size: NSSize(width: totalWidth, height: totalHeight), flipped: false) { _ in
+            var cursorX = padH
+            for piece in capturedPieces {
+                piece.draw(CGPoint(x: cursorX, y: 0), baselineY)
+                cursorX += piece.width
+            }
+            return true
+        }
+        composite.isTemplate = true
+        composite.accessibilityDescription = latex
+        return (composite, -baselineY)
+    }
+
+    private static func renderPlainFallbackMath(
+        latex: String,
+        display: Bool
+    ) -> (image: NSImage, baselineOffset: CGFloat)? {
+        let cleaned = latex
+            .replacingOccurrences(of: "\\text{", with: "")
+            .replacingOccurrences(of: "\\mathrm{", with: "")
+            .replacingOccurrences(of: "\\cdot", with: "·")
+            .replacingOccurrences(of: "\\times", with: "×")
+            .replacingOccurrences(of: "\\lambda", with: "λ")
+            .replacingOccurrences(of: "\\Delta", with: "Δ")
+            .replacingOccurrences(of: "\\approx", with: "≈")
+            .replacingOccurrences(of: "\\le", with: "≤")
+            .replacingOccurrences(of: "\\ge", with: "≥")
+            .replacingOccurrences(of: "{", with: "")
+            .replacingOccurrences(of: "}", with: "")
+        let font = NSFont.systemFont(ofSize: display ? 17.5 : 14.5, weight: .regular)
+        let attrStr = NSAttributedString(string: cleaned, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.black
+        ])
+        let size = attrStr.size()
+        let padH: CGFloat = display ? 4 : 2
+        let padV: CGFloat = display ? 4 : 1
+        let totalWidth = max(1, ceil(size.width + padH * 2))
+        let totalHeight = max(1, ceil(size.height + padV * 2))
+        let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight), flipped: false) { _ in
+            attrStr.draw(at: CGPoint(x: padH, y: padV))
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = latex
+        let baselineOffset = -(abs(font.descender) + padV)
         return (image, baselineOffset)
     }
 

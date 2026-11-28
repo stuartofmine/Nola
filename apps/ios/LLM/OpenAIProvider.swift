@@ -899,7 +899,7 @@ public final class OpenAIProvider: LLMClient, AgentPromptCacheIdentityClient, LL
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutInterval
-        request.httpBody = try redactedModelRequestBody(body, credential: config.apiKey)
+        request.httpBody = try redactedModelRequestBody(body, credential: config.apiKey, endpoint: request.url?.absoluteString ?? "")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
         if !config.apiKey.isEmpty {
@@ -2051,7 +2051,7 @@ extension OpenAIProvider {
         let data = try JSONSerialization.data(withJSONObject: body)
         var request = URLRequest(url: try responsesURL())
         request.httpMethod = "POST"
-        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey)
+        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey, endpoint: request.url?.absoluteString ?? "")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         if !config.apiKey.isEmpty {
@@ -2510,7 +2510,7 @@ extension OpenAIProvider {
         let data = try JSONSerialization.data(withJSONObject: body)
         var request = URLRequest(url: try anthropicURL())
         request.httpMethod = "POST"
-        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey)
+        request.httpBody = try redactedModelRequestBody(data, credential: config.apiKey, endpoint: request.url?.absoluteString ?? "")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

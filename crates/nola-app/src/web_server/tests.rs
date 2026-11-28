@@ -222,7 +222,8 @@ fn session_scoped_permission_grant_is_narrowly_scoped() {
     );
     assert!(pending.conversation_needs_response("conv-a"));
     assert!(!pending.conversation_needs_response("conv-b"));
-    assert!(pending.resolve_approval("req-1", true, "session"));
+    assert!(!pending.resolve_approval("conv-b", "req-1", true, "session"));
+    assert!(pending.resolve_approval("conv-a", "req-1", true, "session"));
     assert!(pending.has_session_grant("conv-a", "write_file", "path:src/main.rs"));
     assert!(!pending.has_session_grant("conv-a", "write_file", "path:src/other.rs"));
     assert!(!pending.has_session_grant("conv-b", "write_file", "path:src/main.rs"));
@@ -335,9 +336,14 @@ fn channel_reader_drop_cancels_on_disconnect_only() {
     let (_tx, rx) = mpsc::channel::<Vec<u8>>();
     let cancel = Arc::new(AtomicBool::new(false));
     {
-        let _reader = ChannelReader::with_cancel(rx, Arc::clone(&cancel));
+        let _reader = ChannelReader::for_chat(rx, Arc::clone(&cancel), false);
     }
     assert!(cancel.load(Ordering::SeqCst));
+
+    let (_paired_tx, paired_rx) = mpsc::channel();
+    let paired_cancel = Arc::new(AtomicBool::new(false));
+    drop(ChannelReader::for_chat(paired_rx, Arc::clone(&paired_cancel), true));
+    assert!(!paired_cancel.load(Ordering::SeqCst));
 
     // Draining to EOF keeps cancel = false
     let (tx2, rx2) = mpsc::channel::<Vec<u8>>();
@@ -1477,7 +1483,34 @@ fn web_server_pdf_resources_and_remote_host_contracts_work() {
         "taskId": "task-1"
     });
     assert!(is_paired_task_cancellation_body(&cancel_body));
-    let cancel_resp = handle_paired_task_cancellation(
+    let parent = Arc::new(AtomicBool::new(false));
+    let child = Arc::new(AtomicBool::new(false));
+    cancels.lock().unwrap().extend([
+        (conv_id.to_owned(), parent.clone()),
+        ("child-1".into(), child.clone()),
+    ]);
+    assert_eq!(
+        handle_paired_task_cancellation(
+            &store,
+            &suite,
+            &cancels,
+            "host-a",
+            conv_id,
+            None,
+            &cancel_body
+        )
+        .0,
+        404
+    );
+    suite
+        .upsert_record(
+            "runtime_task",
+            "task-1",
+            &json!({"parent_conversation_id": conv_id,
+        "parent_run_id": "run-1", "child_session_id": "child-1", "status": "running"}),
+        )
+        .unwrap();
+    let (status, cancel_resp) = handle_paired_task_cancellation(
         &store,
         &suite,
         &cancels,
@@ -1486,6 +1519,9 @@ fn web_server_pdf_resources_and_remote_host_contracts_work() {
         None,
         &cancel_body,
     );
+    assert_eq!(status, 200);
+    assert!(child.load(Ordering::Acquire));
+    assert!(!parent.load(Ordering::Acquire));
     assert_eq!(cancel_resp.as_object().unwrap().len(), 8);
     assert_eq!(cancel_resp["hostId"], "host-a");
     assert_eq!(cancel_resp["taskId"], "task-1");
@@ -1942,7 +1978,7 @@ fn web_workstream_b_paired_host_and_catalog_replace_http_contracts() {
     });
 
     let srv_handle = std::thread::spawn(move || {
-        for _ in 0..8 {
+        for _ in 0..10 {
             if let Ok(req) = server.recv() {
                 handle_http_request(req, Arc::clone(&state));
             }
@@ -2117,6 +2153,38 @@ fn web_workstream_b_paired_host_and_catalog_replace_http_contracts() {
     );
     assert_eq!(tcw["source_host_id"], host_id);
     assert!(tcw.get("result").is_some());
+
+    // Use the same opaque message id the Web conversation manager sends.
+    let anchor = store
+        .append_event(
+            conv_id,
+            "chat_user",
+            json!({"id":"draft-anchor","content":"retain"}),
+            1000,
+        )
+        .unwrap();
+    let reply = store
+        .append_event(conv_id, "chat_assistant", json!({"content":"remove"}), 1000)
+        .unwrap();
+    let path = format!("/api/chat/conversations/{conv_id}/truncate");
+    let invalid = client
+        .post(format!("{base}{path}"))
+        .bearer_auth("test-access-token")
+        .header("Origin", &base)
+        .json(&json!({"messageId":"unknown"}))
+        .send()
+        .unwrap();
+    assert_eq!(invalid.status(), 404);
+    assert_eq!(store.latest_event_sequence(conv_id).unwrap(), reply.seq);
+    let truncated = post_json(
+        &path,
+        json!({"messageId":"draft-anchor", "keepMessage":true}),
+    );
+    assert_eq!(truncated["deletedEvents"], 1);
+    assert!(store.latest_event_sequence(conv_id).unwrap() > reply.seq);
+    let retained = store.read_event_range(conv_id, anchor.seq, 10).unwrap();
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].seq, anchor.seq);
 
     srv_handle.join().unwrap();
 }

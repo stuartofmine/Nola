@@ -51,7 +51,7 @@ enum MacBackgroundSchedulerService {
                 UserDefaults.standard.set(identity, forKey: registrationIdentityKey)
                 record(.info, "Background scheduler registration refreshed")
             } catch {
-                record(.warn, "Background scheduler refresh failed", error: error)
+                record(Self.logLevel(for: error), "Background scheduler refresh failed", error: error)
             }
         case .notRegistered, .notFound:
             do {
@@ -59,7 +59,7 @@ enum MacBackgroundSchedulerService {
                 UserDefaults.standard.set(identity, forKey: registrationIdentityKey)
                 record(.info, "Background scheduler registered")
             } catch {
-                record(.warn, "Background scheduler registration failed", error: error)
+                record(Self.logLevel(for: error), "Background scheduler registration failed", error: error)
             }
         @unknown default:
             return
@@ -104,6 +104,19 @@ enum MacBackgroundSchedulerService {
             String(hostValues?.fileSize ?? 0),
             String(hostValues?.contentModificationDate?.timeIntervalSince1970 ?? 0),
         ].joined(separator: "|")
+    }
+
+    private static func logLevel(for error: Error) -> Logger.Level {
+        let nsError = error as NSError
+        // Local ad-hoc / unsigned development builds cannot register SMAppService
+        // launch agents (OSStatus -67056 / Codesigning failure loading plist).
+        if nsError.code == -67056
+            || nsError.localizedDescription.localizedCaseInsensitiveContains("Codesigning failure")
+            || nsError.localizedDescription.contains("-67056")
+        {
+            return .debug
+        }
+        return .warn
     }
 
     private static func record(

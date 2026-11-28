@@ -1610,6 +1610,7 @@ fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
     // 1. ModelCaller::call_cancellable exits cleanly on LlmError::Cancelled
     struct CancelAwareCaller {
         seen_cancel_flag: Mutex<bool>,
+        store: Store,
     }
     impl ModelCaller for CancelAwareCaller {
         fn call(
@@ -1631,6 +1632,25 @@ fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
         ) -> Result<NormalizedModelResponse, LlmError> {
             *self.seen_cancel_flag.lock().unwrap() =
                 call_params.cancel.is_some() && call_params.on_stream_reset.is_some();
+            self.store
+                .set_kv(
+                    "cancel_requested:sess_cancel",
+                    &json!({"requested_at_ms": nola_types::now_ms()}),
+                )
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !call_params
+                .cancel
+                .as_ref()
+                .unwrap()
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "host cancellation never reached the active call"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             Err(LlmError::Cancelled)
         }
     }
@@ -1640,6 +1660,7 @@ fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
     let store = Store::open_in_memory().unwrap();
     let cancel_caller = Arc::new(CancelAwareCaller {
         seen_cancel_flag: Mutex::new(false),
+        store: store.clone(),
     });
     let engine = AgentEngine::new(
         store.clone(),
@@ -1802,7 +1823,7 @@ fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
     assert_eq!(approved["status"], "approved");
     assert!(!crate::is_plan_mode(&store, session_id));
 
-    // 3. Durable permission grants persist on approval and reload on next run without re-asking!
+    // Only a distinct session decision survives a call or a restart.
     let approval_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let approval_calls_cb = Arc::clone(&approval_calls);
     let mw = crate::ToolExecutionMiddleware::new(
@@ -1823,6 +1844,15 @@ fn cancellation_fallbacks_code_mode_dispatcher_and_plan_mode_durable_grants() {
     );
     assert!(!out1.result.is_error);
     assert_eq!(approval_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let args = json!({"path": "approved.txt", "content": "v2"});
+    assert!(!mw.execute(&reg_std, &ctx, "write_file", args.clone()).result.is_error);
+    assert_eq!(approval_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let old = crate::DurablePermissionGrant::for_approval(Some("sess_grant_test".into()),
+        &ctx.workspace_root, "write_file", crate::policy::primary_resource_pattern("write_file", &args, &ctx.workspace_root));
+    store.put_module_record("permission_grant", &old.id, &old).unwrap();
+    assert!(crate::load_active_permission_grants(&store, "sess_grant_test", &ctx.workspace_root).is_empty());
+    crate::policy::persist_session_target_approval(&store, "sess_grant_test", &ctx.workspace_root, "write_file", &args).unwrap();
 
     // Reload grants into a fresh EffectivePolicy with NO approval callback -> must be Allowed!
     let mut reloaded_policy = EffectivePolicy::default();
@@ -2597,6 +2627,13 @@ fn resume_honors_permission_profile_upgrade_and_downgrade() {
     );
 
     // Turn 3: resumes switched back to Cautious with approval=None -> bash must be blocked again!
+    // Old v2 runs could copy one-time approvals into their saved effective policy.
+    let state_key = format!("session_state:{sid}");
+    let mut old_state = store.get_kv(&state_key).unwrap().unwrap();
+    let target = crate::policy::primary_resource_pattern("bash", &json!({"command":"echo SHOULD_ASK"}), dir.path());
+    let old_grant = crate::DurablePermissionGrant::for_approval(Some(sid.into()), dir.path(), "bash", target);
+    old_state["policy"]["rules"] = json!([old_grant.rule]);
+    store.set_kv(&state_key, &old_state).unwrap();
     let caller3 = Arc::new(ScriptedCaller::new(vec![
         NormalizedModelResponse {
             response_id: Some("r3a".into()),
@@ -2953,7 +2990,7 @@ fn real_scenario_five_turn_permission_matrix_on_same_session() {
     assert_eq!(deny_count.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(t1_events, vec![("t1_bash".into(), true)]);
 
-    // --- Turn 2: Cautious + approval=Allow -> safe bash executes & persists durable grant;
+    // --- Turn 2: Cautious + one-time approvals -> safe and sensitive commands execute;
     //     sensitive bash (`ls ~/.nola`, `sqlite3 State/nola-v4.db`) STILL asks & NEVER persists durable grant! ---
     let asked_cmds: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let asked_cmds_cb = Arc::clone(&asked_cmds);
@@ -3034,13 +3071,7 @@ fn real_scenario_five_turn_permission_matrix_on_same_session() {
     let grants = store
         .list_module_records::<serde_json::Value>("permission_grant")
         .unwrap_or_default();
-    assert_eq!(
-        grants.len(),
-        1,
-        "only safe bash may persist a durable permission_grant, sensitive commands must NOT: {grants:?}"
-    );
-    let grant_str = serde_json::to_string(&grants[0]).unwrap();
-    assert!(!grant_str.contains(".nola") && !grant_str.contains("nola-v4.db"));
+    assert!(grants.is_empty(), "One-time approvals must not create durable grants");
 
     // --- Turn 3: AllowAll + approval=None -> bash + write_file + edit_file ALL execute cleanly ---
     let caller3 = Arc::new(ScriptedCaller::new(vec![

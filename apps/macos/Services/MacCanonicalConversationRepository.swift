@@ -1989,9 +1989,9 @@ final class MacCanonicalConversationRepository {
             case let .error(value):
                 presentation.upsertStatus(
                     externalID: value.partID,
-                    title: value.displayKey,
-                    detail: value.code,
-                    state: value.recoverable ? .waiting : .failed
+                    title: String(localized: String.LocalizationValue(value.displayKey), table: "Chat"),
+                    detail: value.message ?? value.code,
+                    state: value.code == "run_cancelled" ? .cancelled : value.recoverable ? .waiting : .failed
                 )
             case .attachment, .uiSurface, .uiAction:
                 continue

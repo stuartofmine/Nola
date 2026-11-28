@@ -27,6 +27,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -148,6 +151,7 @@ class RealModelE2EAndroidTest {
             composeRule.onAllNodes(hasTestTag("chat.composer.input") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
         }
 
+        val priorSessions = runtime.listConversations().map { it.id }.toSet()
         val expectedMarker = "OK_ANDROID_REAL_MODEL"
         val prompt = "请用一句简短的中文回复，并在结尾准确附上 $expectedMarker，不要调用任何工具。"
         composeRule.onNodeWithTag("chat.composer.input").performProductInput(prompt)
@@ -157,41 +161,7 @@ class RealModelE2EAndroidTest {
         }
         composeRule.onNode(sendMatcher).performProductClick()
 
-        // Drive Compose frames explicitly during streaming so active progress animations cannot deadlock waitForIdle.
-        var renderedReply = ""
-        var composerIdle = false
-        val previousAutoAdvance = composeRule.mainClock.autoAdvance
-        composeRule.mainClock.autoAdvance = false
-        try {
-            val deadline = SystemClock.elapsedRealtime() + 90_000L
-            while (SystemClock.elapsedRealtime() < deadline) {
-                composeRule.mainClock.advanceTimeBy(64)
-                val streamingNodes = composeRule
-                    .onAllNodesWithTag(CHAT_STREAMING_MARKDOWN_TEST_TAG, useUnmergedTree = true)
-                    .fetchSemanticsNodes()
-                val source = streamingNodes
-                    .mapNotNull {
-                        it.config.getOrNull(ChatStreamingMarkdownSourceKey)
-                            ?: it.config.getOrNull(StreamingMarkdownPresentedTextKey)
-                    }
-                    .maxByOrNull(String::length)
-                    .orEmpty()
-                if (source.length >= renderedReply.length) renderedReply = source
-                composerIdle = composeRule
-                    .onAllNodesWithTag("chat.composer", useUnmergedTree = true)
-                    .fetchSemanticsNodes()
-                    .any { it.boundsInRoot.width > 0f && it.config.getOrNull(ChatComposerGenerationActiveKey) == false }
-                if (renderedReply.contains(expectedMarker) && composerIdle) break
-                SystemClock.sleep(100)
-            }
-            composeRule.mainClock.advanceTimeBy(256)
-        } finally {
-            composeRule.mainClock.autoAdvance = previousAutoAdvance
-        }
-        assertTrue(
-            "Expected real LAN model reply containing $expectedMarker (idle=$composerIdle), got: $renderedReply",
-            renderedReply.contains(expectedMarker),
-        )
+        awaitRealReply(expectedMarker)
         assertTrue(
             "Unexpected error recovery banner after real-model reply",
             composeRule.onAllNodesWithText(context.getString(R.string.chat_unknown_check), useUnmergedTree = true)
@@ -203,6 +173,35 @@ class RealModelE2EAndroidTest {
                 .fetchSemanticsNodes().isEmpty(),
         )
         captureScreenshot("android-02-chat-real-reply.png")
+
+        val owner = runtime.listConversations().single { it.id !in priorSessions }.id
+        val originalUser = requireNotNull(runtime.loadConversation(owner)).messages.single { it.role == "user" }
+        val laterMarker = "ANDROID_LATER_TURN_429"
+        composeRule.onNodeWithTag("chat.composer.input").performProductInput("Reply exactly with $laterMarker.")
+        composeRule.waitUntil(15_000) {
+            composeRule.onAllNodes(sendMatcher and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(sendMatcher).performProductClick()
+        awaitRealReply(laterMarker)
+        assertEquals(4, requireNotNull(runtime.loadConversation(owner)).messages.size)
+        val editOriginal = hasTestTag("chat.message.edit." + originalUser.id)
+        composeRule.onNodeWithTag("chat-transcript-list").performTouchInput { swipeDown() }
+        composeRule.waitForIdle()
+        captureScreenshot("android-earlier-turn.png")
+        composeRule.onNode(editOriginal).performProductClick()
+        val editedMarker = "ANDROID_EDIT_RETURN_681"
+        val editedPrompt = "Reply exactly with $editedMarker."
+        val editor = hasTestTag("chat.message.editor.input") and isEnabled()
+        composeRule.waitUntil(15_000) { composeRule.onAllNodes(editor).fetchSemanticsNodes().size == 1 }
+        composeRule.onNode(editor).performTextReplacement(editedPrompt)
+        composeRule.onNodeWithTag("chat.message.editor.submit").performProductClick()
+        awaitRealReply(editedMarker)
+        val revised = requireNotNull(runtime.loadConversation(owner)).messages
+        assertEquals(listOf("user", "assistant"), revised.map { it.role })
+        assertEquals(editedPrompt, revised.first().text)
+        assertTrue(revised.last().text.contains(editedMarker))
+        assertEquals(setOf(owner), runtime.listConversations().map { it.id }.toSet() - priorSessions)
+        captureScreenshot("android-edited-reply.png")
 
         // Leave conversation detail if phone layout hides bottom navigation inside chat.
         if (composeRule.onAllNodes(primaryNavigation).fetchSemanticsNodes().isEmpty()) {
@@ -511,6 +510,41 @@ class RealModelE2EAndroidTest {
             composeRule.mainClock.autoAdvance = previous
         }
         return this
+    }
+
+    private fun awaitRealReply(expectedMarker: String) {
+        // Drive Compose frames explicitly during streaming so active progress animations cannot deadlock waitForIdle.
+        var renderedReply = ""
+        var composerIdle = false
+        val previousAutoAdvance = composeRule.mainClock.autoAdvance
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val deadline = SystemClock.elapsedRealtime() + 90_000L
+            while (SystemClock.elapsedRealtime() < deadline) {
+                composeRule.mainClock.advanceTimeBy(64)
+                val streamingNodes = composeRule
+                    .onAllNodesWithTag(CHAT_STREAMING_MARKDOWN_TEST_TAG, useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                val sources = streamingNodes.mapNotNull {
+                    it.config.getOrNull(ChatStreamingMarkdownSourceKey)
+                        ?: it.config.getOrNull(StreamingMarkdownPresentedTextKey)
+                }
+                renderedReply = sources.firstOrNull { expectedMarker in it } ?: sources.lastOrNull().orEmpty()
+                composerIdle = composeRule
+                    .onAllNodesWithTag("chat.composer", useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .any { it.boundsInRoot.width > 0f && it.config.getOrNull(ChatComposerGenerationActiveKey) == false }
+                if (renderedReply.contains(expectedMarker) && composerIdle) break
+                SystemClock.sleep(100)
+            }
+            composeRule.mainClock.advanceTimeBy(256)
+        } finally {
+            composeRule.mainClock.autoAdvance = previousAutoAdvance
+        }
+        assertTrue(
+            "Expected real LAN model reply containing $expectedMarker (idle=$composerIdle), got: $renderedReply",
+            renderedReply.contains(expectedMarker) && composerIdle,
+        )
     }
 
     private fun SemanticsNodeInteraction.performProductInput(text: String): SemanticsNodeInteraction {

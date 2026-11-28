@@ -118,6 +118,11 @@ char *nola_core_redact_model_request_json(
     size_t credential_len
 );
 
+char *nola_core_redact_model_request_for_endpoint(
+    const uint8_t *input, size_t size, const uint8_t *credential, size_t credential_len,
+    const char *endpoint
+);
+
 /* Software update manifest check */
 char *nola_core_software_update_json(const uint8_t *input, size_t size);
 

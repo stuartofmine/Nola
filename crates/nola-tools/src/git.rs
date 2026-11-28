@@ -88,7 +88,7 @@ impl ToolHandler for GitTool {
             "diff" => {
                 let staged = args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
                 let stat_only = args.get("stat_only").and_then(|v| v.as_bool()).unwrap_or(false);
-                let mut cmd_args: Vec<&str> = vec!["diff"];
+                let mut cmd_args: Vec<&str> = vec!["diff", "--no-ext-diff", "--no-textconv"];
                 if staged {
                     cmd_args.push("--cached");
                 }

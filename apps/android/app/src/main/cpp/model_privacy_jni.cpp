@@ -5,7 +5,7 @@
 #include "nola_core.h"
 
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_com_nola_llm_provider_ModelRequestPrivacy_redactJson(JNIEnv* env, jobject, jbyteArray input, jbyteArray credential) {
+Java_com_nola_llm_provider_ModelRequestPrivacy_redactJson(JNIEnv* env, jobject, jbyteArray input, jbyteArray credential, jstring endpoint) {
     const auto length = env->GetArrayLength(input);
     const auto keyLength = env->GetArrayLength(credential);
     jbyte* bytes = env->GetByteArrayElements(input, nullptr);
@@ -15,9 +15,11 @@ Java_com_nola_llm_provider_ModelRequestPrivacy_redactJson(JNIEnv* env, jobject, 
         env->ReleaseByteArrayElements(input, bytes, JNI_ABORT);
         return nullptr;
     }
-    char* result = nola_core_redact_model_request_json(
+    const char* address = env->GetStringUTFChars(endpoint, nullptr);
+    char* result = address ? nola_core_redact_model_request_for_endpoint(
         reinterpret_cast<const unsigned char*>(bytes), length,
-        reinterpret_cast<const unsigned char*>(key), keyLength);
+        reinterpret_cast<const unsigned char*>(key), keyLength, address) : nullptr;
+    if (address) env->ReleaseStringUTFChars(endpoint, address);
     if (key) env->ReleaseByteArrayElements(credential, key, JNI_ABORT);
     env->ReleaseByteArrayElements(input, bytes, JNI_ABORT);
     if (!result) return nullptr;

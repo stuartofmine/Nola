@@ -8,6 +8,8 @@ Core evaluates allow, ask or deny under the cautious or allow_all application po
 
 Approval binds the concrete call, resource, scope and policy in force. Resolve an OS denial on the device performing the operation. After a policy change, reconcile the outstanding request against its identity and the new policy.
 
+“Allow once” expires after the current tool call. “Allow for conversation” applies to the same tool and target within that conversation. Earlier v2 session records can lack the chosen scope. On upgrade, Nola asks again when it encounters such a record. The original records are preserved and the SQLite format stays at version 2.
+
 ## Failure and verification
 
 Test a denied permission, a revoked grant, an obsolete approval and a tool unavailable on the executing Host. Show the user which resource was affected and where they can act. A UI control cannot grant a system privilege.

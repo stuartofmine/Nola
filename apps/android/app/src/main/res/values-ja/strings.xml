@@ -1500,4 +1500,6 @@
     <string name="chat_v2_workspace_review_files">ワークスペースファイル</string>
     <string name="chat_v2_workspace_review_truncated">プレビューのため出力を省略しました</string>
     <string name="chat_v2_edit_resend_failed">メッセージを編集して再送信できませんでした</string>
+    <string name="chat_missing_host_history">ペアリング済みのホストにこの会話が見つかりません。ホストで元の会話を開くか、ここで新しい会話を開始してください。</string>
+    <string name="chat_edit_source_changed">会話が更新されました。会話を開き直してから、このメッセージを編集してください。</string>
 </resources>

@@ -548,6 +548,7 @@ struct MacComposerView: View {
     @State private var dictationConversationID: String?
     @State private var attachmentThumbnails: [MacAttachment.ID: NSImage] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.macOpenFileReference) private var openFileReference
 
     var body: some View {
         VStack(spacing: 6) {
@@ -725,7 +726,7 @@ struct MacComposerView: View {
     private func attachmentChip(_ attachment: MacAttachment) -> some View {
         HStack(spacing: 7) {
             Button {
-                MacQuickLookController.shared.preview([attachment.url])
+                openFileReference(.init(url: attachment.url, line: nil, column: nil))
             } label: {
                 HStack(spacing: 7) {
                     if let image = attachmentThumbnails[attachment.id] {
@@ -784,7 +785,7 @@ struct MacComposerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(attachment.name), \(attachmentAccessibilityStatus(attachment))")
         .contextMenu {
-            Button(String(localized: "Quick Look")) { MacQuickLookController.shared.preview([attachment.url]) }
+            Button(String(localized: "Preview")) { openFileReference(.init(url: attachment.url, line: nil, column: nil)) }
             Button(String(localized: "Reveal in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([attachment.url]) }
             Button(String(localized: "Open with Default App")) { NSWorkspace.shared.open(attachment.url) }
             Button(String(localized: "Copy Path")) {

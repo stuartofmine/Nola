@@ -2,6 +2,9 @@
 //! SQLite WAL + FTS5 unified store with per-scope event retention,
 //! atomic `VACUUM INTO` backup, and generic typed business-module CRUD.
 
+mod session_history;
+pub use session_history::HistoryBoundary;
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,6 +43,12 @@ pub enum StoreError {
     IncompatibleSchema(String),
     #[error("store error: {0}")]
     Other(String),
+}
+
+impl StoreError {
+    pub fn is_missing_row(&self) -> bool {
+        matches!(self, Self::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+    }
 }
 
 /// Sync outbox/change-log record persisted in `sync_changes`.
@@ -202,20 +211,14 @@ impl Store {
             ));
         }
         if app_id == 0 {
-            let table_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            let occupied: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*')",
                 [],
-                |r| r.get(0),
+                |row| row.get(0),
             )?;
-            let has_sessions: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
-                [],
-                |r| r.get(0),
-            )?;
-            if table_count > 0 && has_sessions == 0 {
+            if occupied || user_ver != 0 {
                 return Err(StoreError::IncompatibleSchema(
-                    "refusing to open non-Nola SQLite database (missing 'sessions' table and application_id)"
-                        .into(),
+                    "refusing to initialize an unrecognized SQLite database".into(),
                 ));
             }
         }
@@ -225,6 +228,7 @@ impl Store {
              PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;
              PRAGMA foreign_keys = ON;
+             BEGIN IMMEDIATE;
              PRAGMA application_id = {NOLA_SQLITE_APPLICATION_ID};
              PRAGMA user_version = {NOLA_SQLITE_USER_VERSION};
 
@@ -387,7 +391,8 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_code_edges_to
                  ON code_edges (workspace_root, to_symbol);
              CREATE INDEX IF NOT EXISTS idx_code_edges_file
-                 ON code_edges (workspace_root, rel_path);"
+                 ON code_edges (workspace_root, rel_path);
+             COMMIT;"
         );
         conn.execute_batch(&schema_batch)?;
         Ok(Self {
@@ -536,14 +541,15 @@ impl Store {
         let state_key = format!("session_state:{id}");
         let todos_key = format!("todos:{id}");
         let plan_key = format!("plan:{id}");
+        let host_session_key = format!("product_setting:web_host_chat_session/{id}");
         self.run_write_tx(|tx| {
             tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
             tx.execute("DELETE FROM events WHERE scope = ?1", params![id])?;
             tx.execute("DELETE FROM events_fts WHERE scope_id = ?1", params![id])?;
             tx.execute("DELETE FROM event_watermarks WHERE scope = ?1", params![id])?;
             tx.execute(
-                "DELETE FROM kv WHERE key IN (?1, ?2, ?3)",
-                params![state_key, todos_key, plan_key],
+                "DELETE FROM kv WHERE key IN (?1, ?2, ?3, ?4)",
+                params![state_key, todos_key, plan_key, host_session_key],
             )?;
             Ok(())
         })
@@ -616,43 +622,6 @@ impl Store {
                 payload,
                 created_at_ms: ts,
             })
-        })
-    }
-
-    /// Delete events at or after `from_seq` within `scope` (for Edit & Resend / Regenerate).
-    pub fn truncate_events_from(&self, scope: &str, from_seq: i64) -> Result<usize, StoreError> {
-        self.run_write_tx(|tx| {
-            let deleted = tx.execute(
-                "DELETE FROM events WHERE scope = ?1 AND seq >= ?2",
-                params![scope, from_seq],
-            )?;
-            tx.execute(
-                "DELETE FROM events_fts WHERE scope_id = ?1 AND CAST(seq AS INTEGER) >= ?2",
-                params![scope, from_seq],
-            )?;
-            let new_max: i64 = tx
-                .query_row(
-                    "SELECT COALESCE(MAX(seq), 0) FROM events WHERE scope = ?1",
-                    params![scope],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-            let new_min: i64 = tx
-                .query_row(
-                    "SELECT COALESCE(MIN(seq), 1) FROM events WHERE scope = ?1",
-                    params![scope],
-                    |r| r.get(0),
-                )
-                .unwrap_or(1);
-            tx.execute(
-                "INSERT INTO event_watermarks (scope, min_retained_seq, max_seq)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(scope) DO UPDATE SET
-                   min_retained_seq = excluded.min_retained_seq,
-                   max_seq = excluded.max_seq",
-                params![scope, new_min, new_max],
-            )?;
-            Ok(deleted)
         })
     }
 
@@ -777,6 +746,19 @@ impl Store {
                 });
             }
             Ok(out)
+        })
+    }
+
+    pub fn latest_event_sequence(&self, scope: &str) -> Result<i64, StoreError> {
+        self.with_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT max_seq FROM event_watermarks WHERE scope=?1",
+                    [scope],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(0))
         })
     }
 
@@ -1049,6 +1031,18 @@ impl Store {
         })
     }
 
+    /// Consume an observed value without deleting a newer write from another process.
+    pub fn delete_kv_if_unchanged(&self, key: &str, expected: &Value) -> Result<bool, StoreError> {
+        let raw = serde_json::to_string(expected)?;
+        self.with_write_conn(|conn| {
+            let removed = conn.execute(
+                "DELETE FROM kv WHERE key=?1 AND value_json=?2",
+                params![key, raw],
+            )?;
+            Ok(removed > 0)
+        })
+    }
+
     pub fn delete_kv(&self, key: &str) -> Result<bool, StoreError> {
         self.with_write_conn(|conn| {
             let affected = conn.execute("DELETE FROM kv WHERE key = ?1", params![key])?;
@@ -1110,6 +1104,35 @@ impl Store {
         })
     }
 
+    /// Read, check and update one module record under the same SQLite writer lock.
+    /// Returning false leaves the record untouched and yields None.
+    pub fn update_module_record<T: Serialize + DeserializeOwned>(
+        &self,
+        kind: &str,
+        id: &str,
+        update: impl FnOnce(&mut T) -> bool,
+    ) -> Result<Option<T>, StoreError> {
+        self.run_write_tx(|tx| {
+            let raw: Option<String> = tx
+                .query_row(
+                    "SELECT json FROM module_records WHERE kind=?1 AND id=?2",
+                    params![kind, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(raw) = raw else { return Ok(None) };
+            let mut record = serde_json::from_str(&raw)?;
+            if !update(&mut record) {
+                return Ok(None);
+            }
+            tx.execute(
+                "UPDATE module_records SET json=?3, updated_at_ms=?4 WHERE kind=?1 AND id=?2",
+                params![kind, id, serde_json::to_string(&record)?, now_ms()],
+            )?;
+            Ok(Some(record))
+        })
+    }
+
     pub fn get_module_record<T: DeserializeOwned>(
         &self,
         kind: &str,
@@ -1155,6 +1178,53 @@ impl Store {
         })
     }
 
+    /// Indexed B-tree range scan on `PRIMARY KEY (kind, id)` for records whose `id` starts with `id_prefix`.
+    pub fn list_module_records_with_prefix<T: DeserializeOwned>(
+        &self,
+        kind: &str,
+        id_prefix: &str,
+    ) -> Result<Vec<T>, StoreError> {
+        if id_prefix.is_empty() {
+            return self.list_module_records(kind);
+        }
+        let upper = next_prefix_upper_bound(id_prefix);
+        self.with_conn(|conn| {
+            let rows: Vec<(String, String)> = if let Some(ref hi) = upper {
+                let mut stmt = conn.prepare(
+                    "SELECT id, json FROM module_records WHERE kind = ?1 AND id >= ?2 AND id < ?3 ORDER BY id ASC",
+                )?;
+                let collected = stmt
+                    .query_map(params![kind, id_prefix, hi], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                collected
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT id, json FROM module_records WHERE kind = ?1 AND id >= ?2 ORDER BY id ASC",
+                )?;
+                let collected = stmt
+                    .query_map(params![kind, id_prefix], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                collected
+            };
+            let mut out = Vec::with_capacity(rows.len());
+            for (id, raw) in rows {
+                match serde_json::from_str::<T>(&raw) {
+                    Ok(rec) => out.push(rec),
+                    Err(e) => {
+                        eprintln!(
+                            "nola-store: skipping incompatible module_record kind='{kind}' id='{id}': {e}"
+                        );
+                    }
+                }
+            }
+            Ok(out)
+        })
+    }
+
     pub fn delete_module_record(&self, kind: &str, id: &str) -> Result<bool, StoreError> {
         self.with_write_conn(|conn| {
             let n = conn.execute(
@@ -1164,6 +1234,23 @@ impl Store {
             Ok(n > 0)
         })
     }
+}
+
+fn next_prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut bytes = prefix.as_bytes().to_vec();
+    while let Some(last) = bytes.pop() {
+        if last < 0xFF {
+            bytes.push(last + 1);
+            if let Ok(s) = String::from_utf8(bytes.clone()) {
+                return Some(s);
+            }
+            bytes.pop();
+        }
+    }
+    None
+}
+
+impl Store {
 
     // --- Sync Engine (Changes & Peer Cursors) ---
 
@@ -1867,7 +1954,7 @@ impl Store {
                 let v: i64 = r.get(0)?;
                 Ok(v as u32)
             })?;
-            if app_id != 0 && app_id != NOLA_SQLITE_APPLICATION_ID {
+            if app_id != NOLA_SQLITE_APPLICATION_ID {
                 return Err(StoreError::IncompatibleSchema(format!(
                     "backup has foreign application_id 0x{app_id:08X}"
                 )));
@@ -2125,23 +2212,23 @@ mod tests {
         }
         assert!(Store::open(&foreign_path).is_err());
 
-        // Tolerate legacy v2 database with application_id == 0 when sessions table exists
-        let legacy_path = dir.path().join("legacy.db");
-        {
-            let conn = Connection::open(&legacy_path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_root TEXT NOT NULL, model_connection TEXT, model_id TEXT, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);",
-            )
+        // An unmarked database belongs to its owner, even when a table name matches.
+        let unmarked = dir.path().join("unmarked.db");
+        let conn = Connection::open(&unmarked).unwrap();
+        conn.execute_batch("CREATE TABLE sessions (id INTEGER); INSERT INTO sessions VALUES (42);")
             .unwrap();
+        assert!(Store::open(&unmarked).is_err());
+        for query in ["PRAGMA application_id", "PRAGMA user_version"] {
+            assert_eq!(
+                conn.query_row(query, [], |r| r.get::<_, i64>(0)).unwrap(),
+                0
+            );
         }
-        let legacy_store = Store::open(&legacy_path).unwrap();
-        legacy_store
-            .with_conn(|conn| {
-                let app_id: i64 = conn.query_row("PRAGMA application_id;", [], |r| r.get(0))?;
-                assert_eq!(app_id as u32, NOLA_SQLITE_APPLICATION_ID);
-                Ok(())
-            })
-            .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT id FROM sessions", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
 
         // Backup & validated restore_from_backup
         let backup_path = dir.path().join("snap.db");
@@ -2217,6 +2304,10 @@ mod tests {
         store.set_kv("todos:s1", &json!({"todos": []})).unwrap();
         store.set_kv("plan:s1", &json!({"title": "p"})).unwrap();
 
+        let host_reference = "product_setting:web_host_chat_session/";
+        for id in ["s1", "s2"] {
+            store.set_kv(&format!("{host_reference}{id}"), &json!({"preview": id})).unwrap();
+        }
         let ev = store.append_event("s1", "msg", json!({"x": 1}), 10).unwrap();
         let sess = store.get_session("s1").unwrap().unwrap();
         assert_eq!(sess.updated_at_ms, ev.created_at_ms);
@@ -2227,6 +2318,8 @@ mod tests {
         assert!(store.get_kv("session_state:s1").unwrap().is_none());
         assert!(store.get_kv("todos:s1").unwrap().is_none());
         assert!(store.get_kv("plan:s1").unwrap().is_none());
+        assert!(store.get_kv(&format!("{host_reference}s1")).unwrap().is_none());
+        assert_eq!(store.get_kv(&format!("{host_reference}s2")).unwrap(), Some(json!({"preview": "s2"})));
 
         // CJK LIKE fallback properly escapes backslash before % and _
         store
@@ -2383,6 +2476,22 @@ mod tests {
         // Truncation cleans events_fts
         let removed = store.truncate_events_from("s1", e3.seq).unwrap();
         assert_eq!(removed, 1);
+        let reset = store.latest_event_sequence("s1").unwrap();
+        assert!(matches!(
+            store.events_after("s1", e3.seq, 10).unwrap(),
+            EventPage::ResyncRequired { latest_seq, .. } if latest_seq == reset
+        ));
+        let EventPage::Events(prefix) = store.events_after("s1", 0, 10).unwrap() else {
+            panic!("the retained prefix must remain readable");
+        };
+        assert_eq!(prefix.last().unwrap().seq, e2.seq);
+        let replacement = store.append_event("s1", "chat_user", json!({"text":"replacement"}), 10).unwrap();
+        let EventPage::Events(delta) = store.events_after("s1", reset, 10).unwrap() else {
+            panic!("a refreshed cursor must receive the replacement");
+        };
+        assert_eq!(delta.len(), 1);
+        assert!(replacement.seq > e3.seq);
+        assert_eq!(delta[0].seq, replacement.seq);
         assert!(store
             .search_events_fts(Some("s1"), "truncate cleanup", 10)
             .unwrap()

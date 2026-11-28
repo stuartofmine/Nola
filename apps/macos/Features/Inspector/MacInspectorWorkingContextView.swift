@@ -11,6 +11,7 @@ struct MacInspectorWorkingContextView: View {
     var resourcesOnly = false
     var canReadLocalFiles = true
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.macOpenFileReference) private var openFileReference
     @State private var displayedMemoryDefault: Bool?
     @State private var displayedRetrievalDefault: Bool?
 
@@ -44,7 +45,7 @@ struct MacInspectorWorkingContextView: View {
             if !model.attachments.isEmpty {
                 ForEach(model.attachments) { attachment in
                     Button {
-                        MacQuickLookController.shared.preview([attachment.url])
+                        openFileReference(.init(url: attachment.url, line: nil, column: nil))
                     } label: {
                         MacInspectorRow(
                             symbol: attachment.status == .failed ? "exclamationmark.doc" : "doc",
@@ -61,7 +62,7 @@ struct MacInspectorWorkingContextView: View {
                 ForEach(conversationAttachments) { attachment in
                     if allowsLocalFileActions {
                         Button {
-                            MacQuickLookController.shared.preview([attachment.url])
+                            openFileReference(.init(url: attachment.url, line: nil, column: nil))
                         } label: {
                             MacInspectorRow(
                                 symbol: "paperclip",
@@ -72,8 +73,8 @@ struct MacInspectorWorkingContextView: View {
                         .buttonStyle(.plain)
                         .help(attachment.url.path)
                         .contextMenu {
-                            Button(String(localized: "Quick Look")) {
-                                MacQuickLookController.shared.preview([attachment.url])
+                            Button(String(localized: "Preview")) {
+                                openFileReference(.init(url: attachment.url, line: nil, column: nil))
                             }
                             Button(String(localized: "Reveal in Finder")) {
                                 NSWorkspace.shared.activateFileViewerSelecting([attachment.url])

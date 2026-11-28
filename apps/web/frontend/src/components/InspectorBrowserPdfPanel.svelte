@@ -13,16 +13,18 @@
         type V2BrowserState,
         type V2Message,
     } from '../lib/v2Chat';
-    import ChatTextReaderDialog, { type TextReaderSnapshot } from './ChatTextReaderDialog.svelte';
+    import type { InspectorPreviewItem } from '../lib/inspectorPreview';
 
     let {
         conversationId,
         messages,
         refreshToken = 0,
+        onpreview,
     }: {
         conversationId: string;
         messages: V2Message[];
         refreshToken?: number;
+        onpreview?: (item: InspectorPreviewItem) => void;
     } = $props();
 
     let browserState = $state<V2BrowserState>({
@@ -35,7 +37,6 @@
     let loading = $state(false);
     let error = $state('');
     let previewExpanded = $state(false);
-    let readerSnapshot = $state<TextReaderSnapshot | null>(null);
     let disposed = false;
     let controller: AbortController | null = null;
 
@@ -215,9 +216,20 @@
                                 <span class="bp-muted">{formatSize(pdf.byteCount)}</span>
                             </div>
                             <div class="bp-actions">
-                                <a class="bp-link-btn" href={url} target="_blank" rel="noopener noreferrer">
-                                    {t($locale, 'chatResource.openSeparate')}
-                                </a>
+                                <button
+                                    type="button"
+                                    class="bp-btn"
+                                    onclick={() =>
+                                        onpreview?.({
+                                            title: pdf.displayName,
+                                            subtitle: formatSize(pdf.byteCount),
+                                            kind: 'pdf',
+                                            mimeType: 'application/pdf',
+                                            pdfUrl: url,
+                                        })}
+                                >
+                                    {t($locale, 'chatResource.title')}
+                                </button>
                                 <a class="bp-link-btn" href={url} download={pdf.displayName}>
                                     {t($locale, 'chatResource.download')}
                                 </a>
@@ -242,9 +254,11 @@
                                         type="button"
                                         class="bp-btn"
                                         onclick={() =>
-                                            (readerSnapshot = {
+                                            onpreview?.({
                                                 title: att.name,
                                                 subtitle: att.mimeType,
+                                                kind: 'text',
+                                                mimeType: att.mimeType,
                                                 text: att.text ?? '',
                                             })}
                                     >
@@ -259,10 +273,6 @@
         {/if}
     </section>
 </div>
-
-{#if readerSnapshot}
-    <ChatTextReaderDialog snapshot={readerSnapshot} onclose={() => (readerSnapshot = null)} />
-{/if}
 
 <style>
     .browser-pdf-panel {

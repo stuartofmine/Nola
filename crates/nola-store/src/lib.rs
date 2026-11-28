@@ -8,7 +8,7 @@ pub mod vault;
 
 pub use db::{
     CodeEdgeRow, CodeFileRow, CodeIndexStats, CodeSymbolRow, DocChunkHit, DocChunkRecord,
-    EventPage, Store, StoreError, StoredEvent, SyncChangeRecord, DEFAULT_MAX_EVENTS_PER_SCOPE,
+    EventPage, HistoryBoundary, Store, StoreError, StoredEvent, SyncChangeRecord, DEFAULT_MAX_EVENTS_PER_SCOPE,
     NOLA_SQLITE_APPLICATION_ID, NOLA_SQLITE_USER_VERSION,
 };
 pub use service_lock::{

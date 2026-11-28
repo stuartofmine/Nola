@@ -176,6 +176,25 @@ class WebHostApiServiceImpl @Inject constructor(
             ?: error("WebHost v2 returned no conversationId")
     }
 
+    override suspend fun v2ChatHistory(
+        hostBaseUrl: String, token: String, localId: String, remoteId: String, expectedHostId: String,
+        pinnedCertificateSha256: String, checkExists: Boolean,
+    ): WebHostChatHistory? {
+        val path = "chat/conversations/" + java.net.URLEncoder.encode(remoteId, "UTF-8")
+        if (checkExists) {
+            try {
+                getV2Json(hostBaseUrl, token, "$path/configuration", pinnedCertificateSha256, onRoute = {})
+            } catch (failure: WebHostStatusException) {
+                if (failure.statusCode == 404) return null
+                throw failure
+            }
+        }
+        val progress = getV2Json(hostBaseUrl, token, "$path/progress", pinnedCertificateSha256)
+        val body = buildJsonObject { put("operation", "history"); put("expected_host_id", expectedHostId) }
+        val history = postV2Json(hostBaseUrl, token, "$path/messages", body, pinnedCertificateSha256)
+        return decodeWebHostChatHistory(localId, remoteId, expectedHostId, progress, history)
+    }
+
     override suspend fun v2DeleteConversation(
         hostBaseUrl: String,
         token: String,

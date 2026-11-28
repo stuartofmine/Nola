@@ -93,6 +93,7 @@ struct MacMessageView: View {
     }
     @State private var attachmentOpenError: String?
     @Environment(\.macMessageEditAction) private var editMessage
+    @Environment(\.macOpenFileReference) private var openFileReference
     @Environment(\.macTranscriptReadOnly) private var transcriptReadOnly
     @Environment(\.openURL) private var openURL
     @Environment(\.uiSurfaceContext) private var messageSourceContext
@@ -137,7 +138,15 @@ struct MacMessageView: View {
 
     private var hasAssistantResponse: Bool {
         if message.journalReference != nil { return true }
-        if let canonical = message.canonicalPresentation, !canonical.message.parts.isEmpty { return true }
+        if let canonical = message.canonicalPresentation, !canonical.message.parts.isEmpty {
+            // The terminal card already shows this error and its full detail.
+            // Other parts (including a partial answer) still render normally.
+            if showsAssistantFailureFallback, canonical.message.parts.allSatisfy({
+                if case .error = $0 { return true }
+                return false
+            }) { return false }
+            return true
+        }
         if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
@@ -445,7 +454,7 @@ struct MacMessageView: View {
                             }
                             .contextMenu {
                                 if let attachmentURL {
-                                    Button(String(localized: "Quick Look")) {
+                                    Button(String(localized: "Preview")) {
                                         openAttachments([attachmentURL])
                                     }
                                     if attachmentURL.isFileURL {
@@ -556,7 +565,7 @@ struct MacMessageView: View {
         .accessibilityAction(named: "Copy") {
             if message.role != .assistant || assistantOutputIsComplete { copyMessage() }
         }
-        .accessibilityAction(named: "Quick Look") {
+        .accessibilityAction(named: "Preview") {
             openAttachments(uncoveredLocalAttachmentURLs)
         }
         .contextMenu {
@@ -574,7 +583,7 @@ struct MacMessageView: View {
             .disabled(message.role == .assistant && !assistantOutputIsComplete)
             if !uncoveredLocalAttachmentURLs.isEmpty {
                 Divider()
-                Button("Quick Look") {
+                Button(String(localized: "Preview")) {
                     openAttachments(uncoveredLocalAttachmentURLs)
                 }
                 Button("Reveal in Finder") {
@@ -719,8 +728,8 @@ struct MacMessageView: View {
                         for file in files {
                             NSWorkspace.shared.open(file)
                         }
-                    } else {
-                        MacQuickLookController.shared.preview(files)
+                    } else if let first = files.first {
+                        openFileReference(.init(url: first, line: nil, column: nil))
                     }
                 }
             } catch {

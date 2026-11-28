@@ -433,12 +433,9 @@ async function run() {
         await page.locator('.composer-actions button[type="submit"]').click();
         const turn1 = await waitForStreamComplete(page, { timeoutMs: 120000, autoApprovePermissions: true });
 
-        await page.locator('table').first().waitFor({ state: 'visible', timeout: 15000 });
-        const bodyTextTurn1 = await page.locator('body').innerText();
-        assert.ok(
-            bodyTextTurn1.includes('OK_WEB_REAL_MODEL'),
-            `Expected OK_WEB_REAL_MODEL in real LLM reply, got snippet: ${bodyTextTurn1.slice(-400)}`,
-        );
+        const replies = page.locator('.message.assistant .message-body');
+        await replies.last().locator('table').waitFor({ state: 'visible', timeout: 15000 });
+        assert.match(await replies.last().innerText(), /OK_WEB_REAL_MODEL/);
         const chatUrlAfterTurn1 = page.url();
         await recordShot(page, 'web-02-chat-real-reply.png');
         stages.chatRealReply = { ok: true, ...turn1, hasTable: true, hasSentinel: true };
@@ -453,21 +450,11 @@ async function run() {
         await page.locator('.composer-actions button[type="submit"]').click();
         const turn2 = await waitForStreamComplete(page, { timeoutMs: 150000, autoApprovePermissions: true });
 
-        let proofWritten = false;
-        let proofContent = '';
-        try {
-            proofContent = (await fs.readFile(proofPath, 'utf8')).trim();
-            proofWritten = proofContent.includes('REAL_TOOL_OK');
-        } catch {
-            // Check whether tool card rendered or handoff marker was read.
-        }
+        const proofWritten = (await fs.readFile(proofPath, 'utf8')).trim() === 'REAL_TOOL_OK';
+        const markerRead = (await replies.last().innerText()).includes(HANDOFF_MARKER);
         const toolCardsCount = await page.locator('details.tool-card').count();
-        const bodyTextTurn2 = await page.locator('body').innerText();
-        const markerRead = bodyTextTurn2.includes(HANDOFF_MARKER);
-        assert.ok(
-            proofWritten || markerRead || toolCardsCount > 0,
-            `Expected real tool execution evidence (proofWritten=${proofWritten}, markerRead=${markerRead}, toolCards=${toolCardsCount})`,
-        );
+        assert.ok(proofWritten, 'Requested file must contain the exact proof line');
+        assert.ok(markerRead, 'Assistant reply must include the marker read from the file');
         await recordShot(page, 'web-03-chat-tool.png');
         stages.chatTool = { ok: true, ...turn2, proofWritten, markerRead, toolCardsCount };
 
@@ -541,6 +528,61 @@ async function run() {
         await page.locator('.conversation-list h3.group-title').filter({ hasText: /置顶|Pinned/i }).first().waitFor({ state: 'visible' });
         await recordShot(page, 'web-04b-chat-management.png');
         stages.chatManagement = { ok: true, renamedTitle, pinned: true, compactedTriggered };
+
+        // Edit the first of two completed turns, then reopen the same conversation.
+        const editFirst = page.locator('.message.user').first().getByRole('button', { name: /编辑|Edit/i });
+        const confirmation = page.locator('.message.user [role="alertdialog"]');
+        await editFirst.click();
+        await confirmation.getByRole('button', { name: /取消|Cancel/i }).click();
+        assert.equal(await page.locator('.message.user').count(), 2);
+        assert.ok((await replies.last().innerText()).includes(HANDOFF_MARKER));
+        await editFirst.click();
+        await confirmation.locator('button.primary').click();
+        const composer = page.locator('#chat-composer');
+        await page.waitForFunction(expected => document.querySelector('#chat-composer')?.value === expected, prompt1);
+        const revisedPrompt = '只返回 319 加上 527 的结果，用阿拉伯数字，不要解释。';
+        await composer.fill(revisedPrompt);
+        await page.locator('.composer-actions button[type="submit"]').click();
+        await waitForStreamComplete(page);
+        await page.reload({ waitUntil: 'networkidle' });
+        await replies.last().filter({ hasText: '846' }).waitFor({ state: 'visible' });
+        assert.equal(new URL(page.url()).searchParams.get('conversation'), new URL(chatUrlAfterTurn1).searchParams.get('conversation'));
+        assert.deepEqual(await page.locator('.message.user .user-text').allInnerTexts(), [revisedPrompt]);
+        assert.equal(await replies.count(), 1);
+        await recordShot(page, 'web-04c-reopened-edit.png');
+        stages.editEarlierTurn = { ok: true, persistedUserMessages: 1, persistedAssistantMessages: 1, answer: '846' };
+
+        // Deny a write in the same conversation where a previous write was allowed once.
+        await composer.fill(`请直接调用 write_file，将测试文件 ${proofPath} 的内容改为 DENIED_WRITE。此文件可覆盖。`);
+        await page.locator('.composer-actions button[type="submit"]').click();
+        const denyWrite = page.locator('.permission-card .interactive-actions button.danger');
+        await denyWrite.waitFor({ state: 'visible' });
+        await recordShot(page, 'web-04d-permission.png');
+        await denyWrite.click();
+        await waitForStreamComplete(page);
+        assert.equal((await fs.readFile(proofPath, 'utf8')).trim(), 'REAL_TOOL_OK');
+        stages.denyWrite = { ok: true, originalContentsPreserved: true };
+
+        const writeProof = async (target, contents) => {
+            await composer.fill(`请直接调用 write_file，把测试文件 ${target} 的内容写为 ${contents}，只写这一行。此文件可覆盖。`);
+            await page.locator('.composer-actions button[type="submit"]').click();
+        };
+        await writeProof(proofPath, 'SESSION_ALLOWED_1');
+        const sessionAllow = page.locator('.permission-card .interactive-actions').getByRole('button', {
+            name: /本会话允许|Allow for conversation/i,
+        });
+        await sessionAllow.click();
+        await waitForStreamComplete(page);
+        assert.equal((await fs.readFile(proofPath, 'utf8')).trim(), 'SESSION_ALLOWED_1');
+        await writeProof(proofPath, 'SESSION_ALLOWED_2');
+        await waitForStreamComplete(page);
+        assert.equal((await fs.readFile(proofPath, 'utf8')).trim(), 'SESSION_ALLOWED_2');
+        const otherPath = path.join(tempWorkspace, 'other-proof.txt');
+        await writeProof(otherPath, 'OTHER_TARGET');
+        await denyWrite.click();
+        await waitForStreamComplete(page);
+        await assert.rejects(fs.access(otherPath), { code: 'ENOENT' });
+        stages.sessionPermission = { ok: true, repeatedTargetAllowed: true, otherTargetAsked: true };
 
         // ------------------------------------------------------------------
         // Stage 5: /experts — Create QA_Expert, reload & verify persisted

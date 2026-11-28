@@ -639,6 +639,13 @@ class AndroidAuditRegressionsTest {
             assertEquals(JsonPrimitive(clientId), observed["client_id"])
             assertNotNull("Expected observe result object", observed["result"])
 
+            val localId = "android-list-entry"
+            val history = requireNotNull(service.v2ChatHistory(baseUrl, liveToken, localId, conversationId, hostId, "", true))
+            assertFalse(history.active)
+            assertTrue(history.messages.any { it.role == com.nola.domain.model.ChatRole.user && "Describe this diagram" in it.text })
+            assertTrue(history.messages.all { it.conversationId == localId })
+            assertNull(service.v2ChatHistory(baseUrl, liveToken, localId, "absent-host-session", hostId, "", true))
+
             // Verify GET /observe did NOT append a duplicate user message
             val messagesCheck = runNolaCli(
                 nolaBin = nolaBin,
@@ -930,6 +937,30 @@ class AndroidAuditRegressionsTest {
         setField("submissionJournal", ApplicationSubmissionJournal(File(dbFile.path + ".pending-commands.json")))
         setField("recoveredReceipts", mutableListOf<JsonObject>())
         return runtime
+    }
+
+    @Test
+    fun cjkLatexFallbackAndLiveThinkingTailBoundsWorkCleanly() {
+        // Pure Latin/Greek math stays in $$...$$ for JLaTeXMath rendering
+        val pureMath = com.nola.ui.components.normalizeLatexForMarkwon("公式 \$S_s = \\lambda S_t + UV^\\top\$ 成立")
+        assertTrue(pureMath.contains("\$\$S_s = \\lambda S_t + UV^\\top\$\$"))
+
+        // CJK inside LaTeX must convert to readable native Unicode+CJK instead of JLaTeXMath tofu
+        val cjkDisplay = com.nola.ui.components.normalizeLatexForMarkwon(
+            "\$\$S_A = \\lambda \\cdot S_B + (\\text{一小坨残差})\$\$"
+        )
+        assertTrue("Expected Chinese text preserved: $cjkDisplay", cjkDisplay.contains("一小坨残差"))
+        assertTrue("Expected Unicode lambda/cdot: $cjkDisplay", cjkDisplay.contains("λ") && cjkDisplay.contains("·"))
+        assertFalse("Must not leak raw \\text command: $cjkDisplay", cjkDisplay.contains("\\text{"))
+        assertFalse("Must not leave CJK inside $$ for JLaTeXMath: $cjkDisplay", cjkDisplay.contains("$$"))
+
+        // Live thinking tail bounds 120-line streaming thought to trailing lines; finished keeps full body
+        val longThinking = (1..120).joinToString("\n") { "Step $it: analyzing figure layout." }
+        val liveTail = com.nola.ui.components.formatLiveThinkingPreview(longThinking, finished = false)
+        assertTrue("Live preview must show latest trailing thought", liveTail.contains("Step 120"))
+        assertFalse("Live preview must roll past early lines", liveTail.contains("Step 1:"))
+        val full = com.nola.ui.components.formatLiveThinkingPreview(longThinking, finished = true)
+        assertTrue(full.contains("Step 1:") && full.contains("Step 120"))
     }
 
     private fun seedKvRow(dbFile: File, key: String, valueJson: String, updatedAtMs: Long) {

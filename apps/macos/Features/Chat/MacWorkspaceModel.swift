@@ -177,7 +177,7 @@ final class MacWorkspaceModel {
         }
         guard let databaseURL = canonicalRepository?.databaseURL else { throw MacApplicationPortError.invalidResponse }
         return try await Task.detached {
-            try MacApplicationPort(databaseURL: databaseURL).listUISurfaces(conversationID: conversationID)
+            try MacApplicationPort.pooled(databaseURL: databaseURL).listUISurfaces(conversationID: conversationID)
         }.value
     }
 
@@ -186,7 +186,7 @@ final class MacWorkspaceModel {
             return try await remoteHost.previewUISurface(input, target: target)
         }
         guard let databaseURL = canonicalRepository?.databaseURL else { throw MacApplicationPortError.invalidResponse }
-        return try await Task.detached { try MacApplicationPort(databaseURL: databaseURL).previewUISurface(input) }.value
+        return try await Task.detached { try MacApplicationPort.pooled(databaseURL: databaseURL).previewUISurface(input) }.value
     }
 
     func readUISurfaceChanges(identity: AppleUISurfaceIdentity, baseRevision: UInt64?) async throws -> AppleUISurfaceUpdate<MacCanonicalJSONValue> {
@@ -194,7 +194,7 @@ final class MacWorkspaceModel {
             return try await remoteHost.readUISurfaceChanges(identity: identity, baseRevision: baseRevision, target: target)
         }
         guard let databaseURL = canonicalRepository?.databaseURL else { throw MacApplicationPortError.invalidResponse }
-        return try await Task.detached { try MacApplicationPort(databaseURL: databaseURL)
+        return try await Task.detached { try MacApplicationPort.pooled(databaseURL: databaseURL)
             .readUISurfaceChanges(identity: identity, baseRevision: baseRevision) }.value
     }
 
@@ -204,13 +204,13 @@ final class MacWorkspaceModel {
         }
         guard let databaseURL = canonicalRepository?.databaseURL else { throw MacApplicationPortError.invalidResponse }
         return try await Task.detached {
-            try MacApplicationPort(databaseURL: databaseURL).readUISurfaceRevision(identity: reference.identity, revision: reference.revision)
+            try MacApplicationPort.pooled(databaseURL: databaseURL).readUISurfaceRevision(identity: reference.identity, revision: reference.revision)
         }.value
     }
 
     private func uiIntentJournal() throws -> AppleUIIntentJournal<MacCanonicalJSONValue> {
         guard let databaseURL = canonicalRepository?.databaseURL else { throw MacApplicationPortError.invalidResponse }
-        let application = try MacApplicationPort(databaseURL: databaseURL)
+        let application = try MacApplicationPort.pooled(databaseURL: databaseURL)
         return AppleUIIntentJournal(read: { key in
             try application.productSetting(key: key).map { ($0.valueJSON, $0.revision) }
         }, write: { key, json, revision in
@@ -263,7 +263,7 @@ final class MacWorkspaceModel {
             }
             localCommandStarted = true
             let receipt = try await Task.detached {
-                try MacApplicationPort(databaseURL: databaseURL).submitUIInteraction(input)
+                try MacApplicationPort.pooled(databaseURL: databaseURL).submitUIInteraction(input)
             }.value
             if let commandID = receipt.queued_submission_id,
                selectedConversationID == input.interaction.identity.owner.conversation_id,
@@ -360,7 +360,7 @@ final class MacWorkspaceModel {
                         switch dispatch.phase {
                         case .admitted:
                             guard let database = self.canonicalRepository?.databaseURL else { throw MacRemoteHostError.invalidResponse }
-                            try MacApplicationPort(databaseURL: database).adoptObservedRemoteRun(dispatch)
+                            try MacApplicationPort.pooled(databaseURL: database).adoptObservedRemoteRun(dispatch)
                             self.remoteConversationTargets[conversationID] = target
                             self.startRemoteRunObservation()
                             return
@@ -400,7 +400,7 @@ final class MacWorkspaceModel {
               let databaseURL = canonicalRepository?.databaseURL else { return }
         do {
             let commandID = try await Task.detached {
-                try MacApplicationPort(databaseURL: databaseURL).idleQueuedUserCommand(
+                try MacApplicationPort.pooled(databaseURL: databaseURL).idleQueuedUserCommand(
                     conversationID: conversationID, nowMS: Int64(Date().timeIntervalSince1970 * 1000))
             }.value
             guard let commandID, completedGeneration == activeGenerationID,
@@ -728,7 +728,7 @@ final class MacWorkspaceModel {
                   let projection = try await repository.sessionProjectionAsync(conversationID: conversationID) else { return nil }
             let port = repository.databaseURL.standardizedFileURL == modelApplication.databaseURL.standardizedFileURL
                 ? modelApplication
-                : try MacApplicationPort(databaseURL: repository.databaseURL)
+                : try MacApplicationPort.pooled(databaseURL: repository.databaseURL)
             var object = try JSONSerialization.jsonObject(with: projection.goalProjection) as? [String: Any] ?? [:]
             let observation = try await Task.detached(priority: .utility) {
                 try port.goalControlObservation(conversationID: conversationID)
@@ -1707,6 +1707,8 @@ final class MacWorkspaceModel {
     private var scheduledConfigurationOwners: Set<String> = []
     @ObservationIgnored private var modelConfigurationWaiters: [String: [CheckedContinuation<Void, Error>]] = [:]
     @ObservationIgnored private var modelConfigurationErrors: [String: Error] = [:]
+    @ObservationIgnored private var queuedPermissionModeByConversation: [String: MacPermissionMode] = [:]
+    @ObservationIgnored private var queuedModelOverrideByConversation: [String: (key: String, baseline: MacConversationModelOverride, value: MacConversationModelOverride)] = [:]
     var selectedModelConfigurationPending: Bool {
         selectedConversationID.map { configurationCommitIsPending($0) } ?? false
     }
@@ -1714,9 +1716,33 @@ final class MacWorkspaceModel {
     private func configurationCommitIsPending(_ owner: String) -> Bool {
         modelConfigurationPendingOwners.contains(owner) || scheduledConfigurationOwners.contains(owner)
             || !(metadataConfigurationPendingWrites[owner]?.isEmpty ?? true)
+            || queuedPermissionModeByConversation[owner] != nil
+            || queuedModelOverrideByConversation[owner] != nil
     }
 
     private func resumeConfigurationWaitersIfSettled(_ owner: String) {
+        let hasInFlightCommit = modelConfigurationPendingOwners.contains(owner)
+            || scheduledConfigurationOwners.contains(owner)
+            || !(metadataConfigurationPendingWrites[owner]?.isEmpty ?? true)
+        guard !hasInFlightCommit else { return }
+        if let queuedPermission = queuedPermissionModeByConversation.removeValue(forKey: owner) {
+            if selectedConversationID == owner {
+                permissionMode = queuedPermission
+                if configurationCommitIsPending(owner) { return }
+            }
+        }
+        if let queuedOverride = queuedModelOverrideByConversation.removeValue(forKey: owner) {
+            if let conv = conversations.first(where: { $0.id == owner }) {
+                commitModelConfiguration(
+                    selectionID: conv.modelSelectionID,
+                    displayName: String(localized: "Model"),
+                    changesSelection: false,
+                    overrideEdit: queuedOverride,
+                    ownerID: owner
+                )
+                if configurationCommitIsPending(owner) { return }
+            }
+        }
         guard !configurationCommitIsPending(owner) else { return }
         let error = modelConfigurationErrors[owner] ?? (permissionModeDrafts[owner] != nil &&
             conversations.first(where: { $0.id == owner })?.isPersisted == true
@@ -1745,7 +1771,28 @@ final class MacWorkspaceModel {
         ownerID: String? = nil, sourceAcknowledged: Bool = false) {
         guard let conversation = ownerID.flatMap({ owner in conversations.first { $0.id == owner } }) ?? (ownerID == nil ? selectedConversation : nil),
               let repository = canonicalRepository else { return }
-        guard !modelConfigurationPendingOwners.contains(conversation.id) else {
+        // Cancel any idle background archive debounce before starting an explicit
+        // user configuration write so it cannot race on configurationRevision.
+        if scheduledConfigurationOwners.contains(conversation.id) {
+            archiveScheduler.cancelPending(conversationID: conversation.id)
+            scheduledConfigurationOwners.remove(conversation.id)
+        }
+        let hasActiveCommit = modelConfigurationPendingOwners.contains(conversation.id)
+            || !(metadataConfigurationPendingWrites[conversation.id]?.isEmpty ?? true)
+        if hasActiveCommit {
+            if let edit = overrideEdit {
+                // Preserve the true persisted baseline from the first queued edit
+                // so optimistic UI updates never cause a staleSnapshot mismatch on drain.
+                let preservedBaseline = queuedModelOverrideByConversation[conversation.id]?.baseline ?? edit.baseline
+                queuedModelOverrideByConversation[conversation.id] = (edit.key, preservedBaseline, edit.value)
+                if let optIndex = conversations.firstIndex(where: { $0.id == conversation.id }) {
+                    var optimistic = conversations[optIndex].modelOverrides ?? [:]
+                    optimistic[edit.key] = edit.value
+                    conversations[optIndex].modelOverrides = optimistic
+                    refreshModelConfiguration()
+                }
+                return
+            }
             updateActivity(title: "Model", detail: "Model configuration is still being saved. Retry after it completes.", state: .failed)
             return
         }
@@ -2127,8 +2174,24 @@ final class MacWorkspaceModel {
                 .flatMap(MacPermissionMode.init(rawValue:)) ?? .cautious
         }
         set {
-            guard let owner = selectedConversationID, let conversation = selectedConversation,
-                  !configurationCommitIsPending(owner) else { return }
+            guard let owner = selectedConversationID, let conversation = selectedConversation else { return }
+            // Never let a deferred idle archive save silently drop an explicit
+            // permission mode switch right after a turn finishes.
+            if scheduledConfigurationOwners.contains(owner) {
+                archiveScheduler.cancelPending(conversationID: owner)
+                scheduledConfigurationOwners.remove(owner)
+            }
+            let hasInFlightCommit = modelConfigurationPendingOwners.contains(owner)
+                || !(metadataConfigurationPendingWrites[owner]?.isEmpty ?? true)
+            if hasInFlightCommit {
+                queuedPermissionModeByConversation[owner] = newValue
+                if committedPermissionModes[owner] == nil { committedPermissionModes[owner] = permissionMode }
+                permissionModeDrafts[owner] = newValue
+                if let index = conversations.firstIndex(where: { $0.id == owner }) {
+                    conversations[index].permissionModeRawValue = newValue.rawValue
+                }
+                return
+            }
             if newValue == permissionMode, permissionModeDrafts[owner] == nil { return }
             if !conversation.isPersisted {
                 if committedPermissionModes[owner] == nil { committedPermissionModes[owner] = permissionMode }
@@ -2769,17 +2832,27 @@ final class MacWorkspaceModel {
         let inMemorySnapshot = contextSnapshotsByConversation[conversationID]
         guard inMemorySnapshot != snapshot else { return }
         contextSnapshotsByConversation[conversationID] = snapshot
-        logger.log(
-            "Core context snapshot applied",
-            level: .debug,
-            category: "MacChatContext",
-            metadata: [
-                "conversation": String(conversationID.prefix(12)),
-                "used_tokens": String(snapshot.usedTokens),
-                "prompt_limit": String(snapshot.promptTokenLimit),
-                "estimated": String(snapshot.isEstimated),
-            ]
-        )
+        let shouldLogSnapshot: Bool = {
+            guard let previous = inMemorySnapshot else { return true }
+            if previous.promptTokenLimit != snapshot.promptTokenLimit
+                || previous.isEstimated != snapshot.isEstimated {
+                return true
+            }
+            return abs(snapshot.usedTokens - previous.usedTokens) >= 1024
+        }()
+        if shouldLogSnapshot {
+            logger.log(
+                "Core context snapshot applied",
+                level: .debug,
+                category: "MacChatContext",
+                metadata: [
+                    "conversation": String(conversationID.prefix(12)),
+                    "used_tokens": String(snapshot.usedTokens),
+                    "prompt_limit": String(snapshot.promptTokenLimit),
+                    "estimated": String(snapshot.isEstimated),
+                ]
+            )
+        }
     }
 
     private func refreshEstimatedContextSnapshot(conversationID: String) {
@@ -3754,7 +3827,7 @@ final class MacWorkspaceModel {
             let invocation: MacExactRunInvocation?
             do {
                 invocation = try await Task.detached(priority: .userInitiated) {
-                    let port = try MacApplicationPort(databaseURL: databaseURL)
+                    let port = try MacApplicationPort.pooled(databaseURL: databaseURL)
                     return try port.loadExactRunInvocation(conversationID: conversationID,
                         expectedRunID: owner.runID, assistantMessageID: owner.assistantMessageID)
                 }.value
@@ -3874,8 +3947,7 @@ final class MacWorkspaceModel {
         if try port.activeRunIdentity(conversationID: input.conversation_id)?.runID == input.operation_id
             || port.canonicalRunTerminal(conversationID: input.conversation_id, runID: input.operation_id) != nil {
             let prepared = try port.prepareInPlaceResend(input)
-            if prepared.deferred_rewind == true { try await publishAdmittedRewind(prepared, repository: repository) }
-            else { reloadPersistentData() }
+            try await publishAdmittedRewind(prepared, repository: repository)
             adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
             return
         }
@@ -3890,12 +3962,12 @@ final class MacWorkspaceModel {
         if try port.expertMessageSource(conversationID: input.conversation_id, messageID: input.message_id) != nil,
            expertWorkspace == nil { throw MacEditedResendError.sourceUnavailable }
         let prepared = try port.prepareInPlaceResend(input)
-        if prepared.deferred_rewind != true { reloadPersistentData() }
-        // Normal admission creates the replacement message using its stable ID.
-        // Passing text explicitly preserves the unsent composer and attachments.
+        // Keep the original conversation and its composer selected while Core
+        // admits the replacement. Rebuilding the sidebar between truncation
+        // and admission can redirect an edit to a different conversation.
         send(preassignedSubmissionID: prepared.run_id,
             canonicalUserMessageID: prepared.user_message_id, preassignedText: input.edited_text, isInPlaceResend: true,
-            deferredRewind: prepared.deferred_rewind == true, editedMentions: input.expert_mentions,
+            defersSubmissionOverlay: true, editedMentions: input.expert_mentions,
             selectedExperts: input.selected_experts ?? prepared.experts.map { .init(agentID: $0.agent_id, agentRevision: $0.agent_revision, participantID: $0.participant_id, contextConversationID: $0.context_conversation_id) })
         guard let ticket = runCoordinator.submissionTicket,
               ticket.identity.submissionID == prepared.run_id else { throw MacEditedResendError.admissionUnconfirmed }
@@ -3904,9 +3976,7 @@ final class MacWorkspaceModel {
             try await Task.sleep(for: .milliseconds(50))
         }
         guard ticket.phase == .accepted else { throw MacEditedResendError.admissionUnconfirmed }
-        if prepared.deferred_rewind == true {
-            try await publishAdmittedRewind(prepared, repository: repository)
-        }
+        try await publishAdmittedRewind(prepared, repository: repository)
         adoptEditedTitle(conversationID: input.conversation_id, messageID: prepared.user_message_id, text: input.edited_text)
     }
 
@@ -4218,7 +4288,7 @@ final class MacWorkspaceModel {
         }
     }
 
-    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, deferredRewind: Bool = false, editedMentions: AppleExpertMentions? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
+    private func send(preassignedSubmissionID: String?, queuedUserCommandID: String? = nil, canonicalUserMessageID: String? = nil, preassignedText: String? = nil, isInPlaceResend: Bool = false, defersSubmissionOverlay: Bool = false, editedMentions: AppleExpertMentions? = nil, selectedExperts: [AppleMainExpertSelectionEntry] = [], expertSelectionSourceEpoch: String? = nil) {
         guard !selectedModelConfigurationPending else { return }
         parkUnselectedLocalRecovery()
         parkUnselectedRemoteRecovery()
@@ -4507,7 +4577,7 @@ final class MacWorkspaceModel {
         // and persists only conversation metadata while execution is active.
         // Pre-creating a Run here makes the Host's atomic submission overlap
         // itself when both processes use the same canonical database.
-        if !deferredRewind {
+        if !defersSubmissionOverlay {
             var presentationOverlay = presentationOverlays[selectedConversationID]
                 ?? MacConversationPresentationOverlay()
             presentationOverlay.beginSubmission(MacPendingSubmissionOverlay(
@@ -5411,7 +5481,7 @@ final class MacWorkspaceModel {
                     _ = try await AppleTaskGuidanceOutbox.shared.submit(hostId: host,
                         conversationId: conversationID, parentRunId: parentRunID, taskId: taskID, message: message) { path, payload in
                             try await Task.detached {
-                                try MacApplicationPort(databaseURL: databaseURL).taskGuidanceTransport(path: path,
+                                try MacApplicationPort.pooled(databaseURL: databaseURL).taskGuidanceTransport(path: path,
                                     payload: payload, conversationID: conversationID, parentRunID: parentRunID)
                             }.value
                         }
@@ -5436,7 +5506,7 @@ final class MacWorkspaceModel {
                 } else {
                     guard let databaseURL else { throw MacApplicationPortError.serviceUnavailable }
                     try await Task.detached {
-                        try MacApplicationPort(databaseURL: databaseURL).requestOwnedTaskCancellation(
+                        try MacApplicationPort.pooled(databaseURL: databaseURL).requestOwnedTaskCancellation(
                             conversationID: conversationID, parentRunID: parentRunID, taskID: taskID)
                     }.value
                 }
@@ -5942,7 +6012,7 @@ final class MacWorkspaceModel {
             defer { resolvingUserInputWaitIDs.remove(request.id) }
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try MacApplicationPort(databaseURL: databaseURL).respondToUserInputWait(
+                    try MacApplicationPort.pooled(databaseURL: databaseURL).respondToUserInputWait(
                         request, commandID: intent.commandID, answers: intent.answers, decline: intent.decline)
                 }.value
                 userInputSubmissionIntents[request.id] = nil
@@ -5981,7 +6051,7 @@ final class MacWorkspaceModel {
         let revision = userInputWaitReadRevisions[conversationID, default: 0]
         do {
             let waits = try await Task.detached(priority: .userInitiated) {
-                try MacApplicationPort(databaseURL: databaseURL).openUserInputWaits(conversationID: conversationID)
+                try MacApplicationPort.pooled(databaseURL: databaseURL).openUserInputWaits(conversationID: conversationID)
             }.value
             guard !Task.isCancelled, userInputWaitReadRevisions[conversationID] == revision else { return false }
             userInputWaitsByConversation[conversationID] = waits
@@ -6475,7 +6545,7 @@ final class MacWorkspaceModel {
                     let workspace = try await bookmarkStore.resolveSubmissionSelection(selection)
                     guard recovery.generationID == activeGenerationID, localRunRecovery == recovery else { return }
                     let mode = try MacPermissionMode.configured(conversations.first { $0.id == recovery.conversationID }?.permissionModeRawValue)
-                    let port = try MacApplicationPort(databaseURL: canonicalRepository.databaseURL)
+                    let port = try MacApplicationPort.pooled(databaseURL: canonicalRepository.databaseURL)
                     try await localAgentRuntime.prepareColdResume(conversationID: recovery.conversationID,
                         expectedRunID: recovery.expectedRunID, assistantMessageID: recovery.canonicalAssistantMessageID,
                         applicationPort: port, authorization: .init(projectURL: workspace.projectURL,

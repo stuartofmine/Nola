@@ -18,7 +18,7 @@ use nola_types::{
     estimate_request_tokens, new_id, now_ms, sha256_hex, ContentVersion, ContextBudget,
     FrozenSystemBlock, GenerationParams, HistoryMessage, HookDecision, HookEvent, HostCapabilities,
     MediaAttachment, MemoryItem, ModelRouteConfig, ModelStopReason, ModelStreamDelta,
-    NormalizedModelResponse, ResourceEffect, ResourceOperation, RuleScope, RuntimeReminder,
+    NormalizedModelResponse, ResourceEffect, ResourceOperation, RuntimeReminder,
     Session, StructuredModelRequest, TokenUsage, ToolExecutionResult, ToolModelPayload,
     VersionTransition,
 };
@@ -515,11 +515,72 @@ impl AgentEngine {
         user_prompt: &str,
         user_media: Vec<MediaAttachment>,
         cfg: AgentRunConfig,
-        mut on_event: impl FnMut(AgentEvent),
+        on_event: impl FnMut(AgentEvent),
     ) -> Result<AgentRunResult, AgentError> {
-        let session_id = cfg.session_id.clone().unwrap_or_else(new_id);
+        self.run_identified(ctx, user_prompt, user_media, cfg, None, on_event)
+    }
+
+    /// A host run identity scopes late cancellation deliveries to their original turn.
+    pub fn run_identified(
+        &self,
+        ctx: &ToolContext,
+        user_prompt: &str,
+        user_media: Vec<MediaAttachment>,
+        mut cfg: AgentRunConfig,
+        run_id: Option<&str>,
+        on_event: impl FnMut(AgentEvent),
+    ) -> Result<AgentRunResult, AgentError> {
+        let session_id = cfg.session_id.get_or_insert_with(new_id).clone();
+        let started_at = now_ms();
+        let cancel = Arc::clone(&cfg.cancel);
+        let session_key = format!("cancel_requested:{session_id}");
+        let run_key = run_id.map(|id| format!("cancel_requested_run:{session_id}:{id}"));
+        let check = || {
+            poll_store_cancel_flag(&self.store, &session_key, &cancel, started_at, run_id)
+                || run_key
+                    .as_ref()
+                    .is_some_and(|key| poll_store_cancel_flag(&self.store, key, &cancel, 0, run_id))
+        };
+        check();
+        // A host command may arrive from another process during a blocking model or tool call.
+        std::thread::scope(|scope| {
+            let (done, wait) = std::sync::mpsc::channel::<()>();
+            let cancel = &cancel;
+            scope.spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                    wait.recv_timeout(std::time::Duration::from_millis(250))
+                {
+                    if cancel.load(Ordering::Acquire) || check() {
+                        break;
+                    }
+                }
+            });
+            let result = self.run_session(
+                ctx,
+                user_prompt,
+                user_media,
+                cfg,
+                on_event,
+                &session_id,
+                started_at,
+            );
+            drop(done);
+            result
+        })
+    }
+
+    fn run_session(
+        &self,
+        ctx: &ToolContext,
+        user_prompt: &str,
+        user_media: Vec<MediaAttachment>,
+        cfg: AgentRunConfig,
+        mut on_event: impl FnMut(AgentEvent),
+        session_id: &str,
+        now: i64,
+    ) -> Result<AgentRunResult, AgentError> {
+        let session_id = session_id.to_owned();
         let run_ctx = ctx.clone().with_session_id(session_id.clone());
-        let now = now_ms();
 
         // Restore history + EffectivePolicy + activated tools + cumulative usage when resuming!
         // Preserve stricter User/CliOverride rules and network restrictions from the new invocation.
@@ -544,10 +605,11 @@ impl AgentEngine {
                     merged_policy.plan_mode = cfg.policy.plan_mode;
                     merged_policy.network_allowed =
                         merged_policy.network_allowed && cfg.policy.network_allowed;
+                    // Reload allowed targets from current configuration and explicit grants.
+                    // An older saved policy may include a one-time approval as an Allow rule.
+                    merged_policy.rules.retain(|r| r.action != nola_types::PermissionAction::Allow);
                     for r in &cfg.policy.rules {
-                        if matches!(r.scope, RuleScope::User | RuleScope::CliOverride)
-                            && !merged_policy.rules.contains(r)
-                        {
+                        if !merged_policy.rules.contains(r) {
                             merged_policy.rules.push(r.clone());
                         }
                     }
@@ -755,8 +817,7 @@ impl AgentEngine {
         let mut deadline_warn_60_sent = false;
 
         loop {
-            if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
-                || cfg.cancel.load(Ordering::Relaxed)
+            if cfg.cancel.load(Ordering::Relaxed)
             {
                 cancelled = true;
                 break;
@@ -1006,8 +1067,21 @@ impl AgentEngine {
                 token_calibration = (token_calibration * 0.6 + clamped * 0.4).clamp(1.0, 2.5);
             }
 
-            accumulate_usage(&mut total_usage, &resp.usage);
-            accumulate_usage(&mut session_usage, &resp.usage);
+            let mut step_usage = resp.usage.clone();
+            if step_usage.reasoning_tokens == 0 {
+                if let Some(ref r) = resp.reasoning {
+                    if !r.trim().is_empty() {
+                        let est = nola_types::estimate_text_tokens(r) as u64;
+                        step_usage.reasoning_tokens = if step_usage.output_tokens > 0 {
+                            est.min(step_usage.output_tokens)
+                        } else {
+                            est
+                        };
+                    }
+                }
+            }
+            accumulate_usage(&mut total_usage, &step_usage);
+            accumulate_usage(&mut session_usage, &step_usage);
 
             // Record assistant turn verbatim (including provider continuation!)
             history.push(HistoryMessage::Assistant {
@@ -1139,8 +1213,7 @@ impl AgentEngine {
             } else if all_read_only {
                 let mut collected = Vec::with_capacity(resp.tool_calls.len());
                 for chunk in resp.tool_calls.chunks(MAX_PARALLEL_READ_TOOLS) {
-                    if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
-                        || cfg.cancel.load(Ordering::Relaxed)
+                    if cfg.cancel.load(Ordering::Relaxed)
                     {
                         cancelled = true;
                         for _ in chunk {
@@ -1186,8 +1259,7 @@ impl AgentEngine {
             } else {
                 let mut collected = Vec::with_capacity(resp.tool_calls.len());
                 for tc in &resp.tool_calls {
-                    if poll_store_cancel_flag(&self.store, &session_id, &cfg.cancel)
-                        || cfg.cancel.load(Ordering::Relaxed)
+                    if cfg.cancel.load(Ordering::Relaxed)
                     {
                         cancelled = true;
                         collected.push(MiddlewareOutcome {
@@ -1454,20 +1526,40 @@ impl AgentEngine {
     }
 }
 
-fn poll_store_cancel_flag(store: &Store, session_id: &str, cancel: &AtomicBool) -> bool {
-    let key = format!("cancel_requested:{session_id}");
-    let requested = match store.get_kv(&key).ok().flatten() {
-        Some(Value::Bool(true)) => true,
-        Some(Value::String(s)) => matches!(
+fn poll_store_cancel_flag(
+    store: &Store,
+    key: &str,
+    cancel: &AtomicBool,
+    started_at: i64,
+    run_id: Option<&str>,
+) -> bool {
+    let Some(value) = store.get_kv(key).ok().flatten() else {
+        return false;
+    };
+    let requested = match &value {
+        Value::Bool(true) => true,
+        Value::String(s) => matches!(
             s.trim().to_ascii_lowercase().as_str(),
             "true" | "1" | "yes"
         ),
-        Some(Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
+        Value::Number(n) => n.as_i64().unwrap_or(0) != 0,
+        Value::Object(record) => {
+            let timestamp = record.get("requested_at_ms").and_then(Value::as_i64);
+            record
+                .get("cancel_requested")
+                .and_then(Value::as_bool)
+                .unwrap_or(timestamp.is_some())
+                && timestamp.is_none_or(|ts| ts >= started_at)
+                && record
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|target| Some(target) == run_id)
+        }
         _ => false,
     };
     if requested {
         cancel.store(true, Ordering::SeqCst);
-        let _ = store.set_kv(&key, &Value::Bool(false));
+        let _ = store.delete_kv_if_unchanged(key, &value);
         true
     } else {
         false

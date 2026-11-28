@@ -184,6 +184,17 @@ pub(crate) fn publish_journal_part(
     let jseq = run.get("journal_seq").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
     run["journal_seq"] = json!(jseq);
 
+    let is_final_part = match kind {
+        "text" => metadata_data
+            .get("is_final")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        _ => metadata_data
+            .get("state")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s != "running" && s != "pending"),
+    };
+
     let mut body_refs = Vec::new();
     for (field, text) in bodies {
         let content_key = format!("assistant_journal_content:{conv_id}:{run_id}:{part_id}:{field}");
@@ -194,6 +205,37 @@ pub(crate) fn publish_journal_part(
         let payload_val = json!({"text": text});
         let _ = store.set_kv(&content_key, &payload_val);
         let _ = store.set_kv(&root_key, &payload_val);
+
+        // Keep at most 2 rolling intermediate root snapshots during streaming (so any 1-tick-behind
+        // UI read still resolves byte-for-byte), and purge stale interim roots when this part finishes.
+        let root_tracker_key = format!("{part_id}\0{field}");
+        let mut tracked_roots: Vec<String> = run
+            .get("journal_recent_roots")
+            .and_then(|m| m.get(&root_tracker_key))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if tracked_roots.last().map(String::as_str) != Some(root_key.as_str()) {
+            tracked_roots.push(root_key.clone());
+        }
+        let max_keep = if is_final_part { 1 } else { 2 };
+        while tracked_roots.len() > max_keep {
+            let old_key = tracked_roots.remove(0);
+            if old_key != root_key {
+                let _ = store.delete_kv(&old_key);
+            }
+        }
+        if !run.get("journal_recent_roots").is_some_and(|v| v.is_object()) {
+            run["journal_recent_roots"] = json!({});
+        }
+        if let Some(map) = run.get_mut("journal_recent_roots").and_then(|v| v.as_object_mut()) {
+            map.insert(root_tracker_key, json!(tracked_roots));
+        }
+
         body_refs.push(json!({
             "field": field,
             "content_generation": "1",
@@ -250,15 +292,16 @@ pub(crate) fn publish_journal_part(
             "head": head
         }
     });
-    let rec_key = format!("journal_records:{conv_id}:{run_id}");
-    let mut recs = store
-        .get_kv(&rec_key)
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default();
-    recs.push(record);
-    let _ = store.set_kv(&rec_key, &Value::Array(recs));
+    // O(1) indexed per-record write (never O(N^2) read-append-rewrite of a multi-MB JSON array!).
+    // During streaming deltas, reuse the active per-part slot so DB size stays O(parts), not O(ticks).
+    let record_id = if is_final_part {
+        let interim_id = format!("{conv_id}:{run_id}:live:{part_id}");
+        let _ = store.delete_module_record("assistant_journal_record", &interim_id);
+        format!("{conv_id}:{run_id}:{jseq:010}")
+    } else {
+        format!("{conv_id}:{run_id}:live:{part_id}")
+    };
+    let _ = store.put_module_record("assistant_journal_record", &record_id, &record);
     let _ = store.set_kv(&format!("journal_head:{conv_id}:{run_id}"), &cursor);
     if !conv_id.is_empty() {
         let idx_key = format!("journal_heads_by_conv:{conv_id}");
@@ -322,6 +365,10 @@ pub(crate) fn build_and_store_terminal_seal(store: &Store, run: &Value, text_par
                 .unwrap_or("run_failed"),
             "observed_effect_refs": [],
             "unknown_effect_refs": []
+        }),
+        "cancelled" if run["blocked_model_effect"].is_string() => json!({
+            "kind": "blocked", "reason": {"code": "model_stop_unconfirmed", "detail": Value::Null},
+            "blocking_fact_refs": [run["blocked_model_effect"]], "resolution_condition": "verify_provider_outcome"
         }),
         "cancelled" => json!({
             "kind": "cancelled",
@@ -931,6 +978,16 @@ pub(super) fn dispatch_claim_committed_host_requests(
                 .collect()
         })
         .unwrap_or_default();
+    let interrupted_request = interrupted_model_request(&run);
+    if let Some(request) = interrupted_request.filter(|r| model_delivery_never_started(&run, r)) {
+        // Claim installs the lease before releasing a delivery to any worker.
+        // A request without any lease or started attempt was never sent.
+        reduce_host_response(store, &json!({"run_id": run_id, "response": {
+            "request_id": request["request_id"], "payload": {"type": "model_cancelled_before_delivery"}
+        }}), None)?;
+        return Ok(json!({"run_id": run_id, "requests": []}));
+    }
+    let interrupted_model = interrupted_request.is_some();
     let mut claimed_out = Vec::new();
     if let Some(reqs) = run.get_mut("requests").and_then(|v| v.as_array_mut()) {
         for r in reqs.iter_mut() {
@@ -958,6 +1015,11 @@ pub(super) fn dispatch_claim_committed_host_requests(
                     }
                     continue;
                 }
+            }
+            // Only the live owner can confirm its interrupted producer. A cold reader
+            // inspects the old lease and explicitly closes it with its outcome unknown.
+            if interrupted_model {
+                continue;
             }
             let lease_token = new_id();
             let attempt_id = r
@@ -1030,10 +1092,82 @@ pub(super) fn dispatch_load_committed_host_requests(
     }))
 }
 
+// A model-only interrupt can be closed explicitly after its producer disappears.
+// A pending tool, a second delivery, or an unknown lease requires its own recovery.
+fn interrupted_model_request(run: &Value) -> Option<&Value> {
+    if run["status"] != "running" || run["turn_status"] != "cancelled" {
+        return None;
+    }
+    let consumed = run["consumed_request_ids"].as_array();
+    let mut pending = run["requests"].as_array()?.iter().filter(|request| {
+        !consumed.is_some_and(|ids| ids.contains(&request["request_id"]))
+    });
+    let request = pending.next()?;
+    (pending.next().is_none() && request.pointer("/payload/type")?.as_str()? == "model_stream"
+        && request["effect_id"].is_string() && request["request_id"].is_string()).then_some(request)
+}
+
+fn model_delivery_never_started(run: &Value, request: &Value) -> bool {
+    request["delivery"].is_null() && request["attempt_started"] != true
+        && !run["started_attempt_request_ids"].as_array().is_some_and(|ids| ids.contains(&request["request_id"]))
+}
+
+pub(super) fn interrupted_model_inspection(
+    store: &Store, conversation: &str, run_id: &str,
+) -> Result<Option<Value>, (&'static str, String)> {
+    let Some(run) = store.get_kv(&format!("committed_run:{run_id}")).map_err(|e| ("storage_error", e.to_string()))?
+    else { return Ok(None) };
+    let Some(request) = interrupted_model_request(&run) else { return Ok(None) };
+    if lookup_active_run(store, conversation).as_ref().and_then(|v| v["run_id"].as_str()) != Some(run_id) {
+        return Ok(None);
+    }
+    let mut delivery = request["delivery"].clone();
+    if delivery.is_null() && !model_delivery_never_started(&run, request) {
+        // Older recovery could already have released a started attempt. This is a
+        // decision fence for that absent lease; it can never authorize a dispatch.
+        delivery = json!({"attempt_id": request["attempt_id"], "worker_generation": "released",
+            "lease_owner": "released", "lease_token": "released"});
+    }
+    if run["conversation_id"] != conversation || !run["invocation_config_digest"].is_string()
+        || !["attempt_id", "worker_generation", "lease_owner", "lease_token"].iter()
+            .all(|field| delivery[field].is_string()) {
+        return Ok(None);
+    }
+    Ok(Some(json!({
+        "conversation_id": conversation, "run_id": run_id, "assistant_message_id": run["assistant_message_id"],
+        "invocation_config_digest": run["invocation_config_digest"], "retry_allowed": false, "independent_pending_effects": 0,
+        "targets": [{"request_id": request["request_id"], "effect_id": request["effect_id"],
+            "attempt_id": delivery["attempt_id"], "worker_generation": delivery["worker_generation"],
+            "lease_owner": delivery["lease_owner"], "lease_token": delivery["lease_token"],
+            "expected_attempt_revision": run["sequence"]}]
+    })))
+}
+
+pub(super) fn preserve_unknown_model_outcome(store: &Store, decision: &Value) -> Result<Value, (&'static str, String)> {
+    let conv = decision["conversation_id"].as_str().unwrap_or_default();
+    let run_id = decision["run_id"].as_str().unwrap_or_default();
+    let Some(plan) = interrupted_model_inspection(store, conv, run_id)? else {
+        return Ok(json!({"outcome": "conflict", "code": "recovery_target_changed"}));
+    };
+    if plan["targets"] != decision["targets"] || plan["invocation_config_digest"] != decision["invocation_config_digest"]
+        || decision.pointer("/choice/kind").and_then(Value::as_str) != Some("keep_unknown_blocked")
+        || decision["resolution_id"].as_str().is_none_or(str::is_empty) {
+        return Ok(json!({"outcome": "conflict", "code": "recovery_target_changed"}));
+    }
+    let args = json!({"conversation_id": conv, "run_id": run_id, "response": {
+        "request_id": plan["targets"][0]["request_id"], "payload": {"type": "cancelled"}}});
+    reduce_host_response(store, &args, Some(&plan["targets"][0]))?;
+    Ok(json!({"outcome": "unknown_preserved_blocked", "resolution_id": decision["resolution_id"], "run_id": run_id}))
+}
+
 pub(super) fn dispatch_reduce_and_accept_host_response(
     store: &Store,
     args: &Value,
 ) -> Result<Value, (&'static str, String)> {
+    reduce_host_response(store, args, None)
+}
+
+fn reduce_host_response(store: &Store, args: &Value, unknown: Option<&Value>) -> Result<Value, (&'static str, String)> {
     let input = args.get("input").unwrap_or(args);
     let run_id = input
         .get("run_id")
@@ -1115,6 +1249,46 @@ pub(super) fn dispatch_reduce_and_accept_host_response(
         }));
     }
 
+    // A joined model producer can confirm its own interrupt on the original lease.
+    // Never let that receipt retire a concurrent tool or a replacement delivery.
+    let unissued_stop = ev_type == "model_cancelled_before_delivery"
+        && interrupted_model_request(&run).is_some_and(|request| model_delivery_never_started(&run, request)
+            && request["request_id"] == response["request_id"] && run["conversation_id"] == eff_conv)
+        && lookup_active_run(store, &eff_conv).as_ref().and_then(|v| v["run_id"].as_str()) == Some(run_id);
+    if unknown.is_none() && interrupted_model_request(&run).is_some() && ev_type != "cancellation_confirmed" && !unissued_stop {
+        return Err(("conflict", "Model delivery was interrupted; await its stop or resolve its outcome".into()));
+    }
+    if let Some(target) = unknown {
+        let request = interrupted_model_request(&run);
+        if request.is_none_or(|request| request["request_id"] != target["request_id"]
+            || request["effect_id"] != target["effect_id"] || !(request["delivery"]["lease_token"] == target["lease_token"]
+                || (request["delivery"].is_null() && target["lease_token"] == "released" && request["attempt_id"] == target["attempt_id"])))
+            || run["sequence"] != target["expected_attempt_revision"] {
+            return Err(("conflict", "Model recovery target changed".into()));
+        }
+        run["blocked_model_effect"] = target["effect_id"].clone();
+    }
+    let model_confirmation = ev_type == "cancellation_confirmed" && run["requests"].as_array().into_iter().flatten()
+        .find(|r| r["request_id"] == response["request_id"])
+        .is_none_or(|r| r.pointer("/payload/type").and_then(Value::as_str) == Some("model_stream")
+            || r["effect_id"] != response["effect_id"]);
+    let ev_type = if model_confirmation {
+        let request = interrupted_model_request(&run);
+        if run["conversation_id"] != eff_conv
+            || lookup_active_run(store, &eff_conv).as_ref().and_then(|v| v["run_id"].as_str()) != Some(run_id)
+            || request.is_none_or(|request| request["request_id"] != response["request_id"]
+            || request["effect_id"] != payload["target_effect_id"] || request["effect_id"] != response["effect_id"]
+            || request["session_id"] != response["session_id"] || request["turn_id"] != response["turn_id"]
+            || !["lease_token", "worker_generation", "lease_owner"].iter().all(|field|
+                request["delivery"][field].is_string() && request["delivery"][field] == response["delivery"][field])) {
+            return Err(("invalid_argument", "Cancellation does not match the outstanding model delivery".into()));
+        }
+        "cancelled"
+    } else if unissued_stop {
+        "cancelled"
+    } else {
+        ev_type
+    };
     run["sequence"] = json!(seq);
     let mut is_terminal = false;
     let mut publications: Vec<Value> = Vec::new();
@@ -2237,12 +2411,27 @@ pub(super) fn dispatch_read_assistant_journal(
         .and_then(|v| v.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| v.as_u64()))
         .unwrap_or(0);
     let max_records = args.get("max_records").and_then(|v| v.as_u64()).unwrap_or(32) as usize;
-    let all = store
-        .get_kv(&format!("journal_records:{conv_id}:{run_id}"))
-        .ok()
-        .flatten()
-        .and_then(|v| v.as_array().cloned())
+    let indexed = store
+        .list_module_records_with_prefix::<Value>(
+            "assistant_journal_record",
+            &format!("{conv_id}:{run_id}:"),
+        )
         .unwrap_or_default();
+    let mut all = if !indexed.is_empty() {
+        indexed
+    } else {
+        store
+            .get_kv(&format!("journal_records:{conv_id}:{run_id}"))
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+    };
+    all.sort_by_key(|r| {
+        r.pointer("/header/sequence")
+            .and_then(|v| v.as_str().and_then(|x| x.parse::<u64>().ok()).or_else(|| v.as_u64()))
+            .unwrap_or(0)
+    });
     let records: Vec<Value> = all
         .into_iter()
         .filter(|r| {
@@ -2600,6 +2789,9 @@ pub(super) fn dispatch_load_runtime_effect_work_schedule(
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(ToString::to_string)).collect())
             .unwrap_or_default();
+        if interrupted_model_request(&run).is_some_and(|r| !model_delivery_never_started(&run, r)) {
+            continue;
+        }
         if let Some(reqs) = run.get("requests").and_then(|v| v.as_array()) {
             let mut has_unleased = false;
             let mut has_expired = false;
@@ -2654,6 +2846,9 @@ pub(super) fn dispatch_recover_expired_run_deliveries(
         .get_kv(&key)
         .map_err(|e| ("storage_error", e.to_string()))?
         .ok_or(("not_found", format!("committed run '{run_id}' not found")))?;
+    if interrupted_model_request(&run).is_some() {
+        return Ok(json!({"ok": true, "run_id": run_id, "recovered_count": 0}));
+    }
     let consumed: HashSet<String> = run
         .get("consumed_request_ids")
         .and_then(|v| v.as_array())

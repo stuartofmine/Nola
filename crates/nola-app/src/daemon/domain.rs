@@ -672,27 +672,27 @@ pub(crate) fn build_connection_snapshot(rec: &Value) -> Value {
 
 fn config_connection_to_canonical_record(
     cfg: &crate::config::AppliedConfig,
-    c: &Value,
+    connection: &crate::config::ConnectionConfig,
 ) -> Value {
-    let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let display_name = cfg
-        .connection_extras
-        .get(cid)
+    let cid = connection.id.trim();
+    let extras = cfg.connection_extras.get(cid);
+    let display_name = extras
         .and_then(|e| e.name.as_deref())
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .or_else(|| c.get("display_name").and_then(|v| v.as_str()))
-        .or_else(|| c.get("name").and_then(|v| v.as_str()))
+        .filter(|name| !name.is_empty())
         .unwrap_or(cid);
-    let base_url = c
-        .get("base_url")
-        .or_else(|| c.get("endpoint"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let raw_proto = c
-        .get("protocol")
-        .or_else(|| c.get("provider"))
-        .and_then(|v| v.as_str())
+    // The configuration service and the model process can have different environments.
+    // Describe only the declared binding, regardless of which process can resolve it.
+    let credential_configured = [
+        connection.api_key.as_deref(),
+        connection.api_key_env.as_deref(),
+        extras.and_then(|e| e.credential_ref.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| !value.trim().is_empty());
+    let raw_proto = connection.protocol.as_deref()
+        .or(connection.provider.as_deref())
         .unwrap_or("chat_completions");
     let canonical_proto = match raw_proto.trim().to_ascii_lowercase().as_str() {
         "anthropic" | "anthropic_messages" => "anthropic_messages",
@@ -701,21 +701,10 @@ fn config_connection_to_canonical_record(
         "siwc" | "siwc_responses" => "siwc_responses",
         _ => "chat_completions",
     };
-    let protocols: Vec<Value> = c
-        .get("protocols")
-        .and_then(|v| v.as_array())
-        .filter(|a| !a.is_empty())
-        .cloned()
-        .unwrap_or_else(|| vec![json!(canonical_proto)]);
-    let models_arr: Vec<Value> = c
-        .get("models")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| normalize_catalog_model_entry(m, canonical_proto))
-                .collect()
-        })
-        .unwrap_or_default();
+    let models_arr: Vec<Value> = connection.models.iter()
+        .filter_map(|model| serde_json::to_value(model).ok())
+        .filter_map(|model| normalize_catalog_model_entry(&model, canonical_proto))
+        .collect();
     let catalog = json!({
         "observed_at_ms": now_ms(),
         "source": "config",
@@ -724,15 +713,22 @@ fn config_connection_to_canonical_record(
     json!({
         "id": cid,
         "display_name": display_name,
-        "base_url": base_url,
-        "protocols": protocols,
-        "account_id": c.get("account_id").cloned().unwrap_or(Value::Null),
-        "source": c.get("source").and_then(|v| v.as_str()).unwrap_or("nola"),
-        "source_id": c.get("source_id").cloned().unwrap_or_else(|| json!(cid)),
-        "enabled": c.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+        "base_url": connection.endpoint,
+        "protocols": [canonical_proto],
+        "credential_configured": credential_configured,
+        "account_id": Value::Null,
+        "source": "nola",
+        "source_id": cid,
+        "enabled": true,
         "revision": 1,
         "catalog": catalog
     })
+}
+
+fn configured_connection_record(cfg: &crate::config::AppliedConfig, id: &str) -> Option<Value> {
+    cfg.llm.connections.iter()
+        .find(|conn| conn.id.trim() == id)
+        .map(|conn| config_connection_to_canonical_record(cfg, conn))
 }
 
 fn normalize_execution_capabilities(raw: Option<&Value>, model_id: &str) -> Value {
@@ -894,7 +890,9 @@ pub(crate) fn sync_connection_model_profiles(
         }
     }
 
-    let existing_profiles = suite.list_records::<Value>("model").unwrap_or_default();
+    let existing_profiles = suite
+        .list_records::<Value>("model")
+        .map_err(|e| ("storage_error", e.to_string()))?;
     let mut existing_by_catalog_key: std::collections::HashMap<String, Value> =
         std::collections::HashMap::new();
     for prof in existing_profiles {
@@ -935,7 +933,9 @@ pub(crate) fn sync_connection_model_profiles(
                         obj.insert("updated_at_ms".into(), json!(ts));
                         obj.insert("revision".into(), json!(prev_rev + 1));
                     }
-                    let _ = suite.upsert_record("model", &pid, &tomb);
+                    suite
+                        .upsert_record("model", &pid, &tomb)
+                        .map_err(|e| ("storage_error", e.to_string()))?;
                 }
             }
         } else {
@@ -1454,16 +1454,10 @@ pub(super) fn dispatch_domain_command(
                 }
                 list.push(build_connection_snapshot(&rec));
             }
-            if let Some(cfg_conns) = crate::config::redacted_llm_config(&cfg.llm)
-                .get("connections")
-                .and_then(|v| v.as_array())
-            {
-                for c in cfg_conns {
-                    let cid = c.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    if !cid.is_empty() && !seen_ids.contains(cid) {
-                        let canonical = config_connection_to_canonical_record(&cfg, c);
-                        list.push(build_connection_snapshot(&canonical));
-                    }
+            for conn in &cfg.llm.connections {
+                if !conn.id.is_empty() && !seen_ids.contains(&conn.id) {
+                    let canonical = config_connection_to_canonical_record(&cfg, conn);
+                    list.push(build_connection_snapshot(&canonical));
                 }
             }
             Ok(json!({"connections": list}))
@@ -1490,17 +1484,8 @@ pub(super) fn dispatch_domain_command(
                 return Ok(build_connection_snapshot(&rec));
             }
             let cfg = crate::config::load_active_config(store);
-            let found = crate::config::redacted_llm_config(&cfg.llm)
-                .get("connections")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| {
-                    arr.iter()
-                        .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id))
-                        .map(|c| {
-                            let canonical = config_connection_to_canonical_record(&cfg, c);
-                            build_connection_snapshot(&canonical)
-                        })
-                });
+            let found = configured_connection_record(&cfg, id)
+                .map(|record| build_connection_snapshot(&record));
             Ok(found.unwrap_or(Value::Null))
         }
         ("model", "get_account") => {
@@ -2205,6 +2190,13 @@ pub(super) fn dispatch_domain_command(
                 .and_then(|v| v.as_i64())
                 .unwrap_or_else(now_ms);
             let mut cfg = crate::config::load_active_config(store);
+            let stored_connection = suite
+                .get_record::<Value>("model_connection", conn_id)
+                .map_err(|e| ("storage_error", e.to_string()))?;
+            let is_managed = stored_connection.is_some();
+            let mut connection = stored_connection
+                .or_else(|| configured_connection_record(&cfg, conn_id))
+                .ok_or_else(|| ("not_found", format!("model connection '{conn_id}' not found")))?;
             if let Some(conn) = cfg.llm.connections.iter_mut().find(|c| c.id == conn_id) {
                 for key in &enabled_ids {
                     let mid = key.split_once(':').map(|(_, m)| m).unwrap_or(key.as_str());
@@ -2229,28 +2221,25 @@ pub(super) fn dispatch_domain_command(
                         });
                     }
                 }
-                let _ = crate::config::save_applied_config(store, &cfg);
+                crate::config::save_applied_config(store, &cfg).map_err(|e| ("storage_error", e))?;
             }
-            if let Ok(Some(mut conn_rec)) = suite.get_record::<Value>("model_connection", conn_id) {
-                let prev_rev = conn_rec
+            // File-declared connections share the model picker, while their endpoint and
+            // catalog continue to come from the active config after a reload.
+            sync_connection_model_profiles(
+                store, suite, &connection, &enabled_ids, selected_id.as_deref(), ts,
+            )?;
+            if is_managed {
+                let prev_rev = connection
                     .get("revision")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(1);
-                if let Some(obj) = conn_rec.as_object_mut() {
+                if let Some(obj) = connection.as_object_mut() {
                     obj.insert("revision".into(), json!(prev_rev + 1));
                     obj.insert("updated_at_ms".into(), json!(ts));
                 }
                 suite
-                    .upsert_record("model_connection", conn_id, &conn_rec)
+                    .upsert_record("model_connection", conn_id, &connection)
                     .map_err(|e| ("storage_error", e.to_string()))?;
-                sync_connection_model_profiles(
-                    store,
-                    suite,
-                    &conn_rec,
-                    &enabled_ids,
-                    selected_id.as_deref(),
-                    ts,
-                )?;
             }
             let selection = json!({
                 "connection_id": conn_id,

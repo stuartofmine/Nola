@@ -99,7 +99,8 @@ internal fun AndroidApplicationRuntime.prepareInPlaceResend(input: AndroidPrepar
     }))
 
 internal fun AndroidApplicationRuntime.loadRunIdentity(runId: String): JsonObject? = try {
-    executeQuery(buildJsonObject { put("type", "load_run_identity"); put("run_id", runId) }).jsonObject
+    executeQuery(buildJsonObject { put("type", "load_run_identity"); put("run_id", runId) })
+        .takeUnless { it == JsonNull }?.jsonObject
 } catch (failure: Exception) {
     if (failure.message?.contains("run_not_found") == true) null else throw failure
 }

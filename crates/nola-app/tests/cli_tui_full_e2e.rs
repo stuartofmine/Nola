@@ -437,6 +437,10 @@ fn cli_version_config_and_model_discovery_e2e() {
     assert_eq!(ver_json["version"], env!("CARGO_PKG_VERSION"));
     assert!(ver_json["protocol_version"].as_u64().unwrap_or(0) >= 1);
 
+    let unconfigured = env.run(&["run", "--no-tools", "Hello"]);
+    assert!(!unconfigured.status.success());
+    assert!(String::from_utf8_lossy(&unconfigured.stderr).contains("nola config edit"));
+
     // `nola config example` -> valid JSONC template
     let example = env.run_ok(&["config", "example"]);
     assert!(
@@ -1078,6 +1082,24 @@ fn cli_run_json_tools_reasoning_profiles_and_sessions_e2e() {
     assert!(shown["event_count"].as_u64().unwrap_or(0) > 0);
     assert!(!shown["messages"].as_array().unwrap().is_empty());
 
+    mock.push_turn(MockSseTurn::Text {
+        reasoning: None,
+        text: "alpha-beta-gamma-workspace-content".into(),
+    });
+    env.run_ok(&["run", "--json", "--no-tools", "--session", &sid1, "Repeat the file content from our conversation"]);
+    let resumed_requests = mock.chat_requests();
+    let body = resumed_requests.last().unwrap().body.as_ref().unwrap();
+    assert!(body["tools"].is_null());
+    let resumed_messages = body["messages"].as_array().unwrap();
+    assert!(resumed_messages.iter().any(|message| message["role"] == "system"
+        && message["content"].as_str().is_some_and(|text| text.contains("Tools are disabled"))));
+    assert!(resumed_messages.iter().any(|message| message["role"] == "assistant"
+        && message["content"] == "Read notes.txt successfully."), "Explicit session ID must restore earlier turns");
+    let reopened = env.run_json(&["sessions", "show", &sid1]);
+    assert_eq!(reopened["session"]["title"], shown["session"]["title"]);
+    let roles: Vec<_> = reopened["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap()).collect();
+    assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+
     let backup_db = env.workspace.join("sessions-backup.db");
     let bkp = env.run_json(&["sessions", "backup", backup_db.to_str().unwrap()]);
     assert_eq!(bkp["backup"], backup_db.to_str().unwrap());
@@ -1393,6 +1415,9 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
     let m = pty.send_command("/status");
     pty.wait_for("Permission:  cautious", m, t);
 
+    let m = pty.send_command("/diff");
+    pty.wait_for("Open a Git working tree", m, t);
+
     // 4. `/allow cautious` & `/allow allow_all` & reject `/allow accept_edits`
     let m = pty.send_command("/allow cautious");
     pty.wait_for("Switched permission profile to 'cautious'", m, t);
@@ -1439,6 +1464,19 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
     let m = pty.send_command("/checkpoint pty-snap");
     pty.wait_for("Created checkpoint", m, t);
 
+    for args in [&["init", "-q"][..], &["add", "tracked.txt"]] {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(&env.workspace)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+    let m = pty.send_command("/diff");
+    pty.wait_for("(no diff)", m, t);
+    let m = pty.send_command("/diff --staged");
+    pty.wait_for("1 insertion", m, t);
+
     // 11. `/quit` exits cleanly with code 0 and zero panic
     let _ = pty.send_command("/quit");
     let (status, full_screen) = pty.wait_exit(Duration::from_secs(8));
@@ -1450,4 +1488,5 @@ fn tui_real_pty_interactive_slash_commands_e2e() {
         !full_screen.contains("panicked at"),
         "detected panic in TUI output:\n{full_screen}"
     );
+    assert!(!full_screen.contains("git diff --no-index"));
 }

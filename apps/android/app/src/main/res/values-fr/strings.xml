@@ -1498,4 +1498,6 @@
     <string name="chat_v2_workspace_review_files">Fichiers de l’espace de travail</string>
     <string name="chat_v2_workspace_review_truncated">Sortie tronquée pour l’aperçu</string>
     <string name="chat_v2_edit_resend_failed">Impossible de tronquer et renvoyer le message</string>
+    <string name="chat_missing_host_history">Cette conversation est introuvable sur l’hôte associé. Ouvrez-la sur l’hôte ou créez une nouvelle conversation ici.</string>
+    <string name="chat_edit_source_changed">La conversation a changé. Ouvrez-la à nouveau avant de modifier ce message.</string>
 </resources>

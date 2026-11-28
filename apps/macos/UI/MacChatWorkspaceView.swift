@@ -773,12 +773,16 @@ struct MacChatWorkspaceView: View {
             }
             if section == .memory { dataNavigation.section = .memory }
         }
-        .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(model.selectedMessages.count)") {
+        .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(model.selectedMessages.count)/\(model.selectedConversation?.isPersisted ?? false)") {
             localPreviewSourceConfirmed = false
             let owner = model.selectedConversationID
             localPreviewOwner = owner
-            guard let owner, model.executionHost == .local else { return }
-            localPreviewSourceConfirmed = (try? previewRepository.conversationSourceOwner(conversationID: owner)) == .local
+            guard model.executionHost == .local else { return }
+            if owner == nil || model.selectedConversation?.isPersisted == false {
+                localPreviewSourceConfirmed = true
+            } else if let owner {
+                localPreviewSourceConfirmed = (try? previewRepository.conversationSourceOwner(conversationID: owner)) == .local
+            }
         }
         .task(id: "\(model.selectedConversationID ?? "")/\(model.executionHost)/\(roomWorkspace.mainSourceReady)/\(!expertSelection.isEmpty)") {
             guard let owner = model.selectedConversationID, roomWorkspace.mainSourceReady, model.executionHost == .remote,
@@ -2198,9 +2202,16 @@ struct MacChatWorkspaceView: View {
     private func openCodeReference(_ reference: MacCodeReference) {
         // A file URI carries no Host authority. Recheck canonical ownership at
         // the action boundary; selecting a local endpoint cannot relabel history.
-        guard let owner = model.selectedConversationID else { return }
+        let sourceOwner: AppleConversationSourceOwner?
+        if model.selectedConversationID == nil || model.selectedConversation?.isPersisted == false {
+            sourceOwner = model.executionHost == .local ? .local : nil
+        } else if let owner = model.selectedConversationID {
+            sourceOwner = try? previewRepository.conversationSourceOwner(conversationID: owner)
+        } else {
+            sourceOwner = nil
+        }
         guard MacFilePreviewPolicy.allowsLocalRead(
-            sourceOwner: try? previewRepository.conversationSourceOwner(conversationID: owner),
+            sourceOwner: sourceOwner,
             isLocalExecutionHost: model.executionHost == .local, url: reference.url
         ) else {
             blockedFileReference = reference

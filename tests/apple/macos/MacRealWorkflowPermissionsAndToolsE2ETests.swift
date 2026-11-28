@@ -335,4 +335,262 @@ final class MacRealWorkflowPermissionsAndToolsE2ETests: XCTestCase {
         XCTAssertTrue(reply.contains(p1Marker), "Reply must extract Page 1 marker \(p1Marker), got: \(reply.prefix(400))")
         XCTAssertTrue(reply.contains(p14Marker), "Reply must extract Page 14 marker \(p14Marker), got: \(reply.prefix(400))")
     }
+
+    // MARK: - 3. Real Model PNG Artifact Emission + Vision read_file + Chronological Post-Tool Answer
+
+    func testRealModelFigureGenerationVisionInspectionAndChronologicalJournal() async throws {
+        let config = try loadRealLLMConfig()
+        setenv("NOLA_REAL_LLM_E2E", "1", 1)
+        defer { unsetenv("NOLA_REAL_LLM_E2E") }
+
+        let h = try await makeWorkspaceHarness(prefix: "fig-vision", config: config)
+        defer {
+            if h.workspaceModel.isRunning { h.workspaceModel.stop(reason: "teardown") }
+            h.workspaceModel.presentationDidDetach()
+            h.window.close()
+        }
+        let wm = h.workspaceModel
+        let convID = try XCTUnwrap(wm.selectedConversationID)
+        wm.permissionMode = .allowAll
+        XCTAssertTrue(wm.selectComposerReasoningPreference("low", conversationID: convID))
+        try await wm.waitForModelConfigurationCommit()
+
+        wm.draft = "请用 bash 运行一行 python3 脚本在当前工作区生成一张 200x120 纯红色 PNG 图片 `demo-figure.png`（可用标准库 struct+zlib），然后调用 `read_file` 读取 `demo-figure.png` 检查你画的图，最后用中文一句话说明图片颜色。"
+        wm.send()
+        XCTAssertTrue(wm.isRunning)
+
+        let deadline = ContinuousClock.now + .seconds(150)
+        while wm.isRunning && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(wm.isRunning, "Real figure generation & vision turn timed out")
+        await wm.loadSelectedConversationIfNeeded()
+        try await Task.sleep(for: .milliseconds(500))
+
+        let figURL = h.workspaceDir.appendingPathComponent("demo-figure.png")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: figURL.path), "Model should have created demo-figure.png")
+
+        // Inspect canonical journal parts directly
+        let assistantMsg = try XCTUnwrap(wm.selectedMessages.last(where: { $0.role == .assistant }))
+        let ref = try XCTUnwrap(assistantMsg.journalReference, "Assistant message must carry canonical journalReference")
+        let parts = try await MacJournalTextRead.parts(ref)
+
+        let toolParts = parts.filter { if case .tool = $0.metadata { return true }; return false }
+        XCTAssertFalse(toolParts.isEmpty, "Expected tool parts for bash + read_file")
+
+        // Verify post-tool final answer text part is ordered AFTER the tools (not pinned before them!)
+        let textParts = parts.filter { if case .text = $0.metadata { return true }; return false }
+        let maxToolPos = toolParts.compactMap { UInt64($0.order_key.position) }.max() ?? 0
+        let maxTextPos = textParts.compactMap { UInt64($0.order_key.position) }.max() ?? 0
+        XCTAssertGreaterThan(maxTextPos, maxToolPos, "Final answer text (pos=\(maxTextPos)) MUST come chronologically AFTER tools (maxToolPos=\(maxToolPos))")
+
+        // Verify canonical attachment part for demo-figure.png was emitted
+        let figAttachment = parts.first { part in
+            if case .attachment(let att) = part.metadata,
+               case .inline(let name) = att.name {
+                return name == "demo-figure.png"
+            }
+            return false
+        }
+        XCTAssertNotNil(figAttachment, "Canonical journal must emit an attachment part for generated demo-figure.png")
+
+        // Capture screenshot of the rendered conversation with inline artifact thumbnail
+        let evidenceDir = URL(fileURLWithPath: "/tmp/nola-real-e2e-evidence/macos", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
+        h.window.displayIfNeeded()
+        h.hosting.layoutSubtreeIfNeeded()
+        if let rep = h.hosting.bitmapImageRepForCachingDisplay(in: h.hosting.bounds) {
+            h.hosting.cacheDisplay(in: h.hosting.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: evidenceDir.appendingPathComponent("mac-figure-inline-artifact.png"), options: .atomic)
+            }
+        }
+    }
+
+    // MARK: - 4. Real Model Multi-File Code Refactor + Edit + Unittest + Git Diff Workflow
+
+    func testRealModelMultiFileCodeRefactorEditTestAndGitWorkflow() async throws {
+        let config = try loadRealLLMConfig()
+        setenv("NOLA_REAL_LLM_E2E", "1", 1)
+        defer { unsetenv("NOLA_REAL_LLM_E2E") }
+
+        let h = try await makeWorkspaceHarness(prefix: "code-refactor", config: config)
+        defer {
+            if h.workspaceModel.isRunning { h.workspaceModel.stop(reason: "teardown") }
+            h.workspaceModel.presentationDidDetach()
+            h.window.close()
+        }
+
+        // Seed a realistic multi-file Python project with a deliberate unit-test failure
+        let pkgDir = h.workspaceDir.appendingPathComponent("mathlib", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgDir, withIntermediateDirectories: true)
+        try "".write(to: pkgDir.appendingPathComponent("__init__.py"), atomically: true, encoding: .utf8)
+        let calcURL = pkgDir.appendingPathComponent("calc.py")
+        try """
+        def discounted_total(prices, discount_pct):
+            \"\"\"Return total price after applying percentage discount (0..100).\"\"\"
+            subtotal = sum(prices)
+            # BUG: adds discount instead of subtracting it
+            return round(subtotal * (1.0 + discount_pct / 100.0), 2)
+        """.write(to: calcURL, atomically: true, encoding: .utf8)
+        let testURL = h.workspaceDir.appendingPathComponent("test_calc.py")
+        try """
+        import unittest
+        from mathlib.calc import discounted_total
+
+        class TestCalc(unittest.TestCase):
+            def test_discount(self):
+                self.assertEqual(discounted_total([100, 50], 20), 120.0)
+                self.assertEqual(discounted_total([80, 20], 0), 100.0)
+
+        if __name__ == "__main__":
+            unittest.main()
+        """.write(to: testURL, atomically: true, encoding: .utf8)
+
+        let wm = h.workspaceModel
+        let convID = try XCTUnwrap(wm.selectedConversationID)
+        wm.permissionMode = .allowAll
+        XCTAssertTrue(wm.selectComposerReasoningPreference("low", conversationID: convID))
+        try await wm.waitForModelConfigurationCommit()
+
+        wm.draft = "当前工作区里有一个 Python 项目（`mathlib/calc.py` 和 `test_calc.py`），测试目前失败。请你先运行 `python3 -m unittest test_calc.py` 查看失败原因，定位并修复 `mathlib/calc.py` 中的 bug，然后再次运行单元测试确认全部通过，最后用中文简短汇报修复内容。"
+        wm.send()
+        XCTAssertTrue(wm.isRunning)
+
+        let deadline = ContinuousClock.now + .seconds(150)
+        while wm.isRunning && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(wm.isRunning, "Real code refactor turn timed out")
+        await wm.loadSelectedConversationIfNeeded()
+        try await Task.sleep(for: .milliseconds(400))
+
+        // Verify the real Python unit test suite now passes on disk!
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["python3", "-m", "unittest", "test_calc.py"]
+        proc.currentDirectoryURL = h.workspaceDir
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        try proc.run()
+        proc.waitUntilExit()
+        let testOut = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        XCTAssertEqual(proc.terminationStatus, 0, "Real model MUST have fixed mathlib/calc.py so unittest passes. Output: \(testOut)")
+
+        // Verify chronological journal: final answer text appears AFTER the tools
+        let assistantMsg = try XCTUnwrap(wm.selectedMessages.last(where: { $0.role == .assistant }))
+        let ref = try XCTUnwrap(assistantMsg.journalReference)
+        let parts = try await MacJournalTextRead.parts(ref)
+        let toolParts = parts.filter { if case .tool = $0.metadata { return true }; return false }
+        let textParts = parts.filter { if case .text = $0.metadata { return true }; return false }
+        XCTAssertGreaterThanOrEqual(toolParts.count, 2, "Expected multiple tool calls (read/edit/bash)")
+        let maxToolPos = toolParts.compactMap { UInt64($0.order_key.position) }.max() ?? 0
+        let maxTextPos = textParts.compactMap { UInt64($0.order_key.position) }.max() ?? 0
+        XCTAssertGreaterThan(maxTextPos, maxToolPos, "Final summary text must appear chronologically after tools")
+    }
+
+    // MARK: - 5. Real Model Cross-Conversation Durable Memory Save & Recall
+
+    func testRealModelCrossConversationMemorySaveAndRecall() async throws {
+        let config = try loadRealLLMConfig()
+        setenv("NOLA_REAL_LLM_E2E", "1", 1)
+        defer { unsetenv("NOLA_REAL_LLM_E2E") }
+
+        let h = try await makeWorkspaceHarness(prefix: "mem-recall", config: config)
+        defer {
+            if h.workspaceModel.isRunning { h.workspaceModel.stop(reason: "teardown") }
+            h.workspaceModel.presentationDidDetach()
+            h.window.close()
+        }
+
+        let wm = h.workspaceModel
+        let convA = try XCTUnwrap(wm.selectedConversationID)
+        wm.permissionMode = .allowAll
+        XCTAssertTrue(wm.selectComposerReasoningPreference("low", conversationID: convA))
+        try await wm.waitForModelConfigurationCommit()
+
+        let uniqueCode = "ORBIT-DELTA-\(Int.random(in: 1000...9999))"
+        wm.draft = "请务必调用 `memory_save` 工具记住一条重要长期记忆：我的秘密项目代号是 `\(uniqueCode)`，核心负责语言是 Rust。保存完成后确认给我。"
+        wm.send()
+        XCTAssertTrue(wm.isRunning)
+        let d1 = ContinuousClock.now + .seconds(120)
+        while wm.isRunning && ContinuousClock.now < d1 {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(wm.isRunning, "Memory save turn timed out")
+
+        // Start a brand-new Conversation B and recall the memory across sessions!
+        wm.newConversation()
+        await wm.loadSelectedConversationIfNeeded()
+        let convB = try XCTUnwrap(wm.selectedConversationID)
+        XCTAssertNotEqual(convA, convB)
+        wm.permissionMode = .allowAll
+        XCTAssertTrue(wm.selectComposerReasoningPreference("low", conversationID: convB))
+        try await wm.waitForModelConfigurationCommit()
+
+        wm.draft = "请调用 `memory_search` 工具帮我查一下我之前让你记住的秘密项目代号是什么，直接原样输出该代号。"
+        wm.send()
+        XCTAssertTrue(wm.isRunning)
+        let d2 = ContinuousClock.now + .seconds(120)
+        while wm.isRunning && ContinuousClock.now < d2 {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(wm.isRunning, "Memory recall turn timed out")
+        await wm.loadSelectedConversationIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+
+        let reply = wm.selectedMessages.filter { $0.role == .assistant }.map(\.text).joined(separator: "\n")
+        XCTAssertTrue(
+            reply.contains(uniqueCode),
+            "New conversation B MUST recall durable memory '\(uniqueCode)' saved in conversation A, got: \(reply.prefix(400))"
+        )
+    }
+
+    // MARK: - 6. Real Model High-Reasoning CJK LaTeX + Table + Code Visual Audit
+
+    func testRealModelHighReasoningCJKMathTableCodeVisualAudit() async throws {
+        let config = try loadRealLLMConfig()
+        setenv("NOLA_REAL_LLM_E2E", "1", 1)
+        defer { unsetenv("NOLA_REAL_LLM_E2E") }
+
+        let h = try await makeWorkspaceHarness(prefix: "cjk-math-visual", config: config)
+        defer {
+            if h.workspaceModel.isRunning { h.workspaceModel.stop(reason: "teardown") }
+            h.workspaceModel.presentationDidDetach()
+            h.window.close()
+        }
+
+        let wm = h.workspaceModel
+        let convID = try XCTUnwrap(wm.selectedConversationID)
+        wm.permissionMode = .allowAll
+        XCTAssertTrue(wm.selectComposerReasoningPreference("high", conversationID: convID))
+        try await wm.waitForModelConfigurationCommit()
+
+        wm.draft = "请不要调用工具，直接用简洁生动的中文回答，必须包含：1) 独立公式块 `$$S_A = \\lambda \\cdot S_B + (\\text{一小坨残差})$$`；2) 一张 2 列 2 行的 Markdown 对比表格；3) 一段 3 行以内的 Python 代码块。"
+        wm.send()
+        XCTAssertTrue(wm.isRunning)
+
+        let deadline = ContinuousClock.now + .seconds(120)
+        while wm.isRunning && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertFalse(wm.isRunning, "High-reasoning CJK math visual turn timed out")
+        await wm.loadSelectedConversationIfNeeded()
+        try await Task.sleep(for: .milliseconds(450))
+
+        let reply = wm.selectedMessages.filter { $0.role == .assistant }.map(\.text).joined(separator: "\n")
+        XCTAssertTrue(reply.contains("一小坨残差"), "Reply should contain CJK LaTeX formula: \(reply.prefix(400))")
+
+        let evidenceDir = URL(fileURLWithPath: "/tmp/nola-real-e2e-evidence/macos", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceDir, withIntermediateDirectories: true)
+        h.window.displayIfNeeded()
+        h.hosting.layoutSubtreeIfNeeded()
+        if let rep = h.hosting.bitmapImageRepForCachingDisplay(in: h.hosting.bounds) {
+            h.hosting.cacheDisplay(in: h.hosting.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) {
+                try png.write(to: evidenceDir.appendingPathComponent("mac-real-cjk-math-table-code.png"), options: .atomic)
+            }
+        }
+    }
 }

@@ -213,7 +213,7 @@ internal class OpenAiResponsesAdapter(
             applyStreamingTimeouts(httpClient)
             contentType(ContentType.Application.Json)
             header("Authorization", "Bearer ${config.apiKey}")
-            setBody(ModelRequestPrivacy.redact(body, config.apiKey))
+            setBody(ModelRequestPrivacy.redact(body, config.apiKey, config.baseUrl))
         }.execute { response ->
             if (response.status.value !in 200..299) {
                 throw llmRequestException(response.status.value, response.bodyAsText())

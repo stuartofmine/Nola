@@ -416,6 +416,34 @@ fn ffi_open_execute_redact_and_mobile_roundtrip() {
         "key=[CREDENTIAL] token=[CREDENTIAL]"
     );
 
+    let wire = br#"{"messages":[{"content":"hi user@example.com"}],"tools":[{"function":{"parameters":{"properties":{"password":{"type":"string"}}}}}]}"#;
+    for (address, visible) in [("http://localhost", true), ("https://example.org", false)] {
+        let address = CString::new(address).unwrap();
+        let ptr = unsafe {
+            nola_core_redact_model_request_for_endpoint(
+                wire.as_ptr(),
+                wire.len(),
+                std::ptr::null(),
+                0,
+                address.as_ptr(),
+            )
+        };
+        let filtered: Value =
+            serde_json::from_slice(unsafe { CStr::from_ptr(ptr) }.to_bytes()).unwrap();
+        unsafe { nola_model_privacy_free(ptr) };
+        assert_eq!(
+            filtered["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("user@example.com"),
+            visible
+        );
+        assert_eq!(
+            filtered["tools"][0]["function"]["parameters"]["properties"]["password"]["type"],
+            "string"
+        );
+    }
+
     unsafe { nola_core_application_free(app) };
 }
 

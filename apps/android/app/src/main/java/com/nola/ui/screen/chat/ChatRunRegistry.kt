@@ -61,6 +61,9 @@ internal class ChatRunSession(
     var journalProjection: ConversationProjectionV1? = null
     @Volatile var retired = false
     var presentationJob: kotlinx.coroutines.Job? = null
+    var directHostHistory = false
+    var directHistoryJob: Job? = null
+    var directHistoryMissing = false
     var loadingPresentation = false
     fun retainsLoadedPresentation(): Boolean {
         val snapshot = state.value

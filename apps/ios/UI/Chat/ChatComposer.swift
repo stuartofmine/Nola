@@ -136,9 +136,10 @@ final class ChatPasteAwareTextView: UITextView {
 struct ChatPasteAwareEditor: UIViewRepresentable {
     @Binding var text: String
     let isEditable: Bool
-    let focus: FocusState<Bool>.Binding
+    let focus: Binding<Bool>
     let onPasteFiles: ([URL]) -> Void
     let onPasteFailure: (Error) -> Void
+    var minimumHeight: CGFloat = 0
     var mentionsVisible = false
     var mentionCommand: (String) -> Bool = { _ in false }
     var mentionEditor = AppleMentionEditor()
@@ -200,10 +201,9 @@ struct ChatPasteAwareEditor: UIViewRepresentable {
         view.isEditable = isEditable
         view.onPasteFiles = onPasteFiles
         view.onPasteFailure = onPasteFailure
-        if focus.wrappedValue && !view.isFirstResponder {
-            view.becomeFirstResponder()
-        } else if !focus.wrappedValue && view.isFirstResponder {
-            view.resignFirstResponder()
+        if focus.wrappedValue != view.isFirstResponder {
+            if focus.wrappedValue { view.becomeFirstResponder() }
+            else { view.resignFirstResponder() }
         }
     }
 
@@ -211,7 +211,8 @@ struct ChatPasteAwareEditor: UIViewRepresentable {
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
         let lineHeight = uiView.font?.lineHeight ?? 20
         let measured = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        return CGSize(width: width, height: min(max(lineHeight + 20, measured), lineHeight * 5 + 20))
+        let composerHeight = min(max(lineHeight + 20, measured), lineHeight * 5 + 20)
+        return CGSize(width: width, height: max(minimumHeight, composerHeight))
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -644,7 +645,7 @@ struct ChatComposer<ModelControl: View>: View {
 
     let isEditable: Bool
     let isGenerating: Bool
-    let focus: FocusState<Bool>.Binding
+    let focus: Binding<Bool>
     // Capture owner when opening the picker, not when its delayed result arrives.
     let onBeginAttachFiles: () -> (Result<[URL], Error>) -> Void
     let onRemoveAttachment: (UUID) -> Void
@@ -810,7 +811,6 @@ struct ChatComposer<ModelControl: View>: View {
             )
             .id(draftOwner)
             .accessibilityIdentifier("chat.composer.input")
-            .focused(focus)
         }
             .frame(minHeight: editorMinimumHeight, alignment: .topLeading)
             .clipped()

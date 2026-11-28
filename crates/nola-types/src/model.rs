@@ -308,7 +308,7 @@ impl TokenUsage {
     }
 
     /// Normalized prompt-cache hit rate in basis points (`0..=10_000`).
-    /// Returns `None` when the provider did not report usage (`!self.usage_reported`).
+    /// Returns `None` when usage is unreported or the input-token denominator is zero.
     /// When `input_excludes_cache` is true (e.g. Anthropic Messages API, where
     /// `input_tokens` only counts uncached tokens), divides `cache_read_tokens` by
     /// `input_tokens + cache_read_tokens + cache_write_tokens`.
@@ -324,7 +324,7 @@ impl TokenUsage {
             self.input_tokens
         };
         if denom == 0 {
-            return Some(0);
+            return None;
         }
         Some(((self.cache_read_tokens.saturating_mul(10_000)) / denom).min(10_000) as u32)
     }

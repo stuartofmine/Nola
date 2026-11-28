@@ -921,6 +921,7 @@ impl MockSseServer {
                 let (mut stream, _) = listener.accept().unwrap();
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
                 let raw_body = read_http_request_body(&mut stream);
+                assert!(!raw_body.is_empty(), "received {idx} of {expected_requests} model requests");
                 let parsed: Value =
                     serde_json::from_slice(&raw_body).unwrap_or_else(|_| json!({"raw": String::from_utf8_lossy(&raw_body)}));
                 rec_clone.lock().unwrap().push(parsed.clone());
@@ -965,6 +966,8 @@ impl MockSseServer {
     }
 
     fn join_and_take_bodies(mut self) -> Vec<Value> {
+        // Once the caller finishes, wake an outstanding accept so a missing request fails promptly.
+        drop(std::net::TcpStream::connect(("127.0.0.1", self.port)));
         if let Some(h) = self.handle.take() {
             h.join().unwrap();
         }
@@ -1451,7 +1454,7 @@ fn real_scenario_expert_mentions_selected_experts_list_and_delegate_expert_e2e()
     // 2. Full E2E run over local HTTP SSE: parent calls list_experts -> delegate_expert -> child answers -> parent summarizes
     let server = MockSseServer::spawn(4, |idx, req| {
         let sys = req["messages"][0]["content"].as_str().unwrap_or("");
-        if sys.contains("小米创始人视角") && !sys.contains("Saved ExpertPeer personas") {
+        if sys.contains("小米创始人视角") && !sys.contains("RustReviewer") {
             // Child delegate_expert call!
             return (
                 200,
@@ -1543,7 +1546,7 @@ fn real_scenario_expert_mentions_selected_experts_list_and_delegate_expert_e2e()
     // Child call received 雷军's persona prompt
     assert!(bodies.iter().any(|b| {
         let s = b["messages"][0]["content"].as_str().unwrap_or("");
-        s.contains("小米创始人视角") && !s.contains("Saved ExpertPeer personas")
+        s.contains("小米创始人视角") && !s.contains("RustReviewer")
     }));
 
     // Verify SQLite chat_assistant recorded both list_experts & delegate_expert succeeded
@@ -1850,4 +1853,202 @@ fn real_scenario_canonical_mac_host_upstream_http_error_commits_failed_seal_and_
     .unwrap();
     assert_eq!(seal["protocol_version"], 1);
     assert_ne!(seal["result"]["value"]["kind"], "answered");
+}
+
+#[test]
+fn real_scenario_canonical_mac_host_chronological_text_vision_artifacts_and_host_invocation() {
+    let dir = tempfile::tempdir().unwrap();
+    let ws = dir.path().join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    let db_path = dir.path().join("nola-chron.db");
+    let store = Store::open(&db_path).unwrap();
+    bind_store_vault_path(&store, &dir.path().join("vault.json")).unwrap();
+    let suite = Arc::new(ModulesSuite::new(store.clone(), ws.clone(), None));
+
+    // Create a valid 1x1 PNG in workspace so bash/read_file can inspect it
+    let tiny_png: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+        0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+        0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+        0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    fs::write(ws.join("seed.png"), tiny_png).unwrap();
+
+    // Step 1: reasoning + preface text + bash copying seed.png -> paper-figure.png + read_file(paper-figure.png)
+    // Step 2: post-tool final answer text
+    let server = MockSseServer::spawn(3, |idx, _req| {
+        let sse = |v: Value| format!("data: {v}\n\n");
+        if idx == 0 {
+            let events = vec![
+                sse(json!({"id":"c1","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"First I will create paper-figure.png and inspect it visually."},"finish_reason":null}]})),
+                sse(json!({"id":"c1","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{"content":"Starting figure generation now."},"finish_reason":null}]})),
+                sse(json!({"id":"c1","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tc_fig","type":"function","function":{"name":"bash","arguments":"{\"command\":\"cp seed.png paper-figure.png\"}"}}]},"finish_reason":null}]})),
+                sse(json!({"id":"c1","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":40,"total_tokens":140}})),
+                "data: [DONE]\n\n".into(),
+            ];
+            (200, "text/event-stream", events)
+        } else if idx == 1 {
+            let events = vec![
+                sse(json!({"id":"c2","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"tc_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"paper-figure.png\"}"}}]},"finish_reason":null}]})),
+                sse(json!({"id":"c2","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":150,"completion_tokens":20,"total_tokens":170}})),
+                "data: [DONE]\n\n".into(),
+            ];
+            (200, "text/event-stream", events)
+        } else {
+            let events = vec![
+                sse(json!({"id":"c3","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{"role":"assistant","content":"Figure paper-figure.png is ready and verified!"},"finish_reason":null}]})),
+                sse(json!({"id":"c3","object":"chat.completion.chunk","model":"qwen-vl","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":200,"completion_tokens":18,"total_tokens":218}})),
+                "data: [DONE]\n\n".into(),
+            ];
+            (200, "text/event-stream", events)
+        }
+    });
+
+    let opts = CliOptions {
+        host_request_stdin: true,
+        ..Default::default()
+    };
+    let overrides = HostRunOverrides {
+        session_id: Some("conv-chron-1".into()),
+        submission_id: Some("run-chron-1".into()),
+        user_message_id: Some("u-chron-1".into()),
+        assistant_message_id: Some("a-chron-1".into()),
+        resume: Some(false),
+        model_id: Some("qwen-vl".into()),
+        endpoint: Some(server.endpoint()),
+        api_key: Some("sk-chron".into()),
+        protocol: Some("openai_chat".into()),
+        permission_profile: Some(PermissionProfile::AllowAll),
+        image_input: Some(true),
+        ..Default::default()
+    };
+
+    let exit_code = execute_agent_turn(
+        &store,
+        &suite,
+        &db_path,
+        &ws,
+        &None,
+        &opts,
+        "Draw paper-figure.png and inspect it",
+        Some(overrides),
+    )
+    .expect("execute_agent_turn must succeed");
+    assert_eq!(exit_code, 0);
+
+    // 1. reasoning_tokens must be populated (> 0) via estimation fallback even when upstream omitted it!
+    let evts = match store.events_after("conv-chron-1", 0, 200).unwrap() {
+        nola_store::EventPage::Events(e) => e,
+        other => panic!("unexpected event page: {other:?}"),
+    };
+    let done_evt = evts
+        .iter()
+        .find(|e| e.kind == "turn_completed")
+        .expect("turn_completed event missing");
+    assert!(
+        done_evt.payload["usage"]["reasoning_tokens"].as_u64().unwrap_or(0) > 0,
+        "reasoning_tokens should be estimated when reasoning content is present: {:?}",
+        done_evt.payload["usage"]
+    );
+
+    // 2. Verify read_file sent real image data (NOT media_omitted) to the 3rd LLM request!
+    let bodies = server.join_and_take_bodies();
+    assert_eq!(bodies.len(), 3);
+    let third_req = bodies[2].to_string();
+    assert!(
+        !third_req.contains("media_omitted"),
+        "image_input: true must allow image content instead of media_omitted: {third_req}"
+    );
+    assert!(
+        third_req.contains("image_url") || third_req.contains("data:image/png;base64,"),
+        "3rd LLM request must include inline PNG image content"
+    );
+
+    // 3. Verify chronological part ordering: preface text < tools < final text, plus attachment & tool artifacts!
+    let head = crate::daemon::dispatch_command(
+        &store,
+        &suite,
+        "local_assistant_journal_head",
+        &json!({"identity": {"conversation_id": "conv-chron-1", "assistant_message_id": "a-chron-1", "run_id": "run-chron-1"}}),
+    )
+    .unwrap();
+    let snap = crate::daemon::dispatch_command(
+        &store,
+        &suite,
+        "open_assistant_journal_snapshot",
+        &json!({"at": head}),
+    )
+    .unwrap();
+    let parts_res = crate::daemon::dispatch_command(
+        &store,
+        &suite,
+        "read_assistant_journal_parts",
+        &json!({"snapshot": snap, "max_records": 64}),
+    )
+    .unwrap();
+    let parts = parts_res["parts"].as_array().unwrap();
+
+    let text_parts: Vec<&Value> = parts
+        .iter()
+        .filter(|p| p["metadata"]["kind"] == "text")
+        .collect();
+    assert_eq!(
+        text_parts.len(),
+        2,
+        "pre-tool text and post-tool answer must be separate chronological text parts, got: {text_parts:?}"
+    );
+    let first_text_pos: u64 = text_parts[0]["order_key"]["position"].as_str().unwrap().parse().unwrap();
+    let final_text_pos: u64 = text_parts[1]["order_key"]["position"].as_str().unwrap().parse().unwrap();
+    let max_tool_pos: u64 = parts
+        .iter()
+        .filter(|p| p["metadata"]["kind"] == "tool")
+        .map(|p| p["order_key"]["position"].as_str().unwrap().parse::<u64>().unwrap())
+        .max()
+        .unwrap();
+    assert!(
+        first_text_pos < max_tool_pos && max_tool_pos < final_text_pos,
+        "expected preface text ({first_text_pos}) < tools ({max_tool_pos}) < final answer ({final_text_pos})"
+    );
+
+    // 4. Bash tool creating paper-figure.png must carry real tool_artifacts + affected_resources + human title!
+    let bash_tool = parts
+        .iter()
+        .find(|p| p["metadata"]["kind"] == "tool" && p["metadata"]["data"]["capability_id"] == "bash")
+        .expect("bash tool part missing");
+    assert_ne!(
+        bash_tool["metadata"]["data"]["title"]["value"],
+        "bash",
+        "tool title should be human-readable, not raw capability id"
+    );
+    assert!(
+        bash_tool["bodies"].as_array().unwrap().iter().any(|b| b["field"] == "tool_artifacts"),
+        "bash tool that created paper-figure.png must emit tool_artifacts body"
+    );
+    assert!(
+        !bash_tool["metadata"]["data"]["affected_resources"]["value"].as_array().unwrap().is_empty(),
+        "bash tool that created paper-figure.png must populate affected_resources"
+    );
+
+    // 5. Canonical attachment part must be emitted for paper-figure.png!
+    let attachment = parts
+        .iter()
+        .find(|p| p["metadata"]["kind"] == "attachment")
+        .expect("deliverable paper-figure.png must emit canonical attachment part");
+    assert_eq!(attachment["metadata"]["data"]["name"]["value"], "paper-figure.png");
+    assert_eq!(attachment["metadata"]["data"]["mime_type"]["value"], "image/png");
+
+    // 6. exact_run_invocation.host_invocation must be populated!
+    let exact_inv: Value = store
+        .get_kv("exact_run_invocation:conv-chron-1:run-chron-1")
+        .unwrap()
+        .expect("exact_run_invocation KV missing");
+    assert_eq!(
+        exact_inv["host_invocation"]["primary"]["model_id"],
+        "qwen-vl"
+    );
+    assert_eq!(
+        exact_inv["host_invocation"]["permission_mode"],
+        "allow_all"
+    );
 }

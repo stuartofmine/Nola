@@ -43,23 +43,51 @@ pub fn is_forbidden_ip(ip: IpAddr) -> bool {
     }
 }
 
+pub(crate) fn is_fake_ip_benchmark(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            o[0] == 198 && (o[1] == 18 || o[1] == 19)
+        }
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .or_else(|| v6.to_ipv4())
+            .is_some_and(|v4| is_fake_ip_benchmark(IpAddr::V4(v4))),
+    }
+}
+
+pub(crate) fn is_public_domain_name(dom: &str) -> bool {
+    let lower = dom.trim().trim_end_matches('.').to_ascii_lowercase();
+    if !lower.contains('.') || lower.parse::<IpAddr>().is_ok() {
+        return false;
+    }
+    !matches!(
+        lower.rsplit('.').next().unwrap_or(""),
+        "local" | "localhost" | "internal" | "lan" | "home" | "arpa" | "intranet" | "localdomain"
+    )
+}
+
 /// Resolve host DNS upfront, reject any private/loopback/link-local/IPv4-mapped address,
 /// and return pinned `SocketAddr`s for `reqwest::ClientBuilder::resolve_to_addrs`.
+///
+/// Allows RFC 2544 `198.18.0.0/15` **only** when the request targets a public domain name
+/// (common on macOS/desktop TUN proxies such as Clash/Mihomo/Surge in Fake-IP mode), while
+/// still blocking literal `http://198.18.x.x` requests and all private/loopback/metadata IPs.
 pub fn resolve_and_validate_public_url(raw_url: &str) -> Result<(Url, String, Vec<SocketAddr>), String> {
     let url = Url::parse(raw_url).map_err(|e| format!("invalid url: {e}"))?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err("only http and https schemes are allowed".into());
     }
     let port = url.port_or_known_default().unwrap_or(80);
-    let (host, addrs): (String, Vec<SocketAddr>) = match url.host() {
-        Some(Host::Ipv4(v4)) => (v4.to_string(), vec![SocketAddr::new(IpAddr::V4(v4), port)]),
-        Some(Host::Ipv6(v6)) => (v6.to_string(), vec![SocketAddr::new(IpAddr::V6(v6), port)]),
+    let (host, addrs, allow_fake_ip_tun): (String, Vec<SocketAddr>, bool) = match url.host() {
+        Some(Host::Ipv4(v4)) => (v4.to_string(), vec![SocketAddr::new(IpAddr::V4(v4), port)], false),
+        Some(Host::Ipv6(v6)) => (v6.to_string(), vec![SocketAddr::new(IpAddr::V6(v6), port)], false),
         Some(Host::Domain(dom)) => {
             let resolved: Vec<SocketAddr> = (dom, port)
                 .to_socket_addrs()
                 .map_err(|e| format!("dns resolution failed for {dom}: {e}"))?
                 .collect();
-            (dom.to_string(), resolved)
+            (dom.to_string(), resolved, is_public_domain_name(dom))
         }
         None => return Err("url missing host".into()),
     };
@@ -67,10 +95,10 @@ pub fn resolve_and_validate_public_url(raw_url: &str) -> Result<(Url, String, Ve
         return Err(format!("dns returned no addresses for {host}"));
     }
     for addr in &addrs {
-        if is_forbidden_ip(addr.ip()) {
+        let ip = addr.ip();
+        if is_forbidden_ip(ip) && !(allow_fake_ip_tun && is_fake_ip_benchmark(ip)) {
             return Err(format!(
-                "blocked SSRF target: {host} resolved to non-public address {}",
-                addr.ip()
+                "blocked SSRF target: {host} resolved to non-public address {ip}"
             ));
         }
     }

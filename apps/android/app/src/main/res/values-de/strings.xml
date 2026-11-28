@@ -1498,4 +1498,6 @@
     <string name="chat_v2_workspace_review_files">Workspace-Dateien</string>
     <string name="chat_v2_workspace_review_truncated">Ausgabe für die Vorschau gekürzt</string>
     <string name="chat_v2_edit_resend_failed">Nachricht konnte nicht gekürzt und erneut gesendet werden</string>
+    <string name="chat_missing_host_history">Diese Unterhaltung ist auf dem gekoppelten Host nicht verfügbar. Öffne sie auf dem Host oder starte hier einen neuen Chat.</string>
+    <string name="chat_edit_source_changed">Die Unterhaltung wurde geändert. Öffne sie erneut, bevor du diese Nachricht bearbeitest.</string>
 </resources>

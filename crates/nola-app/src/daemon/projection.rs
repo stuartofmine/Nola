@@ -12,17 +12,13 @@ use super::{clear_active_run, get_session_case_insensitive, lookup_active_run};
 
 pub(super) fn projection_event_scope_key(scope_type: &str, conv_id: Option<&str>) -> String {
     match (scope_type, conv_id) {
-        ("conversation", Some(cid)) if !cid.trim().is_empty() => format!("__proj__:{cid}"),
+        ("conversation", Some(cid)) if !cid.trim().is_empty() => Store::conversation_projection_scope(cid),
         _ => "__proj__:__conversations__".to_string(),
     }
 }
 
 pub(super) fn append_projection_event(store: &Store, conv_id: &str, mutation: Value) {
-    let scope_key = if conv_id == "__conversations__" {
-        "__proj__:__conversations__".to_string()
-    } else {
-        format!("__proj__:{conv_id}")
-    };
+    let scope_key = Store::conversation_projection_scope(conv_id);
     let payload = json!({
         "event_id": new_id(),
         "conversation_id": conv_id,
@@ -33,11 +29,7 @@ pub(super) fn append_projection_event(store: &Store, conv_id: &str, mutation: Va
 }
 
 pub(super) fn latest_projection_sequence(store: &Store, scope_key: &str) -> u64 {
-    match store.events_after(scope_key, 0, 50_000) {
-        Ok(EventPage::Events(ev)) => ev.last().map(|e| e.seq.max(0) as u64).unwrap_or(0),
-        Ok(EventPage::ResyncRequired { latest_seq, .. }) => latest_seq.max(0) as u64,
-        Err(_) => 0,
-    }
+    store.latest_event_sequence(scope_key).unwrap_or(0).max(0) as u64
 }
 
 pub(super) fn dispatch_projection_snapshot(
@@ -278,24 +270,41 @@ pub(super) fn dispatch_projection_event_suffix(
         .min(250);
     let scope_key = projection_event_scope_key(scope_type, conv_id);
 
-    let fetch = || -> Result<Vec<_>, (&'static str, String)> {
-        match store
+    let fetch = || {
+        store
             .events_after(&scope_key, after_seq as i64, limit + 1)
-            .map_err(|e| ("storage_error", e.to_string()))?
-        {
-            EventPage::Events(ev) => Ok(ev),
-            EventPage::ResyncRequired { .. } => Ok(Vec::new()),
-        }
+            .map_err(|e| ("storage_error", e.to_string()))
     };
-
-    let mut raw_events = fetch()?;
-    if raw_events.is_empty() && wait_ms > 0 {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
-        while raw_events.is_empty() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(15));
-            raw_events = fetch()?;
-        }
-    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+    let (mut raw_events, resync) = loop {
+        let latest = match fetch()? {
+            EventPage::ResyncRequired { latest_seq, .. } => latest_seq,
+            EventPage::Events(events)
+                if events
+                    .first()
+                    .is_some_and(|e| e.seq as u64 > after_seq.saturating_add(1)) =>
+            {
+                latest_projection_sequence(store, &scope_key) as i64
+            }
+            EventPage::Events(events)
+                if !events.is_empty() || std::time::Instant::now() >= deadline =>
+            {
+                break (events, false)
+            }
+            EventPage::Events(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(15));
+                continue;
+            }
+        };
+        let reset = nola_types::SessionEvent {
+            scope: scope_key.clone(),
+            seq: latest,
+            kind: "projection".into(),
+            created_at_ms: now_ms(),
+            payload: json!({"mutation": {"type": "invalidate_projection", "revision": latest}}),
+        };
+        break (vec![reset], true);
+    };
 
     let has_more = raw_events.len() > limit;
     if has_more {
@@ -306,7 +315,7 @@ pub(super) fn dispatch_projection_event_suffix(
     let mut events_out = Vec::with_capacity(raw_events.len());
     for ev in raw_events {
         let seq = ev.seq.max(1) as u64;
-        if seq != next_seq + 1 {
+        if !resync && seq != next_seq + 1 {
             break;
         }
         next_seq = seq;
@@ -371,6 +380,7 @@ pub(super) fn dispatch_projection_event_suffix(
     }
     let effective_has_more = has_more && !events_out.is_empty();
     Ok(json!({
+        "resync_required": resync,
         "events": events_out,
         "next_cursor": {
             "scope": scope,

@@ -45,8 +45,8 @@ use nola_types::{
 use serde_json::{json, Value};
 
 use crate::config::{
-    apply_config_file, bind_store_vault_path, build_frozen_system_blocks, default_db_path,
-    default_home_dir, default_vault_path, discover_config_path, load_active_config,
+    apply_config_file, bind_store_vault_path, default_db_path, default_home_dir, default_vault_path,
+    discover_config_path, frozen_system_blocks_for_run, load_active_config,
     parse_applied_config_json, read_config_file_safe, redacted_applied_llm_config,
     resolve_fallback_routes, resolve_model_route, save_applied_config, strip_jsonc, AppliedConfig,
     ConnectionConfig, DefaultModelSelection, ModelEntry,
@@ -557,6 +557,11 @@ struct HostRunOverrides {
     max_output_tokens: Option<usize>,
     max_iterations: Option<usize>,
     context_window_tokens: Option<usize>,
+    image_input: Option<bool>,
+    reasoning_supported: Option<bool>,
+    tool_calls_supported: Option<bool>,
+    sampling_parameters: Option<bool>,
+    stream_reasoning: Option<bool>,
     selected_experts: Vec<Value>,
     expert_mentions: Vec<Value>,
     context_components: Vec<Value>,
@@ -742,15 +747,22 @@ fn handle_run_subcommand(
                 .filter(|s| !s.trim().is_empty())
                 .or(opts.session_id.as_deref())
                 .unwrap_or("");
-            if !sid.is_empty() {
-                let _ = store.set_kv(
-                    &format!("cancel_requested:{sid}"),
-                    &json!({"requested_at_ms": now_ms()}),
-                );
+            if sid.is_empty() {
+                return Err("cancel requires a session_id".into());
             }
+            let key = match req.get("expected_run_id").and_then(Value::as_str) {
+                Some(run) => format!("cancel_requested_run:{sid}:{run}"),
+                None => format!("cancel_requested:{sid}"),
+            };
+            store
+                .set_kv(
+                    &key,
+                    &json!({"cancel_requested": true, "requested_at_ms": now_ms()}),
+                )
+                .map_err(|e| e.to_string())?;
             println!(
                 "{}",
-                json!({"ok": true, "cancelled": true, "session_id": sid})
+                json!({"ok": true, "cancel_requested": true, "cancelled": false, "session_id": sid})
             );
             let _ = io::stdout().flush();
             return Ok(0);
@@ -908,6 +920,35 @@ fn handle_run_subcommand(
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
+        let mc = req
+            .get("model_capabilities")
+            .or_else(|| req.get("modelCapabilities"));
+        let image_input = mc
+            .and_then(|c| {
+                c.get("vision_input")
+                    .or_else(|| c.get("image_input"))
+                    .or_else(|| c.get("imageInput"))
+                    .and_then(|v| v.as_bool())
+            })
+            .or_else(|| req.get("vision_input").and_then(|v| v.as_bool()));
+        let reasoning_supported = mc
+            .and_then(|c| c.get("reasoning").and_then(|v| v.as_bool()));
+        let tool_calls_supported = mc.and_then(|c| {
+            c.get("native_tool_calls")
+                .or_else(|| c.get("tool_calls"))
+                .or_else(|| c.get("toolCalls"))
+                .and_then(|v| v.as_bool())
+        });
+        let sampling_parameters = mc.and_then(|c| {
+            c.get("sampling_parameters")
+                .or_else(|| c.get("samplingParameters"))
+                .and_then(|v| v.as_bool())
+        });
+        let stream_reasoning = mc.and_then(|c| {
+            c.get("stream_reasoning")
+                .or_else(|| c.get("streamReasoning"))
+                .and_then(|v| v.as_bool())
+        });
         let overrides = HostRunOverrides {
             session_id,
             submission_id,
@@ -926,6 +967,11 @@ fn handle_run_subcommand(
             max_output_tokens,
             max_iterations,
             context_window_tokens,
+            image_input,
+            reasoning_supported,
+            tool_calls_supported,
+            sampling_parameters,
+            stream_reasoning,
             selected_experts,
             expert_mentions,
             context_components,
@@ -1016,6 +1062,70 @@ fn execute_agent_turn(
         if let Some(cw) = ov.context_window_tokens {
             route.context_window = cw;
         }
+        if let Some(img) = ov.image_input {
+            route.capabilities.image_input = img;
+        }
+        if let Some(rs) = ov.reasoning_supported {
+            route.capabilities.reasoning = rs;
+        }
+        if let Some(tc) = ov.tool_calls_supported {
+            route.capabilities.tool_calls = tc;
+        }
+        if let Some(sp) = ov.sampling_parameters {
+            route.capabilities.sampling_parameters = sp;
+            if !sp {
+                route.temperature = None;
+                route.top_p = None;
+            }
+        }
+        if let Some(sr) = ov.stream_reasoning {
+            route.capabilities.stream_reasoning = sr;
+        }
+    }
+    // Enrich missing capabilities (e.g. image_input / reasoning) from discovered model_connection catalog
+    if !route.capabilities.image_input {
+        if let Ok(conns) = store.list_module_records::<Value>("model_connection") {
+            let ep_norm = route.endpoint.trim_end_matches('/');
+            'conn_scan: for c in &conns {
+                let c_ep = c
+                    .get("base_url")
+                    .or_else(|| c.get("endpoint"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim_end_matches('/');
+                if !ep_norm.is_empty() && c_ep != ep_norm {
+                    continue;
+                }
+                if let Some(models) = c.pointer("/catalog/models").and_then(|v| v.as_array()) {
+                    for m in models {
+                        let mid = m
+                            .get("model_id")
+                            .or_else(|| m.get("id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if mid == route.model {
+                            let explicit_img = overrides.as_ref().and_then(|o| o.image_input);
+                            if explicit_img.is_none() {
+                                let cat_img = m
+                                    .pointer("/execution_capabilities/imageInput")
+                                    .or_else(|| m.pointer("/execution_capabilities/image_input"))
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                    || m.get("modalities")
+                                        .and_then(|v| v.as_array())
+                                        .is_some_and(|arr| {
+                                            arr.iter().any(|x| x.as_str() == Some("image"))
+                                        });
+                                if cat_img {
+                                    route.capabilities.image_input = true;
+                                }
+                            }
+                            break 'conn_scan;
+                        }
+                    }
+                }
+            }
+        }
     }
     if nola_llm::normalized_wire_reasoning_effort(route.reasoning_effort.as_deref()).is_some() {
         route.capabilities.reasoning = true;
@@ -1073,7 +1183,7 @@ fn execute_agent_turn(
     let mut resume = overrides
         .as_ref()
         .and_then(|o| o.resume)
-        .unwrap_or(opts.resume || opts.continue_last);
+        .unwrap_or(opts.resume || opts.continue_last || opts.session_id.is_some());
     if session_id.is_none() && opts.continue_last {
         if let Ok(recent) = store.list_sessions(1) {
             if let Some(last) = recent.into_iter().next() {
@@ -1082,11 +1192,7 @@ fn execute_agent_turn(
             }
         }
     }
-    let effective_session_id = if opts.host_request_stdin {
-        Some(session_id.clone().unwrap_or_else(new_id))
-    } else {
-        session_id
-    };
+    let effective_session_id = session_id.unwrap_or_else(new_id);
 
     if opts.debug {
         let fallback_count = resolve_fallback_routes(&cfg).len();
@@ -1105,12 +1211,9 @@ fn execute_agent_turn(
         );
     }
 
-    let a2ui_session = effective_session_id
-        .clone()
-        .unwrap_or_else(|| "default".to_string());
     if !opts.no_tools && (opts.host_request_stdin || opts.json_mode) {
         let host_id = crate::web_api::ensure_host_id(store);
-        register_a2ui_tools(suite, &mut registry, &host_id, &a2ui_session);
+        register_a2ui_tools(suite, &mut registry, &host_id, &effective_session_id);
     }
 
     if !opts.no_tools {
@@ -1290,7 +1393,7 @@ fn execute_agent_turn(
         let closed_ap = Arc::clone(&stdin_closed);
         let cancel_ap = Arc::clone(&cancel);
         let out_lock_ap = Arc::clone(&stdout_lock);
-        let sid_ap = effective_session_id.clone().unwrap_or_default();
+        let sid_ap = effective_session_id.clone();
         let ws_ap = workspace.to_path_buf();
         let approval: ApprovalCallback = Arc::new(move |spec, args, reason| {
             if closed_ap.load(Ordering::SeqCst) || cancel_ap.load(Ordering::SeqCst) {
@@ -1346,7 +1449,7 @@ fn execute_agent_turn(
         let closed_ui = Arc::clone(&stdin_closed);
         let cancel_ui = Arc::clone(&cancel);
         let out_lock_ui = Arc::clone(&stdout_lock);
-        let sid_ui = effective_session_id.clone().unwrap_or_default();
+        let sid_ui = effective_session_id.clone();
         let user_input_cb: UserInputCallback = Arc::new(move |question, options| {
             if closed_ui.load(Ordering::SeqCst) || cancel_ui.load(Ordering::SeqCst) {
                 return None;
@@ -1432,7 +1535,7 @@ fn execute_agent_turn(
         None => None,
     };
 
-    let mut frozen_blocks = build_frozen_system_blocks(workspace, &cfg);
+    let mut frozen_blocks = frozen_system_blocks_for_run(workspace, &cfg, !opts.no_tools);
     let effective_lang = opts.lang.clone().or_else(|| {
         std::env::var("NOLA_LANG")
             .ok()
@@ -1497,7 +1600,7 @@ fn execute_agent_turn(
 
     let route_endpoint = route.endpoint.clone();
     let run_cfg = AgentRunConfig {
-        session_id: effective_session_id.clone(),
+        session_id: Some(effective_session_id.clone()),
         resume,
         route,
         frozen_system_blocks: frozen_blocks,
@@ -1518,7 +1621,7 @@ fn execute_agent_turn(
     };
 
     let out_lock_ev = Arc::clone(&stdout_lock);
-    let mut live_session_id = a2ui_session.clone();
+    let mut live_session_id = effective_session_id.clone();
     let canonical_mac_host = opts.host_request_stdin
         && overrides
             .as_ref()
@@ -1526,13 +1629,31 @@ fn execute_agent_turn(
 
     if canonical_mac_host {
         let ov = overrides.as_ref().unwrap();
-        let conv_id = effective_session_id
-            .clone()
-            .unwrap_or_else(|| "default".to_string());
+        let conv_id = effective_session_id.clone();
         let run_id = ov.submission_id.clone().unwrap();
         let assistant_msg_id = ov.assistant_message_id.clone().unwrap();
         let source_host_id = crate::web_api::ensure_host_id(store);
         let exact_key = format!("exact_run_invocation:{conv_id}:{run_id}");
+        let host_invocation_snapshot = json!({
+            "primary": {
+                "model_id": run_cfg.route.model,
+                "endpoint": run_cfg.route.endpoint,
+                "protocol": format!("{:?}", run_cfg.route.protocol),
+                "image_input": run_cfg.route.capabilities.image_input,
+                "reasoning": run_cfg.route.capabilities.reasoning,
+                "tool_calls": run_cfg.route.capabilities.tool_calls
+            },
+            "generation": {
+                "reasoning_effort": run_cfg.route.reasoning_effort,
+                "temperature": run_cfg.route.temperature,
+                "max_output_tokens": run_cfg.route.max_output_tokens
+            },
+            "permission_mode": match run_cfg.policy.profile {
+                PermissionProfile::AllowAll => "allow_all",
+                PermissionProfile::Cautious => "cautious",
+            },
+            "plan_mode": run_cfg.policy.plan_mode
+        });
         let core_session_id = match store.get_kv(&exact_key).ok().flatten() {
             Some(mut inv) => {
                 let csid = inv
@@ -1541,17 +1662,26 @@ fn execute_agent_turn(
                     .filter(|s| !s.trim().is_empty())
                     .map(ToString::to_string)
                     .unwrap_or_else(|| conv_id.clone());
-                if inv.get("checkpoint_sha256").is_none_or(|v| v.is_null()) {
+                let needs_host_inv = inv
+                    .get("host_invocation")
+                    .and_then(|v| v.as_object())
+                    .is_none_or(|o| o.is_empty());
+                if inv.get("checkpoint_sha256").is_none_or(|v| v.is_null()) || needs_host_inv {
                     if let Some(obj) = inv.as_object_mut() {
                         obj.insert("core_session_id".into(), json!(csid));
-                        obj.insert("checkpoint_revision".into(), json!(1i64));
-                        obj.insert("checkpoint_event_cursor".into(), json!(0i64));
-                        obj.insert(
-                            "checkpoint_sha256".into(),
-                            json!(nola_types::sha256_hex(
-                                format!("checkpoint:{conv_id}:{run_id}").as_bytes()
-                            )),
-                        );
+                        if needs_host_inv {
+                            obj.insert("host_invocation".into(), host_invocation_snapshot.clone());
+                        }
+                        if obj.get("checkpoint_sha256").is_none_or(|v| v.is_null()) {
+                            obj.insert("checkpoint_revision".into(), json!(1i64));
+                            obj.insert("checkpoint_event_cursor".into(), json!(0i64));
+                            obj.insert(
+                                "checkpoint_sha256".into(),
+                                json!(nola_types::sha256_hex(
+                                    format!("checkpoint:{conv_id}:{run_id}").as_bytes()
+                                )),
+                            );
+                        }
                     }
                     let _ = store.set_kv(&exact_key, &inv);
                 }
@@ -1570,7 +1700,7 @@ fn execute_agent_turn(
                     "assistant_message_id": assistant_msg_id,
                     "invocation_config_digest": digest,
                     "status": "running",
-                    "host_invocation": {},
+                    "host_invocation": host_invocation_snapshot,
                     "core_session_id": conv_id,
                     "checkpoint_revision": 1i64,
                     "checkpoint_event_cursor": 0i64,
@@ -1671,17 +1801,23 @@ fn execute_agent_turn(
             v
         };
         let mut reasoning_seq: usize = 0;
+        let mut text_seq: usize = 0;
         let mut active_reasoning_part: Option<(String, u64, String)> = None;
-        let mut active_text_part: Option<(String, u64)> = None;
+        let mut active_text_part: Option<(String, u64, String)> = None;
+        let mut last_published_text_part_id: Option<String> = None;
         let mut last_reasoning_publish =
             std::time::Instant::now() - std::time::Duration::from_secs(1);
         let mut last_text_publish =
             std::time::Instant::now() - std::time::Duration::from_secs(1);
-        let mut tool_part_meta: std::collections::HashMap<String, (u64, String, Value)> =
+        let mut tool_part_meta: std::collections::HashMap<String, (u64, String, Value, String)> =
             std::collections::HashMap::new();
+        let mut bash_ws_snapshots: std::collections::HashMap<String, std::collections::HashMap<PathBuf, (u64, std::time::SystemTime)>> =
+            std::collections::HashMap::new();
+        let mut generated_deliverables: Vec<(PathBuf, String)> = Vec::new();
         let mut published_any_reasoning_part = false;
+        let mut published_any_text_part = false;
 
-        let run_res = engine.run(&ctx, &effective_prompt, run_cfg, |ev| match ev {
+        let on_event = |ev: AgentEvent| match ev {
             AgentEvent::SessionStarted { ref session_id, .. } => {
                 if !session_id.trim().is_empty() {
                     live_session_id = session_id.clone();
@@ -1712,11 +1848,20 @@ fn execute_agent_turn(
                 acc_text.push_str(delta);
                 if !delta.is_empty() {
                     let is_first = active_text_part.is_none();
-                    let (t_pid, t_ord) = active_text_part.get_or_insert_with(|| {
-                        (format!("{assistant_msg_id}:text"), alloc_ordinal())
+                    let (t_pid, t_ord, t_text) = active_text_part.get_or_insert_with(|| {
+                        let pid = if text_seq == 0 {
+                            format!("{assistant_msg_id}:text")
+                        } else {
+                            format!("{assistant_msg_id}:text:{text_seq}")
+                        };
+                        text_seq += 1;
+                        (pid, alloc_ordinal(), String::new())
                     });
+                    t_text.push_str(delta);
+                    published_any_text_part = true;
+                    last_published_text_part_id = Some(t_pid.clone());
                     if is_first
-                        || last_text_publish.elapsed() >= std::time::Duration::from_millis(100)
+                        || last_text_publish.elapsed() >= std::time::Duration::from_millis(120)
                     {
                         last_text_publish = std::time::Instant::now();
                         let cursor = crate::daemon::publish_journal_part(
@@ -1729,7 +1874,7 @@ fn execute_agent_turn(
                                 "visibility": "public",
                                 "is_final": false
                             }),
-                            &[("markdown", acc_text.clone())],
+                            &[("markdown", t_text.clone())],
                         );
                         emit_line(&json!({
                             "type": "assistant_journal_committed_v1",
@@ -1746,6 +1891,29 @@ fn execute_agent_turn(
                 }
             }
             AgentEvent::ReasoningDelta { ref delta } => {
+                // Seal any preceding step's text part BEFORE opening a new reasoning round so
+                // chronological ordering stays exact (text -> reasoning -> tool -> final text).
+                if let Some((t_pid, t_ord, t_text)) = active_text_part.take() {
+                    let cursor = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &t_pid,
+                        t_ord,
+                        "text",
+                        json!({
+                            "visibility": "public",
+                            "is_final": true
+                        }),
+                        &[("markdown", t_text)],
+                    );
+                    last_published_text_part_id = Some(t_pid);
+                    emit_line(&json!({
+                        "type": "assistant_journal_committed_v1",
+                        "session_id": conv_id,
+                        "source_host_id": source_host_id,
+                        "through": cursor
+                    }));
+                }
                 acc_reasoning.push_str(delta);
                 if !delta.is_empty() {
                     let is_first = active_reasoning_part.is_none();
@@ -1758,7 +1926,7 @@ fn execute_agent_turn(
                     published_any_reasoning_part = true;
                     if is_first
                         || last_reasoning_publish.elapsed()
-                            >= std::time::Duration::from_millis(120)
+                            >= std::time::Duration::from_millis(160)
                     {
                         last_reasoning_publish = std::time::Instant::now();
                         let cursor = crate::daemon::publish_journal_part(
@@ -1793,6 +1961,29 @@ fn execute_agent_turn(
                 ref arguments,
                 ..
             } => {
+                // Seal any active pre-tool text part at its true pre-tool ordinal so post-tool
+                // final answers NEVER overwrite position 1 above the tool calls!
+                if let Some((t_pid, t_ord, t_text)) = active_text_part.take() {
+                    let cursor = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &t_pid,
+                        t_ord,
+                        "text",
+                        json!({
+                            "visibility": "public",
+                            "is_final": true
+                        }),
+                        &[("markdown", t_text)],
+                    );
+                    last_published_text_part_id = Some(t_pid);
+                    emit_line(&json!({
+                        "type": "assistant_journal_committed_v1",
+                        "session_id": conv_id,
+                        "source_host_id": source_host_id,
+                        "through": cursor
+                    }));
+                }
                 if let Some((r_pid, r_ord, r_text)) = active_reasoning_part.take() {
                     let cursor = crate::daemon::publish_journal_part(
                         store,
@@ -1813,8 +2004,15 @@ fn execute_agent_turn(
                         "through": cursor
                     }));
                 }
+                if name == "bash" {
+                    bash_ws_snapshots.insert(call_id.clone(), snapshot_workspace_files(workspace));
+                }
                 let ord = alloc_ordinal();
-                tool_part_meta.insert(call_id.clone(), (ord, name.clone(), arguments.clone()));
+                let display_title = format_tool_display_title(name, arguments);
+                tool_part_meta.insert(
+                    call_id.clone(),
+                    (ord, name.clone(), arguments.clone(), display_title.clone()),
+                );
                 let input_body = json!({"protocol_version": 1, "value": arguments}).to_string();
                 let artifacts_body = json!({"protocol_version": 1, "artifacts": []}).to_string();
                 let cursor = crate::daemon::publish_journal_part(
@@ -1828,7 +2026,7 @@ fn execute_agent_turn(
                         "capability_id": name,
                         "state": "running",
                         "execution_source": {"kind": "model"},
-                        "title": {"kind": "inline", "value": name},
+                        "title": {"kind": "inline", "value": display_title},
                         "origin": {"kind": "builtin"},
                         "artifacts": "tool_artifacts",
                         "affected_resources": {"kind": "inline", "value": []}
@@ -1865,12 +2063,13 @@ fn execute_agent_turn(
                 ref name,
                 is_error,
                 ref summary,
+                ref effects,
                 ..
             } => {
-                let (ord, stored_name, stored_args) = tool_part_meta
+                let (ord, stored_name, stored_args, display_title) = tool_part_meta
                     .get(call_id)
                     .cloned()
-                    .unwrap_or_else(|| (alloc_ordinal(), name.clone(), json!({})));
+                    .unwrap_or_else(|| (alloc_ordinal(), name.clone(), json!({}), name.clone()));
                 let input_body =
                     json!({"protocol_version": 1, "value": stored_args}).to_string();
                 let output_body = json!({
@@ -1878,16 +2077,82 @@ fn execute_agent_turn(
                     "value": {"summary": summary, "is_error": is_error}
                 })
                 .to_string();
-                let artifacts_body = json!({"protocol_version": 1, "artifacts": []}).to_string();
+                let mut affected_resources: Vec<Value> = Vec::new();
+                let mut artifacts_vec: Vec<Value> = Vec::new();
+                let mut seen_artifact_paths: std::collections::HashSet<PathBuf> =
+                    std::collections::HashSet::new();
+                for eff in effects {
+                    let op = format!("{:?}", eff.operation).to_ascii_lowercase();
+                    let raw_path = eff.uri.strip_prefix("file://").unwrap_or(&eff.uri);
+                    let p = PathBuf::from(raw_path);
+                    let file_uri = if eff.uri.starts_with("file://") {
+                        eff.uri.clone()
+                    } else {
+                        format!("file://{}", p.display())
+                    };
+                    affected_resources.push(json!({
+                        "resource_type": "file",
+                        "operation": op,
+                        "uri": file_uri
+                    }));
+                    if !is_error && p.is_file() && seen_artifact_paths.insert(p.clone()) {
+                        let fname = p
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("file")
+                            .to_string();
+                        let mime = infer_artifact_mime(&p);
+                        artifacts_vec.push(json!({
+                            "uri": file_uri,
+                            "name": fname,
+                            "mime_type": mime,
+                            "operation": op
+                        }));
+                        if is_deliverable_artifact_path(&p) {
+                            record_deliverable(&mut generated_deliverables, p, op);
+                        }
+                    }
+                }
+                if let Some(before_snap) = bash_ws_snapshots.remove(call_id) {
+                    if !is_error {
+                        for (changed_path, op) in diff_workspace_files(workspace, &before_snap) {
+                            if seen_artifact_paths.insert(changed_path.clone()) {
+                                let file_uri = format!("file://{}", changed_path.display());
+                                let fname = changed_path
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("file")
+                                    .to_string();
+                                let mime = infer_artifact_mime(&changed_path);
+                                affected_resources.push(json!({
+                                    "resource_type": "file",
+                                    "operation": op,
+                                    "uri": file_uri
+                                }));
+                                artifacts_vec.push(json!({
+                                    "uri": file_uri,
+                                    "name": fname,
+                                    "mime_type": mime,
+                                    "operation": op
+                                }));
+                                if is_deliverable_artifact_path(&changed_path) {
+                                    record_deliverable(&mut generated_deliverables, changed_path, op);
+                                }
+                            }
+                        }
+                    }
+                }
+                let artifacts_body =
+                    json!({"protocol_version": 1, "artifacts": artifacts_vec}).to_string();
                 let mut tool_data = json!({
                     "tool_call_id": call_id,
                     "capability_id": stored_name,
                     "state": if is_error { "failed" } else { "completed" },
                     "execution_source": {"kind": "model"},
-                    "title": {"kind": "inline", "value": stored_name},
+                    "title": {"kind": "inline", "value": display_title},
                     "origin": {"kind": "builtin"},
                     "artifacts": "tool_artifacts",
-                    "affected_resources": {"kind": "inline", "value": []}
+                    "affected_resources": {"kind": "inline", "value": affected_resources}
                 });
                 if !summary.is_empty() {
                     tool_data["summary"] = json!({"kind": "inline", "value": summary});
@@ -1957,7 +2222,15 @@ fn execute_agent_turn(
                 );
             }
             _ => {}
-        });
+        };
+        let run_res = engine.run_identified(
+            &ctx,
+            &effective_prompt,
+            Vec::new(),
+            run_cfg,
+            Some(&run_id),
+            on_event,
+        );
         ctx.pty.close_all();
         match run_res {
             Ok(res) => {
@@ -1996,20 +2269,87 @@ fn execute_agent_turn(
                         &[("reasoning_summary", acc_reasoning.clone())],
                     );
                 }
-                let (text_part_id, text_ord) = active_text_part
-                    .unwrap_or_else(|| (format!("{assistant_msg_id}:text"), alloc_ordinal()));
-                let cursor = crate::daemon::publish_journal_part(
-                    store,
-                    &mut run_state,
-                    &text_part_id,
-                    text_ord,
-                    "text",
-                    json!({
-                        "visibility": "public",
-                        "is_final": true
-                    }),
-                    &[("markdown", final_text.clone())],
-                );
+                let (text_part_id, cursor) = if let Some((t_pid, t_ord, t_text)) =
+                    active_text_part.take()
+                {
+                    let seg_text = if text_seq == 1 && final_text.len() > t_text.len() {
+                        final_text.clone()
+                    } else {
+                        t_text
+                    };
+                    let c = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &t_pid,
+                        t_ord,
+                        "text",
+                        json!({
+                            "visibility": "public",
+                            "is_final": true
+                        }),
+                        &[("markdown", seg_text)],
+                    );
+                    (t_pid, c)
+                } else if !published_any_text_part {
+                    let t_pid = format!("{assistant_msg_id}:text");
+                    let t_ord = alloc_ordinal();
+                    let c = crate::daemon::publish_journal_part(
+                        store,
+                        &mut run_state,
+                        &t_pid,
+                        t_ord,
+                        "text",
+                        json!({
+                            "visibility": "public",
+                            "is_final": true
+                        }),
+                        &[("markdown", final_text.clone())],
+                    );
+                    (t_pid, c)
+                } else {
+                    let t_pid = last_published_text_part_id
+                        .clone()
+                        .unwrap_or_else(|| format!("{assistant_msg_id}:text"));
+                    let c = store
+                        .get_kv(&format!("journal_head:{conv_id}:{run_id}"))
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| json!({"identity": run_state["journal_identity"], "sequence": run_state["journal_seq"].to_string()}));
+                    (t_pid, c)
+                };
+                let mut latest_cursor = cursor;
+                // Surface newly generated deliverable files (e.g. PNG/SVG charts, PDFs, Office docs)
+                // as canonical attachment parts so macOS renders inline thumbnails + QuickLook + Artifacts!
+                if !was_cancelled {
+                    for (idx, (path, op)) in generated_deliverables.iter().enumerate() {
+                        if !path.is_file() {
+                            continue;
+                        }
+                        let fname = path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("artifact")
+                            .to_string();
+                        let file_uri = format!("file://{}", path.display());
+                        let mime = infer_artifact_mime(path);
+                        let att_id = format!("{assistant_msg_id}:artifact:{idx}");
+                        latest_cursor = crate::daemon::publish_journal_part(
+                            store,
+                            &mut run_state,
+                            &att_id,
+                            alloc_ordinal(),
+                            "attachment",
+                            json!({
+                                "attachment_id": att_id,
+                                "name": {"kind": "inline", "value": fname},
+                                "mime_type": {"kind": "inline", "value": mime},
+                                "uri": {"kind": "inline", "value": file_uri},
+                                "operation": {"kind": "inline", "value": op}
+                            }),
+                            &[],
+                        );
+                    }
+                }
                 if !was_cancelled || !final_text.is_empty() || !acc_reasoning.is_empty() {
                     let _ = store.append_event(
                         &conv_id,
@@ -2028,7 +2368,7 @@ fn execute_agent_turn(
                     "type": "assistant_journal_committed_v1",
                     "session_id": conv_id,
                     "source_host_id": source_host_id,
-                    "through": cursor
+                    "through": latest_cursor
                 }));
                 let seq = emit_trace(
                     if was_cancelled { "run.cancelled" } else { "run.completed" },
@@ -2103,7 +2443,7 @@ fn execute_agent_turn(
                 let _ = store.append_event(
                     &conv_id,
                     "run_error",
-                    json!({"run_id": run_id, "status": status, "error": err_msg}),
+                    json!({"run_id": run_id, "assistant_message_id": assistant_msg_id, "status": status, "error": err_msg}),
                     now_ms(),
                 );
                 let seq = trace_seq.fetch_add(1, Ordering::SeqCst) + 1;
@@ -2135,6 +2475,9 @@ fn execute_agent_turn(
         }
     }
 
+    store.append_event(
+        &effective_session_id, "chat_user", json!({"content": prompt}), nola_store::DEFAULT_MAX_EVENTS_PER_SCOPE,
+    ).map_err(|err| err.to_string())?;
     let effective_prompt = format_turn_prompt_with_attachments(prompt, overrides.as_ref());
     let res = engine
         .run(&ctx, &effective_prompt, run_cfg, |ev| {
@@ -2155,7 +2498,7 @@ fn execute_agent_turn(
                 {
                     if !is_error && (name == "render_ui_surface" || name == "delete_ui_surface") {
                         let frames =
-                            collect_a2ui_surface_frames(store, &a2ui_session, &live_session_id);
+                            collect_a2ui_surface_frames(store, &effective_session_id, &live_session_id);
                         if !frames.is_empty() {
                             let _g = out_lock_ev.lock().unwrap();
                             for frame in frames {
@@ -2237,7 +2580,7 @@ fn append_expert_and_host_context_blocks(
 
     if !raw_experts.is_empty() {
         let mut lines = vec![
-            "Saved ExpertPeer personas in Nola (use list_experts / delegate_expert — never probe SQLite or ~/.nola with bash):".to_string(),
+            "Saved Nola experts:".to_string(),
         ];
         for rec in raw_experts.iter().take(32) {
             let name = rec.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -2330,7 +2673,7 @@ fn append_expert_and_host_context_blocks(
 
         if !matched.is_empty() {
             let mut active_lines = vec![
-                "The user explicitly addressed the following saved Nola expert(s) in this message. Respond directly as the addressed expert persona (or delegate to them with delegate_expert if specialized multi-step work is needed). Do NOT claim the expert does not exist and do NOT run bash/sqlite3 to look them up:".to_string(),
+                "The user addressed the following saved experts. Use their supplied persona instructions. If specialized work needs delegation and delegate_expert is available, you may call it:".to_string(),
             ];
             for rec in matched {
                 let name = rec.get("name").and_then(|v| v.as_str()).unwrap_or("Expert");
@@ -2401,6 +2744,201 @@ fn append_expert_and_host_context_blocks(
                 text: ctx_parts.join("\n\n"),
             });
         }
+    }
+}
+
+fn format_tool_display_title(name: &str, args: &Value) -> String {
+    fn clip(s: &str, max_chars: usize) -> String {
+        let trimmed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+        if trimmed.chars().count() <= max_chars {
+            trimmed
+        } else {
+            let head: String = trimmed.chars().take(max_chars.saturating_sub(1)).collect();
+            format!("{head}…")
+        }
+    }
+    fn basename(raw: &str) -> String {
+        Path::new(raw)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| clip(raw, 40))
+    }
+    match name {
+        "read_file" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| {
+                if let Some(pg) = args.get("page").and_then(|v| v.as_u64()) {
+                    format!("Read {} (p.{pg})", basename(p))
+                } else {
+                    format!("Read {}", basename(p))
+                }
+            })
+            .unwrap_or_else(|| name.to_string()),
+        "write_file" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("Write {}", basename(p)))
+            .unwrap_or_else(|| name.to_string()),
+        "edit_file" | "multi_edit_file" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("Edit {}", basename(p)))
+            .unwrap_or_else(|| name.to_string()),
+        "delete_file" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("Delete {}", basename(p)))
+            .unwrap_or_else(|| name.to_string()),
+        "bash" => args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|c| format!("Run {}", clip(c, 52)))
+            .unwrap_or_else(|| name.to_string()),
+        "web_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|q| format!("Search \"{}\"", clip(q, 48)))
+            .unwrap_or_else(|| name.to_string()),
+        "web_fetch" => args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|u| {
+                let target = url::Url::parse(u)
+                    .ok()
+                    .and_then(|parsed| {
+                        parsed.host_str().map(|h| {
+                            let path = parsed.path();
+                            if path.len() > 1 {
+                                format!("{h}{}", clip(path, 28))
+                            } else {
+                                h.to_string()
+                            }
+                        })
+                    })
+                    .unwrap_or_else(|| clip(u, 48));
+                format!("Fetch {target}")
+            })
+            .unwrap_or_else(|| name.to_string()),
+        "tool_search" => args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|q| format!("Discover tools: {}", clip(q, 40)))
+            .unwrap_or_else(|| name.to_string()),
+        "grep" => args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("Grep \"{}\"", clip(p, 44)))
+            .unwrap_or_else(|| name.to_string()),
+        "glob" => args
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("Glob {}", clip(p, 44)))
+            .unwrap_or_else(|| name.to_string()),
+        "list_dir" => args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| format!("List {}", basename(p)))
+            .unwrap_or_else(|| "List workspace".to_string()),
+        _ => name.to_string(),
+    }
+}
+
+fn snapshot_workspace_files(
+    workspace: &Path,
+) -> std::collections::HashMap<PathBuf, (u64, std::time::SystemTime)> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(entries) = fs::read_dir(workspace) else {
+        return map;
+    };
+    for entry in entries.flatten().take(256) {
+        let p = entry.path();
+        if p.is_file() {
+            if let Ok(meta) = entry.metadata() {
+                let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                map.insert(p, (meta.len(), mtime));
+            }
+        }
+    }
+    map
+}
+
+fn diff_workspace_files(
+    workspace: &Path,
+    before: &std::collections::HashMap<PathBuf, (u64, std::time::SystemTime)>,
+) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(workspace) else {
+        return out;
+    };
+    for entry in entries.flatten().take(256) {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        let cur = (meta.len(), mtime);
+        match before.get(&p) {
+            None => out.push((p, "created".to_string())),
+            Some(prev) if *prev != cur => out.push((p, "modified".to_string())),
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+fn infer_artifact_mime(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("csv") => "text/csv",
+        Some("html" | "htm") => "text/html",
+        Some("md") => "text/markdown",
+        Some("json") => "application/json",
+        Some("py") => "text/x-python",
+        _ => "application/octet-stream",
+    }
+}
+
+fn is_deliverable_artifact_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if name.starts_with('.') {
+        return false;
+    }
+    matches!(
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "pdf" | "docx" | "xlsx" | "pptx" | "csv" | "html")
+    )
+}
+
+fn record_deliverable(list: &mut Vec<(PathBuf, String)>, path: PathBuf, op: String) {
+    if let Some(existing) = list.iter_mut().find(|(p, _)| *p == path) {
+        existing.1 = op;
+    } else if list.len() < 12 {
+        list.push((path, op));
     }
 }
 
@@ -7715,7 +8253,7 @@ fn handle_host_goal_control_request(
             goal.status = GoalStatus::Failed;
             goal.updated_at_ms = ts;
             let _ = store.set_kv(
-                &format!("cancel_requested:{goal_id}"),
+                &format!("cancel_requested:goal_{goal_id}"),
                 &json!({"requested_at_ms": ts, "action": "cancel"}),
             );
         }

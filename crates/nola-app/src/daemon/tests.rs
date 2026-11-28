@@ -547,7 +547,9 @@ fn daemon_real_sync_engine_branch_state_recovery_and_canonical_rpcs() {
             "session_state:conv-src",
             &json!({
                 "history": [
-                    {"role": "user", "content": "first"},
+                    {"role": "user", "content": "first", "media": [{"filename": "notes.pdf"}]},
+                    {"role": "assistant", "content": "", "tool_calls": [{"call_id": "c1"}]},
+                    {"role": "tool", "call_id": "c1", "payload": {"text": "retained result"}},
                     {"role": "assistant", "content": "second"},
                     {"role": "user", "content": "third"}
                 ],
@@ -566,7 +568,11 @@ fn daemon_real_sync_engine_branch_state_recovery_and_canonical_rpcs() {
     let new_id = branched["conversation"]["id"].as_str().unwrap().to_string();
     let new_state = store.get_kv(&format!("session_state:{new_id}")).unwrap().unwrap();
     assert_eq!(new_state["pinned"], true);
-    assert_eq!(new_state["history"].as_array().unwrap().len(), 2);
+    assert_eq!(new_state["history"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        new_state["history"][2]["payload"]["text"],
+        "retained result"
+    );
 
     // truncate_conversation & prepare_edited_resend atomically trim session_state
     let _ = dispatch_command(
@@ -578,7 +584,37 @@ fn daemon_real_sync_engine_branch_state_recovery_and_canonical_rpcs() {
     .unwrap();
     let trimmed_state = store.get_kv("session_state:conv-src").unwrap().unwrap();
     assert_eq!(trimmed_state["history"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        trimmed_state["history"][0]["media"][0]["filename"],
+        "notes.pdf"
+    );
     assert_eq!(e1.seq, 1);
+
+    // A rewound or paged window must never expose a journal for a missing reply.
+    store.set_kv("journal_heads_by_conv:conv-src", &json!([
+        {"identity":{"conversation_id":"conv-src","assistant_message_id":"a1"}},
+        {"identity":{"conversation_id":"conv-src","assistant_message_id":"failed:assistant"}}
+    ])).unwrap();
+    let failed = store.append_event("conv-src", "run_error", json!({
+        "run_id":"failed","status":"failed","error":"upstream unavailable"
+    }), 50_000).unwrap();
+    let projection_scope = Store::conversation_projection_scope("conv-src");
+    for _ in 0..10 {
+        store.append_event(&projection_scope, "projection", json!({}), 100).unwrap();
+    }
+    let window = dispatch_command(&store, &suite, "load_conversation_projection_window_v1",
+        &json!({"conversation_id":"conv-src","limit":1})).unwrap();
+    assert_eq!(window["assistant_journal_heads"].as_array().unwrap().len(), 1);
+    let reply = &window["projection"]["messages"][0];
+    assert_eq!(reply["message_id"], "failed:assistant");
+    assert_eq!(reply["state"], "failed");
+    assert_eq!(reply["parts"][0]["kind"], "error");
+    assert_eq!(reply["parts"][0]["message"], "upstream unavailable");
+    store.truncate_events_from("conv-src", failed.seq).unwrap();
+    let updated = dispatch_command(&store, &suite, "load_conversation_projection_window_update_v1",
+        &json!({"conversation_id":"conv-src","after_sequence":window["event_sequence"],"limit":1})).unwrap();
+    assert!(updated["event_sequence"].as_u64().unwrap() > window["event_sequence"].as_u64().unwrap());
+    assert!(updated["assistant_journal_heads"].as_array().unwrap().is_empty());
 
     // 3. Active run tracking, durable permission_grant projection, & recovery inspection
     store
@@ -1641,6 +1677,27 @@ fn daemon_p0_p1_macos_ios_android_contracts_work() {
     assert_eq!(events[0]["mutation"]["mutation"]["type"], "set_title");
     assert_eq!(events[0]["mutation"]["mutation"]["title"], "Renamed Live");
     assert_eq!(suffix["next_cursor"]["sequence"], events[0]["cursor"]["sequence"]);
+    for _ in 0..3 {
+        store
+            .append_event(&format!("__proj__:{conv_id}"), "projection", json!({}), 1)
+            .unwrap();
+    }
+    let reset = dispatch_command(
+        &store,
+        &suite,
+        "projection_event_suffix",
+        &json!({"conversation_id": conv_id, "after_seq": 1}),
+    )
+    .unwrap();
+    assert_eq!(reset["resync_required"], true);
+    assert_eq!(
+        reset["events"][0]["mutation"]["mutation"]["type"],
+        "invalidate_projection"
+    );
+    assert_eq!(
+        reset["events"][0]["mutation"]["mutation"]["revision"],
+        reset["next_cursor"]["sequence"]
+    );
 
     // 3. Missing daemon RPCs
     let room_null = dispatch_command(
@@ -1838,6 +1895,49 @@ fn daemon_p0_p1_macos_ios_android_contracts_work() {
     )
     .unwrap();
     assert!(no_ident.is_null());
+}
+
+#[test]
+fn file_connection_model_selection_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nola.db");
+    let config_file = dir.path().join("config.json");
+    std::fs::write(&config_file, json!({"llm": {"connections": [{
+        "id": "lan", "endpoint": "http://localhost:8081/v1", "protocol": "responses",
+        "api_key": "synthetic-file-api-key",
+        "models": [{"id": "qa:model", "context_window": 8192}]
+    }, {"id": "env", "endpoint": "http://localhost:8083/v1", "api_key_env": "NOLA_UNUSED_TEST_TOKEN"},
+        {"id": "anonymous", "endpoint": "http://localhost:8082/v1"}]}}).to_string()).unwrap();
+    let send = |store: &Store, command: Value| {
+        let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+        dispatch_command(store, &suite, "model", &json!({"command": command}))
+    };
+    let configure = |ids: Value| json!({"type": "configure_connection_models",
+        "connection_id": "lan", "enabled_model_ids": ids});
+    {
+        let store = Store::open(&path).unwrap();
+        crate::config::apply_config_file(&store, &config_file).unwrap();
+        for (id, has_key) in [("lan", true), ("env", true), ("anonymous", false)] {
+            let snapshot = send(&store, json!({"type": "get_connection", "id": id})).unwrap();
+            assert_eq!(snapshot["document"]["connection"]["credential_configured"], has_key);
+            assert!(!snapshot.to_string().contains("synthetic-file-api-key"));
+        }
+        send(&store, configure(json!(["responses:qa:model"]))).unwrap();
+    }
+    let reopened = Store::open(&path).unwrap();
+    let listed = send(&reopened, json!({"type": "list_profiles"})).unwrap();
+    let profiles = listed["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert_eq!(profiles[0]["enabled"], true);
+    assert_eq!(profiles[0]["model_name"], "qa:model");
+    let source: Value = serde_json::from_str(profiles[0]["source_json"].as_str().unwrap()).unwrap();
+    assert_eq!(source["connectionID"], "lan");
+    assert_eq!(source["catalogKey"], "responses:qa:model");
+    send(&reopened, configure(json!([]))).unwrap();
+    let listed = send(&reopened, json!({"type": "list_profiles"})).unwrap();
+    assert!(listed["profiles"].as_array().unwrap().iter().all(|p| p["enabled"] != true));
+    assert!(send(&reopened, json!({"type": "configure_connection_models",
+        "connection_id": "unknown", "enabled_model_ids": ["qa"]})).is_err());
 }
 
 #[test]
@@ -2547,6 +2647,7 @@ fn resend_expert_host_peer_and_missing_ffi_commands_and_goals_work() {
     let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
 
     // 1. prepare_in_place_resend normalizes experts with non-null participant_id & context_conversation_id
+    store.append_event("conv-1", "user_message", json!({"id": "m-1", "content": "initial"}), 100).unwrap();
     let in_place = dispatch_command(
         &store,
         &suite,
@@ -3899,4 +4000,157 @@ fn real_scenario_assistant_journal_multi_part_streaming_revision_diff_and_utf8_r
     )
     .unwrap();
     assert_eq!(seal["result"]["value"]["kind"], "answered");
+}
+
+#[test]
+fn streaming_journal_storage_is_o1_bounded_roots_and_indexed_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_in_memory().unwrap();
+    let suite = ModulesSuite::new(store.clone(), dir.path().to_path_buf(), None);
+
+    let conv_id = "conv-o1-journal";
+    let run_id = "run-o1-journal";
+    let asst_id = "asst-o1-journal";
+    let mut run_state = json!({
+        "conversation_id": conv_id,
+        "run_id": run_id,
+        "assistant_message_id": asst_id,
+        "session_id": conv_id,
+        "created_at_ms": now_ms(),
+        "journal_identity": journal_identity_value(&store, conv_id, run_id, asst_id),
+        "journal_seq": 0u64,
+        "sequence": 1u64,
+        "status": "running"
+    });
+
+    // Also populate an unrelated run to prove prefix-indexed reads isolate runs.
+    store
+        .put_module_record(
+            "assistant_journal_part",
+            "other-conv:other-run:other-part",
+            &json!({"part_id": "other-part"}),
+        )
+        .unwrap();
+
+    // Stream 50 incremental ticks into one reasoning part (simulating long thinking).
+    let mut accumulated = String::new();
+    let mut seen_roots: Vec<String> = Vec::new();
+    for tick in 1..=50 {
+        accumulated.push_str(&format!("Step {tick}: analyzing low-rank residual structure.\n"));
+        let _ = publish_journal_part(
+            &store,
+            &mut run_state,
+            &format!("{asst_id}:reasoning:0"),
+            0,
+            "reasoning",
+            json!({
+                "state": "running",
+                "title": {"kind": "inline", "value": "Thinking"}
+            }),
+            &[("reasoning_summary", accumulated.clone())],
+        );
+        if let Some(part) = store
+            .get_module_record::<Value>(
+                "assistant_journal_part",
+                &format!("{conv_id}:{run_id}:{asst_id}:reasoning:0"),
+            )
+            .unwrap()
+        {
+            if let Some(root) = part["bodies"][0]["content_root"].as_str() {
+                if seen_roots.last().map(String::as_str) != Some(root) {
+                    seen_roots.push(root.to_string());
+                }
+            }
+        }
+    }
+
+    assert!(seen_roots.len() >= 10, "expected distinct content roots across 50 ticks");
+    let root_prefix = format!(
+        "assistant_journal_content_by_root:{conv_id}:{run_id}:{asst_id}:reasoning:0:reasoning_summary:"
+    );
+    let surviving_live = seen_roots
+        .iter()
+        .filter(|r| store.get_kv(&format!("{root_prefix}{r}")).unwrap().is_some())
+        .count();
+    assert!(
+        surviving_live <= 2 && surviving_live >= 1,
+        "expected 1..=2 rolling KV snapshots during streaming, got {surviving_live}"
+    );
+    // Legacy O(N^2) monolithic journal_records KV blob must NOT be written for new runs.
+    assert!(
+        store
+            .get_kv(&format!("journal_records:{conv_id}:{run_id}"))
+            .unwrap()
+            .is_none(),
+        "new runs must use indexed assistant_journal_record rows, not monolithic KV array"
+    );
+
+    // Finalize the reasoning part.
+    let final_cursor = publish_journal_part(
+        &store,
+        &mut run_state,
+        &format!("{asst_id}:reasoning:0"),
+        0,
+        "reasoning",
+        json!({
+            "state": "completed",
+            "title": {"kind": "inline", "value": "Thinking"}
+        }),
+        &[("reasoning_summary", accumulated.clone())],
+    );
+
+    // After finalization, only 1 root snapshot remains for the finalized field.
+    let final_part = store
+        .get_module_record::<Value>(
+            "assistant_journal_part",
+            &format!("{conv_id}:{run_id}:{asst_id}:reasoning:0"),
+        )
+        .unwrap()
+        .unwrap();
+    if let Some(root) = final_part["bodies"][0]["content_root"].as_str() {
+        if !seen_roots.iter().any(|r| r == root) {
+            seen_roots.push(root.to_string());
+        }
+    }
+    let surviving_final = seen_roots
+        .iter()
+        .filter(|r| store.get_kv(&format!("{root_prefix}{r}")).unwrap().is_some())
+        .count();
+    assert_eq!(
+        surviving_final, 1,
+        "finalized part should retain only 1 root snapshot"
+    );
+
+    // Indexed reads return ONLY this run's part and full content.
+    let snap = dispatch_command(
+        &store,
+        &suite,
+        "open_assistant_journal_snapshot",
+        &json!({"at": final_cursor}),
+    )
+    .unwrap();
+    let parts = dispatch_command(
+        &store,
+        &suite,
+        "read_assistant_journal_parts",
+        &json!({"snapshot": snap, "max_records": 32}),
+    )
+    .unwrap();
+    let arr = parts["parts"].as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["part_id"], format!("{asst_id}:reasoning:0"));
+
+    // Indexed assistant_journal_record rows stay O(parts), not O(50 streaming ticks)!
+    let indexed_records = store
+        .list_module_records_with_prefix::<Value>(
+            "assistant_journal_record",
+            &format!("{conv_id}:{run_id}:"),
+        )
+        .unwrap();
+    assert_eq!(
+        indexed_records.len(),
+        1,
+        "finalized part must replace the interim live record so only 1 indexed record remains"
+    );
+    assert_eq!(indexed_records[0]["header"]["sequence"], "51");
 }

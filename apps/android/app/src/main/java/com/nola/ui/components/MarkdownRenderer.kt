@@ -807,8 +807,59 @@ private fun PlainMarkdownRenderer(
     }
 }
 
-private fun normalizeLatexForMarkwon(markdown: String): String {
-    val source = markdown.replace("\\[", "$$").replace("\\]", "$$")
+internal fun containsCjkInLatex(latex: String): Boolean =
+    latex.any { ch ->
+        val code = ch.code
+        code in 0x2E80..0x9FFF || code in 0xAC00..0xD7AF || code in 0xF900..0xFAFF || code in 0xFF00..0xFFEF
+    }
+
+internal fun renderCjkLatexReadableFallback(latex: String): String {
+    var out = latex.trim()
+    // Unwrap common text/roman commands while preserving inner CJK text cleanly
+    val textCmdRegex = Regex("""\\(?:text|textrm|mathrm|textbf|operatorname|mbox)\{([^{}]*)\}""")
+    repeat(3) {
+        out = textCmdRegex.replace(out) { it.groupValues[1] }
+    }
+    // Convert subscript/superscript braces to readable inline typography
+    out = Regex("""_\{([^{}]+)\}""").replace(out) { "_${it.groupValues[1]}" }
+    out = Regex("""\^\{([^{}]+)\}""").replace(out) { "^${it.groupValues[1]}" }
+    val symbols = listOf(
+        "\\qquad" to "  ",
+        "\\quad" to " ",
+        "\\cdot" to "·",
+        "\\times" to "×",
+        "\\lambda" to "λ",
+        "\\alpha" to "α",
+        "\\beta" to "β",
+        "\\gamma" to "γ",
+        "\\delta" to "δ",
+        "\\Delta" to "Δ",
+        "\\epsilon" to "ε",
+        "\\theta" to "θ",
+        "\\sigma" to "σ",
+        "\\Sigma" to "Σ",
+        "\\sum" to "∑",
+        "\\approx" to "≈",
+        "\\le" to "≤",
+        "\\ge" to "≥",
+        "\\neq" to "≠",
+        "\\top" to "ᵀ",
+        "\\mathcal" to "",
+        "\\mathbf" to "",
+        "\\ " to " "
+    )
+    for ((cmd, repl) in symbols) {
+        out = out.replace(cmd, repl)
+    }
+    return out.replace("{", "").replace("}", "").replace(Regex("""\s{2,}"""), " ").trim()
+}
+
+internal fun normalizeLatexForMarkwon(markdown: String): String {
+    val source = markdown
+        .replace("\\[", "$$")
+        .replace("\\]", "$$")
+        .replace("\\(", "$")
+        .replace("\\)", "$")
     val builder = StringBuilder(source.length)
     var i = 0
     var inFence = false
@@ -820,12 +871,29 @@ private fun normalizeLatexForMarkwon(markdown: String): String {
             i += 3
             continue
         }
+        if (!inFence && source.startsWith("$$", i)) {
+            val close = source.indexOf("$$", i + 2)
+            if (close > i + 2) {
+                val body = source.substring(i + 2, close)
+                if (containsCjkInLatex(body)) {
+                    // JLaTeXMath's TeX font lacks CJK glyphs; render cleanly with native Unicode + CJK.
+                    builder.append(renderCjkLatexReadableFallback(body))
+                } else {
+                    builder.append("$$").append(body).append("$$")
+                }
+                i = close + 2
+                continue
+            }
+        }
         if (!inFence && source[i] == '$' && !source.startsWith("$$", i)) {
             val close = findClosingSingleDollar(source, i + 1)
             if (close > i + 1) {
-                builder.append("$$")
-                builder.append(source, i + 1, close)
-                builder.append("$$")
+                val body = source.substring(i + 1, close)
+                if (containsCjkInLatex(body)) {
+                    builder.append(renderCjkLatexReadableFallback(body))
+                } else {
+                    builder.append("$$").append(body).append("$$")
+                }
                 i = close + 1
                 continue
             }

@@ -12,6 +12,37 @@ nonisolated enum MacJournalPlainPreview {
         String(value.prefix(4096)).split(separator: "\n", omittingEmptySubsequences: false)
             .prefix(24).joined(separator: "\n")
     }
+
+    /// Bounded live rolling tail for streaming reasoning so users always see
+    /// the latest words without re-parsing multi-kilobyte Markdown every tick.
+    static func liveTail(_ value: String, maxChars: Int = 1800, maxLines: Int = 14) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let suffixStr: String
+        let truncatedChars: Bool
+        if trimmed.count > maxChars {
+            suffixStr = String(trimmed.suffix(maxChars))
+            truncatedChars = true
+        } else {
+            suffixStr = trimmed
+            truncatedChars = false
+        }
+        let lines = suffixStr.split(separator: "\n", omittingEmptySubsequences: false)
+        if lines.count > maxLines {
+            return "…\n" + lines.suffix(maxLines).joined(separator: "\n")
+        }
+        if truncatedChars {
+            return "…" + suffixStr
+        }
+        return suffixStr
+    }
+}
+
+/// Reuses open SQLite connections by canonical database URL via `MacApplicationPort.pooled`.
+nonisolated enum MacJournalPortPool {
+    static func port(for databaseURL: URL) throws -> MacApplicationPort {
+        try MacApplicationPort.pooled(databaseURL: databaseURL)
+    }
 }
 
 /// The transcript owns this bounded residency, not a row's temporary SwiftUI parent.
@@ -717,6 +748,10 @@ nonisolated struct MacJournalCompletedToolGrouping {
                     flush()
                 }
                 run.append(part)
+            } else if case .reasoning(let activity) = part.metadata, !activity.isRunning {
+                // Interleaved completed reasoning rounds between completed tool
+                // calls should not prevent 3+ completed tools from collapsing.
+                continue
             } else {
                 flush()
             }
@@ -731,7 +766,7 @@ enum MacJournalTextRead {
     static func markdown(_ reference: MacJournalMessageReference, historicalFallback: String) async throws -> String {
         try Task.checkCancellation()
         let task = Task.detached(priority: .userInitiated) {
-            let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+            let port = try MacJournalPortPool.port(for: reference.databaseURL)
             let snapshot = try port.openAssistantJournalSnapshot(at: reference.cursor)
             defer { try? port.releaseAssistantJournalSnapshot(snapshot) }
             return try await publicMarkdown(at: reference.cursor, parts: { after in
@@ -796,7 +831,7 @@ enum MacJournalTextRead {
         if reference.cursor == base.cursor { return existing }
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+            let port = try MacJournalPortPool.port(for: reference.databaseURL)
             let snapshot = try port.openAssistantJournalSnapshot(at: reference.cursor)
             defer { try? port.releaseAssistantJournalSnapshot(snapshot) }
             var values: [String: MacAssistantJournalPart] = [:]
@@ -868,7 +903,7 @@ enum MacJournalTextRead {
         try Task.checkCancellation()
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+            let port = try MacJournalPortPool.port(for: reference.databaseURL)
             let head = try port.localAssistantJournalHead(identity: reference.cursor.identity)
             try Task.checkCancellation()
             return head.identity == reference.cursor.identity
@@ -879,7 +914,7 @@ enum MacJournalTextRead {
         try Task.checkCancellation()
         let task = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+            let port = try MacJournalPortPool.port(for: reference.databaseURL)
             let snapshot = try port.openAssistantJournalSnapshot(at: reference.cursor)
             defer { try? port.releaseAssistantJournalSnapshot(snapshot) }
             var result: [MacAssistantJournalPart] = []
@@ -914,7 +949,7 @@ enum MacJournalTextRead {
             #if DEBUG
             let started = ProcessInfo.processInfo.systemUptime
             #endif
-            let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+            let port = try MacJournalPortPool.port(for: reference.databaseURL)
             #if DEBUG
             let connected = ProcessInfo.processInfo.systemUptime
             #endif
@@ -978,10 +1013,26 @@ struct MacJournalMessageTextView: View {
 
     @ViewBuilder private func journalParts(_ visibleParts: [MacAssistantJournalPart],
         allParts: [MacAssistantJournalPart], reference loadedReference: MacJournalMessageReference,
-        inlineReasoning: Bool = false) -> some View {
+        inlineReasoning: Bool = false, runningProcess: Bool = false) -> some View {
         // Owned reads still use canonical Parts. Reference metadata is grouped
         // separately; prose, tools and interactive surfaces keep their flow.
         let grouping = MacJournalCompletedToolGrouping(allParts)
+        let reasoningParts = visibleParts.filter {
+            if case .reasoning(let activity) = $0.metadata {
+                return MacJournalActivityTitle.showsReasoning(state: activity.state,
+                    hasDetails: MacJournalActivityTitle.hasDetails(title: activity.title, bodies: $0.bodies))
+            }
+            return false
+        }
+        let activeReasoningID: String? = {
+            if runningProcess {
+                return reasoningParts.last(where: {
+                    if case .reasoning(let activity) = $0.metadata { return activity.isRunning }
+                    return false
+                })?.part_id ?? reasoningParts.last?.part_id
+            }
+            return reasoningParts.count == 1 ? reasoningParts.first?.part_id : nil
+        }()
         ForEach(visibleParts, id: \.part_id) { part in
             if let group = grouping.groups[part.part_id] {
                 MacJournalCompletedToolsView(reference: loadedReference, parts: group)
@@ -990,8 +1041,9 @@ struct MacJournalMessageTextView: View {
             } else if case .reasoning(let activity) = part.metadata {
                 if MacJournalActivityTitle.showsReasoning(state: activity.state,
                     hasDetails: MacJournalActivityTitle.hasDetails(title: activity.title, bodies: part.bodies)) {
+                    let showInline = inlineReasoning && part.part_id == activeReasoningID
                     MacJournalActivityView(reference: loadedReference, part: part, activity: activity, isReasoning: true,
-                        inlineDetails: inlineReasoning)
+                        inlineDetails: showInline, defaultExpanded: showInline)
                 }
             } else if case .step(let activity) = part.metadata {
                 MacJournalActivityView(reference: loadedReference, part: part, activity: activity, isReasoning: false)
@@ -1076,7 +1128,8 @@ struct MacJournalMessageTextView: View {
                             hasTasks: Self.segmentHasTasks(segment.parts),
                             currentActivityTitle: processDelivery == .running ? process.currentActivityTitle : nil) {
                             journalParts(segment.parts, allParts: ordered,
-                                reference: loadedReference, inlineReasoning: true)
+                                reference: loadedReference, inlineReasoning: true,
+                                runningProcess: processDelivery == .running)
                         }
                     } else {
                         journalParts(segment.parts, allParts: ordered, reference: loadedReference)
@@ -1109,7 +1162,7 @@ struct MacJournalMessageTextView: View {
             guard deliveryState != .running else { return }
             let current = reference
             let read = Task.detached(priority: .utility) {
-                let port = try MacApplicationPort(databaseURL: current.databaseURL)
+                let port = try MacJournalPortPool.port(for: current.databaseURL)
                 return try port.canonicalRunTerminal(conversationID: current.cursor.identity.conversation_id,
                     runID: current.cursor.identity.run_id)
             }
@@ -1877,6 +1930,7 @@ struct MacJournalProcessView<Content: View>: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var localChoices: [String: Bool] = [:]
     @State private var hovering = false
+    @State private var liveContentHeight: CGFloat = 0
     private var expanded: Bool {
         AppleMessagePartFlow.isExpanded(choices: partIDs.compactMap { (owner?.processChoices ?? localChoices)[$0] },
             defaultExpanded: hasTasks || delivery == .running)
@@ -1933,10 +1987,47 @@ struct MacJournalProcessView<Content: View>: View {
             .accessibilityLabel(Text(verbatim: heading))
             .accessibilityIdentifier("chat.journal.process.toggle")
             if expanded {
-                VStack(alignment: .leading, spacing: 6) { content() }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                if delivery == .running && !hasTasks {
+                    // Single stable ScrollView that shrink-wraps cleanly to short
+                    // live thoughts (1 line = ~32pt, zero empty box!) and caps at
+                    // 168pt with bottom-pinned rolling auto-scroll when taller.
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: liveContentHeight > 168) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                content()
+                                Color.clear.frame(height: 1).id("mac-journal-process-live-bottom")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 10)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                                if height > 0, abs(liveContentHeight - height) > 0.5 {
+                                    liveContentHeight = height
+                                }
+                            }
+                        }
+                        .frame(height: liveContentHeight > 0 ? min(liveContentHeight, 168) : nil)
+                        .frame(maxHeight: 168, alignment: .topLeading)
+                        .onAppear {
+                            proxy.scrollTo("mac-journal-process-live-bottom", anchor: .bottom)
+                        }
+                        .onChange(of: liveContentHeight) { _, _ in
+                            proxy.scrollTo("mac-journal-process-live-bottom", anchor: .bottom)
+                        }
+                        .onChange(of: partIDs) { _, _ in
+                            proxy.scrollTo("mac-journal-process-live-bottom", anchor: .bottom)
+                        }
+                        .onChange(of: currentActivityTitle) { _, _ in
+                            proxy.scrollTo("mac-journal-process-live-bottom", anchor: .bottom)
+                        }
+                    }
                     .macDisclosureTransition(reduceMotion: reduceMotion)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) { content() }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 10)
+                        .macDisclosureTransition(reduceMotion: reduceMotion)
+                }
             }
         }
         .background(expanded ? MacDesignColor.surfaceRaised : Color.clear, in: RoundedRectangle(cornerRadius: 12))
@@ -1961,6 +2052,7 @@ private struct MacJournalActivityView: View {
     let activity: MacAssistantJournalMetadata.Activity
     let isReasoning: Bool
     var inlineDetails = false
+    var defaultExpanded = true
     @Environment(\.journalPresentationOwner) private var owner
     @State private var localExpansion = MacJournalActivityExpansion()
     private var expansion: MacJournalActivityExpansion {
@@ -1970,9 +2062,9 @@ private struct MacJournalActivityView: View {
             else { localExpansion = newValue }
         }
     }
-    // The enclosing process owns disclosure. Once the user opens it,
-    // reasoning remains readable without another click for every model round.
-    private var expanded: Bool { expansion.userChoice ?? true }
+    // The enclosing process owns disclosure. Single-round reasoning opens
+    // inline, while earlier completed rounds in multi-round runs stay compact.
+    private var expanded: Bool { expansion.userChoice ?? defaultExpanded }
 
     private var hasDetails: Bool {
         MacJournalActivityTitle.hasDetails(title: activity.title, bodies: part.bodies)
@@ -2023,8 +2115,17 @@ private struct MacJournalActivityView: View {
                     content: title, isFinal: !activity.isRunning)
             }
             if let summary = part.bodies.first(where: { $0.field == "reasoning_summary" }) {
-                MacJournalTextPreview(reference: reference, partID: part.part_id,
-                    content: summary, isFinal: !activity.isRunning)
+                let bytes = Int(summary.utf8_bytes) ?? 0
+                let useLightweightPlain = activity.isRunning || bytes > 4096
+                MacJournalTextPreview(
+                    reference: reference,
+                    partID: part.part_id,
+                    content: summary,
+                    isFinal: !activity.isRunning,
+                    presentation: useLightweightPlain ? .plain : .markdown,
+                    usesMonospacedText: false,
+                    liveTailPreview: activity.isRunning
+                )
             }
             if !hasDetails {
                 Text(activity.isRunning
@@ -2071,6 +2172,7 @@ private struct MacJournalTextPreview: View {
     let isFinal: Bool
     var presentation: MacJournalBodyPresentation = .markdown
     var usesMonospacedText = true
+    var liveTailPreview = false
     @Environment(\.journalPresentationOwner) private var owner
     @Environment(\.journalProcessPartIDs) private var processPartIDs
     @State private var localState = MacJournalBodyState()
@@ -2105,12 +2207,17 @@ private struct MacJournalTextPreview: View {
                     animatesAppends: false
                 )
             } else {
-                Text(verbatim: MacJournalPlainPreview.text(state.text))
-                    .font(usesMonospacedText ? .system(.caption, design: .monospaced) : .body)
+                let previewText = (liveTailPreview && !isFinal)
+                    ? MacJournalPlainPreview.liveTail(state.text)
+                    : MacJournalPlainPreview.text(state.text)
+                Text(verbatim: previewText)
+                    .font(usesMonospacedText ? .system(.caption, design: .monospaced) : .callout)
+                    .lineSpacing(3)
                     .textSelection(.enabled)
             }
-            if state.loadState.showsFullReader
-                || (presentation != .markdown && MacJournalPlainPreview.text(state.text) != state.text) {
+            if !(liveTailPreview && !isFinal)
+                && (state.loadState.showsFullReader
+                    || (presentation != .markdown && MacJournalPlainPreview.text(state.text) != state.text)) {
                 if !state.text.isEmpty { Text("history.preview.label", tableName: "Chat").font(.caption).foregroundStyle(.secondary) }
                 Button {
                     owner?.retainProcessExpansion(partIDs: [partID], in: processPartIDs)
@@ -2160,6 +2267,7 @@ private struct MacJournalArtifactList: View {
     @State private var proofFailed = false
     @State private var proofRetry = 0
     @Environment(\.openURL) private var openURL
+    @Environment(\.macOpenFileReference) private var openFileReference
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2189,7 +2297,7 @@ private struct MacJournalArtifactList: View {
                 .help(artifact.uri)
                 .contextMenu {
                     if case .some(.localFile(let url)) = destination {
-                        Button("Quick Look") { MacQuickLookController.shared.preview([url]) }
+                        Button(String(localized: "Preview")) { openFileReference(.init(url: url, line: nil, column: nil)) }
                         Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     } else if case .some(.web(let url)) = destination {
                         Button("Open Link") { openURL(url) }
@@ -2237,13 +2345,13 @@ private struct MacJournalArtifactList: View {
             return true
         }
         let ext = url.pathExtension.lowercased()
-        return ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp"].contains(ext)
+        return ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp", "svg"].contains(ext)
     }
 
     private func open(_ destination: MacJournalArtifactDestination?) {
         switch destination {
         case .web(let url): openURL(url)
-        case .localFile(let url): MacQuickLookController.shared.preview([url])
+        case .localFile(let url): openFileReference(.init(url: url, line: nil, column: nil))
         case nil: break
         }
     }
@@ -2277,15 +2385,22 @@ private struct MacJournalArtifactImageThumbnail<Fallback: View>: View {
         Group {
             if let image {
                 Button(action: onOpen) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 220, maxHeight: 160)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
-                        }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 420, maxHeight: 280)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                            }
+                        Text(verbatim: name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
                 .buttonStyle(.plain)
                 .help(name)
@@ -2414,7 +2529,7 @@ private struct MacOwnedTaskRecoveryView: View {
               parent_run_id: reference.cursor.identity.run_id, task_id: taskID)
     }
     private func control() throws -> MacUnknownEffectRecoveryControl {
-        let port = try MacApplicationPort(databaseURL: reference.databaseURL)
+        let port = try MacApplicationPort.pooled(databaseURL: reference.databaseURL)
         switch try port.conversationSourceOwner(conversationID: owner.parent_conversation_id) {
         case .local: break
         case .remote: throw MacApplicationServiceError.rejected(String(localized: "task.recovery.source_host", table: "Chat"))

@@ -11,15 +11,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use nola_engine::{
-    AgentEngine, AgentRunConfig, EffectivePolicy, ForceToolSet, HookRunner, ModelCaller,
+    AgentEngine, AgentRunConfig, EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller,
+    ModelCaller,
 };
-use nola_llm::{LlmClient, LlmError};
 use nola_store::Store;
 use nola_tools::{path_within_workspace, SandboxMode, ToolContext, ToolRegistry};
-use nola_types::{
-    now_ms, FrozenSystemBlock, GoalStatus, HostCapabilities, ModelRouteConfig, ModelStreamDelta,
-    NormalizedModelResponse, StructuredModelRequest,
-};
+use nola_types::{now_ms, FrozenSystemBlock, GoalStatus, HostCapabilities, ModelRouteConfig};
 
 use crate::goals_sops::{GoalRecord, KIND_GOAL};
 use crate::ModulesSuite;
@@ -38,22 +35,6 @@ pub fn retry_backoff_ms(attempt: u32) -> i64 {
         .min(MAX_RETRY_BACKOFF_MS)
 }
 
-struct GoalLlmCaller {
-    client: Arc<LlmClient>,
-}
-
-impl ModelCaller for GoalLlmCaller {
-    fn call(
-        &self,
-        route: &ModelRouteConfig,
-        req: &StructuredModelRequest,
-        stream: bool,
-        on_delta: &mut dyn FnMut(ModelStreamDelta),
-    ) -> Result<NormalizedModelResponse, LlmError> {
-        self.client.complete(route, req, stream, on_delta)
-    }
-}
-
 pub struct GoalWorker;
 
 impl GoalWorker {
@@ -65,53 +46,64 @@ impl GoalWorker {
         lease_ms: i64,
         now: i64,
     ) -> Result<Option<GoalRecord>, String> {
-        let mut goal = store
-            .get_module_record::<GoalRecord>(KIND_GOAL, goal_id)
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
-
-        let lease_valid = goal.lease_until_ms.is_some_and(|until| until > now);
-        let runnable = match goal.status {
-            GoalStatus::Pending => {
-                goal.needs_user_question.is_none()
-                    && goal.next_retry_at_ms.is_none_or(|retry_at| now >= retry_at)
-            }
-            GoalStatus::Running => !lease_valid,
-            GoalStatus::Paused | GoalStatus::Completed | GoalStatus::Failed => false,
-        };
-        if !runnable {
-            return Ok(None);
-        }
-
-        goal.status = GoalStatus::Running;
-        goal.lease_until_ms = Some(now.saturating_add(lease_ms.max(1_000)));
-        goal.updated_at_ms = now;
         store
-            .put_module_record(KIND_GOAL, &goal.id, &goal)
-            .map_err(|e| e.to_string())?;
-        Ok(Some(goal))
+            .update_module_record(KIND_GOAL, goal_id, |goal: &mut GoalRecord| {
+                if !Self::is_runnable(goal, now) {
+                    return false;
+                }
+                goal.status = GoalStatus::Running;
+                goal.lease_until_ms = Some(now.saturating_add(lease_ms.max(1_000)));
+                goal.updated_at_ms = now;
+                true
+            })
+            .map_err(|e| e.to_string())
     }
 
-    /// Extend an active goal's durable execution lease.
+    fn is_runnable(goal: &GoalRecord, now: i64) -> bool {
+        match goal.status {
+            GoalStatus::Pending => {
+                goal.needs_user_question.is_none()
+                    && goal.next_retry_at_ms.is_none_or(|retry| retry <= now)
+            }
+            GoalStatus::Running => goal.lease_until_ms.is_none_or(|until| until <= now),
+            _ => false,
+        }
+    }
+
     pub fn renew_lease(
         store: &Store,
         goal_id: &str,
         lease_ms: i64,
         now: i64,
     ) -> Result<GoalRecord, String> {
-        let mut goal = store
+        let goal = store
             .get_module_record::<GoalRecord>(KIND_GOAL, goal_id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
-        if goal.status != GoalStatus::Running {
-            return Err(format!("goal '{goal_id}' is not running"));
-        }
-        goal.lease_until_ms = Some(now.saturating_add(lease_ms.max(1_000)));
-        goal.updated_at_ms = now;
+            .ok_or_else(|| format!("unknown goal '{goal_id}'"))?;
+        Self::renew_owned_lease(store, goal_id, goal.lease_until_ms, lease_ms, now)
+    }
+
+    fn renew_owned_lease(
+        store: &Store,
+        id: &str,
+        deadline: Option<i64>,
+        lease_ms: i64,
+        now: i64,
+    ) -> Result<GoalRecord, String> {
         store
-            .put_module_record(KIND_GOAL, &goal.id, &goal)
-            .map_err(|e| e.to_string())?;
-        Ok(goal)
+            .update_module_record(KIND_GOAL, id, |goal: &mut GoalRecord| {
+                if goal.status != GoalStatus::Running
+                    || goal.lease_until_ms != deadline
+                    || deadline.is_none_or(|d| d <= now)
+                {
+                    return false;
+                }
+                goal.lease_until_ms = Some(now.saturating_add(lease_ms.max(1_000)));
+                goal.updated_at_ms = now;
+                true
+            })
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("goal '{id}' lease no longer active"))
     }
 
     /// Pause a goal in `needs_user` state with an explicit question awaiting user input.
@@ -173,18 +165,26 @@ impl GoalWorker {
         error: &str,
         now: i64,
     ) -> Result<GoalRecord, String> {
-        let mut goal = store
-            .get_module_record::<GoalRecord>(KIND_GOAL, goal_id)
+        store
+            .update_module_record(KIND_GOAL, goal_id, |goal: &mut GoalRecord| {
+                Self::record_retry(goal, error, now);
+                true
+            })
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
+            .ok_or_else(|| format!("unknown goal '{goal_id}'"))
+    }
+
+    fn record_retry(goal: &mut GoalRecord, error: &str, now: i64) {
         let attempt = goal.retry_count;
         goal.retry_count = goal.retry_count.saturating_add(1);
         goal.lease_until_ms = None;
         if goal.retry_count >= MAX_GOAL_RETRIES {
             goal.status = GoalStatus::Failed;
             goal.next_retry_at_ms = None;
-            goal.progress_notes
-                .push(format!("[failed after {} retries] {error}", goal.retry_count));
+            goal.progress_notes.push(format!(
+                "[failed after {} retries] {error}",
+                goal.retry_count
+            ));
         } else {
             let delay = retry_backoff_ms(attempt);
             goal.status = GoalStatus::Pending;
@@ -196,10 +196,6 @@ impl GoalWorker {
             ));
         }
         goal.updated_at_ms = now;
-        store
-            .put_module_record(KIND_GOAL, &goal.id, &goal)
-            .map_err(|e| e.to_string())?;
-        Ok(goal)
     }
 
     /// List goals currently eligible for autonomous execution (due pending goals or expired leases).
@@ -208,14 +204,7 @@ impl GoalWorker {
             .list_module_records(KIND_GOAL)
             .unwrap_or_default()
             .into_iter()
-            .filter(|g: &GoalRecord| match g.status {
-                GoalStatus::Pending => {
-                    g.needs_user_question.is_none()
-                        && g.next_retry_at_ms.is_none_or(|retry_at| now >= retry_at)
-                }
-                GoalStatus::Running => g.lease_until_ms.is_none_or(|until| until <= now),
-                GoalStatus::Paused | GoalStatus::Completed | GoalStatus::Failed => false,
-            })
+            .filter(|g| Self::is_runnable(g, now))
             .collect();
         goals.sort_by_key(|g| g.updated_at_ms);
         goals
@@ -247,15 +236,10 @@ impl GoalWorker {
         cancel: Arc<AtomicBool>,
     ) -> Result<GoalRecord, String> {
         let now = now_ms();
-        let mut goal = suite
+        let goal = suite
             .get_record::<GoalRecord>(KIND_GOAL, goal_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("goal '{goal_id}' not found"))?;
-        if goal.status == GoalStatus::Running
-            && goal.lease_until_ms.is_some_and(|until| until > now)
-        {
-            return Err(format!("goal '{goal_id}' is already running under an active lease"));
-        }
         let goal_ws_buf = PathBuf::from(&goal.workspace_root);
         let goal_ws = goal_ws_buf.as_path();
         if !path_within_workspace(&suite.workspace_root, goal_ws) {
@@ -266,12 +250,9 @@ impl GoalWorker {
             ));
         }
 
-        goal.status = GoalStatus::Running;
-        goal.lease_until_ms = Some(now.saturating_add(DEFAULT_GOAL_LEASE_MS));
-        goal.updated_at_ms = now;
-        suite
-            .upsert_record(KIND_GOAL, &goal.id, &goal)
-            .map_err(|e| e.to_string())?;
+        let goal = Self::try_acquire_lease(&suite.store, goal_id, DEFAULT_GOAL_LEASE_MS, now)?
+            .ok_or_else(|| format!("goal '{goal_id}' is not ready to run"))?;
+        let run_cancel = Arc::new(AtomicBool::new(cancel.load(Ordering::Acquire)));
 
         let mut registry = ToolRegistry::with_builtin_tools();
         suite.register_tools(&mut registry);
@@ -290,7 +271,11 @@ impl GoalWorker {
                 goal.acceptance_criteria.join("\n- ")
             )
         };
-        let hooks = HookRunner::load(goal_ws, suite.user_home.as_deref(), policy.workspace_trusted);
+        let hooks = HookRunner::load(
+            goal_ws,
+            suite.user_home.as_deref(),
+            policy.workspace_trusted,
+        );
         let run_cfg = AgentRunConfig {
             session_id: Some(format!("goal_{}", goal.id)),
             resume: true,
@@ -317,58 +302,87 @@ impl GoalWorker {
             force_tool_set: ForceToolSet::Auto,
             stream: false,
             json_schema: None,
-            cancel,
+            cancel: Arc::clone(&run_cancel),
             auto_recall_memory: true,
             inbox: None,
         };
 
-        let store_for_lease = suite.store.clone();
-        let goal_id_for_lease = goal.id.clone();
-        let run_res = engine.run(&ctx, &goal.objective, run_cfg, |_| {
-            let _ = Self::renew_lease(
-                &store_for_lease,
-                &goal_id_for_lease,
-                DEFAULT_GOAL_LEASE_MS,
-                now_ms(),
-            );
+        // Renew independently of model/tool events: a single quiet call may outlast the lease.
+        let mut deadline = goal.lease_until_ms;
+        let result = std::thread::scope(|scope| {
+            let (done, wait) = std::sync::mpsc::channel::<()>();
+            let mut until = deadline;
+            let run_cancel = &run_cancel;
+            let cancel = &cancel;
+            let heartbeat = scope.spawn(move || {
+                while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                    wait.recv_timeout(Duration::from_millis(250))
+                {
+                    if cancel.load(Ordering::Acquire) {
+                        run_cancel.store(true, Ordering::Release);
+                        break;
+                    }
+                    let ts = now_ms();
+                    if until.is_some_and(|end| end - ts > DEFAULT_GOAL_LEASE_MS / 2) {
+                        continue;
+                    }
+                    match Self::renew_owned_lease(
+                        &suite.store,
+                        goal_id,
+                        until,
+                        DEFAULT_GOAL_LEASE_MS,
+                        ts,
+                    ) {
+                        Ok(record) => until = record.lease_until_ms,
+                        Err(_) => {
+                            run_cancel.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                }
+                until
+            });
+            let result = engine.run(&ctx, &goal.objective, run_cfg, |_| {});
+            drop(done);
+            deadline = heartbeat.join().expect("goal lease heartbeat panicked");
+            result
         });
-
-        match run_res {
-            Ok(res) => {
-                // Reload so we preserve structured updates written by `goal_complete` or `needs_user` during the turn.
-                let mut latest = suite
-                    .get_record::<GoalRecord>(KIND_GOAL, &goal.id)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(goal);
-                if latest.is_needs_user() {
-                    latest.lease_until_ms = None;
-                    latest.updated_at_ms = now_ms();
-                    let _ = suite.upsert_record(KIND_GOAL, &latest.id, &latest);
-                    return Ok(latest);
+        let finished = suite
+            .store
+            .update_module_record(KIND_GOAL, goal_id, |current: &mut GoalRecord| {
+                if current.status != GoalStatus::Running || current.lease_until_ms != deadline {
+                    return false;
                 }
-                if latest.status != GoalStatus::Completed {
-                    latest.status = if res.cancelled {
-                        GoalStatus::Paused
-                    } else {
-                        GoalStatus::Completed
-                    };
+                let ts = now_ms();
+                current.lease_until_ms = None;
+                current.updated_at_ms = ts;
+                match &result {
+                    Ok(run) if run.cancelled => current.status = GoalStatus::Paused,
+                    Ok(run) if max_steps > 0 && run.steps >= max_steps => {
+                        current.status = GoalStatus::Pending;
+                        current.next_retry_at_ms = None;
+                    }
+                    Ok(_) => Self::record_retry(current, "turn ended without goal acceptance", ts),
+                    Err(e) => Self::record_retry(current, &e.to_string(), ts),
                 }
-                latest.lease_until_ms = None;
-                latest.next_retry_at_ms = None;
-                let summary: String = res.final_text.chars().take(400).collect();
-                latest
-                    .progress_notes
-                    .push(format!("[steps={}] {summary}", res.steps));
-                latest.updated_at_ms = now_ms();
-                let _ = suite.upsert_record(KIND_GOAL, &latest.id, &latest);
-                Ok(latest)
-            }
-            Err(e) => {
-                let err_str = e.to_string();
-                let _ = Self::schedule_retry_backoff(&suite.store, &goal.id, &err_str, now_ms());
-                Err(err_str)
-            }
+                if let Ok(run) = &result {
+                    let summary: String = run.final_text.chars().take(400).collect();
+                    current
+                        .progress_notes
+                        .push(format!("[steps={}] {summary}", run.steps));
+                }
+                true
+            })
+            .map_err(|e| e.to_string())?;
+        if let Err(e) = result {
+            return Err(e.to_string());
+        }
+        match finished {
+            Some(record) => Ok(record),
+            None => suite
+                .get_record(KIND_GOAL, goal_id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("unknown goal '{goal_id}'")),
         }
     }
 }
@@ -392,10 +406,8 @@ where
                 let runnable = GoalWorker::find_runnable_goals(&store, now_ms());
                 if !runnable.is_empty() {
                     if let Some(route) = route_provider() {
-                        if let Ok(client) = LlmClient::new(120) {
-                            let caller: Arc<dyn ModelCaller> = Arc::new(GoalLlmCaller {
-                                client: Arc::new(client),
-                            });
+                        if let Ok(client) = HttpModelCaller::new(120) {
+                            let caller: Arc<dyn ModelCaller> = Arc::new(client);
                             for goal in runnable {
                                 if shutdown.load(Ordering::Relaxed) {
                                     break;
@@ -458,15 +470,25 @@ mod tests {
         };
         store.put_module_record(KIND_GOAL, &goal.id, &goal).unwrap();
 
-        // Acquire lease
-        let acquired = GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts)
-            .unwrap()
-            .unwrap();
+        let gate = std::sync::Barrier::new(2);
+        let acquired = std::thread::scope(|scope| {
+            let claim = || {
+                gate.wait();
+                GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts).unwrap()
+            };
+            let other = scope.spawn(claim);
+            let claims = [claim(), other.join().unwrap()];
+            let mut winners = claims.into_iter().flatten();
+            let acquired = winners.next().expect("one worker must acquire the goal");
+            assert!(winners.next().is_none());
+            acquired
+        });
         assert_eq!(acquired.status, GoalStatus::Running);
         assert_eq!(acquired.lease_until_ms, Some(base_ts + 60_000));
 
         // Active lease prevents duplicate acquisition
-        let dup = GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts + 10_000).unwrap();
+        let dup =
+            GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts + 10_000).unwrap();
         assert!(dup.is_none());
 
         // Renew lease
@@ -474,21 +496,27 @@ mod tests {
         assert_eq!(renewed.lease_until_ms, Some(base_ts + 80_000));
 
         // Expired lease can be re-acquired
-        let reacquired =
-            GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts + 90_000)
-                .unwrap()
-                .unwrap();
+        let reacquired = GoalWorker::try_acquire_lease(&store, "g-lease", 60_000, base_ts + 90_000)
+            .unwrap()
+            .unwrap();
         assert_eq!(reacquired.lease_until_ms, Some(base_ts + 150_000));
 
         // Retry backoff schedules next_retry_at_ms = now + 30s
-        let retried =
-            GoalWorker::schedule_retry_backoff(&store, "g-lease", "transient timeout", base_ts + 100_000)
-                .unwrap();
+        let retried = GoalWorker::schedule_retry_backoff(
+            &store,
+            "g-lease",
+            "transient timeout",
+            base_ts + 100_000,
+        )
+        .unwrap();
         assert_eq!(retried.retry_count, 1);
         assert_eq!(retried.status, GoalStatus::Pending);
         assert_eq!(retried.next_retry_at_ms, Some(base_ts + 130_000));
         assert!(GoalWorker::find_runnable_goals(&store, base_ts + 110_000).is_empty());
-        assert_eq!(GoalWorker::find_runnable_goals(&store, base_ts + 130_000).len(), 1);
+        assert_eq!(
+            GoalWorker::find_runnable_goals(&store, base_ts + 130_000).len(),
+            1
+        );
 
         // needs_user pause and resume
         let paused =
@@ -499,7 +527,10 @@ mod tests {
         let resumed = GoalWorker::resume_from_user_input(&store, "g-lease", "us-west-2").unwrap();
         assert!(!resumed.is_needs_user());
         assert_eq!(resumed.status, GoalStatus::Pending);
-        assert_eq!(GoalWorker::find_runnable_goals(&store, base_ts + 200_000).len(), 1);
+        assert_eq!(
+            GoalWorker::find_runnable_goals(&store, base_ts + 200_000).len(),
+            1
+        );
 
         // Background worker spawns and shuts down cleanly
         let shutdown = Arc::new(AtomicBool::new(false));

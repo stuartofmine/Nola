@@ -354,6 +354,7 @@ internal fun ChatScreen(
     // Opening an inspector is navigation within this conversation. Its panel reloads
     // the authoritative content when the asynchronous Host binding becomes available.
     var inspector by rememberSaveable(state.conversationId) { mutableStateOf<ConversationInspector?>(null) }
+    var inspectorPreview by remember(state.conversationId) { mutableStateOf<AndroidInlinePreviewRequest?>(null) }
     val showMoreSettings = inspector == ConversationInspector.Settings
     var showContextSheet by rememberSaveable { mutableStateOf(ContextDisplayMode.Context) }
     var showContextSheetOpen by rememberSaveable(state.conversationId, state.executionHostBinding) { mutableStateOf(false) }
@@ -895,7 +896,15 @@ internal fun ChatScreen(
                 )
             }
             inspector == ConversationInspector.Resources -> {
-                ConversationResourcesPanel(state, onClose = { inspector = null })
+                ConversationResourcesPanel(
+                    state = state,
+                    onClose = {
+                        inspectorPreview = null
+                        inspector = null
+                    },
+                    selectedPreview = inspectorPreview,
+                    onSelectPreview = { inspectorPreview = it },
+                )
             }
             showMoreSettings -> {
                 ChatMoreSettingsScreen(
@@ -1257,6 +1266,12 @@ internal fun ChatScreen(
                 }
             }
         } else Box(Modifier.weight(1f).fillMaxWidth()) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalAndroidAttachmentPreview provides { req ->
+                    inspectorPreview = req
+                    inspector = ConversationInspector.Resources
+                }
+            ) {
             transcriptStates.SaveableStateProvider(state.conversationId ?: "new-conversation") {
             ChatTranscript(
             state = state,
@@ -1332,6 +1347,7 @@ internal fun ChatScreen(
             scrollToMessageId = pendingScrollToMessageId,
             onScrollToMessageConsumed = { pendingScrollToMessageId = null },
         )
+            }
             }
         }
 
@@ -1774,14 +1790,17 @@ internal fun ChatScreen(
     }
 
     v2EditTarget?.let { target ->
+        var submitting by remember(target.id) { mutableStateOf(false) }
         AlertDialog(
             modifier = Modifier.dismissImeOnBlankTap(),
-            onDismissRequest = { v2EditTarget = null },
+            onDismissRequest = { if (!submitting) v2EditTarget = null },
             title = { Text(stringResource(R.string.chat_edit_resend)) },
             text = {
                 OutlinedTextField(
                     value = v2EditDraft,
                     onValueChange = { v2EditDraft = it },
+                    enabled = !submitting,
+                    supportingText = state.error?.let { message -> { Text(message) } },
                     minLines = 2,
                     maxLines = 8,
                     modifier = Modifier.fillMaxWidth().testTag("chat.v2.edit.input")
@@ -1789,16 +1808,23 @@ internal fun ChatScreen(
             },
             confirmButton = {
                 TextButton(
-                    enabled = v2EditDraft.isNotBlank() && !state.processingState.blocksInput,
+                    enabled = !submitting && v2EditDraft.isNotBlank() && !state.processingState.blocksInput,
                     onClick = {
-                        val edited = v2EditDraft
-                        v2EditTarget = null
-                        viewModel.truncateAndResendV2Message(target, edited)
+                        if (!submitting) {
+                            submitting = true
+                            scope.launch {
+                                try {
+                                    if (viewModel.truncateAndResendV2Message(target, v2EditDraft)) v2EditTarget = null
+                                } finally {
+                                    submitting = false
+                                }
+                            }
+                        }
                     },
                 ) { Text(stringResource(R.string.chat_edit_resend)) }
             },
             dismissButton = {
-                TextButton(onClick = { v2EditTarget = null }) {
+                TextButton(enabled = !submitting, onClick = { v2EditTarget = null }) {
                     Text(stringResource(R.string.common_cancel))
                 }
             },

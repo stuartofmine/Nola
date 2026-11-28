@@ -328,6 +328,15 @@ internal fun ActivityStateBadge(state: ConversationProjectionV1.ActivityState) {
         style = MaterialTheme.typography.labelSmall, color = color)
 }
 
+internal data class AndroidInlinePreviewRequest(
+    val uri: String,
+    val mimeType: String?,
+    val title: String,
+)
+
+internal val LocalAndroidAttachmentPreview =
+    androidx.compose.runtime.staticCompositionLocalOf<((AndroidInlinePreviewRequest) -> Unit)?> { null }
+
 internal fun canPreviewAttachmentUri(uriString: String): Boolean {
     val trimmed = uriString.trim()
     if (trimmed.isEmpty()) return false
@@ -370,16 +379,20 @@ internal fun openAttachmentPreview(
 }
 
 private const val ARTIFACT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+private const val ARTIFACT_TEXT_PREVIEW_MAX_BYTES = 128 * 1024
 
-internal fun isImageArtifact(artifact: PartArtifact): Boolean {
-    val mime = artifact.mimeType?.trim()?.lowercase().orEmpty()
+internal fun isImagePreviewUri(uriString: String, mimeType: String?): Boolean {
+    val mime = mimeType?.trim()?.lowercase().orEmpty()
     if (mime.startsWith("image/")) return true
-    val lowerUri = artifact.uri.trim().lowercase().substringBefore('?')
+    val lowerUri = uriString.trim().lowercase().substringBefore('?')
     return lowerUri.endsWith(".png") || lowerUri.endsWith(".jpg") || lowerUri.endsWith(".jpeg") ||
-        lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif")
+        lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif") || lowerUri.endsWith(".bmp")
 }
 
-private suspend fun loadArtifactImageBitmap(context: Context, uriString: String): Bitmap? = withContext(Dispatchers.IO) {
+internal fun isImageArtifact(artifact: PartArtifact): Boolean =
+    isImagePreviewUri(artifact.uri, artifact.mimeType)
+
+internal suspend fun loadArtifactImageBitmap(context: Context, uriString: String): Bitmap? = withContext(Dispatchers.IO) {
     val trimmed = uriString.trim()
     if (trimmed.isEmpty()) return@withContext null
     runCatching {
@@ -430,10 +443,53 @@ private fun readArtifactBoundedBytes(stream: java.io.InputStream, maxBytes: Int)
     return output.toByteArray()
 }
 
+internal suspend fun loadAttachmentPreviewText(
+    context: Context,
+    uriString: String,
+    mimeType: String?,
+): String? = withContext(Dispatchers.IO) {
+    val trimmed = uriString.trim()
+    if (trimmed.isEmpty() || isImagePreviewUri(trimmed, mimeType)) return@withContext null
+    val mime = mimeType?.trim()?.lowercase().orEmpty()
+    val lowerUri = trimmed.lowercase().substringBefore('?')
+    val looksText = mime.startsWith("text/") ||
+        mime.contains("json") || mime.contains("xml") || mime.contains("yaml") || mime.contains("javascript") ||
+        listOf(".txt", ".md", ".markdown", ".json", ".yaml", ".yml", ".toml", ".xml", ".csv", ".log",
+            ".rs", ".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".py", ".sh", ".sql", ".html", ".css")
+            .any { lowerUri.endsWith(it) }
+    if (!looksText) return@withContext null
+    runCatching {
+        val bytes = when {
+            trimmed.startsWith("content://") -> {
+                context.contentResolver.openInputStream(Uri.parse(trimmed))?.use {
+                    readArtifactBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES)
+                }
+            }
+            trimmed.startsWith("file://") || trimmed.startsWith("/") -> {
+                val path = if (trimmed.startsWith("file://")) Uri.parse(trimmed).path ?: return@runCatching null else trimmed
+                val file = File(path)
+                if (!file.isFile) return@runCatching null
+                file.inputStream().use { readArtifactBoundedBytes(it, ARTIFACT_TEXT_PREVIEW_MAX_BYTES) }
+            }
+            else -> null
+        } ?: return@runCatching null
+        bytes.toString(Charsets.UTF_8)
+    }.getOrNull()
+}
+
 @Composable
 private fun ArtifactCard(artifact: PartArtifact) {
     val context = LocalContext.current
+    val inlinePreview = LocalAndroidAttachmentPreview.current
     val canOpen = canPreviewAttachmentUri(artifact.uri)
+    val openInInspectorOrExternal = {
+        val req = AndroidInlinePreviewRequest(artifact.uri, artifact.mimeType, artifact.name)
+        if (inlinePreview != null && !isExternalAnswerSource(artifact.uri)) {
+            inlinePreview(req)
+        } else {
+            openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+        }
+    }
     val showImagePreview = canOpen && isImageArtifact(artifact)
     var previewBitmap by remember(artifact.uri) { mutableStateOf<Bitmap?>(null) }
     if (showImagePreview) {
@@ -451,13 +507,13 @@ private fun ArtifactCard(artifact: PartArtifact) {
                     .heightIn(max = 220.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(role = Role.Button) {
-                        openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+                        openInInspectorOrExternal()
                     },
                 contentScale = ContentScale.Fit,
             )
         }
         val titleModifier = if (canOpen) Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
-            openAttachmentPreview(context, artifact.uri, artifact.mimeType, artifact.name)
+            openInInspectorOrExternal()
         } else Modifier
         Text(artifact.name, titleModifier, style = MaterialTheme.typography.labelMedium,
             color = if (canOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)

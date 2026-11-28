@@ -1,14 +1,18 @@
 package com.nola.ui.screen.chat
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
@@ -17,7 +21,10 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
@@ -25,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.nola.R
 import com.nola.data.repository.ConversationProgress
@@ -386,7 +394,93 @@ internal fun ProgressItems(title: String, entries: List<ConversationProgressItem
 }
 
 @Composable
-internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit) {
+internal fun ConversationResourcesPanel(
+    state: ChatUiState,
+    onClose: () -> Unit,
+    selectedPreview: AndroidInlinePreviewRequest? = null,
+    onSelectPreview: (AndroidInlinePreviewRequest?) -> Unit = {},
+) {
+    val context = LocalContext.current
+    var localPreview by remember(state.conversationId) { mutableStateOf<AndroidInlinePreviewRequest?>(null) }
+    val activePreview = selectedPreview ?: localPreview
+    val setPreview: (AndroidInlinePreviewRequest?) -> Unit = { next ->
+        localPreview = next
+        onSelectPreview(next)
+    }
+
+    if (activePreview != null) {
+        var previewBitmap by remember(activePreview.uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+        var previewText by remember(activePreview.uri) { mutableStateOf<String?>(null) }
+        var loadingPreview by remember(activePreview.uri) { mutableStateOf(true) }
+        LaunchedEffect(activePreview.uri, activePreview.mimeType) {
+            loadingPreview = true
+            previewBitmap = null
+            previewText = null
+            if (isImagePreviewUri(activePreview.uri, activePreview.mimeType)) {
+                previewBitmap = loadArtifactImageBitmap(context, activePreview.uri)
+            } else {
+                previewText = loadAttachmentPreviewText(context, activePreview.uri, activePreview.mimeType)
+            }
+            loadingPreview = false
+        }
+        Column(Modifier.fillMaxSize().testTag("inspector.inline.preview")) {
+            NolaTopAppBar(
+                title = activePreview.title,
+                onBack = { setPreview(null) },
+            ) {
+                IconButton(onClick = {
+                    openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
+                }) {
+                    Icon(Icons.Filled.OpenInNew, contentDescription = activePreview.title)
+                }
+            }
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (loadingPreview) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                previewBitmap?.let { bitmap ->
+                    NolaCard {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = activePreview.title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 160.dp, max = 460.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                } ?: previewText?.let { text ->
+                    NolaCard {
+                        SelectionContainer {
+                            Text(
+                                text = text,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                } ?: if (!loadingPreview) {
+                    NolaCard {
+                        Text(activePreview.title, style = MaterialTheme.typography.titleSmall)
+                        activePreview.mimeType?.takeIf { it.isNotBlank() }?.let { mime ->
+                            Text(mime, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = {
+                            openAttachmentPreview(context, activePreview.uri, activePreview.mimeType, activePreview.title)
+                        }) {
+                            Text(stringResource(R.string.intelligence_view))
+                        }
+                    }
+                } else Unit
+            }
+        }
+        return
+    }
+
     val messages = state.messages.filter { it.conversationId == state.conversationId }
     val parts = messages.flatMap { it.canonicalParts }.filter {
         it is com.nola.domain.projection.ConversationProjectionV1.Part.Source ||
@@ -424,7 +518,6 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
                 }
             }
             if (attachments.isNotEmpty()) {
-                val context = LocalContext.current
                 NolaCard {
                     NolaSectionTitle(icon = Icons.Filled.AttachFile, title = stringResource(R.string.inspector_resources))
                     attachments.forEachIndexed { index, attachment ->
@@ -435,7 +528,11 @@ internal fun ConversationResourcesPanel(state: ChatUiState, onClose: () -> Unit)
                                 .fillMaxWidth()
                                 .heightIn(min = 48.dp)
                                 .clickable(enabled = canOpen, role = Role.Button) {
-                                    openAttachmentPreview(context, attachment.uri, attachment.mimeType, attachment.name)
+                                    if (isExternalAnswerSource(attachment.uri)) {
+                                        openAttachmentPreview(context, attachment.uri, attachment.mimeType, attachment.name)
+                                    } else {
+                                        setPreview(AndroidInlinePreviewRequest(attachment.uri, attachment.mimeType, attachment.name))
+                                    }
                                 },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),

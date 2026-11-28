@@ -43,7 +43,11 @@ struct IOSMessageEditSheet: View {
                             .scrollContentBackground(.hidden)
                             .padding(12)
                             .background(DesignTokens.backgroundColor)
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(DesignTokens.strongBorderColor, lineWidth: 1))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(DesignTokens.strongBorderColor, lineWidth: 1)
+                                    .allowsHitTesting(false)
+                            }
                             .accessibilityLabel(String(localized: "chat.message.edit"))
                             .accessibilityIdentifier("chat.message.editor")
                     } footer: {
@@ -75,7 +79,7 @@ struct IOSMessageEditSheet: View {
                     }
                 } catch { self.error = error.localizedDescription }
             }
-            .navigationTitle(String(localized: "chat.message.edit"))
+            .navigationTitle(L10n.edit)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

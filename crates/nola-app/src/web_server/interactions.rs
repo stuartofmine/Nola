@@ -34,6 +34,12 @@ impl ChannelReader {
         }
     }
 
+    /// A paired client can resume a Host-owned turn after reconnecting. Its explicit
+    /// stop request still addresses the cancellation flag held by the Host.
+    pub(super) fn for_chat(rx: mpsc::Receiver<Vec<u8>>, cancel: Arc<AtomicBool>, paired_mobile: bool) -> Self {
+        if paired_mobile { Self::new(rx) } else { Self::with_cancel(rx, cancel) }
+    }
+
     pub(super) fn with_cancel(rx: mpsc::Receiver<Vec<u8>>, cancel: Arc<AtomicBool>) -> Self {
         Self {
             rx,
@@ -120,20 +126,24 @@ impl PendingInteractions {
             .contains(&(conv_id.to_string(), tool_name.to_string(), target_key.to_string()))
     }
 
-    pub(super) fn resolve_approval(&self, request_id: &str, allow: bool, scope: &str) -> bool {
-        if let Some(entry) = self.approvals.lock().unwrap().remove(request_id) {
-            if allow && scope.eq_ignore_ascii_case("session") {
-                self.session_grants.lock().unwrap().insert((
-                    entry.conversation_id,
-                    entry.tool_name,
-                    entry.target_key,
-                ));
-            }
-            let _ = entry.tx.send(allow);
-            true
-        } else {
-            false
+    pub(super) fn resolve_approval(
+        &self, conversation_id: &str, request_id: &str, allow: bool, scope: &str,
+    ) -> bool {
+        let mut pending = self.approvals.lock().unwrap();
+        if !pending.get(request_id).is_some_and(|entry| entry.conversation_id == conversation_id) {
+            return false;
         }
+        let entry = pending.remove(request_id).unwrap();
+        drop(pending);
+        if allow && scope.eq_ignore_ascii_case("session") {
+            let mut grants = self.session_grants.lock().unwrap();
+            if entry.tx.send(true).is_err() {
+                return false;
+            }
+            grants.insert((entry.conversation_id, entry.tool_name, entry.target_key));
+            return true;
+        }
+        entry.tx.send(allow).is_ok()
     }
 
     pub(super) fn resolve_question(&self, request_id: &str, answer: Option<String>) -> bool {

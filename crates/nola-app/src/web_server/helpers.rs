@@ -1664,60 +1664,31 @@ pub(super) fn probe_and_attach_data_source_validation(
     (ok, probe)
 }
 
-pub(super) fn parse_message_seq(body: &Value) -> Option<i64> {
-    body.get("fromSeq")
-        .or_else(|| body.get("from_seq"))
-        .or_else(|| body.get("upToSeq"))
-        .or_else(|| body.get("up_to_seq"))
-        .and_then(|v| v.as_i64())
-        .or_else(|| {
-            body.get("fromMessageId")
-                .or_else(|| body.get("messageId"))
-                .or_else(|| body.get("message_id"))
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.strip_prefix("msg-"))
-                .and_then(|s| s.parse::<i64>().ok())
-        })
-}
-
-pub(super) fn synchronize_session_state_after_truncate(store: &Store, conv_id: &str) {
-    let state_key = format!("session_state:{conv_id}");
-    let Ok(Some(mut state_val)) = store.get_kv(&state_key) else {
-        return;
-    };
-    let (messages, _) = reconstruct_v2_messages(store, conv_id);
-    let rebuilt_history: Vec<Value> = messages
+pub(super) fn parse_message_boundary(
+    body: &Value,
+) -> Result<Option<nola_store::HistoryBoundary<'_>>, &'static str> {
+    if let Some(value) = ["fromSeq", "from_seq", "upToSeq", "up_to_seq"]
         .iter()
-        .filter_map(|m| {
-            let role = m.get("role").and_then(|v| v.as_str())?;
-            let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            match role {
-                "user" => Some(json!({
-                    "role": "user",
-                    "content": content
-                })),
-                "assistant" => {
-                    let reasoning = m
-                        .get("reasoning")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty());
-                    let mut obj = json!({
-                        "role": "assistant",
-                        "content": content
-                    });
-                    if let Some(r) = reasoning {
-                        obj["reasoning"] = json!(r);
-                    }
-                    Some(obj)
-                }
-                _ => None,
-            }
-        })
-        .collect();
-    if let Some(obj) = state_val.as_object_mut() {
-        obj.insert("history".into(), Value::Array(rebuilt_history));
+        .find_map(|key| body.get(*key))
+    {
+        return value
+            .as_i64()
+            .filter(|seq| *seq > 0)
+            .map(nola_store::HistoryBoundary::Sequence)
+            .map(Some)
+            .ok_or("invalid_message_sequence");
     }
-    let _ = store.set_kv(&state_key, &state_val);
+    let Some(value) = ["fromMessageId", "messageId", "message_id"]
+        .iter()
+        .find_map(|key| body.get(*key))
+    else {
+        return Ok(None);
+    };
+    let id = value.as_str().ok_or("invalid_message_id")?;
+    if id.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(nola_store::HistoryBoundary::Message(id)))
 }
 
 pub(super) fn build_activity_page(
@@ -3895,6 +3866,7 @@ pub(super) fn handle_sse_chat_turn(
     conversation_id: String,
     body: Value,
     crypto_tok: Option<String>,
+    paired_mobile: bool,
 ) {
     // P1: Reject concurrent chat turns on the same conversation with HTTP 409 `conversation_busy`!
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4438,7 +4410,7 @@ pub(super) fn handle_sse_chat_turn(
         let resp = Response::new(
             StatusCode(200),
             headers,
-            ChannelReader::with_cancel(rx_room, cancel_for_reader),
+            ChannelReader::for_chat(rx_room, cancel_for_reader, paired_mobile),
             None,
             None,
         );
@@ -4454,6 +4426,8 @@ pub(super) fn handle_sse_chat_turn(
     let cancel_approval = Arc::clone(&cancel);
     let conv_id_for_approval = conversation_id.clone();
     let crypto_for_approval = crypto_tok.clone();
+    let approval_store = store.clone();
+    let approval_workspace = effective_workspace_root.clone();
     let approval_cb: ApprovalCallback = Arc::new(move |spec, args, reason| {
         let tool_name = spec.schema.name.clone();
         let target_key = approval_target_key(args);
@@ -4467,7 +4441,7 @@ pub(super) fn handle_sse_chat_turn(
             PendingApprovalEntry {
                 conversation_id: conv_id_for_approval.clone(),
                 tool_name: tool_name.clone(),
-                target_key,
+                target_key: target_key.clone(),
                 reason: reason.to_string(),
                 arguments: args.clone(),
                 tx: resp_tx,
@@ -4497,6 +4471,11 @@ pub(super) fn handle_sse_chat_turn(
             }
         };
         pending_approval.approvals.lock().unwrap().remove(&req_id);
+        if decision && pending_approval.has_session_grant(&conv_id_for_approval, &tool_name, &target_key) {
+            let _ = nola_engine::policy::persist_session_target_approval(
+                &approval_store, &conv_id_for_approval, &approval_workspace, &tool_name, args,
+            );
+        }
         decision
     });
 
@@ -4734,7 +4713,7 @@ pub(super) fn handle_sse_chat_turn(
     let resp = Response::new(
         StatusCode(200),
         headers,
-        ChannelReader::with_cancel(rx, cancel_for_reader),
+        ChannelReader::for_chat(rx, cancel_for_reader, paired_mobile),
         None,
         None,
     );

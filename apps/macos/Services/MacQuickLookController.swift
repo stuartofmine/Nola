@@ -50,6 +50,7 @@ final class MacQuickLookController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        (notification.object as? NSWindow)?.contentView = nil
         window = nil
         releaseAccess()
     }

@@ -31,8 +31,8 @@ use crossterm::terminal::{
 use crossterm::QueueableCommand;
 use nola_engine::{
     approve_agent_plan, compact_session_now, is_plan_mode, load_session_plan, load_session_todos,
-    persist_permission_grant, register_planning_tools, register_subagent_tools, set_plan_mode,
-    AgentEngine, AgentEvent, AgentRunConfig, AgentRunResult, DurablePermissionGrant,
+    register_planning_tools, register_subagent_tools, set_plan_mode,
+    AgentEngine, AgentEvent, AgentRunConfig, AgentRunResult,
     EffectivePolicy, ForceToolSet, HookRunner, HttpModelCaller, ModelCaller, PlanningState,
     SubagentManager, TaskStatus,
 };
@@ -1360,26 +1360,25 @@ impl TuiApp {
     fn load_session_preview(&mut self, sid: &str) {
         if let Ok(events) = self.read_tail_events(sid, 200) {
             let mut shown = 0usize;
-            for ev in events.iter().rev().take(20).rev() {
-                if ev.kind == "turn_completed" {
-                    if let Some(txt) = ev.payload.get("final_text").and_then(|v| v.as_str()) {
-                        let preview: String = txt.chars().take(200).collect();
-                        if !preview.trim().is_empty() {
-                            self.push_entry(
-                                TranscriptKind::Assistant,
-                                format!("history #{}", ev.seq),
-                                preview,
-                            );
-                            shown += 1;
-                        }
-                    }
+            let messages: Vec<_> = events.iter().filter(|ev|
+                matches!(ev.kind.as_str(), "turn_completed" | "chat_user" | "user_message")
+            ).collect();
+            for ev in messages.iter().rev().take(20).rev() {
+                let (kind, text) = if ev.kind == "turn_completed" {
+                    (TranscriptKind::Assistant, ev.payload["final_text"].as_str())
+                } else {
+                    (TranscriptKind::User, ev.payload["content"].as_str().or_else(|| ev.payload["text"].as_str()))
+                };
+                if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+                    self.push_entry(kind, format!("history #{}", ev.seq), text.chars().take(200).collect::<String>());
+                    shown += 1;
                 }
             }
             if shown > 0 {
                 self.push_system(format!(
                     "{} ({shown})",
                     self.locale
-                        .t("Loaded recent session turns", "已加载最近会话轮次")
+                        .t("Loaded recent messages", "已加载最近消息")
                 ));
             }
         }
@@ -1391,6 +1390,13 @@ impl TuiApp {
                 "A turn is already running. Use /guide <msg> to steer, /model or /thinking to switch live, or Esc/Ctrl+C to cancel.",
                 "当前已有任务正在执行。可使用 /guide <消息> 实时引导、/model 或 /thinking 实时切换，或按 Esc/Ctrl+C 中断。",
             ));
+            return;
+        }
+
+        if let Err(err) = self.store.append_event(
+            &self.session_id, "chat_user", json!({"content": raw_prompt}), nola_store::DEFAULT_MAX_EVENTS_PER_SCOPE,
+        ) {
+            self.push_error(err.to_string());
             return;
         }
 
@@ -1498,14 +1504,9 @@ impl TuiApp {
                 ApprovalChoice::AllowOnce => true,
                 ApprovalChoice::AllowForTargetInSession => {
                     grants.lock().unwrap().insert(grant_key);
-                    let resource_pat = extract_resource_pattern(&spec.schema.name, args);
-                    let durable = DurablePermissionGrant::for_approval(
-                        Some(sid_for_grant.clone()),
-                        &ws_for_grant,
-                        &spec.schema.name,
-                        resource_pat,
+                    let _ = nola_engine::policy::persist_session_target_approval(
+                        &store_for_grant, &sid_for_grant, &ws_for_grant, &spec.schema.name, args,
                     );
-                    let _ = persist_permission_grant(&store_for_grant, &durable);
                     true
                 }
                 ApprovalChoice::ReturnToInput => {
@@ -2323,13 +2324,32 @@ impl TuiApp {
     }
 
     fn cmd_diff(&mut self, rest: &str) {
-        let staged = rest.contains("--staged") || rest.contains("--cached");
+        let staged = match rest.trim() {
+            "" => false,
+            "--staged" | "--cached" => true,
+            _ => {
+                self.push_error(self.locale.t("Usage: /diff [--staged]", "用法：/diff [--staged]"));
+                return;
+            }
+        };
         let status_res = self.registry.execute("git", &self.ctx, json!({"action": "status"}));
+        if status_res.is_error {
+            let hint = self.locale.t(
+                "Open a Git working tree to view changes with /diff.",
+                "请在 Git 工作目录中打开 Nola，再用 /diff 查看改动。",
+            );
+            self.push_error(format!("{}\n{hint}", extract_git_stdout(&status_res)));
+            return;
+        }
         let diff_res = self.registry.execute(
             "git",
             &self.ctx,
             json!({"action": "diff", "staged": staged, "stat_only": true}),
         );
+        if diff_res.is_error {
+            self.push_error(extract_git_stdout(&diff_res));
+            return;
+        }
         let status_txt = extract_git_stdout(&status_res);
         let diff_txt = extract_git_stdout(&diff_res);
         let mut out = String::new();
@@ -4269,6 +4289,9 @@ fn print_entry_line_mode(entry: &TranscriptEntry) {
 
 fn extract_git_stdout(res: &nola_types::ToolExecutionResult) -> String {
     let val = res.payload.to_model_value();
+    if let Some(output) = val.get("output").and_then(|v| v.as_str()) {
+        return output.to_owned();
+    }
     if let Some(s) = val.get("stdout").and_then(|v| v.as_str()) {
         if !s.is_empty() {
             return s.to_string();
@@ -4465,27 +4488,6 @@ fn prompt_approval_line_mode(
     }
 }
 
-fn extract_resource_pattern(tool_name: &str, args: &Value) -> Option<String> {
-    if matches!(tool_name, "bash" | "pty_exec") {
-        return args
-            .get("command")
-            .and_then(|v| v.as_str())
-            .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
-            .filter(|s| !s.is_empty());
-    }
-    for key in ["path", "file_path", "target_path", "destination", "url"] {
-        if let Some(val) = args
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return Some(val.to_string());
-        }
-    }
-    None
-}
-
 fn extract_target_key(tool_name: &str, args: &Value) -> String {
     if matches!(tool_name, "bash" | "pty_exec") {
         if let Some(cmd) = args
@@ -4573,9 +4575,9 @@ fn format_context_usage_line(route: &ModelRouteConfig, latest_usage: &TokenUsage
     let pct = ((used_tokens as f64 / window as f64) * 100.0).min(100.0);
     let used_k = used_tokens as f64 / 1000.0;
     let win_k = window as f64 / 1000.0;
-    let cache_bps = latest_usage
-        .cache_hit_rate_bps_normalized(excl_cache)
-        .unwrap_or_else(|| latest_usage.cache_hit_rate_bps());
+    let Some(cache_bps) = latest_usage.cache_hit_rate_bps_normalized(excl_cache) else {
+        return format!("Context {pct:.0}% · {used_k:.1}k/{win_k:.0}k · cache hit —");
+    };
     let cache_pct = cache_bps as f64 / 100.0;
     format!("Context {pct:.0}% · {used_k:.1}k/{win_k:.0}k · cache hit {cache_pct:.0}%")
 }

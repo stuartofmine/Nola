@@ -21,7 +21,7 @@ use nola_llm::LlmClient;
 use nola_modules::a2ui::{build_nodes_from_spec, catalog_digest, commit_ui_interaction, delete_ui_surface, list_conversation_surfaces, preview_ui_surface, read_ui_surface_changes, read_ui_surface_revision, upsert_ui_surface, UiDraftPreviewInput, UiInteraction, UiSurfaceIdentity, UiSurfaceOwner, UiSurfaceRevisionRef, DEFAULT_CATALOG_ID, MAX_ACTIVE_SURFACES_PER_CONVERSATION};
 use nola_modules::scheduler::spawn_background_scheduler;
 use nola_modules::ModulesSuite;
-use nola_store::{default_socket_path, EventPage, ServiceLock, Store, SyncChangeRecord, PROTOCOL_VERSION};
+use nola_store::{default_socket_path, EventPage, HistoryBoundary, ServiceLock, Store, SyncChangeRecord, PROTOCOL_VERSION};
 use nola_types::{new_id, now_ms, sha256_hex, GoalRecord, GoalStatus, MemoryItem, PermissionProfile, Session};
 use serde_json::{json, Value};
 
@@ -238,46 +238,6 @@ fn load_pending_permission_requests(store: &Store, conv_id: Option<&str>) -> Vec
         }
     }
     pending
-}
-
-fn synchronize_session_state_after_truncate(store: &Store, conv_id: &str) {
-    let state_key = format!("session_state:{conv_id}");
-    let Ok(Some(mut state_val)) = store.get_kv(&state_key) else {
-        return;
-    };
-    let (messages, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
-    let rebuilt_history: Vec<Value> = messages
-        .iter()
-        .filter_map(|m| {
-            let role = m.get("role").and_then(|v| v.as_str())?;
-            let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            match role {
-                "user" => Some(json!({
-                    "role": "user",
-                    "content": content
-                })),
-                "assistant" => {
-                    let reasoning = m
-                        .get("reasoning")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty());
-                    let mut obj = json!({
-                        "role": "assistant",
-                        "content": content
-                    });
-                    if let Some(r) = reasoning {
-                        obj["reasoning"] = json!(r);
-                    }
-                    Some(obj)
-                }
-                _ => None,
-            }
-        })
-        .collect();
-    if let Some(obj) = state_val.as_object_mut() {
-        obj.insert("history".into(), Value::Array(rebuilt_history));
-    }
-    let _ = store.set_kv(&state_key, &state_val);
 }
 
 #[cfg(unix)]
@@ -3358,11 +3318,11 @@ pub fn dispatch_command(
                 .get("from_seq")
                 .or_else(|| args.get("fromSeq"))
                 .and_then(|v| v.as_i64())
-                .unwrap_or(1);
+                .filter(|seq| *seq > 0)
+                .ok_or(("invalid_argument", "a positive from_seq is required".into()))?;
             let deleted = store
                 .truncate_events_from(id, from_seq)
                 .map_err(|e| ("storage_error", e.to_string()))?;
-            synchronize_session_state_after_truncate(store, id);
             Ok(
                 json!({"ok": true, "conversation_id": id, "from_seq": from_seq, "deleted_events": deleted}),
             )
@@ -3409,50 +3369,8 @@ pub fn dispatch_command(
                 updated_at_ms: ts,
             };
             store
-                .upsert_session(&sess)
+                .branch_session(id, &sess, up_to_seq.map(HistoryBoundary::Sequence))
                 .map_err(|e| ("storage_error", e.to_string()))?;
-
-            // Copy transcript events paginated via read_event_range up to optional `up_to_seq`.
-            let mut next_seq = 1i64;
-            loop {
-                let batch = store
-                    .read_event_range(id, next_seq, 500)
-                    .map_err(|e| ("storage_error", e.to_string()))?;
-                if batch.is_empty() {
-                    break;
-                }
-                let mut reached_limit = false;
-                for e in &batch {
-                    if let Some(max_seq) = up_to_seq {
-                        if e.seq > max_seq {
-                            reached_limit = true;
-                            break;
-                        }
-                    }
-                    let _ = store.append_event(&new_conv_id, &e.kind, e.payload.clone(), 50_000);
-                    next_seq = e.seq + 1;
-                }
-                if reached_limit || batch.len() < 500 {
-                    break;
-                }
-            }
-
-            // Copy session_state, meta, and knowledge from source to branched conversation.
-            if let Ok(Some(state_val)) = store.get_kv(&format!("session_state:{id}")) {
-                let _ = store.set_kv(&format!("session_state:{new_conv_id}"), &state_val);
-            }
-            if up_to_seq.is_some() {
-                synchronize_session_state_after_truncate(store, &new_conv_id);
-            }
-            if let Ok(Some(meta_val)) = store.get_kv(&crate::web_api::session_meta_key(id)) {
-                let _ = store.set_kv(&crate::web_api::session_meta_key(&new_conv_id), &meta_val);
-            }
-            if let Ok(Some(k_val)) = store.get_kv(&crate::web_api::conversation_knowledge_key(id)) {
-                let _ = store.set_kv(
-                    &crate::web_api::conversation_knowledge_key(&new_conv_id),
-                    &k_val,
-                );
-            }
             Ok(
                 json!({"conversation": crate::web_api::session_to_conversation_json(store, &sess)}),
             )
@@ -4644,6 +4562,11 @@ pub fn dispatch_command(
                 .or_else(|| args.get("id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            if let (Some(run), Some(assistant)) = (args["expected_run_id"].as_str(), args["assistant_message_id"].as_str()) {
+                if let Some(inspection) = run_journal::interrupted_model_inspection(store, conv_id, run)? {
+                    return Ok(if inspection["assistant_message_id"] == assistant { inspection } else { Value::Null });
+                }
+            }
             let mut items = store
                 .get_kv(&format!("unknown_effect_recovery:{conv_id}"))
                 .ok()
@@ -4683,6 +4606,9 @@ pub fn dispatch_command(
         }
         "resolve_unknown_effect_recovery" => {
             let input = args.get("input").unwrap_or(args);
+            if input["run_id"].is_string() && input["targets"].is_array() {
+                return run_journal::preserve_unknown_model_outcome(store, input);
+            }
             let conv_id = input
                 .get("conversation_id")
                 .or_else(|| input.get("id"))
@@ -5068,22 +4994,11 @@ pub fn dispatch_command(
                 .or_else(|| input.get("truncate_from_seq"))
                 .or_else(|| input.get("target_seq"))
                 .and_then(|v| v.as_i64());
-            let truncate_seq = if let Some(seq) = explicit_from_seq {
-                Some(seq)
-            } else if let Some(mid) = target_msg_id {
-                let (msgs, _) = crate::web_api::reconstruct_v2_messages(store, conv_id);
-                msgs.iter()
-                    .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(mid))
-                    .and_then(|m| m.get("seq").and_then(|v| v.as_i64()))
-            } else {
-                None
+            let boundary = match (explicit_from_seq, target_msg_id) {
+                (Some(seq), _) if seq > 0 => HistoryBoundary::Sequence(seq),
+                (None, Some(id)) => HistoryBoundary::Message(id),
+                _ => return Err(("invalid_argument", "missing or invalid edit point".into())),
             };
-            if let Some(from_seq) = truncate_seq {
-                store
-                    .truncate_events_from(conv_id, from_seq)
-                    .map_err(|e| ("storage_error", e.to_string()))?;
-                synchronize_session_state_after_truncate(store, conv_id);
-            }
             let experts: Vec<Value> = input
                 .get("selected_experts")
                 .and_then(|v| v.as_array())
@@ -5133,12 +5048,14 @@ pub fn dispatch_command(
                 "deferred_rewind": false
             });
             store
-                .set_kv(&op_key, &prepared)
-                .map_err(|e| ("storage_error", e.to_string()))?;
-            store
-                .set_kv(&format!("prepared_in_place_resend:{conv_id}"), &prepared)
-                .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(prepared)
+                .prepare_resend(
+                    conv_id,
+                    Some(boundary),
+                    &op_key,
+                    &format!("prepared_in_place_resend:{conv_id}"),
+                    prepared,
+                )
+                .map_err(|e| if e.is_missing_row() { ("not_found", "edited message no longer exists".into()) } else { ("storage_error", e.to_string()) })
         }
         "prepare_edited_resend" => {
             let input = args.get("input").unwrap_or(args);
@@ -5157,17 +5074,11 @@ pub fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or(source_conv_id);
-            if let Some(from_seq) = input
+            let truncate_seq = input
                 .get("from_seq")
                 .or_else(|| input.get("truncate_from_seq"))
                 .or_else(|| input.get("target_seq"))
-                .and_then(|v| v.as_i64())
-            {
-                store
-                    .truncate_events_from(source_conv_id, from_seq)
-                    .map_err(|e| ("storage_error", e.to_string()))?;
-                synchronize_session_state_after_truncate(store, source_conv_id);
-            }
+                .and_then(Value::as_i64);
             let op_id = input
                 .get("operation_id")
                 .and_then(|v| v.as_str())
@@ -5273,9 +5184,14 @@ pub fn dispatch_command(
                 "admitted_run_id": Value::Null
             });
             store
-                .set_kv(&format!("prepared_edited_resend:{target_conv_id}"), &prepared)
-                .map_err(|e| ("storage_error", e.to_string()))?;
-            Ok(prepared)
+                .prepare_resend(
+                    source_conv_id,
+                    truncate_seq.map(HistoryBoundary::Sequence),
+                    &format!("prepared_edited_resend_op:{op_id}"),
+                    &format!("prepared_edited_resend:{target_conv_id}"),
+                    prepared,
+                )
+                .map_err(|e| ("storage_error", e.to_string()))
         }
         "load_prepared_edited_resend" => {
             let conv_id = args
@@ -8386,9 +8302,24 @@ pub fn dispatch_command(
                 .unwrap_or(64)
                 .clamp(1, 512) as usize;
 
-            let mut parts: Vec<Value> = store
-                .list_module_records::<Value>("assistant_journal_part")
-                .map_err(|e| ("storage_error", e.to_string()))?
+            let raw_parts: Vec<Value> = match (conv_filter, run_filter) {
+                (Some(c), Some(r)) if !c.is_empty() && !r.is_empty() => store
+                    .list_module_records_with_prefix::<Value>(
+                        "assistant_journal_part",
+                        &format!("{c}:{r}:"),
+                    )
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+                (Some(c), None) if !c.is_empty() => store
+                    .list_module_records_with_prefix::<Value>(
+                        "assistant_journal_part",
+                        &format!("{c}:"),
+                    )
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+                _ => store
+                    .list_module_records::<Value>("assistant_journal_part")
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+            };
+            let mut parts: Vec<Value> = raw_parts
                 .into_iter()
                 .filter(|p| {
                     let conv_ok = conv_filter.is_none_or(|c| {
@@ -8493,9 +8424,24 @@ pub fn dispatch_command(
                 .unwrap_or(64)
                 .clamp(1, 512) as usize;
 
-            let mut parts: Vec<Value> = store
-                .list_module_records::<Value>("assistant_journal_part")
-                .map_err(|e| ("storage_error", e.to_string()))?
+            let raw_parts: Vec<Value> = match (conv_filter, run_filter) {
+                (Some(c), Some(r)) if !c.is_empty() && !r.is_empty() => store
+                    .list_module_records_with_prefix::<Value>(
+                        "assistant_journal_part",
+                        &format!("{c}:{r}:"),
+                    )
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+                (Some(c), None) if !c.is_empty() => store
+                    .list_module_records_with_prefix::<Value>(
+                        "assistant_journal_part",
+                        &format!("{c}:"),
+                    )
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+                _ => store
+                    .list_module_records::<Value>("assistant_journal_part")
+                    .map_err(|e| ("storage_error", e.to_string()))?,
+            };
+            let mut parts: Vec<Value> = raw_parts
                 .into_iter()
                 .filter(|p| {
                     let conv_ok = conv_filter.is_none_or(|c| {
@@ -8595,30 +8541,47 @@ pub fn dispatch_command(
                 .unwrap_or(32_768)
                 .clamp(1, 262_144) as usize;
 
+            let expected_bytes = args
+                .pointer("/content/utf8_bytes")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .map(|n| n as usize);
             let content_root = args
                 .pointer("/content/content_root")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.trim().is_empty());
             let content_key = format!("assistant_journal_content:{conv_id}:{run_id}:{part_id}:{content_id}");
-            let full_text = content_root
-                .and_then(|root| {
-                    let root_key = format!(
-                        "assistant_journal_content_by_root:{conv_id}:{run_id}:{part_id}:{content_id}:{root}"
-                    );
-                    store
-                        .get_kv(&root_key)
-                        .ok()
-                        .flatten()
-                        .and_then(|v| v.get("text").and_then(|s| s.as_str()).map(ToString::to_string))
-                })
-                .unwrap_or_else(|| {
+            let (mut full_text, from_root) = match content_root.and_then(|root| {
+                let root_key = format!(
+                    "assistant_journal_content_by_root:{conv_id}:{run_id}:{part_id}:{content_id}:{root}"
+                );
+                store
+                    .get_kv(&root_key)
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.get("text").and_then(|s| s.as_str()).map(ToString::to_string))
+            }) {
+                Some(t) => (t, true),
+                None => (
                     store
                         .get_kv(&content_key)
                         .ok()
                         .flatten()
                         .and_then(|v| v.get("text").and_then(|s| s.as_str()).map(ToString::to_string))
-                        .unwrap_or_default()
-                });
+                        .unwrap_or_default(),
+                    false,
+                ),
+            };
+            if !from_root {
+                if let Some(cap) = expected_bytes {
+                    if cap < full_text.len() {
+                        let mut cut = cap;
+                        while cut > 0 && !full_text.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        full_text.truncate(cut);
+                    }
+                }
+            }
             let total = full_text.len();
             let mut start = offset_bytes.min(total);
             while start < total && !full_text.is_char_boundary(start) {
@@ -8824,6 +8787,8 @@ pub fn dispatch_command(
                     "prompt": prompt,
                     "owner_session_id": parent_session_id,
                     "parent_conversation_id": parent_session_id,
+                    "parent_run_id": req.get("run_id").or_else(|| input.get("parent_run_id"))
+                        .or_else(|| child_config.pointer("/turn_identity/run_id")),
                     "conversation_id": parent_session_id,
                     "child_session_id": child_session_id,
                     "child_conversation_id": child_session_id,

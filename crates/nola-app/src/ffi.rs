@@ -4748,6 +4748,34 @@ pub unsafe extern "C" fn nola_core_redact_model_request_json(
     credential: *const u8,
     credential_len: usize,
 ) -> *mut c_char {
+    unsafe {
+        nola_core_redact_model_request_for_endpoint(
+            input,
+            size,
+            credential,
+            credential_len,
+            std::ptr::null(),
+        )
+    }
+}
+
+/// Endpoint-aware variant. A missing endpoint uses the public-provider policy.
+///
+/// # Safety
+/// Input and credential follow the original ABI. A non-null endpoint must be a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn nola_core_redact_model_request_for_endpoint(
+    input: *const u8,
+    size: usize,
+    credential: *const u8,
+    credential_len: usize,
+    endpoint: *const c_char,
+) -> *mut c_char {
+    let endpoint = if endpoint.is_null() {
+        ""
+    } else {
+        unsafe { CStr::from_ptr(endpoint) }.to_str().unwrap_or("")
+    };
     if input.is_null() || size == 0 {
         return to_owned_c_string(String::new());
     }
@@ -4755,7 +4783,7 @@ pub unsafe extern "C" fn nola_core_redact_model_request_json(
     let cred_str = if !credential.is_null() && credential_len > 0 {
         let cred_slice = unsafe { std::slice::from_raw_parts(credential, credential_len) };
         let trimmed = String::from_utf8_lossy(cred_slice).trim().to_string();
-        (trimmed.len() >= 6).then_some(trimmed)
+        (!trimmed.is_empty()).then_some(trimmed)
     } else {
         None
     };
@@ -4765,7 +4793,7 @@ pub unsafe extern "C" fn nola_core_redact_model_request_json(
     if let Ok(mut json_val) = serde_json::from_slice::<Value>(slice) {
         PrivacyRedactor.redact_json_value_for_endpoint(
             &mut json_val,
-            "https://remote.invalid",
+            endpoint,
             &extra_secrets,
         );
         return to_owned_c_string(json_val.to_string());
@@ -4774,7 +4802,7 @@ pub unsafe extern "C" fn nola_core_redact_model_request_json(
     let text = String::from_utf8_lossy(slice);
     let (out, _) = PrivacyRedactor.redact_text_for_endpoint(
         &text,
-        "https://remote.invalid",
+        endpoint,
         &extra_secrets,
     );
     to_owned_c_string(out)

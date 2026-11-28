@@ -39,13 +39,19 @@ struct AppleStreamingMarkdownBuffer: Equatable {
         reduceMotion: Bool,
         now: Date = Date()
     ) {
-        guard isStreaming else {
-            finish(with: nextContent)
-            return
-        }
+        reconcileContent(nextContent)
+    }
+
+    mutating func finish(with finalContent: String) {
+        reconcileContent(finalContent)
+    }
+
+    // A settled snapshot can still receive an authoritative extension. A view's
+    // lifecycle must not introduce a paragraph boundary in the source Markdown.
+    private mutating func reconcileContent(_ nextContent: String) {
         switch AuthoritativeTextReconciliation.reconcile(authoritative: nextContent, accepted: source) {
         case .unchanged:
-            return
+            lastParsedCharacterCount = 0
         case .append(let delta):
             source = nextContent
             visible = nextContent
@@ -60,51 +66,6 @@ struct AppleStreamingMarkdownBuffer: Equatable {
         }
     }
 
-    mutating func finish(with finalContent: String) {
-        switch AuthoritativeTextReconciliation.reconcile(authoritative: finalContent, accepted: source) {
-        case .unchanged:
-            break
-        case .append(let delta):
-            source = finalContent
-            visible = finalContent
-            appendStreamingMarkdown(delta)
-        case .replace(let replacement):
-            source = replacement
-            visible = replacement
-            lastParsedCharacterCount = replacement.count
-            streamingBlocks = AppleStreamingMarkdownPartitioner.partition(replacement, settleTail: true)
-            mutableTailSource = ""
-            return
-        }
-
-        // Completion changes the lifecycle of only the mutable tail. Preserve
-        // the immutable prefix and its SwiftUI identities so terminal
-        // promotion cannot trigger a full Markdown-tree parse and redraw.
-        guard !mutableTailSource.isEmpty else {
-            lastParsedCharacterCount = 0
-            return
-        }
-        let stableCount = streamingBlocks.last?.isMutableTail == true
-            ? streamingBlocks.count - 1
-            : streamingBlocks.count
-        let stableBlocks = Array(streamingBlocks.prefix(stableCount))
-        lastParsedCharacterCount = mutableTailSource.count
-        let settledTail = AppleStreamingMarkdownPartitioner.partition(
-            mutableTailSource,
-            settleTail: true
-        ).map { block in
-            AppleStreamingMarkdownRenderBlock(
-                ordinal: stableCount + block.ordinal,
-                markdown: block.markdown,
-                isMutableTail: false
-            )
-        }
-        source = finalContent
-        visible = finalContent
-        streamingBlocks = stableBlocks + settledTail
-        mutableTailSource = ""
-    }
-
     mutating func prepareForCompletion(
         _ finalContent: String,
         reduceMotion: Bool,
@@ -114,16 +75,13 @@ struct AppleStreamingMarkdownBuffer: Equatable {
     }
 
     func renderBlocks(settleTail: Bool) -> [AppleStreamingMarkdownRenderBlock] {
-        if !settleTail {
+        guard settleTail, let tail = streamingBlocks.last, tail.isMutableTail else {
             return streamingBlocks
         }
-        if mutableTailSource.isEmpty {
-            return streamingBlocks
-        }
-        return AppleStreamingMarkdownPartitioner.partition(
-            visible,
-            settleTail: settleTail
-        )
+        var blocks = streamingBlocks
+        blocks[blocks.count - 1] = AppleStreamingMarkdownRenderBlock(
+            ordinal: tail.ordinal, markdown: tail.markdown, isMutableTail: false)
+        return blocks
     }
 
     private mutating func appendStreamingMarkdown(_ appended: String) {

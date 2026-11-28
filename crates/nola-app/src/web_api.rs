@@ -250,7 +250,7 @@ pub fn conversation_configuration_json(store: &Store, s: &Session) -> Value {
 
 /// Reconstruct clean v2 conversation messages from persisted `session_events` for history reload.
 pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Value>, Vec<Value>) {
-    let events = match store.events_after(conversation_id, 0, 2000) {
+    let events = match store.events_after(conversation_id, 0, i64::MAX as usize) {
         Ok(EventPage::Events(ev)) => ev,
         _ => Vec::new(),
     };
@@ -403,6 +403,27 @@ pub fn reconstruct_v2_messages(store: &Store, conversation_id: &str) -> (Vec<Val
                         last_was_turn_completed = ev.kind == "turn_completed";
                     }
                 }
+            }
+            "run_error" => {
+                let Some(run) = ev.payload["run_id"].as_str() else { continue };
+                let id = ev.payload["assistant_message_id"].as_str()
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| format!("{run}:assistant"));
+                let detail = ev.payload["error"].as_str().unwrap_or_default();
+                let state = if ev.payload["status"] == "cancelled" { "cancelled" } else { "failed" };
+                let existing = messages.iter_mut().rev()
+                    .take_while(|message| message["role"] != "user")
+                    .find(|message| message["id"] == id);
+                if let Some(message) = existing {
+                    message["status"] = json!(state);
+                    message["error"] = json!(detail);
+                } else {
+                    messages.push(json!({
+                        "id": id, "seq": ev.seq, "role": "assistant", "status": state,
+                        "content": detail, "error": detail, "createdAtMs": ev.created_at_ms
+                    }));
+                }
+                last_was_turn_completed = false;
             }
             _ => {}
         }
@@ -2410,8 +2431,22 @@ mod tests {
                 100,
             )
             .unwrap();
+        for _ in 0..2000 {
+            store
+                .append_event("conv-multi", "step", json!({}), 3000)
+                .unwrap();
+        }
+        store
+            .append_event(
+                "conv-multi",
+                "chat_user",
+                json!({"content": "latest"}),
+                3000,
+            )
+            .unwrap();
         let (msgs, _) = reconstruct_v2_messages(&store, "conv-multi");
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.last().unwrap()["content"], "latest");
+        assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[1]["role"], "assistant");
         assert_eq!(msgs[1]["content"], "| a | b |\n|---|---|\n| 1 | 2 |\n\nRendered UI.");
         assert_eq!(msgs[1]["reasoning"], "checked metrics");

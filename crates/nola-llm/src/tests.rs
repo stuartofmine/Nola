@@ -940,6 +940,28 @@ fn deliverable1_full_wire_privacy_redaction_and_lan_endpoint_detection() {
         is_error: false,
         media: vec![],
     });
+    let credential = "private-route-credential";
+    req.prefix_stable_tools[0].description = format!("Use {credential}");
+    req.prefix_stable_tools[0].parameters = json!({"properties": {
+        "password": {"type": "string", "description": "Contact user@example.com"}
+    }});
+    if let HistoryMessage::User { media, .. } = &mut req.history[0] {
+        media.push(MediaAttachment {
+            filename: format!("{credential}.pdf"),
+            mime_type: "application/pdf".into(),
+            bytes_base64: "YQ==".into(),
+            sha256: String::new(),
+            raw_bytes_len: 1,
+        });
+    }
+    let remote =
+        PrivacyRedactor::sanitize_request_with_secrets("https://example.org", &req, &[credential]);
+    let body = serde_json::to_string(&remote).unwrap();
+    assert!(!body.contains(credential) && !body.contains("user@example.com"));
+    assert_eq!(
+        remote.prefix_stable_tools[0].parameters["properties"]["password"]["type"],
+        "string"
+    );
     let sanitized = PrivacyRedactor::sanitize_request("http://127.0.0.1:8080/v1", &req);
     let HistoryMessage::Tool {
         payload: ToolModelPayload::Text(content),

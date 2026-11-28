@@ -28,3 +28,5 @@ x64 CPU 安装器位于 `apps/windows/release/x64-cpu/`。安装程序按当前�
 ## 验证已安装版本
 
 在使用英文界面的独立 Windows 测试账号中，设置 `NOLA_INSTALLED_DESKTOP` 指向已安装的 `nola-desktop.exe`，在 `apps/windows` 下运行 `npm run test:e2e`。测试使用当前桌面和剪贴板，在真实窗口里创建会话、输入草稿并选择文本附件。退出重开后，会核对会话标识、草稿原文和附件名称。
+
+在交互式 Windows 测试账户中，从仓库根目录运行 `python scripts/e2e/run_real_e2e.py --platforms windows` 可验证真实模型回合。设置 `NOLA_INSTALLED_DESKTOP` 为已安装程序的路径，并通过 `NOLA_REAL_LLM_ENDPOINT`、`NOLA_REAL_LLM_MODEL` 和 `NOLA_REAL_LLM_API_KEY` 配置测试模型。脚本重启应用后从输入框发送消息，核对已保存的助手回复并截图。在其他操作系统指定 Windows 时，汇总结果会标记为未通过。

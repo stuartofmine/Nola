@@ -1497,4 +1497,6 @@
     <string name="chat_v2_workspace_review_files">工作区文件</string>
     <string name="chat_v2_workspace_review_truncated">预览内容已截断</string>
     <string name="chat_v2_edit_resend_failed">无法截断并重新发送消息</string>
+    <string name="chat_missing_host_history">当前配对的宿主机上找不到这段对话。你可以在宿主机上打开原对话，或在这里新建对话。</string>
+    <string name="chat_edit_source_changed">会话已经更新。请重新打开会话，再编辑这条消息。</string>
 </resources>

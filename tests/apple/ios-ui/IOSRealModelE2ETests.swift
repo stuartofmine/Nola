@@ -179,21 +179,101 @@ final class IOSRealModelE2ETests: XCTestCase {
         XCTAssertTrue(sendButton.waitForExistence(timeout: 5))
         sendButton.tap()
 
-        let replyMarker = app.otherElements.matching(identifier: "chat.assistant.bubble")
-            .descendants(matching: .staticText)
-            .matching(NSPredicate(format: "label CONTAINS %@", "OK_IOS_REAL_MODEL"))
-            .firstMatch
-        XCTAssertTrue(replyMarker.waitForExistence(timeout: 90), "Expected real LAN model reply containing OK_IOS_REAL_MODEL")
-
-        let terminal = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == true AND label != %@", "Stop generation"),
-            object: sendButton
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [terminal], timeout: 30), .completed)
+        func assistantText(containing marker: String) -> XCUIElement {
+            app.otherElements.matching(identifier: "chat.assistant.bubble")
+                .descendants(matching: .staticText)
+                .matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch
+        }
+        func waitForIdle(file: StaticString = #filePath, line: UInt = #line) {
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true AND label != %@", "Stop generation"), object: sendButton
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed, file: file, line: line)
+        }
+        XCTAssertTrue(assistantText(containing: "OK_IOS_REAL_MODEL").waitForExistence(timeout: 90))
+        waitForIdle()
         saveEvidenceScreenshot("ios-02-chat-real-reply.png")
+        let editButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.message.edit."))
+        let originalEditID = editButtons.firstMatch.identifier
+        XCTAssertFalse(originalEditID.isEmpty)
+        let back = app.buttons["chat.navigation.back"]
+        let conversationRows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "chat.conversation."))
+
+        // Stop an actual streaming reply, then submit again on the same conversation.
+        input.tap()
+        input.typeText("Write a long story with 80 paragraphs. Start with IOS_STOP_TEST.")
+        sendButton.tap()
+        let stop = app.buttons.matching(identifier: "chat.composer.send")
+            .matching(NSPredicate(format: "label == %@", "Stop generation")).firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 15))
+        stop.tap()
+        back.tap()
+        let originalRow = conversationRows.firstMatch
+        XCTAssertTrue(originalRow.waitForExistence(timeout: 10))
+        let conversationID = originalRow.identifier
+        tapRootTab("activity", in: app)
+        XCTAssertTrue(app.buttons["activity.plans"].waitForExistence(timeout: 8))
+        tapRootTab("chat", in: app)
+        app.buttons[conversationID].tap()
+        waitForIdle()
+        saveEvidenceScreenshot("ios-stop-reopen.png")
+        input.tap()
+        input.typeText("Reply only OK_IOS_AFTER_STOP.")
+        sendButton.tap()
+        XCTAssertTrue(assistantText(containing: "OK_IOS_AFTER_STOP").waitForExistence(timeout: 60))
+        waitForIdle()
+        saveEvidenceScreenshot("ios-chat-after-stop.png")
+
+        // Editing the first user message must remove both later turns and preserve the conversation.
+        let originalEdit = app.buttons[originalEditID]
+        for _ in 0..<6 where !originalEdit.isHittable { app.swipeDown() }
+        XCTAssertTrue(originalEdit.isHittable)
+        originalEdit.tap()
+        let editor = app.textViews["chat.message.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 8))
+        let originalText = editor.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.12))
+        originalText.tap()
+        originalText.press(forDuration: 1.0)
+        saveEvidenceScreenshot("ios-edit-touch-menu.png")
+        func selectionAction(_ title: String) -> XCUIElement {
+            let menu = app.menuItems[title].firstMatch
+            return menu.exists ? menu : app.buttons[title].firstMatch
+        }
+        let selectAll = selectionAction("Select All")
+        if !selectAll.exists, selectionAction("Select").exists { selectionAction("Select").tap() }
+        if !selectAll.exists, selectionAction("Show more items").exists { selectionAction("Show more items").tap() }
+        XCTAssertTrue(selectionAction("Select All").waitForExistence(timeout: 5))
+        saveEvidenceScreenshot("ios-edit-original-open.png")
+        selectionAction("Select All").tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let firstKey = keyboard.keys.matching(NSPredicate(format: "label ==[c] %@", "r")).firstMatch
+        XCTAssertTrue(firstKey.waitForExistence(timeout: 5))
+        firstKey.tap()
+        XCTAssertEqual((editor.value as? String)?.lowercased(), "r")
+        editor.typeText("eply only OK_IOS_EDITED_ROOT.")
+        XCTAssertEqual((editor.value as? String)?.lowercased(), "reply only ok_ios_edited_root.")
+        let saveEdit = app.buttons["chat.message.editor.save"]
+        XCTAssertTrue(saveEdit.isEnabled)
+        saveEdit.tap()
+        XCTAssertTrue(assistantText(containing: "OK_IOS_EDITED_ROOT").waitForExistence(timeout: 90))
+        waitForIdle()
+        saveEvidenceScreenshot("ios-edited-root.png")
+
+        app.terminate()
+        app.launch()
+        if back.exists { back.tap() }
+        tapRootTab("chat", in: app)
+        let row = app.buttons[conversationID]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(assistantText(containing: "OK_IOS_EDITED_ROOT").waitForExistence(timeout: 15))
+        XCTAssertFalse(assistantText(containing: "OK_IOS_REAL_MODEL").exists)
+        XCTAssertFalse(assistantText(containing: "OK_IOS_AFTER_STOP").exists)
+        XCTAssertEqual(editButtons.count, 1)
+        saveEvidenceScreenshot("ios-edited-root-relaunched.png")
 
         // Return to conversation list before traversing tabs
-        let back = app.buttons["chat.navigation.back"]
         if back.exists {
             back.tap()
         } else {

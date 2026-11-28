@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 import urllib.parse
 import uuid
@@ -127,11 +128,14 @@ def main():
     )
     ap.add_argument(
         "--evidence-dir",
-        default="/tmp/nola-real-e2e-evidence",
+        default=str(Path(tempfile.gettempdir()) / "nola-real-e2e-evidence"),
         help="Directory to store screenshots, videos, and summary.json",
     )
     args = ap.parse_args()
     platforms = [p.strip().lower() for p in args.platforms.split(",") if p.strip()]
+    supported = {"cli", "web", "macos", "ios", "android", "windows"}
+    if not platforms or not set(platforms) <= supported:
+        ap.error("select at least one supported platform: " + ", ".join(sorted(supported)))
     evidence = Path(args.evidence_dir)
     evidence.mkdir(parents=True, exist_ok=True)
 
@@ -155,10 +159,14 @@ def main():
         }
     )
     results = {}
+    needs_fixture = bool({"ios", "macos"} & set(platforms))
+    owns_fixture = False
     try:
-        fd = os.open(str(fixture_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(fixture_payload)
+        if needs_fixture:
+            fd = os.open(str(fixture_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            owns_fixture = True
+            with os.fdopen(fd, "w") as f:
+                f.write(fixture_payload)
 
         if "cli" in platforms:
             print("[e2e] Running CLI & TUI real-model E2E...")
@@ -169,8 +177,14 @@ def main():
             results["web"] = run_step(["node", "apps/web/tests/real_e2e.mjs"], env, timeout=300)
 
         if "windows" in platforms:
-            print("[e2e] Running Windows desktop-shell Playwright E2E...")
-            results["windows"] = run_step(["npm", "--prefix", "apps/windows", "test"], env, timeout=180)
+            if os.name != "nt":
+                results["windows"] = {"ok": False, "reason": "installed Tauri E2E requires a Windows host"}
+            else:
+                win_env = dict(env, NOLA_LLM_ENDPOINT=endpoint, NOLA_LLM_MODEL=model,
+                               NOLA_API_KEY=api_key, NOLA_UI_SCREENSHOTS=str(evidence / "windows"))
+                results["windows"] = run_step(
+                    ["powershell.exe", "-STA", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                     "-File", "apps/windows/scripts/test-installed-ui.ps1"], win_env, timeout=300)
 
         if "macos" in platforms:
             print("[e2e] Running macOS NolaMac real-model E2E (with NSWindow screenshots)...")
@@ -408,7 +422,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     emu.kill()
     finally:
-        if fixture_path.exists():
+        if owns_fixture:
             fixture_path.unlink()
 
     manifest = {
@@ -417,7 +431,7 @@ def main():
         "evidence_dir": str(evidence),
         "platforms": results,
         "files": sorted(str(p.relative_to(evidence)) for p in evidence.rglob("*") if p.is_file()),
-        "all_passed": all(r.get("ok") for r in results.values()),
+        "all_passed": all(results.get(p, {}).get("ok") for p in platforms),
     }
     (evidence / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     print("\n=== REAL-MODEL E2E SUMMARY ===")

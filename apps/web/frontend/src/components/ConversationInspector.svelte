@@ -34,6 +34,7 @@
     import InspectorRecallPanel from './InspectorRecallPanel.svelte';
     import PrototypeIcon from './PrototypeIcon.svelte';
     import WorkspaceWorktreesPanel from './WorkspaceWorktreesPanel.svelte';
+    import type { InspectorPreviewItem } from '../lib/inspectorPreview';
 
     type InspectorTab =
         | 'tasks'
@@ -52,6 +53,8 @@
         streaming = false,
         width,
         plan = null,
+        previewItem = null,
+        onclearpreview,
         onclose,
         onopenPage,
         oncompacted,
@@ -63,6 +66,8 @@
         streaming?: boolean;
         width?: number;
         plan?: V2ConversationPlan | null;
+        previewItem?: InspectorPreviewItem | null;
+        onclearpreview?: () => void;
         onclose: () => void;
         onopenPage?: (path: string) => void;
         oncompacted?: (summary: string) => void;
@@ -71,6 +76,35 @@
 
     let activeTab = $state<InspectorTab>('tasks');
     let refreshToken = $state(0);
+    let localPreview = $state<InspectorPreviewItem | null>(null);
+    let previewCopied = $state(false);
+    const activePreview = $derived(previewItem ?? localPreview);
+
+    function openInlinePreview(item: InspectorPreviewItem) {
+        onclearpreview?.();
+        localPreview = item;
+        previewCopied = false;
+    }
+
+    function closeInlinePreview() {
+        localPreview = null;
+        previewCopied = false;
+        onclearpreview?.();
+    }
+
+    async function copyPreviewContent(item: InspectorPreviewItem) {
+        const value = item.text || item.path || item.pdfUrl || item.title;
+        if (!value) return;
+        try {
+            await navigator.clipboard?.writeText(value);
+            previewCopied = true;
+            setTimeout(() => {
+                previewCopied = false;
+            }, 1600);
+        } catch {
+            /* Clipboard unavailable */
+        }
+    }
 
     const inspectorTabs: ReadonlyArray<{ id: InspectorTab; labelKey: string }> = [
         { id: 'tasks', labelKey: 'chatInspector.tabTasks' },
@@ -586,6 +620,12 @@
     }
 
     $effect(() => {
+        conversationId;
+        localPreview = null;
+        previewCopied = false;
+    });
+
+    $effect(() => {
         const convId = conversationId;
         const tab = activeTab;
         if (!convId) {
@@ -633,7 +673,11 @@
     onkeydown={event => {
         if (event.key === 'Escape' && !document.querySelector('dialog:modal')) {
             event.preventDefault();
-            onclose();
+            if (activePreview) {
+                closeInlinePreview();
+            } else {
+                onclose();
+            }
         }
     }}
 />
@@ -647,6 +691,70 @@
     data-testid="conversation-inspector"
     aria-label={t($locale, 'chatPage.details')}
 >
+    {#if activePreview}
+        <header class="inspector-header">
+            <div class="preview-header-title">
+                <button
+                    type="button"
+                    class="inspector-icon-btn"
+                    title={t($locale, 'chatPage.closeReader')}
+                    aria-label={t($locale, 'chatPage.closeReader')}
+                    onclick={closeInlinePreview}
+                >
+                    ←
+                </button>
+                <div class="preview-title-stack">
+                    <h2 class="inspector-title" title={activePreview.path || activePreview.title}>{activePreview.title}</h2>
+                    {#if activePreview.subtitle}
+                        <span class="preview-subtitle">{activePreview.subtitle}</span>
+                    {/if}
+                </div>
+            </div>
+            <div class="inspector-header-actions">
+                {#if activePreview.text || activePreview.path}
+                    <button
+                        type="button"
+                        class="compact-btn"
+                        onclick={() => void copyPreviewContent(activePreview)}
+                    >
+                        {previewCopied ? t($locale, 'chatInspector.copied') : t($locale, 'chatInspector.copy')}
+                    </button>
+                {/if}
+                <button
+                    type="button"
+                    class="inspector-icon-btn"
+                    title={t($locale, 'chatInspector.close')}
+                    aria-label={t($locale, 'chatInspector.close')}
+                    onclick={onclose}
+                >
+                    <PrototypeIcon name="close" size={16} />
+                </button>
+            </div>
+        </header>
+        <div class="inspector-body inspector-preview-body" data-testid="inspector-inline-preview">
+            {#if activePreview.kind === 'image' && activePreview.imageUrl}
+                <div class="inspector-image-stage">
+                    <img class="inspector-image-full" src={activePreview.imageUrl} alt={activePreview.title} />
+                </div>
+            {:else if activePreview.kind === 'pdf' && activePreview.pdfUrl}
+                <div class="inspector-pdf-actions">
+                    <a class="compact-btn" href={activePreview.pdfUrl} target="_blank" rel="noopener noreferrer">
+                        {t($locale, 'chatResource.openSeparate')}
+                    </a>
+                    <a class="compact-btn" href={activePreview.pdfUrl} download={activePreview.title}>
+                        {t($locale, 'chatResource.download')}
+                    </a>
+                </div>
+                <iframe
+                    class="inspector-pdf-frame"
+                    title={activePreview.title}
+                    src={activePreview.pdfUrl}
+                ></iframe>
+            {:else}
+                <pre class="inspector-text-preview">{activePreview.text || activePreview.path || ''}</pre>
+            {/if}
+        </div>
+    {:else}
     <header class="inspector-header">
         <h2 class="inspector-title">{t($locale, 'chatPage.details')}</h2>
         <div class="inspector-header-actions">
@@ -903,7 +1011,7 @@
                 {/if}
             </section>
         {:else if activeTab === 'artifacts'}
-            <InspectorArtifactsPanel {conversationId} {messages} {refreshToken} />
+            <InspectorArtifactsPanel {conversationId} {messages} {refreshToken} onpreview={openInlinePreview} />
         {:else if activeTab === 'recall'}
             <InspectorRecallPanel {conversationId} />
         {:else if activeTab === 'diff'}
@@ -995,7 +1103,7 @@
                 onchanged={() => conversationId && void loadDiffAndCheckpoints(conversationId, nextTabSignal())}
             />
         {:else if activeTab === 'browser'}
-            <InspectorBrowserPdfPanel {conversationId} {messages} {refreshToken} />
+            <InspectorBrowserPdfPanel {conversationId} {messages} {refreshToken} onpreview={openInlinePreview} />
         {:else if activeTab === 'context'}
             <section class="inspector-section">
                 <h3>{t($locale, 'chatInspector.tabContext')}</h3>
@@ -1159,9 +1267,86 @@
             </section>
         {/if}
     </div>
+    {/if}
 </aside>
 
 <style>
+    .preview-header-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        flex: 1;
+    }
+    .preview-title-stack {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        gap: 1px;
+    }
+    .preview-title-stack .inspector-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .preview-subtitle {
+        font-size: 11px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .inspector-preview-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    .inspector-image-stage {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--canvas);
+        min-height: 160px;
+    }
+    .inspector-image-full {
+        max-width: 100%;
+        max-height: calc(100dvh - 180px);
+        object-fit: contain;
+        border-radius: 6px;
+    }
+    .inspector-pdf-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .inspector-pdf-frame {
+        width: 100%;
+        flex: 1;
+        min-height: 480px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--canvas);
+    }
+    .inspector-text-preview {
+        margin: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--canvas);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        user-select: text;
+    }
     .inspector-scrim {
         display: none;
     }

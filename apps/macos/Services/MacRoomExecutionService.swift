@@ -102,7 +102,7 @@ import Observation
             return try await remoteHost.readUISurfaceChanges(identity: identity, baseRevision: baseRevision, target: target)
         }
         let database = repository.databaseURL
-        return try await Task.detached { try MacApplicationPort(databaseURL: database).readUISurfaceChanges(identity: identity, baseRevision: baseRevision) }.value
+        return try await Task.detached { try MacApplicationPort.pooled(databaseURL: database).readUISurfaceChanges(identity: identity, baseRevision: baseRevision) }.value
     }
     func readHistoryUIRevision(childID: String, source: AppleConversationSourceOwner,
         reference: AppleUISurfaceReference) async throws -> AppleUISnapshot<MacCanonicalJSONValue>? {
@@ -111,7 +111,7 @@ import Observation
             return try await remoteHost.readUISurfaceRevision(reference, target: target)
         }
         let database = repository.databaseURL
-        return try await Task.detached { try MacApplicationPort(databaseURL: database).readUISurfaceRevision(identity: reference.identity, revision: reference.revision) }.value
+        return try await Task.detached { try MacApplicationPort.pooled(databaseURL: database).readUISurfaceRevision(identity: reference.identity, revision: reference.revision) }.value
     }
 
     func cachedRemotePeers(_ contextIDs: Set<String>, parentID: String) async -> Set<String> {
